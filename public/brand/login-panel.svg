@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="900" viewBox="0 0 720 900" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="40" x2="680" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10233F"/>
+      <stop offset="1" stop-color="#0B1526"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="164" y1="180" x2="556" y2="690" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A3358"/>
+      <stop offset="1" stop-color="#142848"/>
+    </linearGradient>
+    <linearGradient id="card" x1="210" y1="250" x2="510" y2="620" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E8EEF8"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="240" y1="300" x2="480" y2="560" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#60A5FA"/>
+      <stop offset="1" stop-color="#2563EB"/>
+    </linearGradient>
+    <filter id="soft" x="0" y="0" width="720" height="900" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+
+  <rect width="720" height="900" fill="url(#bg)"/>
+  <circle cx="560" cy="170" r="120" fill="#2563EB" fill-opacity="0.18" filter="url(#soft)"/>
+  <circle cx="180" cy="720" r="150" fill="#38BDF8" fill-opacity="0.12" filter="url(#soft)"/>
+
+  <!-- floating dashboard frame -->
+  <rect x="150" y="210" width="420" height="500" rx="28" fill="url(#panel)" stroke="#3B82F6" stroke-opacity="0.28"/>
+  <rect x="178" y="242" width="364" height="436" rx="20" fill="url(#card)"/>
+
+  <!-- top bar -->
+  <rect x="204" y="268" width="120" height="14" rx="7" fill="#94A3B8" fill-opacity="0.55"/>
+  <circle cx="500" cy="275" r="8" fill="#CBD5E1"/>
+  <circle cx="476" cy="275" r="8" fill="#E2E8F0"/>
+
+  <!-- progress card -->
+  <rect x="204" y="308" width="312" height="96" rx="16" fill="#FFFFFF" stroke="#Dbe4f0"/>
+  <rect x="224" y="330" width="88" height="10" rx="5" fill="#64748B" fill-opacity="0.55"/>
+  <rect x="224" y="356" width="220" height="10" rx="5" fill="#E2E8F0"/>
+  <rect x="224" y="356" width="148" height="10" rx="5" fill="url(#accent)"/>
+  <rect x="224" y="376" width="64" height="8" rx="4" fill="#93C5FD"/>
+
+  <!-- message bubbles -->
+  <rect x="204" y="430" width="210" height="72" rx="16" fill="#EFF6FF" stroke="#BFDBFE"/>
+  <rect x="220" y="450" width="140" height="8" rx="4" fill="#60A5FA" fill-opacity="0.85"/>
+  <rect x="220" y="468" width="96" height="8" rx="4" fill="#93C5FD" fill-opacity="0.9"/>
+
+  <rect x="286" y="522" width="230" height="72" rx="16" fill="#FFFFFF" stroke="#Dbe4f0"/>
+  <rect x="306" y="542" width="150" height="8" rx="4" fill="#94A3B8"/>
+  <rect x="306" y="560" width="110" height="8" rx="4" fill="#CBD5E1"/>
+
+  <!-- status chips -->
+  <rect x="204" y="620" width="88" height="28" rx="14" fill="#DCFCE7"/>
+  <rect x="224" y="630" width="48" height="8" rx="4" fill="#16A34A"/>
+  <rect x="304" y="620" width="88" height="28" rx="14" fill="#DBEAFE"/>
+  <rect x="324" y="630" width="48" height="8" rx="4" fill="#2563EB"/>
+
+  <!-- small orbiting dots -->
+  <circle cx="140" cy="300" r="6" fill="#60A5FA" fill-opacity="0.9"/>
+  <circle cx="590" cy="430" r="5" fill="#93C5FD" fill-opacity="0.8"/>
+  <circle cx="560" cy="680" r="7" fill="#38BDF8" fill-opacity="0.55"/>
+</svg>

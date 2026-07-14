@@ -1,0 +1,2 @@
+ALTER TABLE "RequestMessage"
+  ADD COLUMN IF NOT EXISTS "isSystem" BOOLEAN NOT NULL DEFAULT false;

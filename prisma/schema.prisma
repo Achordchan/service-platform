@@ -1,0 +1,615 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlatformRole {
+  CUSTOMER
+  PROJECT_MANAGER
+  TECHNICIAN
+  PLATFORM_ADMIN
+}
+
+enum RoleAccessLevel {
+  PROJECT_MANAGER
+  TECHNICIAN
+}
+
+enum SpaceMemberRole {
+  OWNER
+  MEMBER
+}
+
+enum SpaceStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum ProjectStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  EXPIRED
+}
+
+enum ProjectStaffRole {
+  PROJECT_MANAGER
+  TECHNICIAN
+}
+
+enum MilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum RequestStatus {
+  PENDING
+  IN_PROGRESS
+  WAITING_CUSTOMER
+  RESOLVED
+  CLOSED
+}
+
+enum RequestPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum ContentVisibility {
+  CUSTOMER_VISIBLE
+  INTERNAL
+}
+
+enum NotificationType {
+  INVITATION
+  PROJECT_UPDATE
+  UPDATE_COMMENT
+  REQUEST_CREATED
+  REQUEST_ASSIGNED
+  REQUEST_MESSAGE
+  REQUEST_STATUS
+}
+
+enum EventType {
+  PROJECT_UPDATED
+  PROJECT_UPDATE_CREATED
+  UPDATE_COMMENT_CREATED
+  REQUEST_CREATED
+  REQUEST_ASSIGNED
+  REQUEST_MESSAGE_CREATED
+  REQUEST_STATUS_CHANGED
+  NOTIFICATION_CREATED
+}
+
+enum MailDeliveryMode {
+  LOCAL_OUTBOX
+  SMTP
+}
+
+enum MailMessageStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
+model User {
+  id            String       @id @default(cuid())
+  name          String
+  email         String       @unique
+  emailVerified Boolean      @default(false)
+  image         String?
+  platformRole  PlatformRole @default(CUSTOMER)
+  phone         String?
+  company       String?
+  jobTitle      String?
+  wechat        String?
+  website       String?
+  location      String?
+  contactNotes  String?
+  roleGroupId   String?
+  createdAt     DateTime     @default(now())
+  platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
+  updatedAt     DateTime     @updatedAt
+
+  roleGroup          RoleGroup?       @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
+  sessions           Session[]
+  accounts           Account[]
+  memberships        Membership[]
+  ownedSpaces        CustomerSpace[]  @relation("SpaceOwner")
+  invitationsCreated Invitation[]     @relation("InvitationCreator")
+  staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreator")
+  projectsCreated    Project[]        @relation("ProjectCreator")
+  projectAssignments ProjectStaff[]
+  milestonesCreated  Milestone[]      @relation("MilestoneCreator")
+  projectUpdates     ProjectUpdate[]
+  updateComments     UpdateComment[]
+  requestsCreated    ServiceRequest[] @relation("RequestCreator")
+  requestsAssigned   ServiceRequest[] @relation("RequestAssignee")
+  requestAssignees   RequestAssignee[]
+  requestMessages    RequestMessage[]
+  attachments        Attachment[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+
+  @@index([roleGroupId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model CustomerSpace {
+  id          String      @id @default(cuid())
+  name        String
+  slug        String      @unique
+  memberLimit Int         @default(2)
+  status      SpaceStatus @default(ACTIVE)
+  ownerId     String
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  owner         User           @relation("SpaceOwner", fields: [ownerId], references: [id])
+  memberships   Membership[]
+  invitations   Invitation[]
+  projects      Project[]
+  attachments   Attachment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  events        EventRecord[]
+
+  @@index([ownerId])
+}
+
+model Membership {
+  id              String          @id @default(cuid())
+  customerSpaceId String
+  userId          String
+  role            SpaceMemberRole @default(MEMBER)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  customerSpace CustomerSpace @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([customerSpaceId, userId])
+  @@index([userId])
+}
+
+model Invitation {
+  id              String          @id @default(cuid())
+  email           String
+  tokenHash       String          @unique
+  role            SpaceMemberRole @default(MEMBER)
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  customerSpaceId String
+  invitedById     String
+  createdAt       DateTime        @default(now())
+
+  customerSpace CustomerSpace @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  invitedBy     User          @relation("InvitationCreator", fields: [invitedById], references: [id])
+
+  @@index([email])
+  @@index([customerSpaceId])
+}
+
+model StaffInvitation {
+  id           String       @id @default(cuid())
+  email        String
+  name         String?
+  phone        String?
+  company      String?
+  jobTitle     String?
+  wechat       String?
+  website      String?
+  location     String?
+  contactNotes String?
+  tokenHash    String       @unique
+  platformRole PlatformRole
+  roleGroupId  String?
+  expiresAt    DateTime
+  acceptedAt   DateTime?
+  revokedAt    DateTime?
+  invitedById  String
+  createdAt    DateTime     @default(now())
+
+  invitedBy User      @relation("StaffInvitationCreator", fields: [invitedById], references: [id])
+  roleGroup RoleGroup? @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
+
+  @@index([email])
+  @@index([platformRole, createdAt])
+  @@index([roleGroupId])
+}
+
+model RoleGroup {
+  id          String          @id @default(cuid())
+  key         String          @unique
+  name        String
+  description String?
+  accessLevel RoleAccessLevel
+  permissions String[]
+  isSystem    Boolean         @default(false)
+  active      Boolean         @default(true)
+  sortOrder   Int             @default(0)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  users        User[]
+  invitations  StaffInvitation[]
+
+  @@index([active, sortOrder])
+}
+
+model ServiceType {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  requestCategories RequestCategory[]
+  projects          Project[]
+}
+
+model RequestCategory {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  active        Boolean  @default(true)
+  serviceTypeId String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  serviceType ServiceType      @relation(fields: [serviceTypeId], references: [id], onDelete: Cascade)
+  requests    ServiceRequest[]
+
+  @@unique([serviceTypeId, name])
+}
+
+model Project {
+  id              String        @id @default(cuid())
+  title           String
+  description     String?
+  status          ProjectStatus @default(DRAFT)
+  currentStage    String?
+  showMilestones  Boolean       @default(true)
+  showProgress    Boolean       @default(true)
+  startDate       DateTime?
+  endDate         DateTime?
+  customerSpaceId String
+  serviceTypeId   String
+  createdById     String
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  customerSpace CustomerSpace    @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  serviceType   ServiceType      @relation(fields: [serviceTypeId], references: [id])
+  createdBy     User             @relation("ProjectCreator", fields: [createdById], references: [id])
+  staff         ProjectStaff[]
+  milestones    Milestone[]
+  updates       ProjectUpdate[]
+  requests      ServiceRequest[]
+  attachments   Attachment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  events        EventRecord[]
+
+  @@index([customerSpaceId, status])
+  @@index([serviceTypeId])
+}
+
+model ProjectStaff {
+  id        String           @id @default(cuid())
+  projectId String
+  userId    String
+  role      ProjectStaffRole
+  createdAt DateTime         @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([userId, role])
+}
+
+model Milestone {
+  id          String          @id @default(cuid())
+  title       String
+  description String?
+  status      MilestoneStatus @default(NOT_STARTED)
+  startDate   DateTime?
+  endDate     DateTime?
+  sortOrder   Int             @default(0)
+  projectId   String
+  createdById String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy User    @relation("MilestoneCreator", fields: [createdById], references: [id])
+
+  @@index([projectId, sortOrder])
+}
+
+model ProjectUpdate {
+  id         String            @id @default(cuid())
+  title      String
+  body       String
+  visibility ContentVisibility @default(CUSTOMER_VISIBLE)
+  projectId  String
+  authorId   String
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+
+  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author      User            @relation(fields: [authorId], references: [id])
+  comments    UpdateComment[]
+  attachments Attachment[]
+
+  @@index([projectId, createdAt])
+}
+
+model UpdateComment {
+  id              String            @id @default(cuid())
+  body            String
+  visibility      ContentVisibility @default(CUSTOMER_VISIBLE)
+  projectUpdateId String
+  authorId        String
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  projectUpdate ProjectUpdate @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  author        User          @relation(fields: [authorId], references: [id])
+  attachments   Attachment[]
+
+  @@index([projectUpdateId, createdAt])
+}
+
+model ServiceRequest {
+  id          String          @id @default(cuid())
+  number      String          @unique
+  title       String
+  description String
+  priority    RequestPriority @default(NORMAL)
+  status      RequestStatus   @default(PENDING)
+  projectId   String
+  categoryId  String
+  createdById String
+  assigneeId  String?
+  resolvedAt  DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category      RequestCategory  @relation(fields: [categoryId], references: [id])
+  createdBy     User             @relation("RequestCreator", fields: [createdById], references: [id])
+  assignee      User?            @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  assignees     RequestAssignee[]
+  messages      RequestMessage[]
+  attachments   Attachment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  events        EventRecord[]
+
+  @@index([projectId, status])
+  @@index([assigneeId, status])
+}
+
+model RequestAssignee {
+  id               String   @id @default(cuid())
+  serviceRequestId String
+  userId           String
+  assignedAt       DateTime @default(now())
+  assignedById     String?
+
+  serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceRequestId, userId])
+  @@index([userId])
+  @@index([serviceRequestId])
+}
+
+model RequestMessage {
+  id               String            @id @default(cuid())
+  body             String
+  visibility       ContentVisibility @default(CUSTOMER_VISIBLE)
+  isSystem         Boolean           @default(false)
+  serviceRequestId String
+  authorId         String
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  author         User           @relation(fields: [authorId], references: [id])
+  attachments    Attachment[]
+
+  @@index([serviceRequestId, createdAt])
+}
+
+model Attachment {
+  id               String            @id @default(cuid())
+  originalName     String
+  storageKey       String            @unique
+  mimeType         String
+  size             Int
+  visibility       ContentVisibility @default(CUSTOMER_VISIBLE)
+  customerSpaceId  String
+  projectId        String?
+  projectUpdateId  String?
+  updateCommentId  String?
+  serviceRequestId String?
+  requestMessageId String?
+  uploadedById     String
+  createdAt        DateTime          @default(now())
+
+  customerSpace  CustomerSpace   @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectUpdate  ProjectUpdate?  @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  updateComment  UpdateComment?  @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
+  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  requestMessage RequestMessage? @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
+  uploadedBy     User            @relation(fields: [uploadedById], references: [id])
+
+  @@index([customerSpaceId, projectId])
+  @@index([serviceRequestId])
+}
+
+model Notification {
+  id               String           @id @default(cuid())
+  type             NotificationType
+  title            String
+  body             String
+  readAt           DateTime?
+  userId           String
+  customerSpaceId  String?
+  projectId        String?
+  serviceRequestId String?
+  createdAt        DateTime         @default(now())
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model EventRecord {
+  id               BigInt    @id @default(autoincrement())
+  type             EventType
+  payload          Json
+  userId           String?
+  customerSpaceId  String?
+  projectId        String?
+  serviceRequestId String?
+  createdAt        DateTime  @default(now())
+
+  customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+
+  @@index([userId, id])
+  @@index([customerSpaceId, id])
+}
+
+model AuditLog {
+  id               BigInt   @id @default(autoincrement())
+  action           String
+  resourceType     String
+  resourceId       String?
+  result           String   @default("SUCCESS")
+  metadata         Json?
+  requestId        String?
+  ipAddress        String?
+  userAgent        String?
+  actorId          String?
+  customerSpaceId  String?
+  projectId        String?
+  serviceRequestId String?
+  createdAt        DateTime @default(now())
+
+  actor          User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: SetNull)
+  project        Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([customerSpaceId, createdAt])
+}
+
+model PlatformSetting {
+  id                              Int              @id @default(1)
+  appUrl                          String?
+  smtpHost                        String?
+  smtpPort                        Int?
+  smtpUser                        String?
+  smtpPassword                    String?
+  smtpFrom                        String?
+  smtpSecure                      Boolean          @default(false)
+  mailMode                        MailDeliveryMode @default(LOCAL_OUTBOX)
+  attachmentMaxSizeMb             Int              @default(20)
+  attachmentAllowedExtensions     String           @default("jpg,jpeg,png,gif,webp,pdf,docx,xlsx,pptx,txt,log,csv,json")
+  customerReplyAttachmentsEnabled Boolean          @default(true)
+  updatedAt                       DateTime         @updatedAt
+  updatedById                     String?
+  updatedBy                       User?            @relation("PlatformSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+model MailMessage {
+  id           String            @id @default(cuid())
+  toEmail      String
+  subject      String
+  heading      String
+  body         String
+  actionLabel  String?
+  actionUrl    String?
+  status       MailMessageStatus @default(QUEUED)
+  errorMessage String?
+  providerId   String?
+  sentAt       DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([status, createdAt])
+  @@index([toEmail, createdAt])
+}

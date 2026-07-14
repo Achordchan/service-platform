@@ -1,0 +1,118 @@
+import pg from "pg";
+import { env } from "@/lib/env";
+import { requireUserWithAccess } from "@/lib/session";
+import { listVisibleEvents } from "@/modules/notifications/notification-service";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const encoder = new TextEncoder();
+
+function encodeEvent(event: {
+  id: string;
+  type: string;
+  payload: unknown;
+  userId?: string | null;
+  projectId?: string | null;
+  serviceRequestId?: string | null;
+  customerSpaceId?: string | null;
+}) {
+  const payload =
+    event.payload && typeof event.payload === "object" && !Array.isArray(event.payload)
+      ? (event.payload as Record<string, unknown>)
+      : { value: event.payload };
+
+  const data = {
+    ...payload,
+    eventId: event.id,
+    userId: event.userId ?? null,
+    projectId: event.projectId ?? payload.projectId ?? null,
+    serviceRequestId:
+      event.serviceRequestId ?? payload.serviceRequestId ?? payload.requestId ?? null,
+    customerSpaceId: event.customerSpaceId ?? null,
+  };
+
+  return encoder.encode(
+    `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(data)}\n\n`,
+  );
+}
+
+export async function GET(request: Request) {
+  const { actor } = await requireUserWithAccess();
+  const headerId = request.headers.get("last-event-id") ?? "0";
+  let cursor = /^\d+$/.test(headerId) ? BigInt(headerId) : 0n;
+  const client = new pg.Client({ connectionString: env.DATABASE_URL });
+  await client.connect();
+  await client.query("LISTEN service_platform_events");
+
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let controller:
+    | ReadableStreamDefaultController<Uint8Array>
+    | undefined;
+
+  const close = async (closeController: boolean) => {
+    if (closed) return;
+    closed = true;
+    if (heartbeat) clearInterval(heartbeat);
+    client.removeAllListeners("notification");
+    client.removeAllListeners("error");
+    await client.end().catch(() => undefined);
+    if (!closeController || !controller) return;
+    try {
+      controller.close();
+    } catch {
+      // Stream may already be closed by cancel/abort races.
+    }
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(streamController) {
+      controller = streamController;
+      const sendPending = async () => {
+        if (closed) return;
+        const events = await listVisibleEvents(actor, cursor);
+        for (const event of events) {
+          if (closed) return;
+          streamController.enqueue(encodeEvent(event));
+          cursor = BigInt(event.id);
+        }
+      };
+      let pendingSend = Promise.resolve();
+      const queuePending = () => {
+        pendingSend = pendingSend.then(sendPending);
+        return pendingSend;
+      };
+
+      heartbeat = setInterval(() => {
+        if (!closed) {
+          streamController.enqueue(encoder.encode(": heartbeat\n\n"));
+        }
+      }, 25_000);
+
+      client.on("notification", () => {
+        void queuePending().catch(() => close(true));
+      });
+      client.on("error", () => {
+        void close(true);
+      });
+      request.signal.addEventListener("abort", () => {
+        void close(true);
+      });
+
+      await queuePending();
+    },
+    async cancel() {
+      await close(false);
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
