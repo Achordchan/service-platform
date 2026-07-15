@@ -4,11 +4,14 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { prisma } from "@/lib/db";
 import { enqueueMail } from "@/lib/jobs";
+import { env } from "@/lib/runtime-env";
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
+  secret: env.BETTER_AUTH_SECRET,
+  baseURL: env.BETTER_AUTH_URL,
   emailAndPassword: {
     enabled: true,
     disableSignUp: true,
@@ -38,5 +41,5 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
   },
-  trustedOrigins: [process.env.APP_URL ?? "http://localhost:3000"],
+  trustedOrigins: [env.APP_URL, env.BETTER_AUTH_URL],
 });
