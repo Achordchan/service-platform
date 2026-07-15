@@ -1,7 +1,6 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
 import {
   Avatar,
   Box,
@@ -12,15 +11,11 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
-import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import ReplyOutlinedIcon from "@mui/icons-material/ReplyOutlined";
 import VerifiedUserOutlinedIcon from "@mui/icons-material/VerifiedUserOutlined";
-import type {
-  ChatAttachment,
-  ChatMessage,
-} from "@/components/shared/request-chat-types";
+import { RequestMessageAttachments } from "@/components/shared/request-chat-attachments";
+import type { ChatMessage } from "@/components/shared/request-chat-types";
 import { RequestQuotedMessage } from "@/components/shared/request-reply-preview";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 
@@ -36,102 +31,72 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
 const INITIAL_VISIBLE = 12;
 const LOAD_MORE_STEP = 12;
 
-function formatSize(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
 function looksLikeHtml(body: string) {
   return /<\/?[a-z][\s\S]*>/i.test(body);
 }
 
-function AttachmentList({
-  files,
-  tone,
-}: {
-  files: ChatAttachment[];
-  tone: "self" | "other" | "internal" | "admin";
-}) {
-  if (files.length === 0) return null;
+function RequestTypingBubble({ label }: { label: string }) {
   return (
-    <Stack spacing={1} sx={{ mt: 1.25 }}>
-      {files.map((file) => (
-        <Stack
-          key={file.id}
-          direction="row"
-          spacing={1.25}
-          sx={{
-            alignItems: "center",
-            p: 1.1,
-            borderRadius: 1.5,
-            bgcolor:
-              tone === "self" || tone === "admin"
-                ? "rgba(255,255,255,0.16)"
-                : tone === "internal"
-                  ? "#fff7ed"
-                  : "#f8fafc",
-            border: "1px solid",
-            borderColor:
-              tone === "self" || tone === "admin"
-                ? "rgba(255,255,255,0.2)"
-                : tone === "internal"
-                  ? "#fed7aa"
-                  : "divider",
-          }}
-        >
-          <InsertDriveFileOutlinedIcon
-            sx={{
-              fontSize: 18,
-              color:
-                tone === "self" || tone === "admin"
-                  ? "rgba(255,255,255,0.9)"
-                  : "text.secondary",
-            }}
-          />
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography
-              variant="body2"
-              noWrap
-              sx={{
-                fontWeight: 600,
-                color:
-                  tone === "self" || tone === "admin"
-                    ? "common.white"
-                    : "text.primary",
-              }}
-            >
-              {file.originalName}
-            </Typography>
-            <Typography
-              variant="caption"
-              sx={{
-                color:
-                  tone === "self" || tone === "admin"
-                    ? "rgba(255,255,255,0.78)"
-                    : "text.secondary",
-              }}
-            >
-              {formatSize(file.size)}
-              {file.visibility === "INTERNAL" ? " · 内部附件" : ""}
-            </Typography>
-          </Box>
-          <IconButton
-            component={Link}
-            href={`/api/v1/attachments/${file.id}`}
-            aria-label={`下载 ${file.originalName}`}
-            size="small"
-            sx={{
-              color:
-                tone === "self" || tone === "admin"
-                  ? "common.white"
-                  : "text.secondary",
-            }}
-          >
-            <DownloadOutlinedIcon fontSize="small" />
-          </IconButton>
+    <Stack
+      direction="row"
+      spacing={1.25}
+      role="status"
+      aria-live="polite"
+      sx={{ alignItems: "flex-end" }}
+    >
+      <Avatar
+        sx={{
+          width: 34,
+          height: 34,
+          fontSize: 14,
+          bgcolor: "#e5e7eb",
+          color: "text.secondary",
+        }}
+      >
+        {label.slice(0, 1)}
+      </Avatar>
+      <Box
+        sx={{
+          px: 1.75,
+          py: 1.15,
+          borderRadius: "18px 18px 18px 6px",
+          bgcolor: "background.paper",
+          border: "1px solid",
+          borderColor: "divider",
+          boxShadow: "0 4px 14px rgba(15, 23, 42, 0.04)",
+        }}
+      >
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Stack direction="row" spacing={0.45}>
+            {[0, 1, 2].map((index) => (
+              <Box
+                key={index}
+                sx={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  bgcolor: "text.secondary",
+                  animation: "requestTypingPulse 1.2s ease-in-out infinite",
+                  animationDelay: `${index * 160}ms`,
+                  "@keyframes requestTypingPulse": {
+                    "0%, 60%, 100%": {
+                      opacity: 0.35,
+                      transform: "translateY(0)",
+                    },
+                    "30%": {
+                      opacity: 1,
+                      transform: "translateY(-2px)",
+                    },
+                  },
+                }}
+              />
+            ))}
+          </Stack>
+          <Typography variant="body2" color="text.secondary">
+            {label}正在输入
+          </Typography>
         </Stack>
-      ))}
+      </Box>
     </Stack>
   );
 }
@@ -141,11 +106,13 @@ export function RequestChatThread({
   currentUserId,
   emptyText = "暂无沟通记录",
   onReply,
+  counterpartTypingLabel,
 }: {
   messages: ChatMessage[];
   currentUserId: string;
   emptyText?: string;
   onReply?: (message: ChatMessage) => void;
+  counterpartTypingLabel?: string | null;
 }) {
   const sorted = useMemo(
     () =>
@@ -187,7 +154,7 @@ export function RequestChatThread({
 
     previousLatestIdRef.current = latestId;
     previousScrollHeightRef.current = node.scrollHeight;
-  }, [sorted, visibleMessages.length]);
+  }, [counterpartTypingLabel, sorted, visibleMessages.length]);
 
   function loadEarlier() {
     const node = scrollerRef.current;
@@ -495,12 +462,18 @@ export function RequestChatThread({
                         {message.body}
                       </Typography>
                     )}
-                    <AttachmentList files={message.attachments} tone={tone} />
+                    <RequestMessageAttachments
+                      files={message.attachments}
+                      tone={tone}
+                    />
                   </Box>
                 </Box>
               </Stack>
             );
           })}
+          {counterpartTypingLabel ? (
+            <RequestTypingBubble label={counterpartTypingLabel} />
+          ) : null}
         </Stack>
       </Box>
     </Paper>

@@ -1,7 +1,17 @@
 "use client";
 
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
-import { Box, IconButton, Stack, Typography } from "@mui/material";
+import ReplyOutlinedIcon from "@mui/icons-material/ReplyOutlined";
+import {
+  Box,
+  Divider,
+  IconButton,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Paper,
+  Typography,
+} from "@mui/material";
 import type {
   ChatReplyReference,
   ChatReplyTarget,
@@ -27,40 +37,48 @@ export function RequestReplyPreview({
   onCancel: () => void;
 }) {
   return (
-    <Stack
-      direction="row"
-      spacing={1}
+    <Paper
+      variant="outlined"
       sx={{
-        alignItems: "center",
-        borderLeft: "3px solid",
-        borderColor: "primary.main",
-        bgcolor: "#f8fafc",
-        borderRadius: 1.5,
-        px: 1.25,
-        py: 1,
+        overflow: "hidden",
+        bgcolor: "background.default",
       }}
     >
-      <Box sx={{ minWidth: 0, flex: 1 }}>
-        <Typography variant="caption" sx={{ fontWeight: 700 }}>
-          回复 {target.authorName}
-        </Typography>
-        <Typography
-          variant="body2"
-          color="text.secondary"
-          noWrap
-          sx={{ mt: 0.25 }}
-        >
-          {replyText(target)}
-        </Typography>
-      </Box>
-      <IconButton
-        size="small"
-        onClick={onCancel}
-        aria-label="取消回复"
+      <ListItem
+        secondaryAction={
+          <IconButton
+            edge="end"
+            size="small"
+            onClick={onCancel}
+            aria-label="取消回复"
+          >
+            <CloseOutlinedIcon fontSize="small" />
+          </IconButton>
+        }
+        sx={{ py: 0.75, pr: 6 }}
       >
-        <CloseOutlinedIcon fontSize="small" />
-      </IconButton>
-    </Stack>
+        <ListItemIcon sx={{ minWidth: 34, color: "text.secondary" }}>
+          <ReplyOutlinedIcon fontSize="small" />
+        </ListItemIcon>
+        <Divider orientation="vertical" flexItem sx={{ mr: 1.25 }} />
+        <ListItemText
+          sx={{ minWidth: 0, my: 0 }}
+          primary={`回复 ${target.authorName}`}
+          secondary={replyText(target)}
+          slotProps={{
+            primary: {
+              variant: "caption",
+              sx: { fontWeight: 700, color: "text.primary" },
+            },
+            secondary: {
+              variant: "body2",
+              noWrap: true,
+              sx: { mt: 0.15, color: "text.secondary" },
+            },
+          }}
+        />
+      </ListItem>
+    </Paper>
   );
 }
 

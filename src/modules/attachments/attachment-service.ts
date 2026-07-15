@@ -213,6 +213,7 @@ export async function uploadProjectAttachment(
 export function readAttachmentDownload(
   actor: Actor,
   attachmentId: string,
+  options?: { inlinePreview?: boolean },
 ) {
   return withActorDb(actor, async (tx) => {
     const attachment = await tx.attachment.findUnique({
@@ -237,18 +238,23 @@ export function readAttachmentDownload(
     }
 
     const buffer = await readPrivateFile(attachment.storageKey);
-    await writeAuditLog(tx, actor, {
-      action: "ATTACHMENT_DOWNLOADED",
-      resourceType: "Attachment",
-      resourceId: attachment.id,
-      customerSpaceId: attachment.customerSpaceId,
-      projectId: attachment.projectId ?? undefined,
-      serviceRequestId: attachment.serviceRequestId ?? undefined,
-      metadata: {
-        originalName: attachment.originalName,
-        size: attachment.size,
-      },
-    });
+    const isInlineImagePreview =
+      options?.inlinePreview === true &&
+      attachment.mimeType.startsWith("image/");
+    if (!isInlineImagePreview) {
+      await writeAuditLog(tx, actor, {
+        action: "ATTACHMENT_DOWNLOADED",
+        resourceType: "Attachment",
+        resourceId: attachment.id,
+        customerSpaceId: attachment.customerSpaceId,
+        projectId: attachment.projectId ?? undefined,
+        serviceRequestId: attachment.serviceRequestId ?? undefined,
+        metadata: {
+          originalName: attachment.originalName,
+          size: attachment.size,
+        },
+      });
+    }
 
     return { attachment, buffer };
   });

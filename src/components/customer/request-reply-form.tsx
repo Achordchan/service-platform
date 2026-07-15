@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
+import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
@@ -36,11 +37,15 @@ export function RequestReplyForm({
   disabled = false,
   replyTarget,
   onCancelReply,
+  onTypingActivity,
+  onTypingStopped,
 }: {
   requestId: string;
   disabled?: boolean;
   replyTarget?: ChatReplyTarget | null;
   onCancelReply?: () => void;
+  onTypingActivity?: () => void;
+  onTypingStopped?: () => void;
 }) {
   const router = useRouter();
   const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
@@ -66,6 +71,7 @@ export function RequestReplyForm({
 
     setSubmitting(true);
     setError("");
+    onTypingStopped?.();
     try {
       const response = await fetch(`/api/v1/requests/${requestId}/messages`, {
         method: "POST",
@@ -151,7 +157,14 @@ export function RequestReplyForm({
         ) : null}
         <RichTextEditor
           value={body}
-          onChange={setBody}
+          onChange={(value) => {
+            setBody(value);
+            if (hasMeaningfulHtml(value)) {
+              onTypingActivity?.();
+            } else {
+              onTypingStopped?.();
+            }
+          }}
           disabled={submitting}
           placeholder="补充信息或回复处理人员"
         />
@@ -163,6 +176,7 @@ export function RequestReplyForm({
           {attachmentsEnabled ? (
             <Button
               component="label"
+              variant="outlined"
               startIcon={<AttachFileOutlinedIcon />}
               disabled={submitting}
             >
@@ -202,33 +216,14 @@ export function RequestReplyForm({
             {policy.allowedExtensions.join("、")}
           </Typography>
         ) : null}
-        {files.length > 0 ? (
-          <Stack spacing={0.75}>
-            {files.map((file, index) => (
-              <Stack
-                key={`${file.name}-${file.lastModified}-${index}`}
-                direction="row"
-                spacing={1}
-                sx={{ justifyContent: "space-between", alignItems: "center" }}
-              >
-                <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
-                  {file.name}
-                </Typography>
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() =>
-                    setFiles((current) =>
-                      current.filter((_, fileIndex) => fileIndex !== index),
-                    )
-                  }
-                >
-                  移除
-                </Button>
-              </Stack>
-            ))}
-          </Stack>
-        ) : null}
+        <RequestAttachmentDrafts
+          files={files}
+          onRemove={(index) =>
+            setFiles((current) =>
+              current.filter((_, fileIndex) => fileIndex !== index),
+            )
+          }
+        />
       </Stack>
     </Paper>
   );

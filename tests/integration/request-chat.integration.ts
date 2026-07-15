@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import type { Actor } from "@/lib/actor";
 import {
   addRequestMessage,
@@ -354,6 +354,33 @@ describe("请求聊天生产流程", () => {
       }),
     ).toEqual({ counterpartOnline: true });
 
+    const listener = new Client({
+      connectionString: process.env.DATABASE_MIGRATION_URL,
+    });
+    await listener.connect();
+    await listener.query("LISTEN service_platform_transient_events");
+    try {
+      const typingEvent = waitForTransientEvent(listener);
+      await updateRequestPresence(customer, created.id, {
+        sessionId: customerSession,
+        action: "typing",
+        typing: true,
+        visibility: "CUSTOMER_VISIBLE",
+      });
+      await expect(typingEvent).resolves.toMatchObject({
+        type: "REQUEST_TYPING_CHANGED",
+        userIds: [technician.id],
+        payload: {
+          requestId: created.id,
+          actorId: customer.id,
+          group: "CUSTOMER",
+          typing: true,
+        },
+      });
+    } finally {
+      await listener.end();
+    }
+
     await ownerPool.query(
       `
         UPDATE "Notification"
@@ -452,4 +479,23 @@ function actor(
     isPlatformAdmin: platformRole === "PLATFORM_ADMIN",
     isStaff: platformRole !== "CUSTOMER",
   };
+}
+
+function waitForTransientEvent(client: Client) {
+  return new Promise<Record<string, unknown>>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      client.removeListener("notification", handleNotification);
+      reject(new Error("等待输入状态实时事件超时"));
+    }, 5_000);
+    const handleNotification = (message: { payload?: string }) => {
+      clearTimeout(timer);
+      client.removeListener("notification", handleNotification);
+      try {
+        resolve(JSON.parse(message.payload ?? "{}") as Record<string, unknown>);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    client.on("notification", handleNotification);
+  });
 }

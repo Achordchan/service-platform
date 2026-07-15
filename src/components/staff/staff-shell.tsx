@@ -26,6 +26,7 @@ import BusinessCenterOutlinedIcon from "@mui/icons-material/BusinessCenterOutlin
 import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
 import ChevronLeftOutlinedIcon from "@mui/icons-material/ChevronLeftOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
+import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
@@ -67,6 +68,11 @@ const adminNavigation = [
     href: "/staff/service-types",
     label: "服务配置",
     icon: <CategoryOutlinedIcon fontSize="small" />,
+  },
+  {
+    href: "/staff/plugins",
+    label: "插件中心",
+    icon: <ExtensionOutlinedIcon fontSize="small" />,
   },
   {
     href: "/staff/settings",

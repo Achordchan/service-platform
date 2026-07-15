@@ -8,20 +8,28 @@ type RouteContext = {
   params: Promise<{ attachmentId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
     const actor = await requireApiActor();
     const { attachmentId } = await context.params;
+    const inlineRequested =
+      new URL(request.url).searchParams.get("disposition") === "inline";
     const { attachment, buffer } = await readAttachmentDownload(
       actor,
       attachmentId,
+      { inlinePreview: inlineRequested },
     );
+    const inline =
+      inlineRequested && attachment.mimeType.startsWith("image/");
 
     return new Response(buffer, {
       headers: {
         "Content-Type": attachment.mimeType,
         "Content-Length": String(buffer.byteLength),
-        "Content-Disposition": contentDisposition(attachment.originalName),
+        "Content-Disposition": contentDisposition(
+          attachment.originalName,
+          inline ? "inline" : "attachment",
+        ),
         "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff",
       },
@@ -31,9 +39,12 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 }
 
-function contentDisposition(fileName: string) {
+function contentDisposition(
+  fileName: string,
+  disposition: "inline" | "attachment",
+) {
   const asciiName = fileName
     .replace(/[^\x20-\x7E]/g, "_")
     .replace(/["\\]/g, "_");
-  return `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
+  return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(fileName)}`;
 }

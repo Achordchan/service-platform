@@ -7,6 +7,10 @@ import {
   subscribeRealtimeReady,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
+import {
+  bindTabAttentionReset,
+  startTabAttention,
+} from "@/lib/tab-attention";
 import { bindUiSoundUnlock, playRequestUpdateSound } from "@/lib/ui-sound";
 
 const REQUEST_LIVE_EVENTS: readonly RealtimeEventType[] = [
@@ -50,6 +54,7 @@ export function useRequestRealtime(
 
   useEffect(() => {
     bindUiSoundUnlock();
+    bindTabAttentionReset();
     const markLocalMutation = () => {
       suppressUntilRef.current = Date.now() + 2000;
     };
@@ -83,17 +88,26 @@ export function useRequestRealtime(
       const isLocalWindow = Date.now() < suppressUntilRef.current;
       const isOwnEvent =
         Boolean(currentUserId) && payload.actorId === currentUserId;
+      const suppressLocalEcho =
+        isLocalWindow && (isOwnEvent || !payload.actorId);
 
       if (
         enableSound &&
         REQUEST_SOUND_EVENTS.has(event.type) &&
-        !isLocalWindow &&
+        !suppressLocalEcho &&
         !isOwnEvent
       ) {
         playRequestUpdateSound();
       }
+      if (
+        event.type === "REQUEST_MESSAGE_CREATED" &&
+        !suppressLocalEcho &&
+        !isOwnEvent
+      ) {
+        startTabAttention();
+      }
 
-      if (!isLocalWindow || !isOwnEvent) {
+      if (!suppressLocalEcho) {
         scheduleRefresh();
       }
     });

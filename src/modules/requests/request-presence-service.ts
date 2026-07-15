@@ -3,13 +3,17 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
-import { publishEvent } from "@/modules/notifications/notification-service";
-import { notFound } from "@/modules/requests/errors";
+import {
+  publishEvent,
+  publishTransientEvent,
+} from "@/modules/notifications/notification-service";
+import { badRequest, notFound } from "@/modules/requests/errors";
 import { findRequestContext } from "@/modules/requests/request-context";
 import type { RequestPresenceInput } from "@/modules/requests/request-schemas";
 
-const PRESENCE_TTL_MS = 70_000;
+const PRESENCE_TTL_MS = 3 * 60 * 1000;
 const STALE_RETENTION_MS = 24 * 60 * 60 * 1000;
+const TYPING_TTL_MS = 12_000;
 
 export type RequestPresenceGroup = "CUSTOMER" | "STAFF";
 
@@ -61,6 +65,23 @@ async function publishPresenceChange(
   });
 }
 
+async function activeGroupUserIds(
+  tx: Prisma.TransactionClient,
+  serviceRequestId: string,
+  group: RequestPresenceGroup,
+  now: Date,
+) {
+  const presences = await tx.requestPresence.findMany({
+    where: {
+      serviceRequestId,
+      expiresAt: { gt: now },
+      user: groupUserWhere(group),
+    },
+    select: { userId: true },
+  });
+  return Array.from(new Set(presences.map((presence) => presence.userId)));
+}
+
 export function updateRequestPresence(
   actor: Actor,
   requestId: string,
@@ -81,7 +102,10 @@ export function updateRequestPresence(
       now,
     );
 
-    if (input.action === "heartbeat") {
+    if (
+      input.action === "heartbeat" ||
+      input.action === "typing" && input.typing
+    ) {
       await tx.requestPresence.upsert({
         where: {
           serviceRequestId_userId_sessionId: {
@@ -100,7 +124,7 @@ export function updateRequestPresence(
           expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS),
         },
       });
-    } else {
+    } else if (input.action === "leave") {
       await tx.requestPresence.deleteMany({
         where: {
           serviceRequestId: request.id,
@@ -110,14 +134,16 @@ export function updateRequestPresence(
       });
     }
 
-    await tx.requestPresence.deleteMany({
-      where: {
-        serviceRequestId: request.id,
-        expiresAt: {
-          lt: new Date(now.getTime() - STALE_RETENTION_MS),
+    if (input.action !== "typing") {
+      await tx.requestPresence.deleteMany({
+        where: {
+          serviceRequestId: request.id,
+          expiresAt: {
+            lt: new Date(now.getTime() - STALE_RETENTION_MS),
+          },
         },
-      },
-    });
+      });
+    }
 
     const groupIsOnline = await isGroupOnline(
       tx,
@@ -135,13 +161,45 @@ export function updateRequestPresence(
       );
     }
 
+    const counterpartUserIds = await activeGroupUserIds(
+      tx,
+      request.id,
+      counterpartGroup,
+      now,
+    );
+    if (input.action === "typing") {
+      const visibility = input.visibility;
+      if (
+        actor.platformRole === "CUSTOMER" &&
+        visibility !== "CUSTOMER_VISIBLE"
+      ) {
+        throw badRequest(
+          "INVALID_TYPING_VISIBILITY",
+          "客户输入状态只能用于公开回复",
+        );
+      }
+      if (visibility === "CUSTOMER_VISIBLE") {
+        await publishTransientEvent(tx, {
+          type: "REQUEST_TYPING_CHANGED",
+          userIds: counterpartUserIds,
+          payload: {
+            requestId: request.id,
+            serviceRequestId: request.id,
+            actorId: actor.id,
+            sessionId: input.sessionId,
+            group: ownGroup,
+            typing: input.typing === true,
+            visibility,
+            expiresAt: new Date(
+              now.getTime() + (input.typing ? TYPING_TTL_MS : 0),
+            ).toISOString(),
+          },
+        });
+      }
+    }
+
     return {
-      counterpartOnline: await isGroupOnline(
-        tx,
-        request.id,
-        counterpartGroup,
-        now,
-      ),
+      counterpartOnline: counterpartUserIds.length > 0,
     };
   });
 }

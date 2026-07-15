@@ -20,7 +20,7 @@ import {
   Typography,
 } from "@mui/material";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
-import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
+import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import type {
@@ -77,6 +77,15 @@ export function NewRequestForm({
     () => projects.find((project) => project.id === selectedProjectId),
     [projects, selectedProjectId],
   );
+
+  function addFiles(nextFiles: File[]) {
+    const { accepted, error } = validateFiles(nextFiles, files.length);
+    if (error) setSubmitError(error);
+    if (accepted.length > 0) {
+      if (!error) setSubmitError("");
+      setFiles((current) => [...current, ...accepted]);
+    }
+  }
 
   async function onSubmit(values: FormValues) {
     setSubmitError("");
@@ -154,6 +163,12 @@ export function NewRequestForm({
       component="form"
       variant="outlined"
       onSubmit={handleSubmit(onSubmit)}
+      onPaste={(event) => {
+        const imageFiles = filesFromClipboard(event.clipboardData);
+        if (imageFiles.length === 0) return;
+        event.preventDefault();
+        addFiles(imageFiles);
+      }}
       sx={{ overflow: "hidden" }}
     >
       {isSubmitting ? <LinearProgress /> : null}
@@ -282,19 +297,7 @@ export function NewRequestForm({
           )}
         />
 
-        <Box
-          onPaste={(event) => {
-            const imageFiles = filesFromClipboard(event.clipboardData);
-            if (imageFiles.length === 0) return;
-            event.preventDefault();
-            const { accepted, error } = validateFiles(imageFiles, files.length);
-            if (error) setSubmitError(error);
-            if (accepted.length > 0) {
-              if (!error) setSubmitError("");
-              setFiles((current) => [...current, ...accepted]);
-            }
-          }}
-        >
+        <Box>
           <Button
             component="label"
             variant="outlined"
@@ -308,13 +311,7 @@ export function NewRequestForm({
               type="file"
               accept={policy.accept}
               onChange={(event) => {
-                const nextFiles = Array.from(event.target.files ?? []);
-                const { accepted, error } = validateFiles(nextFiles, files.length);
-                if (error) setSubmitError(error);
-                if (accepted.length > 0) {
-                  if (!error) setSubmitError("");
-                  setFiles((current) => [...current, ...accepted]);
-                }
+                addFiles(Array.from(event.target.files ?? []));
                 event.target.value = "";
               }}
             />
@@ -323,39 +320,16 @@ export function NewRequestForm({
             最多 5 个附件，单文件不超过 {policy.maxSizeMb}MB；支持粘贴图片；格式：
             {policy.allowedExtensions.join("、")}
           </Typography>
-          {files.length > 0 ? (
-            <Stack spacing={1} sx={{ mt: 1.5 }}>
-              {files.map((file, index) => (
-                <Stack
-                  key={`${file.name}-${file.lastModified}`}
-                  direction="row"
-                  sx={{
-                    p: 1.25,
-                    borderRadius: 1.5,
-                    bgcolor: "#f8fafc",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                  }}
-                >
-                  <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
-                    {file.name}
-                  </Typography>
-                  <Button
-                    size="small"
-                    color="inherit"
-                    startIcon={<CloseOutlinedIcon />}
-                    onClick={() =>
-                      setFiles((current) =>
-                        current.filter((_, fileIndex) => fileIndex !== index),
-                      )
-                    }
-                  >
-                    移除
-                  </Button>
-                </Stack>
-              ))}
-            </Stack>
-          ) : null}
+          <Box sx={{ mt: files.length > 0 ? 1.5 : 0 }}>
+            <RequestAttachmentDrafts
+              files={files}
+              onRemove={(index) =>
+                setFiles((current) =>
+                  current.filter((_, fileIndex) => fileIndex !== index),
+                )
+              }
+            />
+          </Box>
         </Box>
 
         <Stack

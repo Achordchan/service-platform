@@ -45,6 +45,40 @@ function encodeReady(cursor: bigint) {
   );
 }
 
+function encodeTransientEvent(type: string, payload: Record<string, unknown>) {
+  return encoder.encode(
+    `event: ${type}\ndata: ${JSON.stringify(payload)}\n\n`,
+  );
+}
+
+function parseTransientEvent(value: string | null) {
+  if (!value) return null;
+  try {
+    const envelope = JSON.parse(value) as {
+      type?: unknown;
+      userIds?: unknown;
+      payload?: unknown;
+    };
+    if (
+      envelope.type !== "REQUEST_TYPING_CHANGED" ||
+      !Array.isArray(envelope.userIds) ||
+      !envelope.userIds.every((item) => typeof item === "string") ||
+      !envelope.payload ||
+      typeof envelope.payload !== "object" ||
+      Array.isArray(envelope.payload)
+    ) {
+      return null;
+    }
+    return {
+      type: envelope.type,
+      userIds: envelope.userIds,
+      payload: envelope.payload as Record<string, unknown>,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function GET(request: Request) {
   const { actor } = await requireUserWithAccess();
   const headerId = request.headers.get("last-event-id") ?? "0";
@@ -52,6 +86,7 @@ export async function GET(request: Request) {
   const client = new pg.Client({ connectionString: env.DATABASE_URL });
   await client.connect();
   await client.query("LISTEN service_platform_events");
+  await client.query("LISTEN service_platform_transient_events");
 
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
@@ -101,8 +136,19 @@ export async function GET(request: Request) {
         }
       }, 25_000);
 
-      client.on("notification", () => {
-        void queuePending().catch(() => close(true));
+      client.on("notification", (message) => {
+        if (message.channel === "service_platform_events") {
+          void queuePending().catch(() => close(true));
+          return;
+        }
+        if (message.channel !== "service_platform_transient_events") return;
+        const transient = parseTransientEvent(message.payload ?? null);
+        if (!transient || !transient.userIds.includes(actor.id) || closed) {
+          return;
+        }
+        streamController.enqueue(
+          encodeTransientEvent(transient.type, transient.payload),
+        );
       });
       client.on("error", () => {
         void close(true);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Alert,
@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
+import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
@@ -30,11 +31,17 @@ export function RequestReplyComposer({
   replyTarget,
   onCancelReply,
   claimRequired = false,
+  onTypingActivity,
+  onTypingStopped,
 }: {
   requestId: string;
   replyTarget?: ChatReplyTarget | null;
   onCancelReply?: () => void;
   claimRequired?: boolean;
+  onTypingActivity?: (
+    visibility: "CUSTOMER_VISIBLE" | "INTERNAL",
+  ) => void;
+  onTypingStopped?: () => void;
 }) {
   const router = useRouter();
   const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
@@ -45,6 +52,13 @@ export function RequestReplyComposer({
   const [error, setError] = useState("");
   const internalReplyLocked = replyTarget?.visibility === "INTERNAL";
   const effectiveInternal = internalReplyLocked || internal;
+
+  useEffect(() => {
+    if (!hasMeaningfulHtml(body)) return;
+    onTypingActivity?.(
+      effectiveInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+    );
+  }, [body, effectiveInternal, onTypingActivity]);
 
   function addFiles(next: File[]) {
     const { accepted, error: validateError } = validateFiles(next, files.length);
@@ -60,6 +74,7 @@ export function RequestReplyComposer({
     if (!hasMeaningfulHtml(body) && files.length === 0) return;
     setSubmitting(true);
     setError("");
+    onTypingStopped?.();
     try {
       const result = await staffApi<{ message: { id: string } }>(
         `/api/v1/requests/${requestId}/messages`,
@@ -153,7 +168,12 @@ export function RequestReplyComposer({
         ) : null}
         <RichTextEditor
           value={body}
-          onChange={setBody}
+          onChange={(value) => {
+            setBody(value);
+            if (!hasMeaningfulHtml(value)) {
+              onTypingStopped?.();
+            }
+          }}
           disabled={submitting}
           placeholder={
             effectiveInternal ? "记录内部处理信息" : "输入给客户的回复"
@@ -166,6 +186,7 @@ export function RequestReplyComposer({
         >
           <Button
             component="label"
+            variant="outlined"
             startIcon={<AttachFileOutlinedIcon />}
             disabled={submitting}
           >
@@ -201,33 +222,14 @@ export function RequestReplyComposer({
           支持粘贴图片；单文件不超过 {policy.maxSizeMb}MB；格式：
           {policy.allowedExtensions.join("、")}
         </Typography>
-        {files.length > 0 ? (
-          <Stack spacing={0.75}>
-            {files.map((file, index) => (
-              <Stack
-                key={`${file.name}-${file.lastModified}-${index}`}
-                direction="row"
-                spacing={1}
-                sx={{ justifyContent: "space-between", alignItems: "center" }}
-              >
-                <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
-                  {file.name}
-                </Typography>
-                <Button
-                  size="small"
-                  color="inherit"
-                  onClick={() =>
-                    setFiles((current) =>
-                      current.filter((_, fileIndex) => fileIndex !== index),
-                    )
-                  }
-                >
-                  移除
-                </Button>
-              </Stack>
-            ))}
-          </Stack>
-        ) : null}
+        <RequestAttachmentDrafts
+          files={files}
+          onRemove={(index) =>
+            setFiles((current) =>
+              current.filter((_, fileIndex) => fileIndex !== index),
+            )
+          }
+        />
       </Stack>
     </Paper>
   );

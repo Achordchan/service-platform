@@ -82,7 +82,7 @@ export function RequestDetailWorkspace({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
-  const customerOnline = useRequestPresence(request.id, "STAFF");
+  const presence = useRequestPresence(request.id, "STAFF");
   useRequestRealtime(request.id, { currentUserId });
   useRequestNotificationsRead(request.id);
 
@@ -158,13 +158,16 @@ export function RequestDetailWorkspace({
         <Stack spacing={2.5}>
           <Box>
             <RequestChatHeading
-              counterpartOnline={customerOnline}
+              counterpartOnline={presence.counterpartOnline}
               counterpartLabel="客户"
             />
             <RequestChatThread
               messages={request.messages}
               currentUserId={currentUserId}
               onReply={setReplyTarget}
+              counterpartTypingLabel={
+                presence.counterpartTyping ? "客户" : null
+              }
             />
           </Box>
 
@@ -174,6 +177,8 @@ export function RequestDetailWorkspace({
               replyTarget={replyTarget}
               onCancelReply={() => setReplyTarget(null)}
               claimRequired={claimRequired}
+              onTypingActivity={presence.reportTypingActivity}
+              onTypingStopped={presence.stopTyping}
             />
           ) : request.status === "CLOSED" ? (
             <Alert severity="info">该服务请求已关闭，不能继续回复。</Alert>

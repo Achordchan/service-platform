@@ -40,10 +40,25 @@ export const createRequestMessageSchema = z.object({
   replyToMessageId: z.string().trim().min(1).nullable().optional(),
 });
 
-export const requestPresenceSchema = z.object({
+const requestPresenceSessionSchema = z.object({
   sessionId: z.string().trim().min(8).max(120),
-  action: z.enum(["heartbeat", "leave"]),
 });
+
+export const requestPresenceSchema = z.discriminatedUnion("action", [
+  requestPresenceSessionSchema.extend({
+    action: z.literal("heartbeat"),
+  }),
+  requestPresenceSessionSchema.extend({
+    action: z.literal("leave"),
+  }),
+  requestPresenceSessionSchema.extend({
+    action: z.literal("typing"),
+    typing: z.boolean(),
+    visibility: z
+      .enum(["CUSTOMER_VISIBLE", "INTERNAL"])
+      .default("CUSTOMER_VISIBLE"),
+  }),
+]);
 
 export type CreateRequestInput = z.infer<typeof createRequestSchema>;
 export type CreateRequestMessageInput = z.infer<

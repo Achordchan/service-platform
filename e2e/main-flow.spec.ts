@@ -97,6 +97,14 @@ test.describe("主流程冒烟", () => {
       adminPage.getByRole("heading", { name: "服务请求" }),
     ).toBeVisible();
 
+    await adminPage
+      .getByRole("link", { name: "插件中心", exact: true })
+      .click();
+    await expect(
+      adminPage.getByRole("heading", { name: "插件中心", exact: true }),
+    ).toBeVisible();
+    await expect(adminPage.getByText("暂无插件")).toBeVisible();
+
     await adminPage.goto("/staff/settings");
     await expect(
       adminPage.getByRole("heading", { name: "设置", exact: true }),
@@ -161,6 +169,12 @@ test.describe("主流程冒烟", () => {
     ).toBeVisible();
     await expectVisibleText(technicianPage, "关于首页标题优化建议");
     await expectVisibleText(technicianPage, "RLS fix smoke");
+
+    await technicianPage.goto("/staff/plugins");
+    await technicianPage.waitForURL("/staff/projects");
+    await expect(
+      technicianPage.getByRole("heading", { name: "项目", exact: true }),
+    ).toBeVisible();
   });
 
   test("请求在线提示、自动接手和回复引用保持实时同步", async () => {
@@ -212,6 +226,7 @@ test.describe("主流程冒烟", () => {
     await technicianPage
       .locator(".request-rich-editor")
       .fill("E2E 后台公开回复");
+    await expect(customerPage.getByText("服务人员正在输入")).toBeVisible();
     await technicianPage
       .getByRole("button", { name: "回复并接手" })
       .click();
@@ -227,17 +242,41 @@ test.describe("主流程冒烟", () => {
       .getByRole("button", { name: "回复 李工程师 的消息" })
       .click();
     await expect(customerPage.getByText("回复 李工程师")).toBeVisible();
+
+    await simulatePageVisibility(technicianPage, "hidden");
+    await expect(customerPage.getByText("服务人员在线")).toBeVisible();
+
     await customerPage
       .locator(".request-rich-editor")
       .fill("E2E 客户引用回复");
+    await expect(technicianPage.getByText("客户正在输入")).toBeVisible();
+    await customerPage.locator('input[type="file"]').setInputFiles({
+      name: "e2e-chat-image.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        "base64",
+      ),
+    });
+    await expect(customerPage.getByText("待发送附件")).toBeVisible();
     await customerPage.getByRole("button", { name: "发送回复" }).click();
 
     await expect(
       technicianPage.getByText("E2E 客户引用回复"),
     ).toBeVisible();
     await expect(
+      technicianPage.locator('img[alt="e2e-chat-image.png"]'),
+    ).toBeVisible();
+    await expect(
       technicianPage.getByText("E2E 后台公开回复"),
     ).toHaveCount(2);
+    await expect
+      .poll(() => technicianPage.title())
+      .toMatch(/^【新消息】/);
+    await simulatePageVisibility(technicianPage, "visible");
+    await expect
+      .poll(() => technicianPage.title())
+      .not.toMatch(/^【新消息】/);
 
     const unreadForRequest = await technicianPage.evaluate(
       async (requestId) => {
@@ -281,4 +320,38 @@ function loadLocalEnv() {
       .replace(/^(['"])(.*)\1$/, "$2");
     process.env[key] ??= value;
   }
+}
+
+async function simulatePageVisibility(
+  page: Page,
+  state: "visible" | "hidden",
+) {
+  await page.evaluate((nextState) => {
+    if (nextState === "hidden") {
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "hidden",
+      });
+      Object.defineProperty(document, "hidden", {
+        configurable: true,
+        get: () => true,
+      });
+      Object.defineProperty(document, "hasFocus", {
+        configurable: true,
+        value: () => false,
+      });
+    } else {
+      const documentOverrides = document as unknown as Record<
+        string,
+        unknown
+      >;
+      delete documentOverrides.visibilityState;
+      delete documentOverrides.hidden;
+      delete documentOverrides.hasFocus;
+    }
+    document.dispatchEvent(new Event("visibilitychange"));
+    if (nextState === "visible") {
+      window.dispatchEvent(new Event("focus"));
+    }
+  }, state);
 }

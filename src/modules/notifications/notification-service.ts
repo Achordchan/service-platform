@@ -26,6 +26,12 @@ type EventInput = {
   serviceRequestId?: string;
 };
 
+type TransientEventInput = {
+  type: "REQUEST_TYPING_CHANGED";
+  userIds: string[];
+  payload: Prisma.InputJsonObject;
+};
+
 export async function publishEvent(
   tx: Prisma.TransactionClient,
   input: EventInput,
@@ -39,6 +45,29 @@ export async function publishEvent(
   });
   await tx.$executeRaw`SELECT pg_notify('service_platform_events', ${id.toString()})`;
   return { ...input, id };
+}
+
+export async function publishTransientEvent(
+  tx: Prisma.TransactionClient,
+  input: TransientEventInput,
+) {
+  const userIds = uniqueStrings(input.userIds);
+  if (userIds.length === 0) return null;
+
+  for (let index = 0; index < userIds.length; index += 100) {
+    const envelope = JSON.stringify({
+      type: input.type,
+      userIds: userIds.slice(index, index + 100),
+      payload: input.payload,
+    });
+    if (Buffer.byteLength(envelope, "utf8") > 7_000) {
+      throw new Error("实时临时事件内容过大");
+    }
+    await tx.$executeRaw`
+      SELECT pg_notify('service_platform_transient_events', ${envelope})
+    `;
+  }
+  return { ...input, userIds };
 }
 
 export function publishProjectChange(

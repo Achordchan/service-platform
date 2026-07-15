@@ -129,6 +129,37 @@ describe("SSE 浏览器连接复用", () => {
     unsubscribeReady();
     unsubscribeFirst();
   });
+
+  it("同一连接可以接收不落库的输入状态事件", () => {
+    const received: RealtimeEvent[] = [];
+    const unsubscribe = subscribeRealtime(
+      ["REQUEST_TYPING_CHANGED"],
+      (event) => received.push(event),
+    );
+    const source = FakeEventSource.instances[0]!;
+    source.emit("STREAM_READY", { eventId: "30" }, "30");
+    source.emit(
+      "REQUEST_TYPING_CHANGED",
+      {
+        requestId: "request-1",
+        group: "CUSTOMER",
+        typing: true,
+      },
+      "30",
+    );
+
+    expect(received).toEqual([
+      expect.objectContaining({
+        type: "REQUEST_TYPING_CHANGED",
+        live: true,
+        payload: expect.objectContaining({
+          requestId: "request-1",
+          typing: true,
+        }),
+      }),
+    ]);
+    unsubscribe();
+  });
 });
 
 describe("SSE 事件范围匹配", () => {

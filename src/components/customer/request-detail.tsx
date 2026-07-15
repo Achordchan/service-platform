@@ -53,7 +53,7 @@ export function RequestDetail({
 }) {
   const priority = priorityMap[request.priority];
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
-  const staffOnline = useRequestPresence(request.id, "CUSTOMER");
+  const presence = useRequestPresence(request.id, "CUSTOMER");
   useRequestRealtime(request.id, { currentUserId });
   useRequestNotificationsRead(request.id);
   return (
@@ -80,13 +80,16 @@ export function RequestDetail({
         <Stack spacing={2.5}>
           <Box>
             <RequestChatHeading
-              counterpartOnline={staffOnline}
+              counterpartOnline={presence.counterpartOnline}
               counterpartLabel="服务人员"
             />
             <RequestChatThread
               messages={request.messages}
               currentUserId={currentUserId}
               onReply={setReplyTarget}
+              counterpartTypingLabel={
+                presence.counterpartTyping ? "服务人员" : null
+              }
             />
           </Box>
 
@@ -95,6 +98,10 @@ export function RequestDetail({
             disabled={request.status === "CLOSED"}
             replyTarget={replyTarget}
             onCancelReply={() => setReplyTarget(null)}
+            onTypingActivity={() =>
+              presence.reportTypingActivity("CUSTOMER_VISIBLE")
+            }
+            onTypingStopped={presence.stopTyping}
           />
         </Stack>
 
