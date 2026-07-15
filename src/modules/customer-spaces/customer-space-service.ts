@@ -360,7 +360,6 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
 
     await tx.invitation.deleteMany({ where: { customerSpaceId } });
     await tx.membership.deleteMany({ where: { customerSpaceId } });
-    await tx.customerSpace.delete({ where: { id: customerSpaceId } });
     await writeAuditLog(tx, actor, {
       action: "CUSTOMER_SPACE_DELETED",
       resourceType: "CustomerSpace",
@@ -371,5 +370,6 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
         membershipCount: existing._count.memberships,
       },
     });
+    await tx.customerSpace.delete({ where: { id: customerSpaceId } });
   });
 }

@@ -84,6 +84,40 @@ export function routeError(error: unknown) {
     );
   }
 
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2003"
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "RELATION_CONFLICT",
+          message: "关联数据不存在或仍在使用，无法完成当前操作",
+        },
+      },
+      { status: 409 },
+    );
+  }
+
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2025"
+  ) {
+    return NextResponse.json(
+      {
+        error: {
+          code: "NOT_FOUND",
+          message: "记录不存在或已被删除",
+        },
+      },
+      { status: 404 },
+    );
+  }
+
   console.error(error);
   return NextResponse.json(
     { error: { code: "INTERNAL_ERROR", message: "服务器处理失败" } },

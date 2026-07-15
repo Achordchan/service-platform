@@ -19,6 +19,10 @@ import {
   Typography,
 } from "@mui/material";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import {
+  jsonRequest,
+  staffApi,
+} from "@/components/staff/staff-api";
 
 type SpaceMembers = {
   id: string;
@@ -39,27 +43,44 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
   const [state, setState] = useState<
     "idle" | "sending" | "success" | "error"
   >("idle");
+  const [invitationError, setInvitationError] = useState("");
+  const [memberError, setMemberError] = useState("");
+  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
 
   async function sendInvitation() {
     if (!activeSpace) return;
     setState("sending");
-    const response = await fetch(
-      `/api/v1/admin/customer-spaces/${activeSpace.id}/invitations`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, role: "MEMBER" }),
-      },
-    );
-    setState(response.ok ? "success" : "error");
+    setInvitationError("");
+    try {
+      await staffApi(
+        `/api/v1/admin/customer-spaces/${activeSpace.id}/invitations`,
+        jsonRequest("POST", { email }),
+      );
+      setState("success");
+    } catch (error) {
+      setInvitationError(
+        error instanceof Error ? error.message : "邀请发送失败",
+      );
+      setState("error");
+    }
   }
 
   async function removeMember(spaceId: string, membershipId: string) {
-    const response = await fetch(
-      `/api/v1/admin/customer-spaces/${spaceId}/members/${membershipId}`,
-      { method: "DELETE" },
-    );
-    if (response.ok) router.refresh();
+    setMemberError("");
+    setRemovingMemberId(membershipId);
+    try {
+      await staffApi(
+        `/api/v1/admin/customer-spaces/${spaceId}/members/${membershipId}`,
+        { method: "DELETE" },
+      );
+      router.refresh();
+    } catch (error) {
+      setMemberError(
+        error instanceof Error ? error.message : "成员移除失败",
+      );
+    } finally {
+      setRemovingMemberId(null);
+    }
   }
 
   if (spaces.length === 0) {
@@ -68,6 +89,11 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
 
   return (
     <Stack spacing={3}>
+      {memberError ? (
+        <Alert severity="error" onClose={() => setMemberError("")}>
+          {memberError}
+        </Alert>
+      ) : null}
       {spaces.map((space) => {
         const isFull = space.members.length >= space.memberLimit;
         return (
@@ -100,6 +126,7 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                   setActiveSpace(space);
                   setEmail("");
                   setState("idle");
+                  setInvitationError("");
                 }}
               >
                 邀请成员
@@ -116,9 +143,10 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                       <Button
                         color="inherit"
                         size="small"
+                        disabled={removingMemberId !== null}
                         onClick={() => removeMember(space.id, member.id)}
                       >
-                        移除
+                        {removingMemberId === member.id ? "移除中" : "移除"}
                       </Button>
                     ) : null
                   }
@@ -150,7 +178,9 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
               <Alert severity="success">邀请邮件已加入发送队列。</Alert>
             ) : null}
             {state === "error" ? (
-              <Alert severity="error">邀请发送失败，请检查邮箱或成员名额。</Alert>
+              <Alert severity="error">
+                {invitationError || "邀请发送失败"}
+              </Alert>
             ) : null}
             <TextField
               label="成员邮箱"

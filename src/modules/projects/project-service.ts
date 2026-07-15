@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { removePrivateFile } from "@/modules/attachments/private-storage";
 import {
   assertAllowed,
   assertFound,
@@ -341,9 +342,9 @@ export function updateProject(
   });
 }
 
-export function deleteProject(actor: Actor, projectId: string) {
+export async function deleteProject(actor: Actor, projectId: string) {
   assertAllowed(actor.isPlatformAdmin);
-  return withActorDb(actor, async (tx) => {
+  const storageKeys = await withActorDb(actor, async (tx) => {
     const existing = await tx.project.findUnique({
       where: { id: projectId },
       select: {
@@ -360,8 +361,11 @@ export function deleteProject(actor: Actor, projectId: string) {
       },
     });
     assertFound(existing, "项目不存在");
+    const attachments = await tx.attachment.findMany({
+      where: { projectId },
+      select: { storageKey: true },
+    });
 
-    await tx.project.delete({ where: { id: projectId } });
     await writeAuditLog(tx, actor, {
       action: "PROJECT_DELETED",
       resourceType: "Project",
@@ -375,6 +379,22 @@ export function deleteProject(actor: Actor, projectId: string) {
         milestoneCount: existing._count.milestones,
       },
     });
+    await tx.project.delete({ where: { id: projectId } });
+    return attachments.map((attachment) => attachment.storageKey);
   });
-}
 
+  let failedCount = 0;
+  for (const storageKey of storageKeys) {
+    try {
+      await removePrivateFile(storageKey);
+    } catch {
+      failedCount += 1;
+    }
+  }
+  if (failedCount > 0) {
+    console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
+      projectId,
+      failedCount,
+    });
+  }
+}
