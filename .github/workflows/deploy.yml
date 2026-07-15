@@ -90,7 +90,21 @@ jobs:
             ./ "${USER_NAME}@${VPS_HOST}:${REMOTE_DIR}/"
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
-            "${USER_NAME}@${VPS_HOST}" "sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'"
+            "${USER_NAME}@${VPS_HOST}" "
+              set -euo pipefail
+              APP_DIR=/var/www/service-platform
+              NEEDS_CLEAN_INSTALL=false
+              if [[ ! -f \"\${APP_DIR}/pnpm-lock.yaml\" ]] ||
+                 ! cmp -s '${REMOTE_DIR}/pnpm-lock.yaml' \"\${APP_DIR}/pnpm-lock.yaml\" ||
+                 ! cmp -s '${REMOTE_DIR}/package.json' \"\${APP_DIR}/package.json\"; then
+                NEEDS_CLEAN_INSTALL=true
+              fi
+              if [[ \"\${NEEDS_CLEAN_INSTALL}\" == true && -d \"\${APP_DIR}/node_modules\" ]]; then
+                echo '[deploy] dependency manifest changed; clearing node_modules contents before non-interactive install'
+                find \"\${APP_DIR}/node_modules\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+              fi
+              sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'
+            "
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
             "${USER_NAME}@${VPS_HOST}" "ls -1dt /home/${USER_NAME}/releases/* 2>/dev/null | tail -n +4 | xargs -r rm -rf"
