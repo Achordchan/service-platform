@@ -71,6 +71,17 @@ pnpm dev
 | 客户 Owner | `client@local.test` |
 | 客户成员 | `client2@local.test` |
 
+## 生产部署（VPS）
+
+- 域名：`https://support.achord.cn`
+- 运行方式：systemd + Nginx 反代 + PostgreSQL（非 Docker / 非宝塔）
+- 代码目录：`/var/www/service-platform`
+- 服务：`service-platform`（Web）、`service-platform-worker`（邮件任务）
+- 推送到 `main` 或手动触发 GitHub Action `Deploy to VPS` 即可更新
+- 本地紧急部署：`scripts/vps-deploy-local.sh`
+
+所需 GitHub Secrets：`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`，可选 `VPS_PORT`、`APP_URL`。
+
 ## 常用命令
 
 ```bash

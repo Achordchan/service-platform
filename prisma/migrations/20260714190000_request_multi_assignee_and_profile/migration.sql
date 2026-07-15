@@ -46,7 +46,7 @@ ON CONFLICT ("serviceRequestId", "userId") DO NOTHING;
 
 -- Drop ambiguous overloads first, keep a single 2-arg helper.
 DROP FUNCTION IF EXISTS app_can_access_request_fields(text, text, text);
-DROP FUNCTION IF EXISTS app_can_access_request_fields(text, text);
+DROP FUNCTION IF EXISTS app_can_access_request_fields(text, text) CASCADE;
 
 CREATE OR REPLACE FUNCTION app_can_access_request_fields(
   target_project_id text,
