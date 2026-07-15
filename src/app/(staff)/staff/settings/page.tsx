@@ -116,7 +116,7 @@ export default async function StaffSettingsPage() {
             <Stack spacing={0.5}>
               <Typography sx={{ fontWeight: 700 }}>2. 站点与邮件</Typography>
               <Typography variant="body2" color="text.secondary">
-                站点地址、SMTP/本地发件箱
+                站点地址与 SMTP 外发
               </Typography>
             </Stack>
           </AccordionSummary>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import {
   Alert,
   Box,
@@ -9,10 +9,7 @@ import {
   Divider,
   FormControl,
   FormControlLabel,
-  InputLabel,
-  MenuItem,
   Paper,
-  Select,
   Stack,
   Switch,
   Table,
@@ -27,7 +24,7 @@ import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
 export type PlatformSettingsView = {
   appUrl: string;
-  mailMode: "LOCAL_OUTBOX" | "SMTP";
+  mailMode: "SMTP" | "LOCAL_OUTBOX";
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -80,7 +77,6 @@ export function PlatformSettingsManager({
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [messages, setMessages] = useState(initialMessages);
-  const [mailMode, setMailMode] = useState(initialSettings.mailMode);
   const [smtpSecure, setSmtpSecure] = useState(initialSettings.smtpSecure);
   const [customerReplyAttachmentsEnabled, setCustomerReplyAttachmentsEnabled] =
     useState(initialSettings.customerReplyAttachmentsEnabled);
@@ -95,13 +91,6 @@ export function PlatformSettingsManager({
   const showAttachments = activeSections.has("attachments");
   const showOutbox = activeSections.has("outbox");
 
-  const modeHint = useMemo(() => {
-    if (mailMode === "LOCAL_OUTBOX") {
-      return "本地发件箱模式：邮件写入后台可查看，不需要 Mailpit 或第二个进程。";
-    }
-    return "SMTP 模式：按下方主机、端口和账号实际外发。发件人建议使用 info@achord.cn。";
-  }, [mailMode]);
-
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
@@ -115,7 +104,7 @@ export function PlatformSettingsManager({
     if (hasMailFields) {
       const smtpPassword = String(form.get("smtpPassword") ?? "");
       payload.appUrl = String(form.get("appUrl") ?? "").trim();
-      payload.mailMode = mailMode;
+      payload.mailMode = "SMTP";
       payload.smtpHost = String(form.get("smtpHost") ?? "").trim();
       payload.smtpPort = form.get("smtpPort")
         ? Number(form.get("smtpPort"))
@@ -145,7 +134,6 @@ export function PlatformSettingsManager({
         jsonRequest("PATCH", payload),
       );
       setSettings(next);
-      setMailMode(next.mailMode);
       setSmtpSecure(next.smtpSecure);
       setCustomerReplyAttachmentsEnabled(next.customerReplyAttachmentsEnabled);
       setSuccess(hasAttachmentFields && !hasMailFields ? "附件策略已保存" : "平台设置已保存");
@@ -205,42 +193,27 @@ export function PlatformSettingsManager({
             helperText="邀请链接、邮件按钮会使用这个地址"
           />
 
-          <FormControl fullWidth>
-            <InputLabel id="mail-mode-label">邮件发送方式</InputLabel>
-            <Select
-              labelId="mail-mode-label"
-              label="邮件发送方式"
-              value={mailMode}
-              onChange={(event) =>
-                setMailMode(event.target.value as PlatformSettingsView["mailMode"])
-              }
-            >
-              <MenuItem value="LOCAL_OUTBOX">本地发件箱（开发推荐）</MenuItem>
-              <MenuItem value="SMTP">SMTP 外发</MenuItem>
-            </Select>
-          </FormControl>
+          <Alert severity="info">
+            正式环境仅支持 SMTP 外发。Cloudflare 本身不提供发信邮箱，请在企业邮箱 / Resend / 阿里云邮件推送等服务开通 SMTP，并把 SPF、DKIM 记录加到 Cloudflare DNS。发件人建议使用 info@achord.cn。
+          </Alert>
 
-          <Alert severity="info">{modeHint}</Alert>
-
-          <Stack
-            direction={{ xs: "column", md: "row" }}
-            spacing={2}
-            sx={{ opacity: mailMode === "SMTP" ? 1 : 0.72 }}
-          >
+          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
             <TextField
               name="smtpHost"
               label="SMTP 主机"
               defaultValue={settings.smtpHost ?? ""}
               fullWidth
-              disabled={mailMode !== "SMTP"}
+              required
+              placeholder="smtp.example.com"
             />
             <TextField
               name="smtpPort"
               label="SMTP 端口"
               type="number"
-              defaultValue={settings.smtpPort ?? ""}
+              defaultValue={settings.smtpPort ?? 465}
               fullWidth
-              disabled={mailMode !== "SMTP"}
+              required
+              helperText="常见：465（SSL）或 587（STARTTLS）"
             />
           </Stack>
 
@@ -250,18 +223,19 @@ export function PlatformSettingsManager({
               label="SMTP 用户名"
               defaultValue={settings.smtpUser ?? ""}
               fullWidth
-              disabled={mailMode !== "SMTP"}
+              required
+              placeholder="info@achord.cn"
             />
             <TextField
               name="smtpPassword"
               label="SMTP 密码"
               type="password"
               fullWidth
-              disabled={mailMode !== "SMTP"}
+              required={!settings.hasStoredPassword}
               helperText={
                 settings.hasStoredPassword
                   ? "已保存密码；留空表示不修改"
-                  : "可选。无认证 SMTP 可留空"
+                  : "邮箱密码或 SMTP 专用密码"
               }
             />
           </Stack>
@@ -269,10 +243,10 @@ export function PlatformSettingsManager({
           <TextField
             name="smtpFrom"
             label="发件人"
-            defaultValue={settings.smtpFrom}
+            defaultValue={settings.smtpFrom || "服务支持中心 <info@achord.cn>"}
             fullWidth
+            required
             helperText="例如：服务支持中心 <info@achord.cn>"
-            disabled={mailMode !== "SMTP"}
           />
 
           <FormControlLabel
@@ -280,10 +254,9 @@ export function PlatformSettingsManager({
               <Switch
                 checked={smtpSecure}
                 onChange={(event) => setSmtpSecure(event.target.checked)}
-                disabled={mailMode !== "SMTP"}
               />
             }
-            label="使用 SSL/TLS（通常 465 端口开启）"
+            label="使用 SSL/TLS（465 端口开启；587 端口通常关闭并改用 STARTTLS）"
           />
 
           <Stack direction="row" spacing={1.5} sx={{ justifyContent: "flex-end" }}>
@@ -357,7 +330,7 @@ export function PlatformSettingsManager({
               发件箱
             </Typography>
             <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              本地模式直接在这里查看邀请和通知内容；SMTP 模式也可核对发送结果。
+              记录邀请与通知的外发结果；失败时在此查看错误原因。
             </Typography>
           </Box>
           <Button onClick={refreshMessages} disabled={refreshing}>

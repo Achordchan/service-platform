@@ -15,26 +15,53 @@ export const updatePlatformSettingsSchema = z
     customerReplyAttachmentsEnabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.mailMode !== "SMTP") return;
+    const configuringMail =
+      value.mailMode === "SMTP" ||
+      value.smtpHost !== undefined ||
+      value.smtpPort !== undefined ||
+      value.smtpFrom !== undefined ||
+      value.smtpUser !== undefined ||
+      value.smtpPassword !== undefined ||
+      value.smtpSecure !== undefined;
+
+    if (!configuringMail) return;
+
+    // Production UI only configures SMTP. Reject local outbox updates from admin form.
+    if (value.mailMode === "LOCAL_OUTBOX") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["mailMode"],
+        message: "正式环境请使用 SMTP 外发",
+      });
+      return;
+    }
+
     if (!value.smtpHost?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpHost"],
-        message: "SMTP 模式下必须填写主机",
+        message: "请填写 SMTP 主机",
       });
     }
     if (!value.smtpPort) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpPort"],
-        message: "SMTP 模式下必须填写端口",
+        message: "请填写 SMTP 端口",
       });
     }
     if (!value.smtpFrom?.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpFrom"],
-        message: "SMTP 模式下必须填写发件人",
+        message: "请填写发件人",
+      });
+    }
+    if (!value.smtpUser?.trim()) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["smtpUser"],
+        message: "请填写 SMTP 用户名",
       });
     }
   });
