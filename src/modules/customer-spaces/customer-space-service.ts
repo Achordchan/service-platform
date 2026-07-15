@@ -199,7 +199,15 @@ export async function createCustomerSpace(
   await enqueueMail({
     to: result.invitation.email,
     templateKey: "CUSTOMER_OWNER_INVITATION",
-    variables: { spaceName: result.space.name },
+    variables: {
+      recipientName: result.space.owner.name,
+      recipientEmail: result.space.owner.email,
+      inviterName: actor.name,
+      inviterEmail: actor.email,
+      customerName: result.space.name,
+      spaceName: result.space.name,
+      expiresIn: "24 小时",
+    },
     actionUrl,
   });
 

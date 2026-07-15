@@ -21,7 +21,11 @@ export const auth = betterAuth({
       await enqueueMail({
         to: user.email,
         templateKey: "PASSWORD_RESET",
-        variables: { expiresIn: "1 小时" },
+        variables: {
+          recipientName: user.name || user.email,
+          recipientEmail: user.email,
+          expiresIn: "1 小时",
+        },
         actionUrl: url,
       });
     },

@@ -246,7 +246,21 @@ export async function inviteStaff(actor: Actor, raw: InviteStaffInput) {
   await enqueueMail({
     to: email,
     templateKey: "STAFF_INVITATION",
-    variables: { roleGroupName: result.roleGroupName },
+    variables: {
+      recipientName: result.invitation.name ?? input.name,
+      recipientEmail: result.invitation.email,
+      inviterName: result.invitation.invitedBy.name,
+      inviterEmail: result.invitation.invitedBy.email,
+      roleGroupName: result.roleGroupName,
+      phone: result.invitation.phone ?? "",
+      company: result.invitation.company ?? "",
+      jobTitle: result.invitation.jobTitle ?? "",
+      wechat: result.invitation.wechat ?? "",
+      website: result.invitation.website ?? "",
+      location: result.invitation.location ?? "",
+      contactNotes: result.invitation.contactNotes ?? "",
+      expiresIn: "24 小时",
+    },
     actionUrl,
   });
 

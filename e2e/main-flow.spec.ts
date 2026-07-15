@@ -11,30 +11,55 @@ async function login(page: Page, email: string) {
 }
 
 async function expectVisibleText(page: Page, text: string) {
-  await expect(page.getByText(text).and(page.locator(":visible")).first()).toBeVisible();
+  await expect(
+    page.getByText(text).and(page.locator(":visible")).first(),
+  ).toBeVisible();
 }
 
 test.describe("主流程冒烟", () => {
   test("管理员可进入项目、客户与服务请求后台", async ({ page }) => {
     await login(page, "admin@local.test");
-    await expect(page.getByRole("heading", { name: "项目管理" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "项目", exact: true }),
+    ).toBeVisible();
     await expectVisibleText(page, "官网 SEO 优化服务");
 
     await page.getByRole("link", { name: "客户", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "客户空间" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "客户", exact: true }),
+    ).toBeVisible();
     await expect(page.getByRole("button", { name: "新建客户" })).toBeVisible();
 
     await page.getByRole("link", { name: "服务请求", exact: true }).click();
     await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
 
     await page.goto("/staff/settings");
-    await page.getByText("2. 站点与邮件", { exact: true }).click();
-    await expect(page.getByLabel("Resend API Key")).toBeVisible();
-    await expect(page.getByText("1. 连接 Resend", { exact: true })).toBeVisible();
-    await expect(page.getByLabel("SMTP 主机")).not.toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "设置", exact: true }),
+    ).toBeVisible();
 
-    await page.getByText("高级备用方式", { exact: true }).click();
-    await expect(page.getByLabel("SMTP 主机")).toBeVisible();
+    const mailTemplates = page.getByRole("button", { name: /邮件模板/ });
+    const roleGroups = page.getByRole("button", { name: /角色与权限/ });
+    await expect(mailTemplates).toHaveAttribute("aria-expanded", "false");
+    await expect(roleGroups).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByRole("button", { name: "编辑" })).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "新增角色组" }),
+    ).not.toBeVisible();
+
+    await mailTemplates.click();
+    await expect(mailTemplates).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.getByRole("button", { name: "编辑" }).first(),
+    ).toBeVisible();
+    await mailTemplates.click();
+
+    await roleGroups.click();
+    await expect(roleGroups).toHaveAttribute("aria-expanded", "true");
+    await expect(
+      page.getByRole("button", { name: "新增角色组" }),
+    ).toBeVisible();
+    await roleGroups.click();
 
     await page.setViewportSize({ width: 390, height: 844 });
     const hasHorizontalOverflow = await page.evaluate(

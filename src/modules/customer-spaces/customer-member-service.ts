@@ -295,7 +295,14 @@ export async function createInvitation(
   await enqueueMail({
     to: result.invitation.email,
     templateKey: "CUSTOMER_MEMBER_INVITATION",
-    variables: { spaceName: result.spaceName },
+    variables: {
+      recipientEmail: result.invitation.email,
+      inviterName: actor.name,
+      inviterEmail: actor.email,
+      customerName: result.spaceName,
+      spaceName: result.spaceName,
+      expiresIn: "24 小时",
+    },
     actionUrl,
   });
   return {

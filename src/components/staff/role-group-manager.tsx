@@ -58,11 +58,9 @@ const emptyForm = {
 export function RoleGroupManager({
   roleGroups,
   embedded = false,
-  showHeading = false,
 }: {
   roleGroups: RoleGroupView[];
   embedded?: boolean;
-  showHeading?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -202,23 +200,9 @@ export function RoleGroupManager({
           sx={{
             mb: 2,
             alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
           }}
         >
-          {showHeading ? (
-            <Box>
-              <Typography sx={{ fontWeight: 700 }}>角色与权限</Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mt: 0.5 }}
-              >
-                {roleGroups.length} 个角色组
-              </Typography>
-            </Box>
-          ) : (
-            <Box />
-          )}
           <Button
             variant="contained"
             startIcon={<AddOutlinedIcon />}

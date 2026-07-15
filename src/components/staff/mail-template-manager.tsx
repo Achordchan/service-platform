@@ -276,9 +276,11 @@ function MailTemplateEditor({
 export function MailTemplateManager({
   initialTemplates,
   currentAdminEmail,
+  embedded = false,
 }: {
   initialTemplates: MailTemplateView[];
   currentAdminEmail: string;
+  embedded?: boolean;
 }) {
   const [templates, setTemplates] = useState(initialTemplates);
   const [busy, setBusy] = useState<string | null>(null);
@@ -289,70 +291,84 @@ export function MailTemplateManager({
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selectedTemplate =
     templates.find((template) => template.key === selectedKey) ?? null;
-
-  return (
+  const templateList = (
     <>
-      <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+      {!embedded ? (
         <Box sx={{ px: { xs: 2, sm: 2.5 }, py: 2.25 }}>
           <Typography sx={{ fontWeight: 700 }}>邮件模板</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {templates.length} 个模板
           </Typography>
         </Box>
-        {message ? (
-          <Alert severity={message.type} sx={{ mx: 2, mb: 2 }}>
-            {message.text}
-          </Alert>
-        ) : null}
-        <Divider />
-        {templates.map((template, index) => (
-          <Box key={template.key}>
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={2}
-              sx={{
-                px: { xs: 2, sm: 2.5 },
-                py: 2,
-                alignItems: { sm: "center" },
-                justifyContent: "space-between",
-              }}
-            >
-              <Box sx={{ minWidth: 0 }}>
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  useFlexGap
-                  sx={{ alignItems: "center", flexWrap: "wrap" }}
-                >
-                  <Typography sx={{ fontWeight: 650 }}>
-                    {template.name}
-                  </Typography>
-                  <Chip
-                    size="small"
-                    label={template.customized ? "已自定义" : "系统默认"}
-                    color={template.customized ? "primary" : "default"}
-                  />
-                </Stack>
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ mt: 0.5 }}
-                >
-                  {template.description}
-                </Typography>
-              </Box>
-              <Button
-                variant="outlined"
-                onClick={() => setSelectedKey(template.key)}
-                sx={{ alignSelf: { xs: "stretch", sm: "center" } }}
+      ) : null}
+      {message ? (
+        <Alert
+          severity={message.type}
+          sx={{ mx: 2, mt: embedded ? 2 : 0, mb: 2 }}
+        >
+          {message.text}
+        </Alert>
+      ) : null}
+      {!embedded ? <Divider /> : null}
+      {templates.map((template, index) => (
+        <Box key={template.key}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={2}
+            sx={{
+              px: { xs: 2, sm: 2.5 },
+              py: 2,
+              alignItems: { sm: "center" },
+              justifyContent: "space-between",
+            }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                useFlexGap
+                sx={{ alignItems: "center", flexWrap: "wrap" }}
               >
-                编辑
-              </Button>
-            </Stack>
-            {index < templates.length - 1 ? <Divider /> : null}
-          </Box>
-        ))}
-      </Paper>
+                <Typography sx={{ fontWeight: 650 }}>
+                  {template.name}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={template.customized ? "已自定义" : "系统默认"}
+                  color={template.customized ? "primary" : "default"}
+                />
+              </Stack>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.5 }}
+              >
+                {template.description}
+              </Typography>
+            </Box>
+            <Button
+              variant="outlined"
+              onClick={() => setSelectedKey(template.key)}
+              sx={{ alignSelf: { xs: "stretch", sm: "center" } }}
+            >
+              编辑
+            </Button>
+          </Stack>
+          {index < templates.length - 1 ? <Divider /> : null}
+        </Box>
+      ))}
+    </>
+  );
+
+  return (
+    <>
+      {embedded ? (
+        <Box>{templateList}</Box>
+      ) : (
+        <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+          {templateList}
+        </Paper>
+      )}
 
       <Dialog
         open={selectedTemplate !== null}

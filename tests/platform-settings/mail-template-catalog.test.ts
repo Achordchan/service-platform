@@ -8,17 +8,70 @@ import {
 } from "../../src/modules/platform-settings/mail-template-catalog";
 
 describe("mail template catalog", () => {
-  it("renders allowed variables in every field", () => {
+  it("renders personalized staff invitation variables", () => {
     const definition = getMailTemplateDefinition("STAFF_INVITATION");
     const rendered = renderTemplateContent(
       definition.key,
       definition.defaults,
-      { roleGroupName: "技术支持" },
+      sampleVariablesForTemplate(definition.key),
     );
 
-    expect(rendered.subject).toContain("技术支持");
-    expect(rendered.body).toContain("技术支持");
+    expect(rendered.subject).toContain("李明");
+    expect(rendered.previewText).toContain("王经理");
+    expect(rendered.body).toContain("项目负责人");
+    expect(rendered.body).toContain("24 小时");
     expect(rendered.subject).not.toContain("{{");
+  });
+
+  it("allows optional staff profile variables to be empty", () => {
+    const definition = getMailTemplateDefinition("STAFF_INVITATION");
+    const variables = sampleVariablesForTemplate(definition.key);
+    const rendered = renderTemplateContent(
+      definition.key,
+      {
+        ...definition.defaults,
+        body: "{{recipientName}} / {{company}} / {{jobTitle}} / {{contactNotes}}",
+      },
+      {
+        ...variables,
+        company: "",
+        jobTitle: "",
+        contactNotes: "",
+      },
+    );
+
+    expect(rendered.body).toBe("李明 /  /  / ");
+  });
+
+  it("renders customer owner identity and customer name", () => {
+    const definition = getMailTemplateDefinition(
+      "CUSTOMER_OWNER_INVITATION",
+    );
+    const rendered = renderTemplateContent(
+      definition.key,
+      definition.defaults,
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.subject).toContain("陈总");
+    expect(rendered.subject).toContain("示例客户");
+    expect(rendered.body).toContain("服务支持团队");
+  });
+
+  it("keeps the legacy space name variable available", () => {
+    const definition = getMailTemplateDefinition(
+      "CUSTOMER_MEMBER_INVITATION",
+    );
+    const rendered = renderTemplateContent(
+      definition.key,
+      {
+        ...definition.defaults,
+        body: "加入 {{spaceName}}",
+      },
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.body).toBe("加入 示例客户");
   });
 
   it("rejects variables outside the template whitelist", () => {
@@ -48,6 +101,7 @@ describe("mail template catalog", () => {
       sampleVariablesForTemplate(definition.key),
     );
     expect(rendered.subject).toContain("示例客户");
+    expect(rendered.subject).toContain("陈总");
   });
 
   it("only accepts HTTP and HTTPS action links", () => {
