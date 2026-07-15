@@ -26,6 +26,21 @@ test.describe("主流程冒烟", () => {
 
     await page.getByRole("link", { name: "服务请求", exact: true }).click();
     await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
+
+    await page.goto("/staff/settings");
+    await page.getByText("2. 站点与邮件", { exact: true }).click();
+    await expect(page.getByLabel("Resend API Key")).toBeVisible();
+    await expect(page.getByText("1. 连接 Resend", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("SMTP 主机")).not.toBeVisible();
+
+    await page.getByText("高级备用方式", { exact: true }).click();
+    await expect(page.getByLabel("SMTP 主机")).toBeVisible();
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    const hasHorizontalOverflow = await page.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
   });
 
   test("客户可查看服务项目与请求列表", async ({ page }) => {
@@ -34,7 +49,7 @@ test.describe("主流程冒烟", () => {
     await expectVisibleText(page, "官网 SEO 优化服务");
 
     await page.goto("/customer/requests");
-    await expect(page.getByRole("heading", { name: "我的工单" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
     await expectVisibleText(page, "关于首页标题优化建议");
   });
 
@@ -44,4 +59,5 @@ test.describe("主流程冒烟", () => {
     await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
     await expectVisibleText(page, "关于首页标题优化建议");
   });
+
 });

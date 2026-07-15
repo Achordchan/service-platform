@@ -44,6 +44,18 @@ export default async function StaffSettingsPage() {
   const settingsView: PlatformSettingsView = {
     appUrl: settings.appUrl,
     mailMode: settings.mailMode,
+    mailFrom: settings.mailFrom,
+    mailReplyTo: settings.mailReplyTo,
+    hasDedicatedEncryptionKey: settings.hasDedicatedEncryptionKey,
+    hasResendApiKey: settings.hasResendApiKey,
+    resendDomain: settings.resendDomain,
+    resendDomainId: settings.resendDomainId,
+    resendDomainStatus: settings.resendDomainStatus,
+    resendDnsRecords: settings.resendDnsRecords,
+    resendWebhookId: settings.resendWebhookId,
+    resendWebhookStatus: settings.resendWebhookStatus,
+    hasResendWebhookSecret: settings.hasResendWebhookSecret,
+    resendLastCheckedAt: settings.resendLastCheckedAt,
     smtpHost: settings.smtpHost,
     smtpPort: settings.smtpPort,
     smtpUser: settings.smtpUser,
@@ -64,10 +76,12 @@ export default async function StaffSettingsPage() {
     body: message.body,
     actionLabel: message.actionLabel,
     actionUrl: message.actionUrl,
+    deliveryMode: message.deliveryMode,
     status: message.status,
     errorMessage: message.errorMessage,
     providerId: message.providerId,
     sentAt: message.sentAt?.toISOString() ?? null,
+    lastEventAt: message.lastEventAt?.toISOString() ?? null,
     createdAt: message.createdAt.toISOString(),
   }));
 
@@ -116,7 +130,7 @@ export default async function StaffSettingsPage() {
             <Stack spacing={0.5}>
               <Typography sx={{ fontWeight: 700 }}>2. 站点与邮件</Typography>
               <Typography variant="body2" color="text.secondary">
-                站点地址与 SMTP 外发
+                Resend 域名、发件人和备用 SMTP
               </Typography>
             </Stack>
           </AccordionSummary>
@@ -124,6 +138,7 @@ export default async function StaffSettingsPage() {
             <PlatformSettingsManager
               initialSettings={settingsView}
               initialMessages={messageViews}
+              currentAdminEmail={actor.email}
               sections={["site-mail"]}
             />
           </AccordionDetails>
@@ -142,6 +157,7 @@ export default async function StaffSettingsPage() {
             <PlatformSettingsManager
               initialSettings={settingsView}
               initialMessages={messageViews}
+              currentAdminEmail={actor.email}
               sections={["attachments"]}
             />
           </AccordionDetails>
@@ -160,6 +176,7 @@ export default async function StaffSettingsPage() {
             <PlatformSettingsManager
               initialSettings={settingsView}
               initialMessages={messageViews}
+              currentAdminEmail={actor.email}
               sections={["outbox"]}
             />
           </AccordionDetails>

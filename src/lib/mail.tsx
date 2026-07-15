@@ -1,6 +1,9 @@
 import { render } from "@react-email/render";
 import nodemailer from "nodemailer";
 import React from "react";
+import { Resend } from "resend";
+import type { MailDeliveryMode } from "@/generated/prisma/client";
+import { decryptSecret } from "@/lib/secret-crypto";
 import { withSystemDb } from "@/lib/system-db";
 import {
   getRuntimeMailSettings,
@@ -14,6 +17,7 @@ export type MailPayload = {
   body: string;
   actionLabel?: string;
   actionUrl?: string;
+  deliveryMode?: MailDeliveryMode;
 };
 
 function MailTemplate({
@@ -105,6 +109,7 @@ async function deliverViaSmtp(
   const result = await transporter.sendMail({
     from: settings.smtpFrom,
     to: payload.to,
+    replyTo: settings.mailReplyTo,
     subject: payload.subject,
     html,
   });
@@ -115,9 +120,38 @@ async function deliverViaSmtp(
   };
 }
 
+async function deliverViaResend(
+  payload: MailPayload,
+  settings: RuntimeMailSettings,
+  html: string,
+) {
+  if (!settings.resendApiKeyEncrypted) {
+    throw new Error("Resend 未配置：缺少 API Key");
+  }
+  if (settings.resendDomainStatus !== "verified") {
+    throw new Error("Resend 发信域名尚未验证");
+  }
+
+  const resend = new Resend(
+    decryptSecret(settings.resendApiKeyEncrypted),
+  );
+  const result = await resend.emails.send({
+    from: settings.mailFrom,
+    to: payload.to,
+    replyTo: settings.mailReplyTo,
+    subject: payload.subject,
+    html,
+  });
+  if (result.error || !result.data) {
+    throw new Error(result.error?.message || "Resend 邮件发送失败");
+  }
+  return { providerId: result.data.id };
+}
+
 export async function sendMail(payload: MailPayload) {
   const settings = await getRuntimeMailSettings();
   const html = await renderMailHtml(payload);
+  const deliveryMode = payload.deliveryMode ?? settings.mailMode;
 
   const message = await withSystemDb((tx) =>
     tx.mailMessage.create({
@@ -128,13 +162,14 @@ export async function sendMail(payload: MailPayload) {
         body: payload.body,
         actionLabel: payload.actionLabel,
         actionUrl: payload.actionUrl,
+        deliveryMode,
         status: "QUEUED",
       },
     }),
   );
 
   try {
-    if (settings.mailMode === "LOCAL_OUTBOX") {
+    if (deliveryMode === "LOCAL_OUTBOX") {
       await withSystemDb((tx) =>
         tx.mailMessage.update({
           where: { id: message.id },
@@ -149,7 +184,10 @@ export async function sendMail(payload: MailPayload) {
       return { id: message.id, mode: "LOCAL_OUTBOX" as const };
     }
 
-    const delivery = await deliverViaSmtp(payload, settings, html);
+    const delivery =
+      deliveryMode === "RESEND"
+        ? await deliverViaResend(payload, settings, html)
+        : await deliverViaSmtp(payload, settings, html);
     await withSystemDb((tx) =>
       tx.mailMessage.update({
         where: { id: message.id },
@@ -157,11 +195,12 @@ export async function sendMail(payload: MailPayload) {
           status: "SENT",
           providerId: delivery.providerId,
           sentAt: new Date(),
+          lastEventAt: new Date(),
           errorMessage: null,
         },
       }),
     );
-    return { id: message.id, mode: "SMTP" as const };
+    return { id: message.id, mode: deliveryMode };
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "邮件发送失败";

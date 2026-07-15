@@ -3,7 +3,11 @@ import { z } from "zod";
 export const updatePlatformSettingsSchema = z
   .object({
     appUrl: z.string().url().optional().or(z.literal("")),
-    mailMode: z.enum(["LOCAL_OUTBOX", "SMTP"]).optional(),
+    mailMode: z.enum(["LOCAL_OUTBOX", "RESEND", "SMTP"]).optional(),
+    mailFrom: z
+      .literal("服务支持中心 <no-reply@mail.achord.cn>")
+      .optional(),
+    mailReplyTo: z.literal("support@achord.cn").optional(),
     smtpHost: z.string().max(255).optional().or(z.literal("")),
     smtpPort: z.coerce.number().int().min(1).max(65535).optional().nullable(),
     smtpUser: z.string().max(255).optional().or(z.literal("")),
@@ -15,7 +19,7 @@ export const updatePlatformSettingsSchema = z
     customerReplyAttachmentsEnabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
-    const configuringMail =
+    const configuringSmtp =
       value.mailMode === "SMTP" ||
       value.smtpHost !== undefined ||
       value.smtpPort !== undefined ||
@@ -24,40 +28,30 @@ export const updatePlatformSettingsSchema = z
       value.smtpPassword !== undefined ||
       value.smtpSecure !== undefined;
 
-    if (!configuringMail) return;
+    if (!configuringSmtp) return;
 
-    // Production UI only configures SMTP. Reject local outbox updates from admin form.
-    if (value.mailMode === "LOCAL_OUTBOX") {
-      ctx.addIssue({
-        code: "custom",
-        path: ["mailMode"],
-        message: "正式环境请使用 SMTP 外发",
-      });
-      return;
-    }
-
-    if (!value.smtpHost?.trim()) {
+    if (value.smtpHost !== undefined && !value.smtpHost.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpHost"],
         message: "请填写 SMTP 主机",
       });
     }
-    if (!value.smtpPort) {
+    if (value.smtpPort !== undefined && !value.smtpPort) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpPort"],
         message: "请填写 SMTP 端口",
       });
     }
-    if (!value.smtpFrom?.trim()) {
+    if (value.smtpFrom !== undefined && !value.smtpFrom.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpFrom"],
         message: "请填写发件人",
       });
     }
-    if (!value.smtpUser?.trim()) {
+    if (value.smtpUser !== undefined && !value.smtpUser.trim()) {
       ctx.addIssue({
         code: "custom",
         path: ["smtpUser"],
@@ -69,3 +63,11 @@ export const updatePlatformSettingsSchema = z
 export type UpdatePlatformSettingsInput = z.infer<
   typeof updatePlatformSettingsSchema
 >;
+
+export const setupResendSchema = z.object({
+  apiKey: z.string().trim().min(8).max(255).optional(),
+});
+
+export const testMailSchema = z.object({
+  to: z.string().trim().email().max(255).optional(),
+});

@@ -22,6 +22,7 @@ export async function GET(request: Request) {
         createdAt: message.createdAt.toISOString(),
         updatedAt: message.updatedAt.toISOString(),
         sentAt: message.sentAt?.toISOString() ?? null,
+        lastEventAt: message.lastEventAt?.toISOString() ?? null,
       })),
     });
   } catch (error) {

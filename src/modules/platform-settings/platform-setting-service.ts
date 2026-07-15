@@ -8,7 +8,7 @@ import {
   ensurePlatformSettings,
 } from "@/modules/platform-settings/mail-settings-runtime";
 import type { UpdatePlatformSettingsInput } from "@/modules/platform-settings/schemas";
-import { assertAllowed } from "@/modules/projects/errors";
+import { DomainError, assertAllowed } from "@/modules/projects/errors";
 
 export type { RuntimeMailSettings } from "@/modules/platform-settings/mail-settings-runtime";
 export {
@@ -25,7 +25,18 @@ function emptyToNull(value?: string | null) {
 
 function publicSettings(settings: {
   appUrl: string | null;
-  mailMode: "LOCAL_OUTBOX" | "SMTP";
+  mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
+  mailFrom: string;
+  mailReplyTo: string;
+  resendApiKeyEncrypted: string | null;
+  resendDomain: string;
+  resendDomainId: string | null;
+  resendDomainStatus: string | null;
+  resendDnsRecords: unknown;
+  resendWebhookId: string | null;
+  resendWebhookStatus: string | null;
+  resendWebhookSecretEncrypted: string | null;
+  resendLastCheckedAt: Date | null;
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -40,6 +51,27 @@ function publicSettings(settings: {
   return {
     appUrl: settings.appUrl?.trim() || env.APP_URL,
     mailMode: settings.mailMode,
+    mailFrom:
+      settings.mailFrom?.trim() ||
+      "服务支持中心 <no-reply@mail.achord.cn>",
+    mailReplyTo: settings.mailReplyTo?.trim() || "support@achord.cn",
+    hasDedicatedEncryptionKey: Boolean(
+      env.PLATFORM_SECRET_ENCRYPTION_KEY,
+    ),
+    hasResendApiKey: Boolean(settings.resendApiKeyEncrypted),
+    resendDomain: settings.resendDomain || "mail.achord.cn",
+    resendDomainId: settings.resendDomainId,
+    resendDomainStatus: settings.resendDomainStatus,
+    resendDnsRecords: Array.isArray(settings.resendDnsRecords)
+      ? settings.resendDnsRecords
+      : [],
+    resendWebhookId: settings.resendWebhookId,
+    resendWebhookStatus: settings.resendWebhookStatus,
+    hasResendWebhookSecret: Boolean(
+      settings.resendWebhookSecretEncrypted,
+    ),
+    resendLastCheckedAt:
+      settings.resendLastCheckedAt?.toISOString() ?? null,
     smtpHost: settings.smtpHost,
     smtpPort: settings.smtpPort,
     smtpUser: settings.smtpUser,
@@ -88,6 +120,12 @@ export async function updatePlatformSettings(
     if (input.mailMode !== undefined) {
       data.mailMode = input.mailMode;
     }
+    if (input.mailFrom !== undefined) {
+      data.mailFrom = input.mailFrom.trim();
+    }
+    if (input.mailReplyTo !== undefined) {
+      data.mailReplyTo = input.mailReplyTo.trim().toLowerCase();
+    }
     if (input.smtpHost !== undefined) {
       data.smtpHost = emptyToNull(input.smtpHost);
     }
@@ -119,6 +157,56 @@ export async function updatePlatformSettings(
         input.customerReplyAttachmentsEnabled;
     }
 
+    const nextMailMode = input.mailMode ?? current.mailMode;
+    if (nextMailMode === "RESEND") {
+      if (
+        !current.resendApiKeyEncrypted ||
+        current.resendDomainStatus !== "verified" ||
+        !current.resendWebhookId ||
+        current.resendWebhookStatus !== "enabled" ||
+        !current.resendWebhookSecretEncrypted
+      ) {
+        throw new DomainError(
+          "RESEND_NOT_READY",
+          "Resend 域名和 Webhook 尚未配置完成",
+          409,
+        );
+      }
+    }
+    if (nextMailMode === "SMTP") {
+      const smtpHost =
+        input.smtpHost === undefined
+          ? current.smtpHost
+          : emptyToNull(input.smtpHost);
+      const smtpPort =
+        input.smtpPort === undefined ? current.smtpPort : input.smtpPort;
+      const smtpUser =
+        input.smtpUser === undefined
+          ? current.smtpUser
+          : emptyToNull(input.smtpUser);
+      const smtpPassword =
+        input.smtpPassword === undefined
+          ? current.smtpPassword
+          : emptyToNull(input.smtpPassword);
+      const smtpFrom =
+        input.smtpFrom === undefined
+          ? current.smtpFrom
+          : emptyToNull(input.smtpFrom);
+      if (
+        !smtpHost ||
+        !smtpPort ||
+        !smtpUser ||
+        !smtpPassword ||
+        !smtpFrom
+      ) {
+        throw new DomainError(
+          "SMTP_NOT_READY",
+          "SMTP 配置不完整",
+          409,
+        );
+      }
+    }
+
     const updated = await tx.platformSetting.update({
       where: { id: 1 },
       data,
@@ -131,6 +219,8 @@ export async function updatePlatformSettings(
       metadata: {
         mailMode: updated.mailMode,
         appUrl: updated.appUrl,
+        mailFrom: updated.mailFrom,
+        mailReplyTo: updated.mailReplyTo,
         smtpHost: updated.smtpHost,
         smtpPort: updated.smtpPort,
         smtpFrom: updated.smtpFrom,

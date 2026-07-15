@@ -17,6 +17,24 @@ if [[ ! -f "${RELEASE_STAGING}/prisma/schema.prisma" ]]; then
   echo "Release missing prisma/schema.prisma" >&2
   exit 1
 fi
+if [[ ! -f "${ENV_FILE}" ]]; then
+  echo "Runtime env file missing: ${ENV_FILE}" >&2
+  exit 1
+fi
+set -a
+source "${ENV_FILE}"
+set +a
+if [[ -z "${PLATFORM_SECRET_ENCRYPTION_KEY:-}" ]]; then
+  echo "[deploy] PLATFORM_SECRET_ENCRYPTION_KEY not set; app will derive a stable compatibility key"
+else
+  node -e '
+    const key = Buffer.from(process.env.PLATFORM_SECRET_ENCRYPTION_KEY, "base64");
+    if (key.length !== 32) {
+      console.error("PLATFORM_SECRET_ENCRYPTION_KEY must decode to 32 bytes");
+      process.exit(1);
+    }
+  '
+fi
 echo "[deploy] stop app processes before swap"
 systemctl stop service-platform || true
 systemctl stop service-platform-worker || true

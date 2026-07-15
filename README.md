@@ -10,7 +10,7 @@
 - Better Auth
 - PostgreSQL 16 + Prisma
 - pg-boss 邮件任务
-- 本地发件箱（后台可查看）/ SMTP
+- 本地发件箱（后台可查看）/ Resend API / SMTP
 
 ## 本地启动
 
@@ -120,6 +120,13 @@ pnpm check
 
 ## 邮件说明
 
-- 本地：SMTP 指向 Mailpit（`127.0.0.1:1025`），需额外运行 `pnpm worker`。
-- 正式环境：域名计划使用 `support.achord.cn`，发件人计划使用 `info@achord.cn`。
+- 本地默认写入后台「平台设置 → 发件箱」；需要测试 SMTP 时可指向 Mailpit（`127.0.0.1:1025`）。
+- 正式环境默认使用 Resend API：
+  - 发信域名：`mail.achord.cn`
+  - 发件人：`服务支持中心 <no-reply@mail.achord.cn>`
+  - 回复地址：`support@achord.cn`
+  - Webhook：`https://support.achord.cn/api/v1/webhooks/resend`
+- Resend API Key 和 Webhook Secret 由平台管理员在后台录入并加密保存。生产环境推荐使用 `openssl rand -base64 32` 生成 `PLATFORM_SECRET_ENCRYPTION_KEY`；未设置时系统会从现有 `BETTER_AUTH_SECRET` 稳定派生兼容密钥，避免旧服务器升级后无法启动。
+- 后台连接 Resend 后会显示需要添加到 Cloudflare 的 DNS 记录；不要修改 `achord.cn` 主域现有 Email Routing MX/SPF。
+- 完成域名验证和测试邮件后，再在后台启用 Resend。SMTP 保留为折叠的故障备用方式。
 - 邀请邮件依赖 `APP_URL`，正式环境请改成线上域名。

@@ -3,7 +3,14 @@ import { withSystemDb } from "@/lib/system-db";
 
 export type RuntimeMailSettings = {
   appUrl: string;
-  mailMode: "LOCAL_OUTBOX" | "SMTP";
+  mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
+  mailFrom: string;
+  mailReplyTo: string;
+  resendApiKeyEncrypted: string | null;
+  resendDomain: string;
+  resendDomainId: string | null;
+  resendDomainStatus: string | null;
+  resendWebhookId: string | null;
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -22,6 +29,9 @@ export async function ensurePlatformSettings() {
         id: 1,
         appUrl: env.APP_URL,
         mailMode: "LOCAL_OUTBOX",
+        mailFrom: "服务支持中心 <no-reply@mail.achord.cn>",
+        mailReplyTo: "support@achord.cn",
+        resendDomain: "mail.achord.cn",
         smtpHost: env.SMTP_HOST ?? null,
         smtpPort: env.SMTP_PORT ?? null,
         smtpUser: env.SMTP_USER ?? null,
@@ -38,6 +48,15 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
   return {
     appUrl: settings.appUrl?.trim() || env.APP_URL,
     mailMode: settings.mailMode,
+    mailFrom:
+      settings.mailFrom?.trim() ||
+      "服务支持中心 <no-reply@mail.achord.cn>",
+    mailReplyTo: settings.mailReplyTo?.trim() || "support@achord.cn",
+    resendApiKeyEncrypted: settings.resendApiKeyEncrypted,
+    resendDomain: settings.resendDomain || "mail.achord.cn",
+    resendDomainId: settings.resendDomainId,
+    resendDomainStatus: settings.resendDomainStatus,
+    resendWebhookId: settings.resendWebhookId,
     smtpHost: settings.smtpHost ?? env.SMTP_HOST ?? null,
     smtpPort: settings.smtpPort ?? env.SMTP_PORT ?? null,
     smtpUser: settings.smtpUser ?? env.SMTP_USER ?? null,

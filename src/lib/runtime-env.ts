@@ -8,6 +8,16 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.url(),
   APP_URL: z.url(),
   UPLOAD_DIR: z.string().default(".data/uploads"),
+  PLATFORM_SECRET_ENCRYPTION_KEY: z
+    .string()
+    .refine((value) => {
+      try {
+        return Buffer.from(value, "base64").length === 32;
+      } catch {
+        return false;
+      }
+    }, "PLATFORM_SECRET_ENCRYPTION_KEY 必须是 32 字节 Base64 密钥")
+    .optional(),
   // SMTP env is only a bootstrap fallback. Prefer admin platform settings.
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().int().positive().optional(),
@@ -47,6 +57,8 @@ function readEnvSource() {
         "http://localhost:3000",
       APP_URL: process.env.APP_URL ?? "http://localhost:3000",
       UPLOAD_DIR: process.env.UPLOAD_DIR,
+      PLATFORM_SECRET_ENCRYPTION_KEY:
+        process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
       SMTP_HOST: process.env.SMTP_HOST,
       SMTP_PORT: process.env.SMTP_PORT,
       SMTP_USER: process.env.SMTP_USER,
@@ -64,6 +76,8 @@ function readEnvSource() {
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     APP_URL: process.env.APP_URL,
     UPLOAD_DIR: process.env.UPLOAD_DIR,
+    PLATFORM_SECRET_ENCRYPTION_KEY:
+      process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
     SMTP_HOST: process.env.SMTP_HOST,
     SMTP_PORT: process.env.SMTP_PORT,
     SMTP_USER: process.env.SMTP_USER,

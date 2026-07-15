@@ -97,12 +97,18 @@ enum EventType {
 
 enum MailDeliveryMode {
   LOCAL_OUTBOX
+  RESEND
   SMTP
 }
 
 enum MailMessageStatus {
   QUEUED
   SENT
+  DELIVERY_DELAYED
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  SUPPRESSED
   FAILED
 }
 
@@ -580,6 +586,17 @@ model AuditLog {
 model PlatformSetting {
   id                              Int              @id @default(1)
   appUrl                          String?
+  mailFrom                        String           @default("服务支持中心 <no-reply@mail.achord.cn>")
+  mailReplyTo                     String           @default("support@achord.cn")
+  resendApiKeyEncrypted           String?
+  resendDomain                    String           @default("mail.achord.cn")
+  resendDomainId                  String?
+  resendDomainStatus              String?
+  resendDnsRecords                Json?
+  resendWebhookId                 String?
+  resendWebhookStatus             String?
+  resendWebhookSecretEncrypted    String?
+  resendLastCheckedAt             DateTime?
   smtpHost                        String?
   smtpPort                        Int?
   smtpUser                        String?
@@ -596,20 +613,39 @@ model PlatformSetting {
 }
 
 model MailMessage {
-  id           String            @id @default(cuid())
-  toEmail      String
-  subject      String
-  heading      String
-  body         String
-  actionLabel  String?
-  actionUrl    String?
-  status       MailMessageStatus @default(QUEUED)
-  errorMessage String?
-  providerId   String?
-  sentAt       DateTime?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
+  id             String              @id @default(cuid())
+  toEmail        String
+  subject        String
+  heading        String
+  body           String
+  actionLabel    String?
+  actionUrl      String?
+  deliveryMode   MailDeliveryMode    @default(LOCAL_OUTBOX)
+  status         MailMessageStatus   @default(QUEUED)
+  errorMessage   String?
+  providerId     String?
+  sentAt         DateTime?
+  lastEventAt    DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  providerEvents MailProviderEvent[]
 
   @@index([status, createdAt])
   @@index([toEmail, createdAt])
+  @@index([providerId])
+}
+
+model MailProviderEvent {
+  id                String      @id @default(cuid())
+  providerEventId   String      @unique
+  providerMessageId String?
+  eventType         String
+  detail            String?
+  occurredAt        DateTime
+  mailMessageId     String?
+  createdAt         DateTime    @default(now())
+  mailMessage       MailMessage? @relation(fields: [mailMessageId], references: [id], onDelete: SetNull)
+
+  @@index([providerMessageId, occurredAt])
+  @@index([mailMessageId, occurredAt])
 }
