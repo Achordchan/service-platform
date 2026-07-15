@@ -77,7 +77,7 @@ pnpm dev
 - 运行方式：systemd + Nginx 反代 + PostgreSQL（非 Docker / 非宝塔）
 - 代码目录：`/var/www/service-platform`
 - 服务：`service-platform`（Web）、`service-platform-worker`（邮件任务）
-- 推送到 `main` 或手动触发 GitHub Action `Deploy to VPS` 即可更新
+- 推送到 `main` 或手动触发 GitHub Action `Deploy to VPS` 即可更新（**构建在 GitHub 完成，VPS 不执行 next build**）
 - 本地紧急部署：`scripts/vps-deploy-local.sh`
 
 所需 GitHub Secrets：`VPS_HOST`、`VPS_USER`、`VPS_SSH_KEY`，可选 `VPS_PORT`、`APP_URL`。

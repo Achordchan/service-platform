@@ -12,10 +12,35 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        env:
+          # Build-time placeholders; runtime uses VPS /etc/service-platform/app.env
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=public
+          JOB_DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+          BETTER_AUTH_SECRET: github-actions-build-secret-at-least-32-chars
+          BETTER_AUTH_URL: https://support.achord.cn
+          APP_URL: https://support.achord.cn
+          NEXT_PUBLIC_APP_URL: https://support.achord.cn
+          NODE_ENV: production
+        run: pnpm build
 
       - name: Prepare SSH
         env:
@@ -55,20 +80,20 @@ jobs:
             --exclude '.env' \
             --exclude '.env.*' \
             --exclude 'node_modules/' \
-            --exclude '.next/' \
             --exclude '.data/' \
             --exclude 'public/uploads/' \
             --exclude 'test-results/' \
             --exclude 'playwright-report/' \
             --exclude 'coverage/' \
             --exclude '.DS_Store' \
+            --exclude 'tsconfig.tsbuildinfo' \
             ./ "${USER_NAME}@${VPS_HOST}:${REMOTE_DIR}/"
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
             "${USER_NAME}@${VPS_HOST}" "sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'"
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
-            "${USER_NAME}@${VPS_HOST}" "ls -1dt /home/${USER_NAME}/releases/* 2>/dev/null | tail -n +6 | xargs -r rm -rf"
+            "${USER_NAME}@${VPS_HOST}" "ls -1dt /home/${USER_NAME}/releases/* 2>/dev/null | tail -n +4 | xargs -r rm -rf"
 
       - name: Health check
         env:
@@ -76,14 +101,14 @@ jobs:
         run: |
           set -euo pipefail
           URL="${APP_URL:-https://support.achord.cn}/login"
-          for i in 1 2 3 4 5; do
+          for i in 1 2 3 4 5 6 7 8; do
             CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "${URL}" || true)"
             if [[ "${CODE}" == "200" ]]; then
               echo "health ok: ${URL} -> ${CODE}"
               exit 0
             fi
             echo "attempt ${i}: ${CODE}"
-            sleep 3
+            sleep 4
           done
           echo "health check failed for ${URL}" >&2
           exit 1
