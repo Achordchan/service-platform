@@ -11,6 +11,8 @@ export type RuntimeMailSettings = {
   resendDomainId: string | null;
   resendDomainStatus: string | null;
   resendWebhookId: string | null;
+  resendWebhookStatus: string | null;
+  hasResendWebhookSecret: boolean;
   smtpHost: string | null;
   smtpPort: number | null;
   smtpUser: string | null;
@@ -58,6 +60,10 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
     resendDomainId: settings.resendDomainId,
     resendDomainStatus: settings.resendDomainStatus,
     resendWebhookId: settings.resendWebhookId,
+    resendWebhookStatus: settings.resendWebhookStatus,
+    hasResendWebhookSecret: Boolean(
+      settings.resendWebhookSecretEncrypted,
+    ),
     smtpHost: settings.smtpHost ?? env.SMTP_HOST ?? null,
     smtpPort: settings.smtpPort ?? env.SMTP_PORT ?? null,
     smtpUser: settings.smtpUser ?? env.SMTP_USER ?? null,

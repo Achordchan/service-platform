@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { publishProjectChange } from "@/modules/notifications/notification-service";
 import {
   assertCanManageProjectDelivery,
   assertCanViewProject,
@@ -77,6 +78,12 @@ export function createMilestone(
       projectId,
       metadata: auditMetadata(input),
     });
+    await publishProjectChange(tx, actor, {
+      change: "MILESTONE_CREATED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      payload: { milestoneId: milestone.id },
+    });
     return milestone;
   });
 }
@@ -127,6 +134,12 @@ export function updateMilestone(
       projectId,
       metadata: auditMetadata(input),
     });
+    await publishProjectChange(tx, actor, {
+      change: "MILESTONE_UPDATED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      payload: { milestoneId: milestone.id },
+    });
     return milestone;
   });
 }
@@ -152,6 +165,12 @@ export function deleteMilestone(
       customerSpaceId: context.customerSpaceId,
       projectId,
       metadata: { title: existing.title },
+    });
+    await publishProjectChange(tx, actor, {
+      change: "MILESTONE_DELETED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      payload: { milestoneId },
     });
   });
 }

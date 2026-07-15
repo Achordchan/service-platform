@@ -21,6 +21,12 @@ if [[ ! -f "${ENV_FILE}" ]]; then
   echo "Runtime env file missing: ${ENV_FILE}" >&2
   exit 1
 fi
+NEEDS_INSTALL=true
+if [[ -f "${APP_DIR}/pnpm-lock.yaml" ]] &&
+   [[ -d "${APP_DIR}/node_modules" ]] &&
+   cmp -s "${RELEASE_STAGING}/pnpm-lock.yaml" "${APP_DIR}/pnpm-lock.yaml"; then
+  NEEDS_INSTALL=false
+fi
 set -a
 source "${ENV_FILE}"
 set +a
@@ -35,9 +41,32 @@ else
     }
   '
 fi
+
+stop_service() {
+  local unit="$1"
+  systemctl stop --no-block "${unit}" || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if [[ "$(systemctl show "${unit}" -p ActiveState --value)" == "inactive" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[deploy] ${unit} exceeded graceful stop window; terminating remaining processes"
+  systemctl kill --kill-who=all --signal=SIGKILL "${unit}" || true
+  for _ in 1 2 3 4 5; do
+    if [[ "$(systemctl show "${unit}" -p ActiveState --value)" == "inactive" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "[deploy] ${unit} failed to stop" >&2
+  systemctl status "${unit}" --no-pager -l >&2 || true
+  return 1
+}
+
 echo "[deploy] stop app processes before swap"
-systemctl stop service-platform || true
-systemctl stop service-platform-worker || true
+stop_service service-platform
+stop_service service-platform-worker
 echo "[deploy] sync release -> ${APP_DIR}"
 rsync -a --delete \
   --exclude ".git/" \
@@ -54,15 +83,44 @@ rsync -a --delete \
 install -o ${APP_USER} -g ${APP_USER} -m 640 "${ENV_FILE}" "${APP_DIR}/.env"
 rm -rf "${APP_DIR}/src/generated/prisma"
 cd "${APP_DIR}"
-echo "[deploy] install deps"
-sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && CI=true pnpm install --frozen-lockfile"
+if [[ "${NEEDS_INSTALL}" == true ]]; then
+  echo "[deploy] install deps"
+  sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && CI=true pnpm install --frozen-lockfile"
+else
+  echo "[deploy] lockfile unchanged; reuse existing node_modules"
+fi
 echo "[deploy] prisma generate + migrate"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && set -a && source ${ENV_FILE} && set +a && NODE_OPTIONS=--max-old-space-size=768 pnpm exec prisma generate && pnpm exec prisma migrate deploy"
 echo "[deploy] restart services"
 systemctl restart service-platform
 systemctl restart service-platform-worker
-sleep 2
-systemctl is-active --quiet service-platform
-systemctl is-active --quiet service-platform-worker
+
+wait_for_stable_service() {
+  local unit="$1"
+  local active sub pid
+  for _ in 1 2 3 4 5 6 7 8; do
+    active="$(systemctl show "${unit}" -p ActiveState --value)"
+    sub="$(systemctl show "${unit}" -p SubState --value)"
+    pid="$(systemctl show "${unit}" -p MainPID --value)"
+    if [[ "${active}" == "active" && "${sub}" == "running" && "${pid}" != "0" ]]; then
+      sleep 5
+      active="$(systemctl show "${unit}" -p ActiveState --value)"
+      sub="$(systemctl show "${unit}" -p SubState --value)"
+      pid="$(systemctl show "${unit}" -p MainPID --value)"
+      if [[ "${active}" == "active" && "${sub}" == "running" && "${pid}" != "0" ]]; then
+        echo "[deploy] ${unit} stable: pid=${pid}"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  echo "[deploy] ${unit} failed to reach stable running state" >&2
+  systemctl status "${unit}" --no-pager -l >&2 || true
+  journalctl -u "${unit}" -n 80 --no-pager >&2 || true
+  return 1
+}
+
+wait_for_stable_service service-platform
+wait_for_stable_service service-platform-worker
 systemctl is-active --quiet x-ui
 echo "[deploy] done"

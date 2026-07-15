@@ -1,6 +1,7 @@
 import { Box, Container } from "@mui/material";
 import { ProjectDeliveryActions } from "@/components/staff/project-delivery-actions";
 import { ProjectDetailWorkspace } from "@/components/staff/project-detail-workspace";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { StaffStatus } from "@/components/staff/staff-status";
 import type {
@@ -145,6 +146,7 @@ export default async function StaffProjectDetailPage({
         py: { xs: 3, md: 4 },
       }}
     >
+      <RealtimeRouteRefresh mode="project-detail" projectId={project.id} />
       <StaffPageHeading
         backHref="/staff/projects"
         backLabel="项目"

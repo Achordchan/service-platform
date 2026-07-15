@@ -132,6 +132,7 @@ export function createRequest(
         projectId,
         requestId: request.id,
         requestNumber: request.number,
+        actorId: actor.id,
       },
       notificationType: "REQUEST_CREATED",
       notificationTitle: `新服务请求 ${request.number}`,

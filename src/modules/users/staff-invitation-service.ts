@@ -4,7 +4,10 @@ import { hashPassword } from "better-auth/crypto";
 import { z } from "zod";
 import type { Actor } from "@/lib/actor";
 import { withActorDb, withSystemDb } from "@/lib/actor";
-import { enqueueMail } from "@/lib/jobs";
+import {
+  assertMailDeliveryReady,
+  enqueueMail,
+} from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   createInvitationToken,
@@ -151,6 +154,7 @@ export function listStaffInvitations(actor: Actor) {
 export async function inviteStaff(actor: Actor, raw: InviteStaffInput) {
   assertAllowed(actor.isPlatformAdmin);
   const input = inviteStaffSchema.parse(raw);
+  await assertMailDeliveryReady();
   const email = input.email.toLowerCase();
   const tokenData = createInvitationToken();
   const profile = profileData(input);

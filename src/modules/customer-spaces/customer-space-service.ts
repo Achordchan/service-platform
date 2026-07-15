@@ -3,7 +3,10 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
-import { enqueueMail } from "@/lib/jobs";
+import {
+  assertMailDeliveryReady,
+  enqueueMail,
+} from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { createInvitationToken } from "@/modules/invitations/invitation-token";
 import {
@@ -59,6 +62,9 @@ export async function createCustomerSpace(
   input: CreateCustomerSpaceInput,
 ) {
   assertAllowed(actor.isPlatformAdmin);
+  if (!input.ownerId) {
+    await assertMailDeliveryReady();
+  }
   const result = await withActorDb(actor, async (tx) => {
     const baseSlug = buildSpaceSlug(input.name, input.slug);
     let slug = baseSlug;

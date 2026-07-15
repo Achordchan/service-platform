@@ -17,6 +17,11 @@ import {
 } from "@mui/material";
 import NotificationsNoneOutlinedIcon from "@mui/icons-material/NotificationsNoneOutlined";
 import DoneAllOutlinedIcon from "@mui/icons-material/DoneAllOutlined";
+import {
+  subscribeRealtime,
+  subscribeRealtimeReady,
+  type RealtimeEventType,
+} from "@/lib/realtime-client";
 
 type NotificationItem = {
   id: string;
@@ -28,7 +33,7 @@ type NotificationItem = {
   createdAt: string;
 };
 
-const eventTypes = [
+const eventTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
   "PROJECT_UPDATE_CREATED",
   "UPDATE_COMMENT_CREATED",
@@ -60,19 +65,18 @@ export function NotificationMenu({ staff }: { staff: boolean }) {
     }
 
     void refresh();
-    const source = new EventSource("/api/v1/notifications/stream");
-    const handleEvent = () => void refresh();
-    for (const type of eventTypes) {
-      source.addEventListener(type, handleEvent);
-    }
+    const unsubscribeEvents = subscribeRealtime(eventTypes, (event) => {
+      if (event.live) void refresh();
+    });
+    const unsubscribeReady = subscribeRealtimeReady(() => {
+      void refresh();
+    });
     const handleLocalUpdate = () => void refresh();
     window.addEventListener("notifications-updated", handleLocalUpdate);
     return () => {
       active = false;
-      for (const type of eventTypes) {
-        source.removeEventListener(type, handleEvent);
-      }
-      source.close();
+      unsubscribeEvents();
+      unsubscribeReady();
       window.removeEventListener("notifications-updated", handleLocalUpdate);
     };
   }, []);

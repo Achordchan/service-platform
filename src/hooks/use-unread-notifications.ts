@@ -1,6 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  subscribeRealtime,
+  subscribeRealtimeReady,
+  type RealtimeEventType,
+} from "@/lib/realtime-client";
 
 export type UnreadNotification = {
   id: string;
@@ -13,7 +18,7 @@ export type UnreadNotification = {
   createdAt: string;
 };
 
-const streamTypes = [
+const streamTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
   "PROJECT_UPDATE_CREATED",
   "UPDATE_COMMENT_CREATED",
@@ -43,19 +48,18 @@ export function useUnreadNotifications() {
     const timer = window.setTimeout(() => {
       void refresh();
     }, 0);
-    const source = new EventSource("/api/v1/notifications/stream");
-    const onEvent = () => void refresh();
-    for (const type of streamTypes) {
-      source.addEventListener(type, onEvent);
-    }
+    const unsubscribeEvents = subscribeRealtime(streamTypes, (event) => {
+      if (event.live) void refresh();
+    });
+    const unsubscribeReady = subscribeRealtimeReady(() => {
+      void refresh();
+    });
     const onLocal = () => void refresh();
     window.addEventListener("notifications-updated", onLocal);
     return () => {
       window.clearTimeout(timer);
-      for (const type of streamTypes) {
-        source.removeEventListener(type, onEvent);
-      }
-      source.close();
+      unsubscribeEvents();
+      unsubscribeReady();
       window.removeEventListener("notifications-updated", onLocal);
     };
   }, [refresh]);

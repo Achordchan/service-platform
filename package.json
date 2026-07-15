@@ -20,7 +20,7 @@
     "db:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "worker": "tsx --env-file=.env src/worker.ts",
+    "worker": "tsx --tsconfig tsconfig.worker.json --env-file=.env src/worker.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "postinstall": "prisma generate"
   },

@@ -1,5 +1,6 @@
 import { Container, Stack } from "@mui/material";
 import { ProjectTable } from "@/components/staff/project-table";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import type { ProjectListItem } from "@/components/staff/staff-types";
 import { requireUserWithAccess } from "@/lib/session";
@@ -64,6 +65,7 @@ export default async function StaffProjectsPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
+        <RealtimeRouteRefresh mode="project-list" />
         <StaffPageHeading title="项目" />
         <ProjectTable
           projects={rows}

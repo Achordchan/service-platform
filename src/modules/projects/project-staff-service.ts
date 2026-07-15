@@ -3,6 +3,10 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import {
+  publishDetachedProjectChange,
+  publishProjectChange,
+} from "@/modules/notifications/notification-service";
 import { assertCanViewProject } from "@/modules/projects/project-access";
 import {
   assertAllowed,
@@ -106,6 +110,12 @@ export function addProjectStaff(
       projectId,
       metadata: input,
     });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_STAFF_ADDED",
+      customerSpaceId: project.customerSpaceId,
+      projectId,
+      payload: { projectStaffId: staff.id, userId: input.userId },
+    });
     return staff;
   });
 }
@@ -141,6 +151,12 @@ export function updateProjectStaff(
       projectId,
       metadata: input,
     });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_STAFF_UPDATED",
+      customerSpaceId: staff.project.customerSpaceId,
+      projectId,
+      payload: { projectStaffId: updated.id, userId: staff.userId },
+    });
     return updated;
   });
 }
@@ -168,6 +184,18 @@ export function removeProjectStaff(
       customerSpaceId: staff.project.customerSpaceId,
       projectId,
       metadata: { userId: staff.userId, role: staff.role },
+    });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_STAFF_REMOVED",
+      customerSpaceId: staff.project.customerSpaceId,
+      projectId,
+      payload: { projectStaffId, userId: staff.userId },
+    });
+    await publishDetachedProjectChange(tx, actor, {
+      change: "PROJECT_ACCESS_REVOKED",
+      projectId,
+      userIds: [staff.userId],
+      payload: { projectStaffId },
     });
   });
 }

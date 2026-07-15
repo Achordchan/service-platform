@@ -2,11 +2,15 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
 import type { Actor } from "@/lib/actor";
-import { enqueueMail } from "@/lib/jobs";
+import {
+  assertMailDeliveryReady,
+  enqueueMail,
+} from "@/lib/jobs";
 import { createCustomerSpace } from "@/modules/customer-spaces/customer-space-service";
 import { acceptInvitation } from "@/modules/invitations/invitation-service";
 
 vi.mock("@/lib/jobs", () => ({
+  assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
   enqueueMail: vi.fn().mockResolvedValue("test-job"),
 }));
 
@@ -152,5 +156,44 @@ describe("客户开户与 Owner 邀请", () => {
         password: "Onboarding!2026",
       }),
     ).rejects.toThrow("INVITATION_INVALID");
+  });
+
+  it("邮件通道未启用时不会留下半创建的客户或空间", async () => {
+    const blockedEmail = `blocked-${randomUUID()}@local.test`;
+    const blockedSlug = `blocked-${randomUUID()}`;
+    vi.mocked(assertMailDeliveryReady).mockRejectedValueOnce(
+      new Error("邮件服务尚未启用"),
+    );
+
+    await expect(
+      createCustomerSpace(admin, {
+        name: "不应创建的客户",
+        slug: blockedSlug,
+        ownerName: "测试客户",
+        ownerEmail: blockedEmail,
+        memberLimit: 1,
+        status: "ACTIVE",
+      }),
+    ).rejects.toThrow("邮件服务尚未启用");
+
+    const result = await ownerPool.query<{
+      space_count: string;
+      user_count: string;
+    }>(
+      `
+        SELECT
+          (
+            SELECT COUNT(*) FROM "CustomerSpace" WHERE slug = $1
+          )::text AS space_count,
+          (
+            SELECT COUNT(*) FROM "User" WHERE email = $2
+          )::text AS user_count
+      `,
+      [blockedSlug, blockedEmail],
+    );
+    expect(result.rows[0]).toEqual({
+      space_count: "0",
+      user_count: "0",
+    });
   });
 });

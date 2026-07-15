@@ -41,6 +41,104 @@ export async function publishEvent(
   return { ...input, id };
 }
 
+export function publishProjectChange(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    change: string;
+    customerSpaceId: string;
+    projectId: string;
+    visibility?: ContentVisibility;
+    payload?: Prisma.InputJsonObject;
+  },
+) {
+  return publishEvent(tx, {
+    type: "PROJECT_UPDATED",
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    payload: {
+      change: input.change,
+      actorId: actor.id,
+      projectId: input.projectId,
+      ...(input.visibility ? { visibility: input.visibility } : {}),
+      ...(input.payload ?? {}),
+    },
+  });
+}
+
+export function publishRequestChange(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    change: string;
+    customerSpaceId: string;
+    projectId: string;
+    serviceRequestId: string;
+    visibility?: ContentVisibility;
+    payload?: Prisma.InputJsonObject;
+  },
+) {
+  return publishEvent(tx, {
+    type: "REQUEST_UPDATED",
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    serviceRequestId: input.serviceRequestId,
+    payload: {
+      change: input.change,
+      actorId: actor.id,
+      projectId: input.projectId,
+      requestId: input.serviceRequestId,
+      ...(input.visibility ? { visibility: input.visibility } : {}),
+      ...(input.payload ?? {}),
+    },
+  });
+}
+
+export async function publishDetachedProjectChange(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    change: string;
+    projectId: string;
+    userIds: string[];
+    payload?: Prisma.InputJsonObject;
+  },
+) {
+  const events = [];
+  for (const userId of uniqueStrings([...input.userIds, actor.id])) {
+    events.push(
+      await publishEvent(tx, {
+        type: "PROJECT_UPDATED",
+        userId,
+        payload: {
+          change: input.change,
+          actorId: actor.id,
+          projectId: input.projectId,
+          ...(input.payload ?? {}),
+        },
+      }),
+    );
+  }
+  return events;
+}
+
+export async function publishProjectDeleted(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const audience = await loadProjectAudience(tx, projectId);
+  return publishDetachedProjectChange(tx, actor, {
+    change: "PROJECT_DELETED",
+    projectId,
+    userIds: [
+      ...audience.customerUserIds,
+      ...audience.projectStaffUserIds,
+      ...audience.platformAdminUserIds,
+    ],
+  });
+}
+
 export async function createNotification(
   tx: Prisma.TransactionClient,
   input: {

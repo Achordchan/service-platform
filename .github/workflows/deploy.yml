@@ -80,6 +80,8 @@ jobs:
             --exclude '.env' \
             --exclude '.env.*' \
             --exclude 'node_modules/' \
+            --exclude '.next/dev/' \
+            --exclude '.next/cache/' \
             --exclude '.data/' \
             --exclude 'public/uploads/' \
             --exclude 'test-results/' \
@@ -95,8 +97,7 @@ jobs:
               APP_DIR=/var/www/service-platform
               NEEDS_CLEAN_INSTALL=false
               if [[ ! -f \"\${APP_DIR}/pnpm-lock.yaml\" ]] ||
-                 ! cmp -s '${REMOTE_DIR}/pnpm-lock.yaml' \"\${APP_DIR}/pnpm-lock.yaml\" ||
-                 ! cmp -s '${REMOTE_DIR}/package.json' \"\${APP_DIR}/package.json\"; then
+                 ! cmp -s '${REMOTE_DIR}/pnpm-lock.yaml' \"\${APP_DIR}/pnpm-lock.yaml\"; then
                 NEEDS_CLEAN_INSTALL=true
               fi
               if [[ \"\${NEEDS_CLEAN_INSTALL}\" == true && -d \"\${APP_DIR}/node_modules\" ]]; then

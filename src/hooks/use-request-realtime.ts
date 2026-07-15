@@ -2,22 +2,30 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import {
+  subscribeRealtime,
+  subscribeRealtimeReady,
+  type RealtimeEventType,
+} from "@/lib/realtime-client";
 import { bindUiSoundUnlock, playRequestUpdateSound } from "@/lib/ui-sound";
 
-const REQUEST_LIVE_EVENTS = [
+const REQUEST_LIVE_EVENTS: readonly RealtimeEventType[] = [
   "REQUEST_MESSAGE_CREATED",
   "REQUEST_STATUS_CHANGED",
   "REQUEST_ASSIGNED",
+  "REQUEST_UPDATED",
 ] as const;
 
-type LiveEventPayload = {
-  requestId?: string;
-  serviceRequestId?: string;
-  actorId?: string;
-  eventId?: string;
-};
+const REQUEST_SOUND_EVENTS = new Set<RealtimeEventType>([
+  "REQUEST_MESSAGE_CREATED",
+  "REQUEST_STATUS_CHANGED",
+  "REQUEST_ASSIGNED",
+]);
 
-function matchesRequest(payload: LiveEventPayload, requestId: string) {
+function matchesRequest(
+  payload: { requestId?: string; serviceRequestId?: string | null },
+  requestId: string,
+) {
   return (
     payload.requestId === requestId || payload.serviceRequestId === requestId
   );
@@ -36,7 +44,7 @@ export function useRequestRealtime(
 ) {
   const router = useRouter();
   const suppressUntilRef = useRef(0);
-  const liveReadyRef = useRef(false);
+  const pendingCatchupRef = useRef(false);
   const enableSound = options?.enableSound !== false;
   const currentUserId = options?.currentUserId;
 
@@ -54,28 +62,12 @@ export function useRequestRealtime(
   useEffect(() => {
     if (!requestId) return;
 
-    liveReadyRef.current = false;
-    const source = new EventSource("/api/v1/notifications/stream");
-
-    // First backlog from SSE is historical catch-up; only live events should chime.
-    const markLiveReady = () => {
-      window.setTimeout(() => {
-        liveReadyRef.current = true;
-      }, 600);
-    };
-    source.addEventListener("open", markLiveReady);
-
-    const handleEvent = (event: MessageEvent<string>) => {
-      let payload: LiveEventPayload = {};
-      try {
-        payload = JSON.parse(event.data) as LiveEventPayload;
-      } catch {
-        return;
-      }
+    const unsubscribeEvents = subscribeRealtime(REQUEST_LIVE_EVENTS, (event) => {
+      const payload = event.payload;
       if (!matchesRequest(payload, requestId)) return;
 
-      // Ignore historical replay when the stream first connects.
-      if (!liveReadyRef.current) {
+      if (!event.live) {
+        pendingCatchupRef.current = true;
         return;
       }
 
@@ -83,25 +75,28 @@ export function useRequestRealtime(
       const isOwnEvent =
         Boolean(currentUserId) && payload.actorId === currentUserId;
 
-      if (enableSound && !isLocalWindow && !isOwnEvent) {
+      if (
+        enableSound &&
+        REQUEST_SOUND_EVENTS.has(event.type) &&
+        !isLocalWindow &&
+        !isOwnEvent
+      ) {
         playRequestUpdateSound();
       }
 
       if (!isLocalWindow || !isOwnEvent) {
         router.refresh();
       }
-    };
-
-    for (const type of REQUEST_LIVE_EVENTS) {
-      source.addEventListener(type, handleEvent as EventListener);
-    }
+    });
+    const unsubscribeReady = subscribeRealtimeReady(() => {
+      if (!pendingCatchupRef.current) return;
+      pendingCatchupRef.current = false;
+      router.refresh();
+    });
 
     return () => {
-      source.removeEventListener("open", markLiveReady);
-      for (const type of REQUEST_LIVE_EVENTS) {
-        source.removeEventListener(type, handleEvent as EventListener);
-      }
-      source.close();
+      unsubscribeEvents();
+      unsubscribeReady();
     };
   }, [currentUserId, enableSound, requestId, router]);
 }

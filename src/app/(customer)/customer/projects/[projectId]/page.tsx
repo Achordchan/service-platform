@@ -11,6 +11,7 @@ import {
   type ProjectTabKey as TabKey,
 } from "@/components/customer/project-tabs";
 import { ProjectUpdates } from "@/components/customer/project-updates";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { ServiceRequestList } from "@/components/customer/service-request-list";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 import { requireUserWithAccess } from "@/lib/session";
@@ -139,6 +140,7 @@ export default async function CustomerProjectPage({
         py: { xs: 3, md: 4 },
       }}
     >
+      <RealtimeRouteRefresh mode="project-detail" projectId={project.id} />
       <PageHeading
         backLabel="服务项目"
         backHref="/customer/projects"

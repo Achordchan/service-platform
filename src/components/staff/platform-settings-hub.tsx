@@ -186,9 +186,13 @@ export function PlatformSettingsHub({
         <SettingsRow
           title="邮件"
           summary={
-            resendReady
+            settings.mailMode === "RESEND"
               ? `${settings.resendDomain} · ${settings.mailFrom}`
-              : "尚未完成邮件服务配置"
+              : resendReady
+                ? "Resend 已连接，等待启用"
+                : settings.mailMode === "SMTP"
+                  ? settings.smtpFrom
+                  : "邮件发送未启用"
           }
           status={
             <Chip
@@ -198,9 +202,15 @@ export function PlatformSettingsHub({
                   ? "运行中"
                   : settings.mailMode === "SMTP"
                     ? "SMTP"
-                    : "本地"
+                    : "未启用"
               }
-              color={settings.mailMode === "RESEND" ? "success" : "default"}
+              color={
+                settings.mailMode === "RESEND"
+                  ? "success"
+                  : settings.mailMode === "LOCAL_OUTBOX"
+                    ? "warning"
+                    : "default"
+              }
             />
           }
           onClick={() => setDialog("mail")}

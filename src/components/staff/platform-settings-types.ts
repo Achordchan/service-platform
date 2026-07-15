@@ -48,13 +48,15 @@ export type MailMessageView = {
   deliveryMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
   status:
     | "QUEUED"
+    | "PROCESSING"
     | "SENT"
     | "DELIVERY_DELAYED"
     | "DELIVERED"
     | "BOUNCED"
     | "COMPLAINED"
     | "SUPPRESSED"
-    | "FAILED";
+    | "FAILED"
+    | "CANCELLED";
   errorMessage: string | null;
   attemptCount: number;
   lastAttemptAt: string | null;

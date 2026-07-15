@@ -20,12 +20,10 @@ export function SmtpFallbackSettings({
   settings,
   busy,
   onSave,
-  onUseLocalOutbox,
 }: {
   settings: PlatformSettingsView;
   busy: boolean;
   onSave: (payload: Record<string, unknown>) => void;
-  onUseLocalOutbox: () => void;
 }) {
   const [smtpSecure, setSmtpSecure] = useState(settings.smtpSecure);
 
@@ -55,7 +53,7 @@ export function SmtpFallbackSettings({
         <Box>
           <Typography sx={{ fontWeight: 700 }}>高级备用方式</Typography>
           <Typography variant="body2" color="text.secondary">
-            SMTP 与本地发件箱
+            SMTP
           </Typography>
         </Box>
       </AccordionSummary>
@@ -121,13 +119,6 @@ export function SmtpFallbackSettings({
             label="使用 SSL/TLS"
           />
           <Stack direction="row" spacing={1} sx={{ justifyContent: "flex-end" }}>
-            <Button
-              type="button"
-              onClick={onUseLocalOutbox}
-              disabled={busy || settings.mailMode === "LOCAL_OUTBOX"}
-            >
-              使用本地发件箱
-            </Button>
             <Button type="submit" variant="outlined" disabled={busy}>
               保存并启用 SMTP
             </Button>

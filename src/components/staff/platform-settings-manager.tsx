@@ -36,6 +36,7 @@ export type {
 
 const statusLabel = {
   QUEUED: "排队中",
+  PROCESSING: "发送中",
   SENT: "已提交",
   DELIVERY_DELAYED: "投递延迟",
   DELIVERED: "已送达",
@@ -43,10 +44,12 @@ const statusLabel = {
   COMPLAINED: "被投诉",
   SUPPRESSED: "已拦截",
   FAILED: "失败",
+  CANCELLED: "已取消",
 } as const;
 
 const statusColor = {
   QUEUED: "default",
+  PROCESSING: "info",
   SENT: "info",
   DELIVERY_DELAYED: "warning",
   DELIVERED: "success",
@@ -54,10 +57,11 @@ const statusColor = {
   COMPLAINED: "error",
   SUPPRESSED: "error",
   FAILED: "error",
+  CANCELLED: "default",
 } as const;
 
 const deliveryModeLabel = {
-  LOCAL_OUTBOX: "本地",
+  LOCAL_OUTBOX: "未启用",
   RESEND: "Resend",
   SMTP: "SMTP",
 } as const;
@@ -85,6 +89,7 @@ export function PlatformSettingsManager({
     useState(initialSettings.customerReplyAttachmentsEnabled);
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [messageAction, setMessageAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] =
@@ -152,6 +157,46 @@ export function PlatformSettingsManager({
       );
     } finally {
       setRefreshing(false);
+    }
+  }
+
+  async function retryMessage(mailMessageId: string) {
+    setMessageAction(`${mailMessageId}:retry`);
+    setError(null);
+    setSuccess(null);
+    try {
+      await staffApi(
+        `/api/v1/admin/mail-messages/${mailMessageId}/retry`,
+        jsonRequest("POST", {}),
+      );
+      setSuccess("邮件已使用当前发信通道重新入队");
+      await refreshMessages();
+    } catch (retryError) {
+      setError(
+        retryError instanceof Error ? retryError.message : "邮件重试失败",
+      );
+    } finally {
+      setMessageAction(null);
+    }
+  }
+
+  async function cancelMessage(mailMessageId: string) {
+    if (!window.confirm("确认取消这封排队中的邮件？")) return;
+    setMessageAction(`${mailMessageId}:cancel`);
+    setError(null);
+    setSuccess(null);
+    try {
+      await staffApi(`/api/v1/admin/mail-messages/${mailMessageId}`, {
+        method: "DELETE",
+      });
+      setSuccess("邮件已取消");
+      await refreshMessages();
+    } catch (cancelError) {
+      setError(
+        cancelError instanceof Error ? cancelError.message : "取消失败",
+      );
+    } finally {
+      setMessageAction(null);
     }
   }
 
@@ -297,7 +342,12 @@ export function PlatformSettingsManager({
                       ) : null}
                     </TableCell>
                     <TableCell>
-                      <Stack direction="row" spacing={0.5}>
+                      <Stack
+                        direction="row"
+                        spacing={0.5}
+                        useFlexGap
+                        sx={{ flexWrap: "wrap" }}
+                      >
                         <Button
                           size="small"
                           onClick={() => setSelectedMessage(message)}
@@ -313,6 +363,31 @@ export function PlatformSettingsManager({
                         >
                           打开链接
                         </Button>
+                        ) : null}
+                        {message.status === "QUEUED" ||
+                        message.status === "FAILED" ||
+                        message.status === "CANCELLED" ? (
+                          <Button
+                            size="small"
+                            disabled={messageAction !== null}
+                            onClick={() => retryMessage(message.id)}
+                          >
+                            {messageAction === `${message.id}:retry`
+                              ? "入队中"
+                              : "重试"}
+                          </Button>
+                        ) : null}
+                        {message.status === "QUEUED" ? (
+                          <Button
+                            size="small"
+                            color="inherit"
+                            disabled={messageAction !== null}
+                            onClick={() => cancelMessage(message.id)}
+                          >
+                            {messageAction === `${message.id}:cancel`
+                              ? "取消中"
+                              : "取消"}
+                          </Button>
                         ) : null}
                       </Stack>
                     </TableCell>

@@ -11,6 +11,14 @@ REMOTE_DIR="/home/${USER_NAME}/releases/${STAMP}"
 
 cd "${ROOT_DIR}"
 export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
+rm -rf .next/dev .next/cache
+DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build?schema=public \
+JOB_DATABASE_URL=postgresql://build:build@127.0.0.1:5432/build \
+BETTER_AUTH_SECRET=local-emergency-build-secret-at-least-32-chars \
+BETTER_AUTH_URL=https://support.achord.cn \
+APP_URL=https://support.achord.cn \
+NEXT_PUBLIC_APP_URL=https://support.achord.cn \
+NODE_ENV=production \
 pnpm build
 
 ssh -i "${KEY}" -p "${PORT}" -o IdentitiesOnly=yes "${USER_NAME}@${HOST}" "mkdir -p '${REMOTE_DIR}'"
@@ -20,6 +28,8 @@ rsync -az --delete \
   --exclude '.env' \
   --exclude '.env.*' \
   --exclude 'node_modules/' \
+  --exclude '.next/dev/' \
+  --exclude '.next/cache/' \
   --exclude '.data/' \
   --exclude 'public/uploads/' \
   --exclude 'test-results/' \

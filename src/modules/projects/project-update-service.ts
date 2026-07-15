@@ -4,7 +4,10 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { dispatchProjectActivity } from "@/modules/notifications/notification-service";
+import {
+  dispatchProjectActivity,
+  publishProjectChange,
+} from "@/modules/notifications/notification-service";
 import {
   assertCanManageProjectDelivery,
   assertCanViewProject,
@@ -88,6 +91,7 @@ export function createProjectUpdate(
       eventPayload: {
         projectId,
         projectUpdateId: update.id,
+        actorId: actor.id,
       },
       notificationType: "PROJECT_UPDATE",
       notificationTitle: "项目进度已更新",
@@ -130,6 +134,13 @@ export function updateProjectUpdate(
       customerSpaceId: context.customerSpaceId,
       projectId,
       metadata: auditMetadata(input),
+    });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_UPDATE_UPDATED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      visibility: update.visibility,
+      payload: { projectUpdateId: update.id },
     });
     return update;
   });
@@ -222,6 +233,7 @@ export function createUpdateComment(
         projectId,
         projectUpdateId,
         updateCommentId: comment.id,
+        actorId: actor.id,
       },
       notificationType: "UPDATE_COMMENT",
       notificationTitle: "项目动态有新评论",
@@ -289,6 +301,16 @@ export function updateUpdateComment(
       customerSpaceId: context.customerSpaceId,
       projectId,
       metadata: auditMetadata(data),
+    });
+    await publishProjectChange(tx, actor, {
+      change: "UPDATE_COMMENT_UPDATED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      visibility: updated.visibility,
+      payload: {
+        projectUpdateId,
+        updateCommentId: updated.id,
+      },
     });
     return updated;
   });

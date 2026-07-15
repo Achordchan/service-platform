@@ -8,6 +8,10 @@ import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  publishProjectChange,
+  publishRequestChange,
+} from "@/modules/notifications/notification-service";
+import {
   createStorageKey,
   createProjectStorageKey,
   readPrivateFile,
@@ -110,6 +114,19 @@ export async function uploadRequestAttachment(
           requestMessageId: attachment.requestMessageId,
         },
       });
+      await publishRequestChange(tx, actor, {
+        change: "REQUEST_ATTACHMENT_UPLOADED",
+        customerSpaceId: request.project.customerSpaceId,
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+        visibility: attachment.visibility,
+        payload: {
+          attachmentId: attachment.id,
+          ...(attachment.requestMessageId
+            ? { requestMessageId: attachment.requestMessageId }
+            : {}),
+        },
+      });
 
       return attachment;
     });
@@ -184,6 +201,13 @@ export async function uploadProjectAttachment(
           size: attachment.size,
           visibility: attachment.visibility,
         },
+      });
+      await publishProjectChange(tx, actor, {
+        change: "PROJECT_ATTACHMENT_UPLOADED",
+        customerSpaceId: project.customerSpaceId,
+        projectId: project.projectId,
+        visibility: attachment.visibility,
+        payload: { attachmentId: attachment.id },
       });
       return attachment;
     });

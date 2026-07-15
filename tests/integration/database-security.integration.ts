@@ -20,6 +20,7 @@ type Fixture = {
   technician: Actor;
   spaceAId: string;
   spaceBId: string;
+  categoryAId: string;
   projectAId: string;
   projectBId: string;
   requestBId: string;
@@ -83,6 +84,33 @@ describe("数据库运行角色基线", () => {
 });
 
 describe("客户空间跨租户隔离", () => {
+  it("客户可通过应用角色创建并返回自己的服务请求", async () => {
+    const requestId = randomUUID();
+    const rows = await queryAsActor<{ id: string }>(
+      fixture.customerA,
+      `
+        INSERT INTO "ServiceRequest" (
+          id, number, title, description, priority, status, "projectId",
+          "categoryId", "createdById", "updatedAt"
+        )
+        VALUES (
+          $1, $2, 'RLS 创建回归', '验证 INSERT RETURNING',
+          'NORMAL', 'PENDING', $3, $4, $5, NOW()
+        )
+        RETURNING id
+      `,
+      [
+        requestId,
+        `RLS-${requestId}`,
+        fixture.projectAId,
+        fixture.categoryAId,
+        fixture.customerA.id,
+      ],
+    );
+
+    expect(rows).toEqual([{ id: requestId }]);
+  });
+
   it("客户 B 可以读取自己的空间、项目和服务请求", async () => {
     const result = await queryAsActor<{
       space_count: string;
@@ -575,6 +603,7 @@ async function createFixture(): Promise<Fixture> {
       technician,
       spaceAId: seedData.space_id,
       spaceBId: ids.spaceBId,
+      categoryAId: seedData.category_id,
       projectAId: seedData.project_id,
       projectBId: ids.projectBId,
       requestBId: ids.requestBId,

@@ -10,6 +10,7 @@ import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-
 import {
   getRuntimeMailSettings,
 } from "@/modules/platform-settings/mail-settings-runtime";
+import { assertDeliveryModeReady } from "@/modules/platform-settings/mail-delivery-readiness";
 
 export const EMAIL_JOB = "send-email";
 
@@ -47,16 +48,49 @@ export function isInlineMailWorkerEnabled() {
   return env.MAIL_INLINE_WORKER ?? process.env.NODE_ENV !== "production";
 }
 
+async function resolveDeliveryMode(requested?: MailDeliveryMode) {
+  const settings = await getRuntimeMailSettings();
+  const deliveryMode = requested ?? settings.mailMode;
+  assertDeliveryModeReady(settings, deliveryMode);
+  return { settings, deliveryMode };
+}
+
+export async function assertMailDeliveryReady(
+  deliveryMode?: MailDeliveryMode,
+) {
+  return (await resolveDeliveryMode(deliveryMode)).deliveryMode;
+}
+
+export async function queueMailMessage(
+  mailMessageId: string,
+  deliveryMode: MailDeliveryMode,
+) {
+  if (isInlineMailWorkerEnabled()) {
+    await startMailWorker();
+  }
+  const boss = await getBoss();
+  const jobId = await boss.send(
+    EMAIL_JOB,
+    { mailMessageId },
+    {
+      retryLimit: deliveryMode === "RESEND" ? 5 : 0,
+      retryDelay: 30,
+      retryBackoff: true,
+    },
+  );
+  if (!jobId) {
+    throw new Error("邮件任务未能加入队列");
+  }
+  return jobId;
+}
+
 export async function enqueueMail(input: EnqueueMailInput) {
-  const [settings, template] = await Promise.all([
-    getRuntimeMailSettings(),
-    buildTemplateMail({
-      key: input.templateKey,
-      variables: input.variables ?? {},
-      actionUrl: input.actionUrl,
-    }),
-  ]);
-  const deliveryMode = input.deliveryMode ?? settings.mailMode;
+  const { deliveryMode } = await resolveDeliveryMode(input.deliveryMode);
+  const template = await buildTemplateMail({
+    key: input.templateKey,
+    variables: input.variables ?? {},
+    actionUrl: input.actionUrl,
+  });
   const message = await withSystemDb((tx) =>
     tx.mailMessage.create({
       data: {
@@ -75,22 +109,7 @@ export async function enqueueMail(input: EnqueueMailInput) {
   );
 
   try {
-    if (isInlineMailWorkerEnabled()) {
-      await startMailWorker();
-    }
-    const boss = await getBoss();
-    const jobId = await boss.send(
-      EMAIL_JOB,
-      { mailMessageId: message.id },
-      {
-        retryLimit: deliveryMode === "RESEND" ? 5 : 0,
-        retryDelay: 30,
-        retryBackoff: true,
-      },
-    );
-    if (!jobId) {
-      throw new Error("邮件任务未能加入队列");
-    }
+    const jobId = await queueMailMessage(message.id, deliveryMode);
     return { jobId, mailMessageId: message.id };
   } catch (error) {
     await withSystemDb((tx) =>

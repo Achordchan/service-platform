@@ -1,5 +1,6 @@
 import { Container, Stack } from "@mui/material";
 import { RequestTable } from "@/components/staff/request-table";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import type { RequestListItem } from "@/components/staff/staff-types";
 import { requireUserWithAccess } from "@/lib/session";
@@ -56,6 +57,7 @@ export default async function StaffRequestsPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
+        <RealtimeRouteRefresh mode="request-list" />
         <StaffPageHeading title="服务请求" />
         <RequestTable requests={requests} />
       </Stack>

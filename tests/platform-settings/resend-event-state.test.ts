@@ -45,4 +45,15 @@ describe("Resend event state", () => {
       }),
     ).toBe(false);
   });
+
+  it("does not revive an administratively cancelled message", () => {
+    expect(
+      shouldApplyMailEvent({
+        currentStatus: "CANCELLED",
+        currentEventAt: new Date("2026-07-15T10:01:00Z"),
+        nextStatus: "SENT",
+        nextEventAt: new Date("2026-07-15T10:02:00Z"),
+      }),
+    ).toBe(false);
+  });
 });

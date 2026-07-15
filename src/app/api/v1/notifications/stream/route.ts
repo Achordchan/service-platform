@@ -37,6 +37,14 @@ function encodeEvent(event: {
   );
 }
 
+function encodeReady(cursor: bigint) {
+  return encoder.encode(
+    `id: ${cursor.toString()}\nevent: STREAM_READY\ndata: ${JSON.stringify({
+      eventId: cursor.toString(),
+    })}\n\n`,
+  );
+}
+
 export async function GET(request: Request) {
   const { actor } = await requireUserWithAccess();
   const headerId = request.headers.get("last-event-id") ?? "0";
@@ -71,11 +79,14 @@ export async function GET(request: Request) {
       controller = streamController;
       const sendPending = async () => {
         if (closed) return;
-        const events = await listVisibleEvents(actor, cursor);
-        for (const event of events) {
-          if (closed) return;
-          streamController.enqueue(encodeEvent(event));
-          cursor = BigInt(event.id);
+        while (!closed) {
+          const events = await listVisibleEvents(actor, cursor);
+          for (const event of events) {
+            if (closed) return;
+            streamController.enqueue(encodeEvent(event));
+            cursor = BigInt(event.id);
+          }
+          if (events.length < 100) return;
         }
       };
       let pendingSend = Promise.resolve();
@@ -101,6 +112,9 @@ export async function GET(request: Request) {
       });
 
       await queuePending();
+      if (!closed) {
+        streamController.enqueue(encodeReady(cursor));
+      }
     },
     async cancel() {
       await close(false);

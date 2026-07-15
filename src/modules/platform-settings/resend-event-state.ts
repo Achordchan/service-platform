@@ -12,13 +12,15 @@ const STATUS_BY_EVENT: Record<string, MailMessageStatus | undefined> = {
 
 const STATUS_PRIORITY: Record<MailMessageStatus, number> = {
   QUEUED: 0,
-  SENT: 1,
-  DELIVERY_DELAYED: 2,
-  DELIVERED: 3,
-  FAILED: 4,
-  BOUNCED: 4,
-  SUPPRESSED: 4,
-  COMPLAINED: 5,
+  PROCESSING: 1,
+  SENT: 2,
+  DELIVERY_DELAYED: 3,
+  DELIVERED: 4,
+  FAILED: 5,
+  BOUNCED: 5,
+  SUPPRESSED: 5,
+  COMPLAINED: 6,
+  CANCELLED: 7,
 };
 
 export function resendEventToMessageStatus(type: string) {

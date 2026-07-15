@@ -1,6 +1,7 @@
 import { Container } from "@mui/material";
 import type { ServiceRequestSummary } from "@/components/customer/customer-types";
 import { ServiceRequestList } from "@/components/customer/service-request-list";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { requireUserWithAccess } from "@/lib/session";
 import { listProjects } from "@/modules/projects/project-service";
 import { listProjectRequests } from "@/modules/requests/request-service";
@@ -47,6 +48,7 @@ export default async function CustomerRequestsPage() {
       maxWidth={false}
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
+      <RealtimeRouteRefresh mode="request-list" />
       <ServiceRequestList requests={requests} showHeading />
     </Container>
   );

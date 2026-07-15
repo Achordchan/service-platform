@@ -241,27 +241,39 @@ export async function processMailMessage(
   mailMessageId: string,
   options: { finalAttempt: boolean },
 ) {
-  const message = await withSystemDb((tx) =>
-    tx.mailMessage.findUnique({ where: { id: mailMessageId } }),
-  );
-  if (!message) {
-    throw new Error("邮件队列记录不存在");
-  }
-  if (message.status !== "QUEUED") {
-    return { id: message.id, skipped: true };
-  }
-
   const attemptAt = new Date();
-  await withSystemDb((tx) =>
-    tx.mailMessage.update({
-      where: { id: message.id },
+  const staleClaimBefore = new Date(attemptAt.getTime() - 15 * 60 * 1000);
+  const claim = await withSystemDb(async (tx) => {
+    const claimed = await tx.mailMessage.updateMany({
+      where: {
+        id: mailMessageId,
+        OR: [
+          { status: "QUEUED" },
+          {
+            status: "PROCESSING",
+            lastAttemptAt: { lt: staleClaimBefore },
+          },
+        ],
+      },
       data: {
+        status: "PROCESSING",
         attemptCount: { increment: 1 },
         lastAttemptAt: attemptAt,
         errorMessage: null,
       },
-    }),
-  );
+    });
+    const message = await tx.mailMessage.findUnique({
+      where: { id: mailMessageId },
+    });
+    return { claimed: claimed.count > 0, message };
+  });
+  const message = claim.message;
+  if (!message) {
+    throw new Error("邮件队列记录不存在");
+  }
+  if (!claim.claimed) {
+    return { id: message.id, skipped: true };
+  }
 
   const payload: StoredMailPayload = {
     id: message.id,
@@ -277,6 +289,11 @@ export async function processMailMessage(
 
   try {
     if (payload.deliveryMode === "LOCAL_OUTBOX") {
+      if (process.env.NODE_ENV === "production") {
+        throw new Error(
+          "邮件创建时未启用真实发信通道，未实际发送",
+        );
+      }
       await withSystemDb((tx) =>
         tx.mailMessage.update({
           where: { id: message.id },

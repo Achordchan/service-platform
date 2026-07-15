@@ -162,6 +162,16 @@ export async function updatePlatformSettings(
     }
 
     const nextMailMode = input.mailMode ?? current.mailMode;
+    if (
+      input.mailMode === "LOCAL_OUTBOX" &&
+      process.env.NODE_ENV === "production"
+    ) {
+      throw new DomainError(
+        "LOCAL_OUTBOX_NOT_AVAILABLE",
+        "生产环境不能启用本地发件箱",
+        409,
+      );
+    }
     if (nextMailMode === "RESEND") {
       if (
         !current.resendApiKeyEncrypted ||
@@ -217,6 +227,22 @@ export async function updatePlatformSettings(
       where: { id: 1 },
       data,
     });
+    if (
+      current.mailMode === "LOCAL_OUTBOX" &&
+      updated.mailMode !== "LOCAL_OUTBOX"
+    ) {
+      await tx.mailMessage.updateMany({
+        where: {
+          deliveryMode: "LOCAL_OUTBOX",
+          status: "QUEUED",
+        },
+        data: {
+          status: "FAILED",
+          errorMessage:
+            "邮件创建时未启用真实发信通道，请确认后使用当前通道重试",
+        },
+      });
+    }
 
     await writeAuditLog(tx, actor, {
       action: "PLATFORM_SETTINGS_UPDATED",

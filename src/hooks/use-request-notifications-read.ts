@@ -1,6 +1,18 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import {
+  subscribeRealtime,
+  subscribeRealtimeReady,
+  type RealtimeEventType,
+} from "@/lib/realtime-client";
+
+const liveTypes: readonly RealtimeEventType[] = [
+  "REQUEST_MESSAGE_CREATED",
+  "REQUEST_STATUS_CHANGED",
+  "REQUEST_ASSIGNED",
+  "NOTIFICATION_CREATED",
+];
 
 /**
  * When the user is on a request detail page, mark related notifications as read.
@@ -13,6 +25,7 @@ export function useRequestNotificationsRead(requestId: string) {
     if (!requestId) return;
 
     let cancelled = false;
+    let pendingCatchup = false;
 
     async function markRead() {
       const now = Date.now();
@@ -38,43 +51,32 @@ export function useRequestNotificationsRead(requestId: string) {
 
     void markRead();
 
-    const source = new EventSource("/api/v1/notifications/stream");
-    const liveTypes = [
-      "REQUEST_MESSAGE_CREATED",
-      "REQUEST_STATUS_CHANGED",
-      "REQUEST_ASSIGNED",
-      "NOTIFICATION_CREATED",
-    ] as const;
-
-    const onLive = (event: MessageEvent<string>) => {
-      try {
-        const payload = JSON.parse(event.data) as {
-          requestId?: string;
-          serviceRequestId?: string;
-        };
-        if (
-          payload.requestId === requestId ||
-          payload.serviceRequestId === requestId
-        ) {
-          window.setTimeout(() => {
-            if (!cancelled) void markRead();
-          }, 250);
-        }
-      } catch {
-        // ignore malformed events
+    const unsubscribeEvents = subscribeRealtime(liveTypes, (event) => {
+      const payload = event.payload;
+      if (
+        payload.requestId !== requestId &&
+        payload.serviceRequestId !== requestId
+      ) {
+        return;
       }
-    };
-
-    for (const type of liveTypes) {
-      source.addEventListener(type, onLive as EventListener);
-    }
+      if (!event.live) {
+        pendingCatchup = true;
+        return;
+      }
+      window.setTimeout(() => {
+        if (!cancelled) void markRead();
+      }, 250);
+    });
+    const unsubscribeReady = subscribeRealtimeReady(() => {
+      if (!pendingCatchup) return;
+      pendingCatchup = false;
+      void markRead();
+    });
 
     return () => {
       cancelled = true;
-      for (const type of liveTypes) {
-        source.removeEventListener(type, onLive as EventListener);
-      }
-      source.close();
+      unsubscribeEvents();
+      unsubscribeReady();
     };
   }, [requestId]);
 }

@@ -3,6 +3,7 @@ import type { ProjectSummary } from "@/components/customer/customer-types";
 import { PageHeading } from "@/components/customer/page-heading";
 import { ProjectList } from "@/components/customer/project-list";
 import { EmptyState } from "@/components/shared/content-state";
+import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { requireUserWithAccess } from "@/lib/session";
 import { listProjects } from "@/modules/projects/project-service";
 
@@ -43,6 +44,7 @@ export default async function CustomerProjectsPage() {
       sx={{ px: { xs: 2, md: 5 }, py: { xs: 3, md: 5 } }}
     >
       <Stack spacing={4}>
+        <RealtimeRouteRefresh mode="project-list" />
         <PageHeading
           title="服务项目"
           actionLabel="提交服务请求"

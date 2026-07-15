@@ -6,6 +6,10 @@ import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { removePrivateFile } from "@/modules/attachments/private-storage";
 import {
+  publishProjectChange,
+  publishProjectDeleted,
+} from "@/modules/notifications/notification-service";
+import {
   assertAllowed,
   assertFound,
   DomainError,
@@ -269,6 +273,11 @@ export function createProject(actor: Actor, input: CreateProjectInput) {
         managerUserIds: selectedManagerIds,
       }),
     });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_CREATED",
+      customerSpaceId: project.customerSpaceId,
+      projectId: project.id,
+    });
 
     const { milestones, ...result } = project;
     const progress = calculateProjectProgress(milestones);
@@ -331,6 +340,11 @@ export function updateProject(
       projectId: project.id,
       metadata: auditMetadata(input),
     });
+    await publishProjectChange(tx, actor, {
+      change: "PROJECT_UPDATED",
+      customerSpaceId: project.customerSpaceId,
+      projectId: project.id,
+    });
 
     const { milestones, ...result } = project;
     const progress = calculateProjectProgress(milestones);
@@ -379,6 +393,7 @@ export async function deleteProject(actor: Actor, projectId: string) {
         milestoneCount: existing._count.milestones,
       },
     });
+    await publishProjectDeleted(tx, actor, projectId);
     await tx.project.delete({ where: { id: projectId } });
     return attachments.map((attachment) => attachment.storageKey);
   });

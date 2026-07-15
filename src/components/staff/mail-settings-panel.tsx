@@ -23,7 +23,7 @@ import { ResendDnsRecords } from "@/components/staff/resend-dns-records";
 import { SmtpFallbackSettings } from "@/components/staff/smtp-fallback-settings";
 
 const modeLabel = {
-  LOCAL_OUTBOX: "本地发件箱",
+  LOCAL_OUTBOX: "未启用",
   RESEND: "Resend",
   SMTP: "SMTP",
 } as const;
@@ -141,7 +141,7 @@ export function MailSettingsPanel({
   async function disconnectResend() {
     if (
       !window.confirm(
-        "确认断开 Resend？如果当前正在使用 Resend，系统会切换到本地发件箱。",
+        "确认断开 Resend？如果当前正在使用 Resend，邮件发送将被停用。",
       )
     ) {
       return;
@@ -207,6 +207,11 @@ export function MailSettingsPanel({
         <Stack spacing={2.5}>
           {error ? <Alert severity="error">{error}</Alert> : null}
           {success ? <Alert severity="success">{success}</Alert> : null}
+          {settings.mailMode === "LOCAL_OUTBOX" ? (
+            <Alert severity="warning">
+              Resend 已连接但尚未启用，系统不会发送邀请或密码重置邮件。
+            </Alert>
+          ) : null}
           <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
             <Chip label="Resend 已连接" color="success" />
             <Chip label="域名已验证" variant="outlined" />
@@ -312,6 +317,11 @@ export function MailSettingsPanel({
 
         {error ? <Alert severity="error">{error}</Alert> : null}
         {success ? <Alert severity="success">{success}</Alert> : null}
+        {settings.mailMode === "LOCAL_OUTBOX" ? (
+          <Alert severity="warning">
+            邮件发送未启用。邀请、密码重置等操作将被阻止，不会进入虚假队列。
+          </Alert>
+        ) : null}
 
         <Stack
           key={`common-${settings.updatedAt ?? "initial"}`}
@@ -465,12 +475,6 @@ export function MailSettingsPanel({
           busy={busy !== null}
           onSave={(payload) =>
             saveSettings(payload, "SMTP 已保存并启用")
-          }
-          onUseLocalOutbox={() =>
-            saveSettings(
-              { mailMode: "LOCAL_OUTBOX" },
-              "已切换到本地发件箱",
-            )
           }
         />
       </Stack>

@@ -3,7 +3,10 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
-import { enqueueMail } from "@/lib/jobs";
+import {
+  assertMailDeliveryReady,
+  enqueueMail,
+} from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { CreateInvitationInput } from "@/modules/customer-spaces/schemas";
 import { createInvitationToken } from "@/modules/invitations/invitation-token";
@@ -190,6 +193,7 @@ export async function createInvitation(
   customerSpaceId: string,
   input: CreateInvitationInput,
 ) {
+  await assertMailDeliveryReady();
   const result = await withActorDb(actor, async (tx) => {
     const space = await tx.customerSpace.findUnique({
       where: { id: customerSpaceId },
