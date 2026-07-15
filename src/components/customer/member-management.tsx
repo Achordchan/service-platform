@@ -63,7 +63,7 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
   }
 
   if (spaces.length === 0) {
-    return <Alert severity="info">当前账号不是客户空间所有者。</Alert>;
+    return <Alert severity="info">仅客户管理员可管理成员。</Alert>;
   }
 
   return (
@@ -127,7 +127,7 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                   <ListItemText
                     primary={member.name}
                     secondary={`${member.email} · ${
-                      member.role === "OWNER" ? "空间所有者" : "成员"
+                      member.role === "OWNER" ? "管理员" : "成员"
                     }`}
                   />
                 </ListItem>

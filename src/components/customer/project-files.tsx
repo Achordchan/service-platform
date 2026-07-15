@@ -30,7 +30,7 @@ export function ProjectFiles({ files }: { files: ProjectAttachment[] }) {
     return (
       <EmptyState
         title="暂无文件资料"
-        description="项目交付文件上传后，会按更新时间统一展示在这里。"
+        description="文件上传后将在此显示。"
       />
     );
   }

@@ -31,7 +31,7 @@ export function ProjectUpdates({
     return (
       <EmptyState
         title="暂无进度动态"
-        description="项目负责人发布进度后，将在这里同步展示。"
+        description="进度发布后将在此显示。"
       />
     );
   }

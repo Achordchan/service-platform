@@ -91,7 +91,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
               overflow: "hidden",
             }}
           >
-            {project.description || "项目交付信息将在这里持续更新。"}
+            {project.description || "暂无项目说明"}
           </Typography>
 
           {project.showProgress !== false ? (

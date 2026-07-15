@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   Alert,
-  Box,
   Button,
   Chip,
   Paper,
@@ -120,7 +119,7 @@ export function MailSettingsPanel({
           "/api/v1/admin/mail/resend/setup",
           jsonRequest("POST", apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ),
-      "Resend 已连接，请将 DNS 记录添加到 Cloudflare",
+      "Resend 已连接，请配置 DNS",
     );
     if (next) {
       onSettingsChange(next);
@@ -172,7 +171,7 @@ export function MailSettingsPanel({
           "/api/v1/admin/mail/test",
           jsonRequest("POST", { to: testEmail.trim() }),
         ),
-      "测试邮件已加入发送队列，请在发件箱查看结果",
+      "测试邮件已加入队列",
     );
   }
 
@@ -188,26 +187,11 @@ export function MailSettingsPanel({
   return (
     <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
       <Stack spacing={3}>
-        <Box>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
-          >
-            <Box>
-              <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-                站点与邮件
-              </Typography>
-              <Typography color="text.secondary" sx={{ mt: 0.75 }}>
-                当前发送方式：{modeLabel[settings.mailMode]}
-              </Typography>
-            </Box>
-            <Chip
-              label={modeLabel[settings.mailMode]}
-              color={settings.mailMode === "RESEND" ? "success" : "default"}
-            />
-          </Stack>
-        </Box>
+        <Chip
+          label={`当前通道：${modeLabel[settings.mailMode]}`}
+          color={settings.mailMode === "RESEND" ? "success" : "default"}
+          sx={{ alignSelf: "flex-start" }}
+        />
 
         {error ? <Alert severity="error">{error}</Alert> : null}
         {success ? <Alert severity="success">{success}</Alert> : null}
@@ -224,7 +208,7 @@ export function MailSettingsPanel({
             defaultValue={settings.appUrl}
             required
             fullWidth
-            helperText="邀请链接、邮件按钮和 Webhook 地址会使用这个域名"
+            helperText="用于邮件链接和 Webhook"
           />
           <TextField
             name="mailFrom"
@@ -233,7 +217,6 @@ export function MailSettingsPanel({
             required
             fullWidth
             slotProps={{ input: { readOnly: true } }}
-            helperText="固定使用发信子域名，隔离主域邮件信誉"
           />
           <TextField
             name="mailReplyTo"
@@ -243,7 +226,6 @@ export function MailSettingsPanel({
             required
             fullWidth
             slotProps={{ input: { readOnly: true } }}
-            helperText="用户回复系统邮件时将发送到此地址"
           />
           <Stack direction="row" sx={{ justifyContent: "flex-end" }}>
             <Button type="submit" variant="outlined" disabled={busy !== null}>
@@ -253,7 +235,7 @@ export function MailSettingsPanel({
         </Stack>
 
         <Stepper activeStep={-1} alternativeLabel>
-          {["连接 Resend", "验证域名", "配置 Webhook", "测试并启用"].map(
+          {["连接", "验证域名", "Webhook", "启用"].map(
             (label, index) => (
               <Step key={label} completed={completedSteps[index]}>
                 <StepLabel>{label}</StepLabel>
@@ -266,12 +248,9 @@ export function MailSettingsPanel({
           <Typography sx={{ fontWeight: 700 }}>1. 连接 Resend</Typography>
           {!settings.hasDedicatedEncryptionKey ? (
             <Alert severity="warning">
-              当前服务器尚未配置独立加密主密钥。请先在 VPS 设置 PLATFORM_SECRET_ENCRYPTION_KEY 并重启服务，再录入 Resend API Key。
+              缺少 PLATFORM_SECRET_ENCRYPTION_KEY，请配置并重启服务。
             </Alert>
           ) : null}
-          <Alert severity="info">
-            API Key 仅在提交时传输，服务端加密保存，页面不会回显。留空可使用已保存的 Key 刷新配置。
-          </Alert>
           <TextField
             label="Resend API Key"
             type="password"
@@ -280,8 +259,8 @@ export function MailSettingsPanel({
             required={!settings.hasResendApiKey}
             helperText={
               settings.hasResendApiKey
-                ? "已保存；填写新值将替换现有 Key"
-                : "请填写具有域名、Webhook 和发信权限的 API Key"
+                ? "已安全保存；留空不修改"
+                : "粘贴 Resend API Key"
             }
             fullWidth
           />

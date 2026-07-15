@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAIL_TEMPLATE_KEYS } from "@/modules/platform-settings/mail-template-catalog";
 
 export const updatePlatformSettingsSchema = z
   .object({
@@ -70,4 +71,14 @@ export const setupResendSchema = z.object({
 
 export const testMailSchema = z.object({
   to: z.string().trim().email().max(255).optional(),
+  templateKey: z.enum(MAIL_TEMPLATE_KEYS).optional(),
+  deliveryMode: z.enum(["LOCAL_OUTBOX", "RESEND", "SMTP"]).optional(),
+});
+
+export const updateMailTemplateSchema = z.object({
+  subject: z.string().trim().min(1).max(200),
+  previewText: z.string().trim().min(1).max(240),
+  heading: z.string().trim().min(1).max(160),
+  body: z.string().trim().min(1).max(3000),
+  actionLabel: z.string().trim().max(80).nullable(),
 });

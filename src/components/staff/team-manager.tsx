@@ -264,17 +264,9 @@ export function TeamManager({
           sx={{
             mb: 2,
             alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
           }}
         >
-          <Box>
-            <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-              协作团队
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              外包与内部协作人员资料、角色组权限在此维护；平台管理员不可通过邀请创建。
-            </Typography>
-          </Box>
           <Button
             variant="contained"
             startIcon={<PersonAddAltOutlinedIcon />}
@@ -286,7 +278,7 @@ export function TeamManager({
         </Stack>
 
         {members.length === 0 ? (
-          <Alert severity="info">还没有协作成员</Alert>
+          <Alert severity="info">暂无团队成员</Alert>
         ) : (
           <Box sx={{ overflowX: "auto" }}>
             <Table size="small">
@@ -376,11 +368,11 @@ export function TeamManager({
       </Paper>
 
       <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
-        <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-          待接受邀请
-        </Typography>
-        <Typography color="text.secondary" sx={{ mt: 0.5, mb: 2 }}>
-          邀请 24 小时有效。本地可在发件箱或这里打开邀请完成加入。
+        <Typography
+          variant="h2"
+          sx={{ mb: 2, fontSize: 20, fontWeight: 700 }}
+        >
+          待处理邀请
         </Typography>
         {invitations.length === 0 ? (
           <Alert severity="info">暂无待处理邀请</Alert>

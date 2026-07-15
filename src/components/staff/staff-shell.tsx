@@ -60,17 +60,17 @@ const adminNavigation = [
   },
   {
     href: "/staff/team",
-    label: "团队成员",
+    label: "团队",
     icon: <GroupOutlinedIcon fontSize="small" />,
   },
   {
     href: "/staff/service-types",
-    label: "服务类型",
+    label: "服务配置",
     icon: <CategoryOutlinedIcon fontSize="small" />,
   },
   {
     href: "/staff/settings",
-    label: "平台设置",
+    label: "设置",
     icon: <SettingsOutlinedIcon fontSize="small" />,
   },
 ];
@@ -121,7 +121,7 @@ export function StaffShell({
               whiteSpace: "nowrap",
             }}
           >
-            服务管理后台
+            管理后台
           </Typography>
         ) : null}
       </Toolbar>
@@ -263,7 +263,7 @@ export function StaffShell({
                 fontSize: 18,
               }}
             >
-              服务管理后台
+              管理后台
             </Typography>
             <Stack
               direction="row"

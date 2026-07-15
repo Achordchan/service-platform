@@ -56,14 +56,7 @@ export default async function StaffRequestsPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="服务请求"
-          description={
-            actor.platformRole === "TECHNICIAN"
-              ? "查看和处理已分配给你的服务请求"
-              : "统一查看、分配并跟进客户服务请求"
-          }
-        />
+        <StaffPageHeading title="服务请求" />
         <RequestTable requests={requests} />
       </Stack>
     </Container>

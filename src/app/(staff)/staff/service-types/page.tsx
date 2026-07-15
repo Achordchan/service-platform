@@ -7,7 +7,7 @@ import { requireUserWithAccess } from "@/lib/session";
 import { listServiceTypes } from "@/modules/projects/service-type-service";
 
 export const metadata = {
-  title: "服务类型",
+  title: "服务配置",
 };
 
 export default async function StaffServiceTypesPage() {
@@ -37,10 +37,7 @@ export default async function StaffServiceTypesPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="服务类型"
-          description="管理项目服务类型及其可用请求分类"
-        />
+        <StaffPageHeading title="服务配置" />
         <ServiceTypeManager serviceTypes={serviceTypes} />
       </Stack>
     </Container>

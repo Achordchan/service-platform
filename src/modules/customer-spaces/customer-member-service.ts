@@ -294,10 +294,8 @@ export async function createInvitation(
   const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(result.token)}`;
   await enqueueMail({
     to: result.invitation.email,
-    subject: `加入${result.spaceName}的客户服务空间`,
-    heading: "你已被邀请加入服务支持中心",
-    body: "请在 24 小时内完成账号设置，之后即可查看项目进度并提交服务请求。",
-    actionLabel: "接受邀请",
+    templateKey: "CUSTOMER_MEMBER_INVITATION",
+    variables: { spaceName: result.spaceName },
     actionUrl,
   });
   return {

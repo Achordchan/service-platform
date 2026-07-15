@@ -147,7 +147,7 @@ export default async function StaffProjectDetailPage({
     >
       <StaffPageHeading
         backHref="/staff/projects"
-        backLabel="项目管理"
+        backLabel="项目"
         title={project.title}
         description={`${project.customerSpace.name} · ${project.serviceType.name}`}
         status={<StaffStatus value={project.status} />}

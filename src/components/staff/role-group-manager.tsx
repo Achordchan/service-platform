@@ -192,17 +192,9 @@ export function RoleGroupManager({
           sx={{
             mb: 2,
             alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
           }}
         >
-          <Box>
-            <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-              角色组与权限
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              为外包和技术协作配置角色组。平台管理员固定保留，不可通过角色组创建。
-            </Typography>
-          </Box>
           <Button
             variant="contained"
             startIcon={<AddOutlinedIcon />}

@@ -140,7 +140,7 @@ export default async function CustomerProjectPage({
       }}
     >
       <PageHeading
-        backLabel="我的服务"
+        backLabel="服务项目"
         backHref="/customer/projects"
         title={project.title}
         description={`服务周期：${

@@ -245,10 +245,8 @@ export async function inviteStaff(actor: Actor, raw: InviteStaffInput) {
 
   await enqueueMail({
     to: email,
-    subject: `邀请你加入服务支持协作：${result.roleGroupName}`,
-    heading: "欢迎加入协作团队",
-    body: `你已被邀请以「${result.roleGroupName}」身份加入服务支持中心。请在 24 小时内设置账号密码，之后可登录后台处理被授权的项目与服务请求。`,
-    actionLabel: "设置账号并加入",
+    templateKey: "STAFF_INVITATION",
+    variables: { roleGroupName: result.roleGroupName },
     actionUrl,
   });
 

@@ -161,12 +161,6 @@ export function NewRequestForm({
           <Alert severity="info">{submitProgress}</Alert>
         ) : null}
 
-        <Box>
-          <Typography variant="h3">选择服务</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            请求将由所选服务项目的交付团队处理。
-          </Typography>
-        </Box>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2.5}>
           <Controller
             name="projectId"
@@ -262,11 +256,7 @@ export function NewRequestForm({
                 <FormHelperText error sx={{ mx: 0, mt: 0.75 }}>
                   {errors.description.message}
                 </FormHelperText>
-              ) : (
-                <FormHelperText sx={{ mx: 0, mt: 0.75 }}>
-                  支持加粗、列表和链接
-                </FormHelperText>
-              )}
+              ) : null}
             </Box>
           )}
         />

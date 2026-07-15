@@ -119,14 +119,14 @@ export function ProjectOverview({
         {showMilestones ? (
           <Box>
             <Typography variant="h3" sx={{ mb: 2.5 }}>
-              项目里程碑
+              里程碑
             </Typography>
             {project.milestones.length > 0 ? (
               <MilestoneTimeline milestones={project.milestones} />
             ) : (
               <EmptyState
                 title="暂无里程碑"
-                description="项目计划确认后，将在这里展示阶段目标和完成状态。"
+                description="项目计划确认后将在此显示。"
               />
             )}
           </Box>
@@ -180,7 +180,7 @@ export function ProjectOverview({
             href={`/customer/projects/${project.id}?tab=requests`}
             size="small"
           >
-            查看全部服务请求
+            查看全部
           </Button>
         </Stack>
         <ServiceRequestTable requests={requests.slice(0, 4)} compact />

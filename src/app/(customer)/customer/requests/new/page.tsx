@@ -38,14 +38,13 @@ export default async function NewCustomerRequestPage({
     >
       <Stack spacing={3}>
         <PageHeading
-          backLabel={initialProjectId ? "返回项目请求" : "我的服务"}
+          backLabel={initialProjectId ? "返回项目请求" : "服务项目"}
           backHref={
             initialProjectId
               ? `/customer/projects/${initialProjectId}?tab=requests`
               : "/customer/projects"
           }
           title="新建服务请求"
-          description="提交后，服务团队会在服务请求中持续同步处理进度"
         />
         <NewRequestForm
           projects={projectOptions}

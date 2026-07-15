@@ -3,16 +3,15 @@
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   AppBar,
   Avatar,
   Box,
-  Chip,
+  Button,
   Container,
   Divider,
   Drawer,
-  FormControl,
   IconButton,
   List,
   ListItemButton,
@@ -20,7 +19,6 @@ import {
   ListItemText,
   Menu,
   MenuItem,
-  Select,
   Stack,
   Toolbar,
   Typography,
@@ -28,9 +26,9 @@ import {
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import HomeWorkOutlinedIcon from "@mui/icons-material/HomeWorkOutlined";
 import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
+import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
-import VerifiedIcon from "@mui/icons-material/Verified";
 import type {
   CustomerSpaceOption,
   CustomerUser,
@@ -41,15 +39,15 @@ import { NotificationMenu } from "@/components/shared/notification-menu";
 const baseNavigation = [
   {
     href: "/customer/projects",
-    label: "我的服务",
+    label: "服务项目",
     icon: <HomeWorkOutlinedIcon fontSize="small" />,
   },
+  {
+    href: "/customer/requests",
+    label: "服务请求",
+    icon: <SupportAgentOutlinedIcon fontSize="small" />,
+  },
 ];
-
-const roleLabel = {
-  OWNER: "空间所有者",
-  MEMBER: "空间成员",
-} as const;
 
 export function CustomerShell({
   user,
@@ -62,16 +60,15 @@ export function CustomerShell({
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
-  const [spaceId, setSpaceId] = useState(spaces[0]?.id ?? "");
   const canManageMembers = spaces.some((space) => space.role === "OWNER");
-  const currentSpace = spaces.find((space) => space.id === spaceId) ?? spaces[0];
   const navigation = canManageMembers
     ? [
         ...baseNavigation,
         {
           href: "/customer/members",
-          label: "成员管理",
+          label: "成员",
           icon: <ManageAccountsOutlinedIcon fontSize="small" />,
         },
       ]
@@ -105,115 +102,40 @@ export function CustomerShell({
                 whiteSpace: "nowrap",
               }}
             >
-              服务支持中心
+              客户中心
             </Typography>
+
+            <Stack
+              direction="row"
+              spacing={0.5}
+              sx={{ display: { xs: "none", md: "flex" }, ml: 3 }}
+            >
+              {navigation.map((item) => {
+                const selected =
+                  pathname === item.href ||
+                  pathname.startsWith(`${item.href}/`);
+                return (
+                  <Button
+                    key={item.href}
+                    component={Link}
+                    href={item.href}
+                    color={selected ? "primary" : "inherit"}
+                    sx={{
+                      px: 1.5,
+                      bgcolor: selected ? "action.selected" : "transparent",
+                    }}
+                  >
+                    {item.label}
+                  </Button>
+                );
+              })}
+            </Stack>
 
             <Stack
               direction="row"
               spacing={{ xs: 0.75, md: 1.25 }}
               sx={{ ml: "auto", alignItems: "center" }}
             >
-              {spaces.length > 0 ? (
-                <FormControl
-                  size="small"
-                  sx={{
-                    display: { xs: "none", sm: "block" },
-                    minWidth: 0,
-                    maxWidth: 280,
-                  }}
-                >
-                  <Select
-                    value={spaceId}
-                    onChange={(event) => setSpaceId(event.target.value)}
-                    aria-label="当前客户空间"
-                    renderValue={(value) => {
-                      const space = spaces.find((item) => item.id === value);
-                      return (
-                        <Stack
-                          direction="row"
-                          spacing={0.75}
-                          sx={{ alignItems: "center", minWidth: 0 }}
-                        >
-                          <VerifiedIcon
-                            sx={{
-                              fontSize: 18,
-                              color: "#15803d",
-                              flexShrink: 0,
-                            }}
-                          />
-                          <Typography
-                            noWrap
-                            sx={{ fontWeight: 650, fontSize: 14, minWidth: 0 }}
-                          >
-                            {space?.name ?? "服务空间"}
-                          </Typography>
-                          <Chip
-                            size="small"
-                            icon={<VerifiedIcon sx={{ fontSize: "16px !important", color: "#16a34a !important" }} />}
-                            label="已认证"
-                            sx={{
-                              height: 22,
-                              fontWeight: 700,
-                              fontSize: 11,
-                              letterSpacing: "0.02em",
-                              color: "#166534",
-                              bgcolor: "#dcfce7",
-                              border: "1px solid #86efac",
-                              "& .MuiChip-icon": { ml: 0.5, mr: -0.25 },
-                              "& .MuiChip-label": { px: 0.75 },
-                            }}
-                          />
-                        </Stack>
-                      );
-                    }}
-                    sx={{
-                      height: 40,
-                      borderRadius: 999,
-                      bgcolor: "#f0fdf4",
-                      minWidth: 210,
-                      "& .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#86efac",
-                      },
-                      "&:hover .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#22c55e",
-                      },
-                      "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
-                        borderColor: "#16a34a",
-                        borderWidth: 1,
-                      },
-                      "& .MuiSelect-select": {
-                        py: 0.75,
-                        pr: 4,
-                        display: "flex",
-                        alignItems: "center",
-                      },
-                    }}
-                  >
-                    {spaces.map((space) => (
-                      <MenuItem key={space.id} value={space.id}>
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{ alignItems: "center", minWidth: 0 }}
-                        >
-                          <VerifiedIcon
-                            sx={{ fontSize: 18, color: "#15803d" }}
-                          />
-                          <Box sx={{ minWidth: 0 }}>
-                            <Typography sx={{ fontWeight: 650 }} noWrap>
-                              {space.name}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              已认证服务空间
-                              {space.role ? ` · ${roleLabel[space.role]}` : ""}
-                            </Typography>
-                          </Box>
-                        </Stack>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              ) : null}
               <NotificationMenu staff={false} />
               <Stack
                 component="button"
@@ -259,10 +181,10 @@ export function CustomerShell({
       >
         <Box sx={{ px: 2.5, py: 2.5 }}>
           <Typography sx={{ fontWeight: 650, fontSize: 18 }}>
-            服务支持中心
+            客户中心
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {currentSpace?.name ?? user.email}
+            {user.email}
           </Typography>
         </Box>
         <Divider />
@@ -272,6 +194,10 @@ export function CustomerShell({
               key={item.href}
               component={Link}
               href={item.href}
+              selected={
+                pathname === item.href ||
+                pathname.startsWith(`${item.href}/`)
+              }
               onClick={() => setDrawerOpen(false)}
               sx={{ borderRadius: 1.5, my: 0.5 }}
             >
@@ -312,27 +238,11 @@ export function CustomerShell({
         <Divider />
         <MenuItem
           component={Link}
-          href="/customer/projects"
-          onClick={() => setAccountAnchor(null)}
-        >
-          我的服务
-        </MenuItem>
-        <MenuItem
-          component={Link}
           href="/customer/account"
           onClick={() => setAccountAnchor(null)}
         >
           个人设置
         </MenuItem>
-        {canManageMembers ? (
-          <MenuItem
-            component={Link}
-            href="/customer/members"
-            onClick={() => setAccountAnchor(null)}
-          >
-            成员管理
-          </MenuItem>
-        ) : null}
         <Divider />
         <MenuItem
           onClick={async () => {

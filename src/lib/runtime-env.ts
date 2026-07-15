@@ -4,6 +4,12 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   DATABASE_MIGRATION_URL: z.string().min(1).optional(),
   JOB_DATABASE_URL: z.string().min(1),
+  MAIL_INLINE_WORKER: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) =>
+      value === undefined ? undefined : value === "true",
+    ),
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url(),
   APP_URL: z.url(),
@@ -48,6 +54,7 @@ function readEnvSource() {
         process.env.JOB_DATABASE_URL ??
         process.env.DATABASE_URL ??
         "postgresql://build:build@127.0.0.1:5432/build",
+      MAIL_INLINE_WORKER: process.env.MAIL_INLINE_WORKER,
       BETTER_AUTH_SECRET:
         process.env.BETTER_AUTH_SECRET ??
         "build-only-secret-please-override-32chars",
@@ -72,6 +79,7 @@ function readEnvSource() {
     DATABASE_URL: process.env.DATABASE_URL,
     DATABASE_MIGRATION_URL: process.env.DATABASE_MIGRATION_URL,
     JOB_DATABASE_URL: process.env.JOB_DATABASE_URL,
+    MAIL_INLINE_WORKER: process.env.MAIL_INLINE_WORKER,
     BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET,
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     APP_URL: process.env.APP_URL,

@@ -38,7 +38,9 @@ export type PlatformSettingsView = {
 export type MailMessageView = {
   id: string;
   toEmail: string;
+  templateKey: string | null;
   subject: string;
+  previewText: string | null;
   heading: string;
   body: string;
   actionLabel: string | null;
@@ -54,8 +56,42 @@ export type MailMessageView = {
     | "SUPPRESSED"
     | "FAILED";
   errorMessage: string | null;
+  attemptCount: number;
+  lastAttemptAt: string | null;
   providerId: string | null;
   sentAt: string | null;
   lastEventAt: string | null;
   createdAt: string;
+};
+
+export type MailTemplateView = {
+  key:
+    | "PASSWORD_RESET"
+    | "STAFF_INVITATION"
+    | "CUSTOMER_OWNER_INVITATION"
+    | "CUSTOMER_MEMBER_INVITATION"
+    | "TEST_EMAIL";
+  name: string;
+  description: string;
+  variables: Array<{
+    key: string;
+    label: string;
+    sample: string;
+  }>;
+  content: {
+    subject: string;
+    previewText: string;
+    heading: string;
+    body: string;
+    actionLabel: string | null;
+  };
+  preview: {
+    subject: string;
+    previewText: string;
+    heading: string;
+    body: string;
+    actionLabel: string | null;
+  };
+  customized: boolean;
+  updatedAt: string | null;
 };

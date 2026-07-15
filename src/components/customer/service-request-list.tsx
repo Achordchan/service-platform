@@ -92,9 +92,6 @@ export function ServiceRequestList({
       {showHeading ? (
         <Box>
           <Typography variant="h1">服务请求</Typography>
-          <Typography color="text.secondary" sx={{ mt: 1 }}>
-            查看进度、补充信息，并在有效项目内提交服务请求
-          </Typography>
         </Box>
       ) : null}
 
@@ -198,12 +195,8 @@ export function ServiceRequestList({
         />
       ) : (
         <EmptyState
-          title="没有符合条件的服务请求"
-          description={
-            scopedToProject
-              ? "调整状态或搜索关键词后再查看，也可直接新建服务请求。"
-              : "调整状态、所属项目或搜索关键词后再查看。"
-          }
+          title="未找到服务请求"
+          description="调整筛选条件后重试。"
         />
       )}
       <Typography variant="body2" color="text.secondary">

@@ -43,6 +43,7 @@ function publicSettings(settings: {
   smtpPassword: string | null;
   smtpFrom: string | null;
   smtpSecure: boolean;
+  smtpSecureConfigured: boolean;
   attachmentMaxSizeMb?: number;
   attachmentAllowedExtensions?: string;
   customerReplyAttachmentsEnabled?: boolean;
@@ -80,8 +81,10 @@ function publicSettings(settings: {
       settings.smtpFrom?.trim() ||
       env.SMTP_FROM ||
       "服务支持中心 <info@achord.cn>",
-    smtpSecure: settings.smtpSecure,
-    hasStoredPassword: Boolean(settings.smtpPassword),
+    smtpSecure: settings.smtpSecureConfigured
+      ? settings.smtpSecure
+      : env.SMTP_SECURE ?? settings.smtpSecure,
+    hasStoredPassword: Boolean(settings.smtpPassword ?? env.SMTP_PASSWORD),
     attachmentMaxSizeMb: settings.attachmentMaxSizeMb ?? 20,
     attachmentAllowedExtensions:
       settings.attachmentAllowedExtensions?.trim() ||
@@ -143,6 +146,7 @@ export async function updatePlatformSettings(
     }
     if (input.smtpSecure !== undefined) {
       data.smtpSecure = input.smtpSecure;
+      data.smtpSecureConfigured = true;
     }
     if (input.attachmentMaxSizeMb !== undefined) {
       data.attachmentMaxSizeMb = input.attachmentMaxSizeMb;
@@ -176,21 +180,23 @@ export async function updatePlatformSettings(
     if (nextMailMode === "SMTP") {
       const smtpHost =
         input.smtpHost === undefined
-          ? current.smtpHost
+          ? current.smtpHost ?? env.SMTP_HOST
           : emptyToNull(input.smtpHost);
       const smtpPort =
-        input.smtpPort === undefined ? current.smtpPort : input.smtpPort;
+        input.smtpPort === undefined
+          ? current.smtpPort ?? env.SMTP_PORT
+          : input.smtpPort;
       const smtpUser =
         input.smtpUser === undefined
-          ? current.smtpUser
+          ? current.smtpUser ?? env.SMTP_USER
           : emptyToNull(input.smtpUser);
       const smtpPassword =
         input.smtpPassword === undefined
-          ? current.smtpPassword
+          ? current.smtpPassword ?? env.SMTP_PASSWORD
           : emptyToNull(input.smtpPassword);
       const smtpFrom =
         input.smtpFrom === undefined
-          ? current.smtpFrom
+          ? current.smtpFrom ?? env.SMTP_FROM
           : emptyToNull(input.smtpFrom);
       if (
         !smtpHost ||

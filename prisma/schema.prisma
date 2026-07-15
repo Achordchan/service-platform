@@ -113,43 +113,44 @@ enum MailMessageStatus {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  name          String
-  email         String       @unique
-  emailVerified Boolean      @default(false)
-  image         String?
-  platformRole  PlatformRole @default(CUSTOMER)
-  phone         String?
-  company       String?
-  jobTitle      String?
-  wechat        String?
-  website       String?
-  location      String?
-  contactNotes  String?
-  roleGroupId   String?
-  createdAt     DateTime     @default(now())
+  id                      String            @id @default(cuid())
+  name                    String
+  email                   String            @unique
+  emailVerified           Boolean           @default(false)
+  image                   String?
+  platformRole            PlatformRole      @default(CUSTOMER)
+  phone                   String?
+  company                 String?
+  jobTitle                String?
+  wechat                  String?
+  website                 String?
+  location                String?
+  contactNotes            String?
+  roleGroupId             String?
+  createdAt               DateTime          @default(now())
   platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
-  updatedAt     DateTime     @updatedAt
+  updatedAt               DateTime          @updatedAt
 
-  roleGroup          RoleGroup?       @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
-  sessions           Session[]
-  accounts           Account[]
-  memberships        Membership[]
-  ownedSpaces        CustomerSpace[]  @relation("SpaceOwner")
-  invitationsCreated Invitation[]     @relation("InvitationCreator")
-  staffInvitationsCreated StaffInvitation[] @relation("StaffInvitationCreator")
-  projectsCreated    Project[]        @relation("ProjectCreator")
-  projectAssignments ProjectStaff[]
-  milestonesCreated  Milestone[]      @relation("MilestoneCreator")
-  projectUpdates     ProjectUpdate[]
-  updateComments     UpdateComment[]
-  requestsCreated    ServiceRequest[] @relation("RequestCreator")
-  requestsAssigned   ServiceRequest[] @relation("RequestAssignee")
-  requestAssignees   RequestAssignee[]
-  requestMessages    RequestMessage[]
-  attachments        Attachment[]
-  notifications      Notification[]
-  auditLogs          AuditLog[]
+  roleGroup               RoleGroup?             @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
+  sessions                Session[]
+  accounts                Account[]
+  memberships             Membership[]
+  ownedSpaces             CustomerSpace[]        @relation("SpaceOwner")
+  invitationsCreated      Invitation[]           @relation("InvitationCreator")
+  staffInvitationsCreated StaffInvitation[]      @relation("StaffInvitationCreator")
+  projectsCreated         Project[]              @relation("ProjectCreator")
+  projectAssignments      ProjectStaff[]
+  milestonesCreated       Milestone[]            @relation("MilestoneCreator")
+  projectUpdates          ProjectUpdate[]
+  updateComments          UpdateComment[]
+  requestsCreated         ServiceRequest[]       @relation("RequestCreator")
+  requestsAssigned        ServiceRequest[]       @relation("RequestAssignee")
+  requestAssignees        RequestAssignee[]
+  requestMessages         RequestMessage[]
+  attachments             Attachment[]
+  notifications           Notification[]
+  auditLogs               AuditLog[]
+  mailTemplatesUpdated    MailTemplateOverride[]
 
   @@index([roleGroupId])
 }
@@ -275,7 +276,7 @@ model StaffInvitation {
   invitedById  String
   createdAt    DateTime     @default(now())
 
-  invitedBy User      @relation("StaffInvitationCreator", fields: [invitedById], references: [id])
+  invitedBy User       @relation("StaffInvitationCreator", fields: [invitedById], references: [id])
   roleGroup RoleGroup? @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
 
   @@index([email])
@@ -296,8 +297,8 @@ model RoleGroup {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  users        User[]
-  invitations  StaffInvitation[]
+  users       User[]
+  invitations StaffInvitation[]
 
   @@index([active, sortOrder])
 }
@@ -445,10 +446,10 @@ model ServiceRequest {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  project       Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category      RequestCategory  @relation(fields: [categoryId], references: [id])
-  createdBy     User             @relation("RequestCreator", fields: [createdById], references: [id])
-  assignee      User?            @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category      RequestCategory   @relation(fields: [categoryId], references: [id])
+  createdBy     User              @relation("RequestCreator", fields: [createdById], references: [id])
+  assignee      User?             @relation("RequestAssignee", fields: [assigneeId], references: [id])
   assignees     RequestAssignee[]
   messages      RequestMessage[]
   attachments   Attachment[]
@@ -603,6 +604,7 @@ model PlatformSetting {
   smtpPassword                    String?
   smtpFrom                        String?
   smtpSecure                      Boolean          @default(false)
+  smtpSecureConfigured            Boolean          @default(false)
   mailMode                        MailDeliveryMode @default(LOCAL_OUTBOX)
   attachmentMaxSizeMb             Int              @default(20)
   attachmentAllowedExtensions     String           @default("jpg,jpeg,png,gif,webp,pdf,docx,xlsx,pptx,txt,log,csv,json")
@@ -615,13 +617,17 @@ model PlatformSetting {
 model MailMessage {
   id             String              @id @default(cuid())
   toEmail        String
+  templateKey    String?
   subject        String
+  previewText    String?
   heading        String
   body           String
   actionLabel    String?
   actionUrl      String?
   deliveryMode   MailDeliveryMode    @default(LOCAL_OUTBOX)
   status         MailMessageStatus   @default(QUEUED)
+  attemptCount   Int                 @default(0)
+  lastAttemptAt  DateTime?
   errorMessage   String?
   providerId     String?
   sentAt         DateTime?
@@ -635,15 +641,29 @@ model MailMessage {
   @@index([providerId])
 }
 
+model MailTemplateOverride {
+  key         String   @id
+  subject     String
+  previewText String
+  heading     String
+  body        String
+  actionLabel String?
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+  updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedAt])
+}
+
 model MailProviderEvent {
-  id                String      @id @default(cuid())
-  providerEventId   String      @unique
+  id                String       @id @default(cuid())
+  providerEventId   String       @unique
   providerMessageId String?
   eventType         String
   detail            String?
   occurredAt        DateTime
   mailMessageId     String?
-  createdAt         DateTime    @default(now())
+  createdAt         DateTime     @default(now())
   mailMessage       MailMessage? @relation(fields: [mailMessageId], references: [id], onDelete: SetNull)
 
   @@index([providerMessageId, occurredAt])

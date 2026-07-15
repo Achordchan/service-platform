@@ -9,7 +9,7 @@ import { listServiceTypes } from "@/modules/projects/service-type-service";
 import { listUsers } from "@/modules/users/user-service";
 
 export const metadata = {
-  title: "项目管理",
+  title: "项目",
 };
 
 export default async function StaffProjectsPage() {
@@ -64,10 +64,7 @@ export default async function StaffProjectsPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="项目管理"
-          description="管理客户服务周期、里程碑、进度与交付状态"
-        />
+        <StaffPageHeading title="项目" />
         <ProjectTable
           projects={rows}
           canCreate={actor.isPlatformAdmin}

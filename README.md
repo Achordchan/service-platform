@@ -59,6 +59,8 @@ pnpm dev
 本地默认只需要这一个进程：邮件会进入后台「平台设置 → 发件箱」。  
 `pnpm worker` 仅在你想单独拆任务进程时可选。
 
+生产环境使用独立的 `service-platform-worker`，Web 进程不会再重复启动邮件 Worker；如需显式配置，请在生产环境设置 `MAIL_INLINE_WORKER=false`。
+
 ## 本地演示账号
 
 统一密码：`ServiceDemo!2026`
@@ -127,6 +129,8 @@ pnpm check
   - 回复地址：`support@achord.cn`
   - Webhook：`https://support.achord.cn/api/v1/webhooks/resend`
 - Resend API Key 和 Webhook Secret 由平台管理员在后台录入并加密保存。生产环境推荐使用 `openssl rand -base64 32` 生成 `PLATFORM_SECRET_ENCRYPTION_KEY`；未设置时系统会从现有 `BETTER_AUTH_SECRET` 稳定派生兼容密钥，避免旧服务器升级后无法启动。
+- 邮件在入队时即写入发件箱；Resend 使用稳定幂等键防止任务重试造成重复发信，SMTP 为避免重复投递不自动重试。
+- 邀请、密码重置和测试邮件统一由后台「邮件模板」维护，仅允许纯文本和固定变量。
 - 后台连接 Resend 后会显示需要添加到 Cloudflare 的 DNS 记录；不要修改 `achord.cn` 主域现有 Email Routing MX/SPF。
 - 完成域名验证和测试邮件后，再在后台启用 Resend。SMTP 保留为折叠的故障备用方式。
 - 邀请邮件依赖 `APP_URL`，正式环境请改成线上域名。

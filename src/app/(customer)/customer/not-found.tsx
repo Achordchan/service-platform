@@ -9,8 +9,8 @@ export default function CustomerNotFound() {
     >
       <EmptyState
         title="页面不存在或无权访问"
-        description="请返回我的服务，重新选择可访问的项目。"
-        actionLabel="返回我的服务"
+        description="请返回服务项目重新选择。"
+        actionLabel="返回服务项目"
         actionHref="/customer/projects"
       />
     </Container>

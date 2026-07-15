@@ -198,10 +198,8 @@ export async function createCustomerSpace(
   const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(result.invitation.token)}`;
   await enqueueMail({
     to: result.invitation.email,
-    subject: `欢迎加入 ${result.space.name} 服务空间`,
-    heading: `欢迎加入 ${result.space.name}`,
-    body: `我们已为你开通客户服务空间「${result.space.name}」。请在 24 小时内设置账号密码，之后即可查看项目进度并提交服务请求。`,
-    actionLabel: "设置账号并加入",
+    templateKey: "CUSTOMER_OWNER_INVITATION",
+    variables: { spaceName: result.space.name },
     actionUrl,
   });
 
@@ -367,4 +365,3 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
     });
   });
 }
-

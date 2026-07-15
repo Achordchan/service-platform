@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from "react";
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -13,6 +16,7 @@ import {
   Stack,
   TextField,
 } from "@mui/material";
+import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
 type CreatedCustomerSpace = {
@@ -98,7 +102,7 @@ export function CreateCustomerSpaceDialog({
             {error ? <Alert severity="error">{error}</Alert> : null}
             <TextField
               name="name"
-              label="客户空间名称"
+              label="客户名称"
               placeholder="例如：远景科技"
               required
               fullWidth
@@ -112,40 +116,17 @@ export function CreateCustomerSpaceDialog({
               }}
               slotProps={{ htmlInput: { maxLength: 120 } }}
             />
-            <TextField
-              name="slug"
-              label="空间标识"
-              placeholder="可留空，系统将自动生成"
-              helperText={
-                slug || suggestedSlug
-                  ? `将使用：${(slug || suggestedSlug).toLowerCase()}；也可手动修改`
-                  : "可留空。英文名会自动转换；中文名将生成随机标识"
-              }
-              fullWidth
-              value={slug}
-              onChange={(event) => {
-                setSlugTouched(true);
-                setSlug(event.target.value.toLowerCase());
-              }}
-              slotProps={{
-                htmlInput: {
-                  minLength: 0,
-                  maxLength: 80,
-                  pattern: "([a-z0-9]+(?:-[a-z0-9]+)*)?",
-                },
-              }}
-            />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 name="ownerName"
-                label="Owner 姓名"
+                label="负责人姓名"
                 required
                 fullWidth
                 slotProps={{ htmlInput: { minLength: 2, maxLength: 60 } }}
               />
               <TextField
                 name="ownerEmail"
-                label="Owner 邮箱"
+                label="负责人邮箱"
                 type="email"
                 autoComplete="off"
                 required
@@ -161,9 +142,36 @@ export function CreateCustomerSpaceDialog({
               fullWidth
               slotProps={{ htmlInput: { min: 1, max: 1000 } }}
             />
-            <Alert severity="info">
-              创建后将向 Owner 发送 24 小时有效的账号设置邀请。本地默认写入发件箱，可在「平台设置」查看；正式环境可在后台切换为 SMTP。
-            </Alert>
+            <Accordion variant="outlined" disableGutters>
+              <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+                高级设置
+              </AccordionSummary>
+              <AccordionDetails>
+                <TextField
+                  name="slug"
+                  label="客户标识"
+                  placeholder="留空自动生成"
+                  helperText={
+                    slug || suggestedSlug
+                      ? `当前标识：${(slug || suggestedSlug).toLowerCase()}`
+                      : "仅支持小写字母、数字和连字符"
+                  }
+                  fullWidth
+                  value={slug}
+                  onChange={(event) => {
+                    setSlugTouched(true);
+                    setSlug(event.target.value.toLowerCase());
+                  }}
+                  slotProps={{
+                    htmlInput: {
+                      minLength: 0,
+                      maxLength: 80,
+                      pattern: "([a-z0-9]+(?:-[a-z0-9]+)*)?",
+                    },
+                  }}
+                />
+              </AccordionDetails>
+            </Accordion>
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -171,7 +179,7 @@ export function CreateCustomerSpaceDialog({
             取消
           </Button>
           <Button type="submit" variant="contained" disabled={submitting}>
-            {submitting ? "正在创建" : "创建并发送邀请"}
+            {submitting ? "正在创建" : "创建客户"}
           </Button>
         </DialogActions>
       </Box>

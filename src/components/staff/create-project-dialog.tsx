@@ -117,7 +117,7 @@ export function CreateProjectDialog({
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 name="customerSpaceId"
-                label="客户空间"
+                label="客户"
                 select
                 required
                 fullWidth
@@ -170,7 +170,7 @@ export function CreateProjectDialog({
                   },
                 },
               }}
-              helperText="创建时至少指定一位项目负责人；不选则默认创建人"
+              helperText="未选择时由创建人负责"
             >
               {managerCandidates.map((candidate) => (
                 <MenuItem key={candidate.id} value={candidate.id}>

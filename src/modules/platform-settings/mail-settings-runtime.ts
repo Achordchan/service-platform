@@ -38,6 +38,7 @@ export async function ensurePlatformSettings() {
         smtpPassword: env.SMTP_PASSWORD ?? null,
         smtpFrom: env.SMTP_FROM ?? "服务支持中心 <info@achord.cn>",
         smtpSecure: env.SMTP_SECURE ?? false,
+        smtpSecureConfigured: env.SMTP_SECURE !== undefined,
       },
     });
   });
@@ -65,7 +66,9 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
       settings.smtpFrom?.trim() ||
       env.SMTP_FROM ||
       "服务支持中心 <info@achord.cn>",
-    smtpSecure: settings.smtpSecure || Boolean(env.SMTP_SECURE),
+    smtpSecure: settings.smtpSecureConfigured
+      ? settings.smtpSecure
+      : env.SMTP_SECURE ?? settings.smtpSecure,
     hasStoredPassword: Boolean(settings.smtpPassword ?? env.SMTP_PASSWORD),
   };
 }

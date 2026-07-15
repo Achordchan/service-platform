@@ -21,10 +21,7 @@ export default async function CustomerAccountPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <PageHeading
-          title="个人设置"
-          description="管理显示名称与头像"
-        />
+        <PageHeading title="个人设置" />
         <ProfileSettingsForm
           user={{
             id: actor.id,

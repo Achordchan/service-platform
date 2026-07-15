@@ -55,7 +55,7 @@ export function SmtpFallbackSettings({
         <Box>
           <Typography sx={{ fontWeight: 700 }}>高级备用方式</Typography>
           <Typography variant="body2" color="text.secondary">
-            保留 SMTP 和本地发件箱，用于故障切换
+            SMTP 与本地发件箱
           </Typography>
         </Box>
       </AccordionSummary>

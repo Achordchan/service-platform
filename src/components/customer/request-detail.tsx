@@ -113,9 +113,7 @@ export function RequestDetail({
         status={<StatusIndicator status={request.status} />}
       />
       {created ? (
-        <Alert severity="success">
-          服务请求已提交，处理进度将在此页面持续更新。
-        </Alert>
+        <Alert severity="success">服务请求已提交。</Alert>
       ) : null}
 
       <Box

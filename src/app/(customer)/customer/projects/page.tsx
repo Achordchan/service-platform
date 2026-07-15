@@ -1,4 +1,4 @@
-import { Container, Stack, Typography } from "@mui/material";
+import { Container, Stack } from "@mui/material";
 import type { ProjectSummary } from "@/components/customer/customer-types";
 import { PageHeading } from "@/components/customer/page-heading";
 import { ProjectList } from "@/components/customer/project-list";
@@ -7,7 +7,7 @@ import { requireUserWithAccess } from "@/lib/session";
 import { listProjects } from "@/modules/projects/project-service";
 
 export const metadata = {
-  title: "我的服务",
+  title: "服务项目",
 };
 
 export default async function CustomerProjectsPage() {
@@ -44,22 +44,16 @@ export default async function CustomerProjectsPage() {
     >
       <Stack spacing={4}>
         <PageHeading
-          title="我的服务"
-          description="查看服务周期、项目进度和交付动态"
+          title="服务项目"
           actionLabel="提交服务请求"
           actionHref="/customer/requests/new"
         />
         {projects.length > 0 ? (
-          <>
-            <Typography variant="body2" color="text.secondary">
-              共 {projects.length} 个服务项目
-            </Typography>
-            <ProjectList projects={projects} />
-          </>
+          <ProjectList projects={projects} />
         ) : (
           <EmptyState
             title="暂无服务项目"
-            description="服务项目开通后，将在这里展示进度、里程碑和服务请求。"
+            description="项目开通后将在此显示。"
           />
         )}
       </Stack>

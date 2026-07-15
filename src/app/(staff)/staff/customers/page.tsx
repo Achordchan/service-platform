@@ -7,7 +7,7 @@ import { requireUserWithAccess } from "@/lib/session";
 import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
 
 export const metadata = {
-  title: "客户空间",
+  title: "客户",
 };
 
 export default async function StaffCustomersPage() {
@@ -35,10 +35,7 @@ export default async function StaffCustomersPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="客户空间"
-          description="查看客户成员容量、项目数量和空间状态"
-        />
+        <StaffPageHeading title="客户" />
         <CustomerSpaceTable spaces={spaces} />
       </Stack>
     </Container>

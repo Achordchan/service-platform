@@ -163,3 +163,80 @@ export async function recordResendWebhook(
     throw error;
   }
 }
+
+export async function reconcileStoredResendEvents(
+  providerMessageId: string,
+  mailMessageId: string,
+) {
+  return withSystemDb(async (tx) => {
+    const message = await tx.mailMessage.findUnique({
+      where: { id: mailMessageId },
+      select: {
+        id: true,
+        status: true,
+        lastEventAt: true,
+        sentAt: true,
+      },
+    });
+    if (!message) return;
+
+    const events = await tx.mailProviderEvent.findMany({
+      where: { providerMessageId },
+      orderBy: [{ occurredAt: "asc" }, { createdAt: "asc" }],
+    });
+    if (events.length === 0) return;
+
+    await tx.mailProviderEvent.updateMany({
+      where: {
+        providerMessageId,
+        mailMessageId: null,
+      },
+      data: { mailMessageId },
+    });
+
+    let status = message.status;
+    let lastEventAt = message.lastEventAt;
+    let errorMessage: string | null | undefined;
+    let sentAt = message.sentAt;
+    let changed = false;
+
+    for (const event of events) {
+      const nextStatus = resendEventToMessageStatus(event.eventType);
+      if (
+        !nextStatus ||
+        !shouldApplyMailEvent({
+          currentStatus: status,
+          currentEventAt: lastEventAt,
+          nextStatus,
+          nextEventAt: event.occurredAt,
+        })
+      ) {
+        continue;
+      }
+      status = nextStatus;
+      lastEventAt = event.occurredAt;
+      errorMessage =
+        nextStatus === "SENT" || nextStatus === "DELIVERED"
+          ? null
+          : event.detail;
+      sentAt =
+        sentAt ??
+        (nextStatus === "SENT" || nextStatus === "DELIVERED"
+          ? event.occurredAt
+          : null);
+      changed = true;
+    }
+
+    if (changed) {
+      await tx.mailMessage.update({
+        where: { id: mailMessageId },
+        data: {
+          status,
+          lastEventAt,
+          errorMessage,
+          sentAt,
+        },
+      });
+    }
+  });
+}

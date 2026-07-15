@@ -216,7 +216,7 @@ export function ProjectStaffManager({
             ) : null}
             {availableCandidates.length === 0 ? (
               <Alert severity="info">
-                没有可分配的协作人员。请先到「团队成员」邀请，或确认当前账号是否已在项目中。
+                暂无可分配人员，请先到「团队」邀请成员。
               </Alert>
             ) : null}
           </Stack>

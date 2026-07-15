@@ -78,7 +78,7 @@ export function CustomerSpaceTable({
       router.refresh();
     } catch (submitError) {
       setError(
-        submitError instanceof Error ? submitError.message : "客户空间更新失败",
+        submitError instanceof Error ? submitError.message : "客户更新失败",
       );
     } finally {
       setSubmitting(false);
@@ -104,7 +104,7 @@ export function CustomerSpaceTable({
       router.refresh();
     } catch (removeError) {
       setError(
-        removeError instanceof Error ? removeError.message : "客户空间删除失败",
+        removeError instanceof Error ? removeError.message : "客户删除失败",
       );
     } finally {
       setSubmitting(false);
@@ -113,11 +113,11 @@ export function CustomerSpaceTable({
 
   const columns = useMemo<GridColDef<CustomerSpaceItem>[]>(
     () => [
-      { field: "name", headerName: "客户空间", minWidth: 180, flex: 1 },
+      { field: "name", headerName: "客户", minWidth: 180, flex: 1 },
       { field: "slug", headerName: "空间标识", minWidth: 150, flex: 0.8 },
       {
         field: "owner",
-        headerName: "空间所有者",
+        headerName: "负责人",
         minWidth: 210,
         flex: 1,
         valueGetter: (_value, row) => `${row.ownerName} ${row.ownerEmail}`,
@@ -213,7 +213,7 @@ export function CustomerSpaceTable({
             ) : undefined
           }
         >
-          {created.name}已创建，Owner 邀请已发送（本地可直接打开链接；正式环境发送邮件）。
+          {created.name}已创建，负责人邀请已加入发送队列。
         </Alert>
       ) : null}
       <Stack
@@ -333,13 +333,13 @@ export function CustomerSpaceTable({
         {editing ? (
           <Stack component="form" onSubmit={submit}>
             {submitting ? <LinearProgress /> : null}
-            <DialogTitle>管理客户空间</DialogTitle>
+            <DialogTitle>管理客户</DialogTitle>
             <DialogContent>
               <Stack spacing={2} sx={{ pt: 1 }}>
                 {error ? <Alert severity="error">{error}</Alert> : null}
                 <TextField
                   name="name"
-                  label="客户空间名称"
+                  label="客户名称"
                   defaultValue={editing.name}
                   required
                 />

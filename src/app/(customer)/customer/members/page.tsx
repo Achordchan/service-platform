@@ -8,7 +8,7 @@ import {
 } from "@/modules/customer-spaces/customer-member-service";
 
 export const metadata = {
-  title: "成员管理",
+  title: "成员",
 };
 
 export default async function CustomerMembersPage() {
@@ -27,10 +27,7 @@ export default async function CustomerMembersPage() {
       sx={{ px: { xs: 2, md: 5 }, py: { xs: 3, md: 5 } }}
     >
       <Stack spacing={4}>
-        <PageHeading
-          title="成员管理"
-          description="邀请同事共同查看项目进度和提交服务请求"
-        />
+        <PageHeading title="成员" />
         <MemberManagement
           spaces={spaces.map((space) => ({
             id: space.id,

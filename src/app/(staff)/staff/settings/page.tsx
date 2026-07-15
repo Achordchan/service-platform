@@ -13,6 +13,8 @@ import {
   type MailMessageView,
   type PlatformSettingsView,
 } from "@/components/staff/platform-settings-manager";
+import { MailTemplateManager } from "@/components/staff/mail-template-manager";
+import type { MailTemplateView } from "@/components/staff/platform-settings-types";
 import {
   RoleGroupManager,
   type RoleGroupView,
@@ -23,10 +25,11 @@ import {
   getPlatformSettings,
   listMailMessages,
 } from "@/modules/platform-settings/platform-setting-service";
+import { listMailTemplates } from "@/modules/platform-settings/mail-template-service";
 import { listRoleGroups } from "@/modules/users/role-group-service";
 
 export const metadata = {
-  title: "平台设置",
+  title: "设置",
 };
 
 export default async function StaffSettingsPage() {
@@ -35,10 +38,11 @@ export default async function StaffSettingsPage() {
     redirect("/staff/projects");
   }
 
-  const [settings, messages, roleGroups] = await Promise.all([
+  const [settings, messages, roleGroups, templates] = await Promise.all([
     getPlatformSettings(actor),
     listMailMessages(actor, 50),
     listRoleGroups(actor),
+    listMailTemplates(actor),
   ]);
 
   const settingsView: PlatformSettingsView = {
@@ -71,7 +75,9 @@ export default async function StaffSettingsPage() {
   const messageViews: MailMessageView[] = messages.map((message) => ({
     id: message.id,
     toEmail: message.toEmail,
+    templateKey: message.templateKey,
     subject: message.subject,
+    previewText: message.previewText,
     heading: message.heading,
     body: message.body,
     actionLabel: message.actionLabel,
@@ -79,11 +85,14 @@ export default async function StaffSettingsPage() {
     deliveryMode: message.deliveryMode,
     status: message.status,
     errorMessage: message.errorMessage,
+    attemptCount: message.attemptCount,
+    lastAttemptAt: message.lastAttemptAt?.toISOString() ?? null,
     providerId: message.providerId,
     sentAt: message.sentAt?.toISOString() ?? null,
     lastEventAt: message.lastEventAt?.toISOString() ?? null,
     createdAt: message.createdAt.toISOString(),
   }));
+  const templateViews: MailTemplateView[] = templates;
 
   const roleGroupViews: RoleGroupView[] = roleGroups.map((group) => ({
     id: group.id,
@@ -106,19 +115,11 @@ export default async function StaffSettingsPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="平台设置"
-          description="按模块配置角色、站点邮件、附件策略与发件箱"
-        />
+        <StaffPageHeading title="设置" />
 
         <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
           <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Stack spacing={0.5}>
-              <Typography sx={{ fontWeight: 700 }}>1. 角色组与权限</Typography>
-              <Typography variant="body2" color="text.secondary">
-                配置外包/协作角色，平台管理员固定保留
-              </Typography>
-            </Stack>
+            <Typography sx={{ fontWeight: 700 }}>角色与权限</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <RoleGroupManager roleGroups={roleGroupViews} />
@@ -127,12 +128,7 @@ export default async function StaffSettingsPage() {
 
         <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
           <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Stack spacing={0.5}>
-              <Typography sx={{ fontWeight: 700 }}>2. 站点与邮件</Typography>
-              <Typography variant="body2" color="text.secondary">
-                Resend 域名、发件人和备用 SMTP
-              </Typography>
-            </Stack>
+            <Typography sx={{ fontWeight: 700 }}>邮件设置</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <PlatformSettingsManager
@@ -146,12 +142,19 @@ export default async function StaffSettingsPage() {
 
         <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
           <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Stack spacing={0.5}>
-              <Typography sx={{ fontWeight: 700 }}>3. 附件策略</Typography>
-              <Typography variant="body2" color="text.secondary">
-                文件大小、后缀与客户回复附件权限
-              </Typography>
-            </Stack>
+            <Typography sx={{ fontWeight: 700 }}>邮件模板</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <MailTemplateManager
+              initialTemplates={templateViews}
+              currentAdminEmail={actor.email}
+            />
+          </AccordionDetails>
+        </Accordion>
+
+        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
+          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+            <Typography sx={{ fontWeight: 700 }}>附件</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <PlatformSettingsManager
@@ -165,12 +168,7 @@ export default async function StaffSettingsPage() {
 
         <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
           <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Stack spacing={0.5}>
-              <Typography sx={{ fontWeight: 700 }}>4. 发件箱</Typography>
-              <Typography variant="body2" color="text.secondary">
-                查看邀请与通知发送记录
-              </Typography>
-            </Stack>
+            <Typography sx={{ fontWeight: 700 }}>发件箱</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <PlatformSettingsManager

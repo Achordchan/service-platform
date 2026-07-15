@@ -15,7 +15,7 @@ import {
 } from "@/modules/users/staff-invitation-service";
 
 export const metadata = {
-  title: "团队成员",
+  title: "团队",
 };
 
 export default async function StaffTeamPage() {
@@ -80,10 +80,7 @@ export default async function StaffTeamPage() {
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
       <Stack spacing={3}>
-        <StaffPageHeading
-          title="团队成员"
-          description="维护外包与内部协作人员资料，邀请后分配到具体项目"
-        />
+        <StaffPageHeading title="团队" />
         <TeamManager
           members={members}
           invitations={invitationViews}

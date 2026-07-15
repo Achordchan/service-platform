@@ -6,7 +6,10 @@ import {
   Box,
   Button,
   Chip,
-  Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControlLabel,
   Paper,
   Stack,
@@ -80,6 +83,8 @@ export function PlatformSettingsManager({
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [selectedMessage, setSelectedMessage] =
+    useState<MailMessageView | null>(null);
   const activeSections = sections?.length
     ? new Set(sections)
     : new Set<PlatformSettingsSection>(["site-mail", "attachments", "outbox"]);
@@ -161,14 +166,6 @@ export function PlatformSettingsManager({
       {showAttachments ? (
       <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
         <Stack key={`attachments-${settings.updatedAt ?? "init"}`} spacing={2.5} component="form" onSubmit={handleSubmit}>
-          <Box>
-            <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-              附件策略
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.75 }}>
-              统一限制工单与项目文件的上传规则，独立于邮件配置。
-            </Typography>
-          </Box>
           <TextField
             name="attachmentMaxSizeMb"
             label="单文件大小上限（MB）"
@@ -212,24 +209,15 @@ export function PlatformSettingsManager({
           sx={{
             mb: 2,
             alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "space-between",
+            justifyContent: "flex-end",
           }}
         >
-          <Box>
-            <Typography variant="h2" sx={{ fontSize: 20, fontWeight: 700 }}>
-              发件箱
-            </Typography>
-            <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-              记录邀请与通知的外发结果；失败时在此查看错误原因。
-            </Typography>
-          </Box>
           <Button onClick={refreshMessages} disabled={refreshing}>
             {refreshing ? "刷新中" : "刷新"}
           </Button>
         </Stack>
-        <Divider sx={{ mb: 2 }} />
         {messages.length === 0 ? (
-          <Alert severity="info">还没有邮件记录</Alert>
+          <Alert severity="info">暂无邮件记录</Alert>
         ) : (
           <Box sx={{ overflowX: "auto" }}>
             <Table size="small">
@@ -281,9 +269,25 @@ export function PlatformSettingsManager({
                           {new Date(message.lastEventAt).toLocaleString("zh-CN")}
                         </Typography>
                       ) : null}
+                      {message.attemptCount > 0 ? (
+                        <Typography
+                          color="text.secondary"
+                          variant="caption"
+                          sx={{ display: "block" }}
+                        >
+                          尝试 {message.attemptCount} 次
+                        </Typography>
+                      ) : null}
                     </TableCell>
                     <TableCell>
-                      {message.actionUrl ? (
+                      <Stack direction="row" spacing={0.5}>
+                        <Button
+                          size="small"
+                          onClick={() => setSelectedMessage(message)}
+                        >
+                          查看内容
+                        </Button>
+                        {message.actionUrl ? (
                         <Button
                           size="small"
                           href={message.actionUrl}
@@ -292,9 +296,8 @@ export function PlatformSettingsManager({
                         >
                           打开链接
                         </Button>
-                      ) : (
-                        "—"
-                      )}
+                        ) : null}
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -304,6 +307,80 @@ export function PlatformSettingsManager({
         )}
       </Paper>
       ) : null}
+
+      <Dialog
+        open={Boolean(selectedMessage)}
+        onClose={() => setSelectedMessage(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>邮件内容</DialogTitle>
+        <DialogContent dividers>
+          {selectedMessage ? (
+            <Stack spacing={2}>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  收件人
+                </Typography>
+                <Typography sx={{ wordBreak: "break-all" }}>
+                  {selectedMessage.toEmail}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">
+                  主题
+                </Typography>
+                <Typography sx={{ fontWeight: 700 }}>
+                  {selectedMessage.subject}
+                </Typography>
+                {selectedMessage.previewText ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedMessage.previewText}
+                  </Typography>
+                ) : null}
+              </Box>
+              <Paper
+                variant="outlined"
+                sx={{ p: { xs: 2, sm: 2.5 }, overflow: "hidden" }}
+              >
+                <Typography variant="h3" sx={{ fontSize: 20, fontWeight: 700 }}>
+                  {selectedMessage.heading}
+                </Typography>
+                <Typography
+                  color="text.secondary"
+                  sx={{
+                    mt: 1,
+                    whiteSpace: "pre-line",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {selectedMessage.body}
+                </Typography>
+                {selectedMessage.actionLabel && selectedMessage.actionUrl ? (
+                  <Button
+                    variant="contained"
+                    size="small"
+                    href={selectedMessage.actionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    sx={{ mt: 2 }}
+                  >
+                    {selectedMessage.actionLabel}
+                  </Button>
+                ) : null}
+              </Paper>
+              <Typography variant="caption" color="text.secondary">
+                模板：{selectedMessage.templateKey ?? "历史自定义内容"} ·
+                发送方式：{deliveryModeLabel[selectedMessage.deliveryMode]} ·
+                尝试次数：{selectedMessage.attemptCount}
+              </Typography>
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedMessage(null)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }

@@ -20,10 +20,8 @@ export const auth = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       await enqueueMail({
         to: user.email,
-        subject: "重置服务支持中心密码",
-        heading: "重置密码",
-        body: "我们收到了你的密码重置请求。链接将在一小时后失效。",
-        actionLabel: "设置新密码",
+        templateKey: "PASSWORD_RESET",
+        variables: { expiresIn: "1 小时" },
         actionUrl: url,
       });
     },
