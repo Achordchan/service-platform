@@ -110,6 +110,9 @@ export function listInternalUsers(actor: Actor) {
         _count: {
           select: {
             projectAssignments: true,
+            requestsAssigned: true,
+            requestAssignees: true,
+            ownedSpaces: true,
           },
         },
       },
@@ -375,6 +378,108 @@ export function updateStaffProfile(
     });
 
     return updated;
+  });
+}
+
+
+export function deactivateStaffUser(actor: Actor, userId: string) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    if (userId === actor.id) {
+      throw new DomainError(
+        "CANNOT_DELETE_SELF",
+        "不能删除当前登录账号",
+        409,
+      );
+    }
+
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        platformRole: true,
+        _count: {
+          select: {
+            projectAssignments: true,
+            requestsAssigned: true,
+            requestAssignees: true,
+            ownedSpaces: true,
+            projectsCreated: true,
+            milestonesCreated: true,
+            projectUpdates: true,
+            updateComments: true,
+            requestsCreated: true,
+            requestMessages: true,
+            attachments: true,
+          },
+        },
+      },
+    });
+    assertFound(user, "用户不存在");
+    if (user.platformRole === "PLATFORM_ADMIN") {
+      throw new DomainError(
+        "ADMIN_CANNOT_DEACTIVATE",
+        "不能删除平台管理员",
+        409,
+      );
+    }
+    if (user.platformRole === "CUSTOMER") {
+      throw new DomainError(
+        "NOT_INTERNAL_USER",
+        "只能移除内部/外包协作人员",
+        409,
+      );
+    }
+    if (user._count.ownedSpaces > 0) {
+      throw new DomainError(
+        "STAFF_OWNS_CUSTOMER_SPACE",
+        "该成员仍是客户空间所有者，请先转移后再删除",
+        409,
+      );
+    }
+    if (
+      user._count.projectAssignments > 0 ||
+      user._count.requestsAssigned > 0 ||
+      user._count.requestAssignees > 0
+    ) {
+      throw new DomainError(
+        "STAFF_STILL_ASSIGNED",
+        "该成员仍有项目或工单分配，请先解除后再删除",
+        409,
+      );
+    }
+    if (
+      user._count.projectsCreated > 0 ||
+      user._count.milestonesCreated > 0 ||
+      user._count.projectUpdates > 0 ||
+      user._count.updateComments > 0 ||
+      user._count.requestsCreated > 0 ||
+      user._count.requestMessages > 0 ||
+      user._count.attachments > 0
+    ) {
+      throw new DomainError(
+        "STAFF_HAS_HISTORY",
+        "该成员已有历史内容记录，暂不支持直接删除",
+        409,
+      );
+    }
+
+    await tx.session.deleteMany({ where: { userId } });
+    await tx.account.deleteMany({ where: { userId } });
+    await tx.staffInvitation.deleteMany({ where: { email: user.email } });
+    await tx.user.delete({ where: { id: userId } });
+    await writeAuditLog(tx, actor, {
+      action: "STAFF_USER_DELETED",
+      resourceType: "User",
+      resourceId: user.id,
+      metadata: {
+        email: user.email,
+        name: user.name,
+        platformRole: user.platformRole,
+      },
+    });
   });
 }
 

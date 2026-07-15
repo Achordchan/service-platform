@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Alert,
   Box,
   Button,
   InputAdornment,
@@ -14,10 +15,13 @@ import {
   Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FilterAltOffOutlinedIcon from "@mui/icons-material/FilterAltOffOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { CreateProjectDialog } from "@/components/staff/create-project-dialog";
+import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { StaffStatus } from "@/components/staff/staff-status";
 import type {
   ProjectListItem,
@@ -64,6 +68,8 @@ export function ProjectTable({
   const [status, setStatus] = useState("ALL");
   const [serviceTypeId, setServiceTypeId] = useState("ALL");
   const [createOpen, setCreateOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
   const serviceOptions = useMemo(
     () =>
       Array.from(
@@ -163,8 +169,44 @@ export function ProjectTable({
         minWidth: 95,
         renderCell: ({ row }) => <StaffStatus value={row.status} compact />,
       },
+      {
+        field: "actions",
+        headerName: "操作",
+        sortable: false,
+        filterable: false,
+        minWidth: 170,
+        display: "flex",
+        renderCell: ({ row }) => (
+          <Stack direction="row" spacing={0.5}>
+            <Button
+              size="small"
+              startIcon={<EditOutlinedIcon />}
+              onClick={(event) => {
+                event.stopPropagation();
+                router.push(`/staff/projects/${row.id}`);
+              }}
+            >
+              管理
+            </Button>
+            {canCreate ? (
+              <Button
+                size="small"
+                color="inherit"
+                startIcon={<DeleteOutlinedIcon />}
+                disabled={submitting}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void removeProject(row);
+                }}
+              >
+                删除
+              </Button>
+            ) : null}
+          </Stack>
+        ),
+      },
     ],
-    [],
+    [canCreate, router, submitting],
   );
 
   function resetFilters() {
@@ -173,8 +215,35 @@ export function ProjectTable({
     setServiceTypeId("ALL");
   }
 
+  async function removeProject(project: ProjectListItem) {
+    if (
+      !window.confirm(
+        `确认删除项目「${project.title}」？将一并删除其进度、请求与附件记录。`,
+      )
+    ) {
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await staffApi(`/api/v1/projects/${project.id}`, jsonRequest("DELETE"));
+      router.refresh();
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error ? removeError.message : "项目删除失败",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <Stack spacing={2}>
+      {error ? (
+        <Alert severity="error" onClose={() => setError("")}>
+          {error}
+        </Alert>
+      ) : null}
       <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 } }}>
         <Stack
           direction={{ xs: "column", lg: "row" }}
@@ -278,15 +347,11 @@ export function ProjectTable({
         <Stack sx={{ display: { xs: "flex", md: "none" } }}>
           {rows.map((project) => (
             <Stack
-              component="button"
-              type="button"
               key={project.id}
               spacing={1.25}
-              onClick={() => router.push(`/staff/projects/${project.id}`)}
               sx={{
                 width: "100%",
                 p: 2,
-                border: 0,
                 borderBottom: "1px solid",
                 borderColor: "divider",
                 bgcolor: "background.paper",
@@ -295,21 +360,59 @@ export function ProjectTable({
                 "&:last-child": { borderBottom: 0 },
               }}
             >
-              <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between" }}>
-                <Typography sx={{ fontWeight: 650 }}>{project.title}</Typography>
-                <StaffStatus value={project.status} compact />
+              <Stack
+                component="button"
+                type="button"
+                spacing={1.25}
+                onClick={() => router.push(`/staff/projects/${project.id}`)}
+                sx={{
+                  width: "100%",
+                  p: 0,
+                  border: 0,
+                  bgcolor: "transparent",
+                  color: "inherit",
+                  textAlign: "left",
+                  cursor: "pointer",
+                }}
+              >
+                <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between" }}>
+                  <Typography sx={{ fontWeight: 650 }}>{project.title}</Typography>
+                  <StaffStatus value={project.status} compact />
+                </Stack>
+                <Typography variant="body2" color="text.secondary">
+                  {project.customerSpace.name} · {project.serviceType.name}
+                </Typography>
+                {project.showProgress !== false ? (
+                  <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                    <LinearProgress
+                      variant="determinate"
+                      value={project.progress}
+                      sx={{ flex: 1, height: 5, borderRadius: 4 }}
+                    />
+                    <Typography variant="body2">{project.progress}%</Typography>
+                  </Stack>
+                ) : null}
               </Stack>
-              <Typography variant="body2" color="text.secondary">
-                {project.customerSpace.name} · {project.serviceType.name}
-              </Typography>
-              {project.showProgress !== false ? (
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-                  <LinearProgress
-                    variant="determinate"
-                    value={project.progress}
-                    sx={{ flex: 1, height: 5, borderRadius: 4 }}
-                  />
-                  <Typography variant="body2">{project.progress}%</Typography>
+              {canCreate ? (
+                <Stack direction="row" spacing={1}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<EditOutlinedIcon />}
+                    onClick={() => router.push(`/staff/projects/${project.id}`)}
+                  >
+                    管理
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="inherit"
+                    startIcon={<DeleteOutlinedIcon />}
+                    disabled={submitting}
+                    onClick={() => void removeProject(project)}
+                  >
+                    删除
+                  </Button>
                 </Stack>
               ) : null}
             </Stack>

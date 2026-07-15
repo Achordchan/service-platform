@@ -220,3 +220,85 @@ export function updateRequestCategory(
     return category;
   });
 }
+
+export function deleteServiceType(actor: Actor, serviceTypeId: string) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    const existing = await tx.serviceType.findUnique({
+      where: { id: serviceTypeId },
+      select: {
+        id: true,
+        key: true,
+        name: true,
+        _count: {
+          select: {
+            projects: true,
+            requestCategories: true,
+          },
+        },
+      },
+    });
+    assertFound(existing, "服务类型不存在");
+    if (existing._count.projects > 0) {
+      throw new DomainError(
+        "SERVICE_TYPE_IN_USE",
+        "仍有项目使用该服务类型，无法删除",
+        409,
+      );
+    }
+
+    await tx.requestCategory.deleteMany({ where: { serviceTypeId } });
+    await tx.serviceType.delete({ where: { id: serviceTypeId } });
+    await writeAuditLog(tx, actor, {
+      action: "SERVICE_TYPE_DELETED",
+      resourceType: "ServiceType",
+      resourceId: existing.id,
+      metadata: {
+        key: existing.key,
+        name: existing.name,
+        categoryCount: existing._count.requestCategories,
+      },
+    });
+  });
+}
+
+export function deleteRequestCategory(
+  actor: Actor,
+  serviceTypeId: string,
+  requestCategoryId: string,
+) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    const existing = await tx.requestCategory.findFirst({
+      where: {
+        id: requestCategoryId,
+        serviceTypeId,
+      },
+      select: {
+        id: true,
+        name: true,
+        _count: { select: { requests: true } },
+      },
+    });
+    assertFound(existing, "请求分类不存在");
+    if (existing._count.requests > 0) {
+      throw new DomainError(
+        "REQUEST_CATEGORY_IN_USE",
+        "仍有服务请求使用该分类，无法删除",
+        409,
+      );
+    }
+
+    await tx.requestCategory.delete({ where: { id: requestCategoryId } });
+    await writeAuditLog(tx, actor, {
+      action: "REQUEST_CATEGORY_DELETED",
+      resourceType: "RequestCategory",
+      resourceId: existing.id,
+      metadata: {
+        serviceTypeId,
+        name: existing.name,
+      },
+    });
+  });
+}
+

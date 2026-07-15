@@ -23,6 +23,8 @@ import {
   Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { ServiceTypeItem } from "@/components/staff/staff-types";
@@ -39,15 +41,26 @@ export function ServiceTypeManager({
 }) {
   const router = useRouter();
   const [dialog, setDialog] = useState<DialogState>(null);
+  const [editingService, setEditingService] = useState<ServiceTypeItem | null>(null);
+  const [editingCategory, setEditingCategory] = useState<{
+    serviceType: ServiceTypeItem;
+    category: ServiceTypeItem["categories"][number];
+  } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
-  async function execute(url: string, body: unknown) {
+  async function execute(
+    url: string,
+    method: "POST" | "PATCH" | "DELETE",
+    body?: unknown,
+  ) {
     setSubmitting(true);
     setError("");
     try {
-      await staffApi(url, jsonRequest("POST", body));
+      await staffApi(url, jsonRequest(method, body));
       setDialog(null);
+      setEditingService(null);
+      setEditingCategory(null);
       router.refresh();
     } catch (submitError) {
       setError(
@@ -61,7 +74,7 @@ export function ServiceTypeManager({
   async function createService(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    await execute("/api/v1/admin/service-types", {
+    await execute("/api/v1/admin/service-types", "POST", {
       key: String(data.get("key") ?? "").trim(),
       name: String(data.get("name") ?? "").trim(),
       description: String(data.get("description") ?? "").trim() || null,
@@ -75,6 +88,7 @@ export function ServiceTypeManager({
     const data = new FormData(event.currentTarget);
     await execute(
       `/api/v1/admin/service-types/${dialog.serviceType.id}/request-categories`,
+      "POST",
       {
         name: String(data.get("name") ?? "").trim(),
         description: String(data.get("description") ?? "").trim() || null,
@@ -120,6 +134,49 @@ export function ServiceTypeManager({
     } finally {
       setSubmitting(false);
     }
+  }
+
+
+  async function updateService(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingService) return;
+    const data = new FormData(event.currentTarget);
+    await execute(`/api/v1/admin/service-types/${editingService.id}`, "PATCH", {
+      name: String(data.get("name") ?? "").trim(),
+      description: String(data.get("description") ?? "").trim() || null,
+      active: data.get("active") === "on",
+    });
+  }
+
+  async function updateCategory(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingCategory) return;
+    const data = new FormData(event.currentTarget);
+    await execute(
+      `/api/v1/admin/service-types/${editingCategory.serviceType.id}/request-categories/${editingCategory.category.id}`,
+      "PATCH",
+      {
+        name: String(data.get("name") ?? "").trim(),
+        description: String(data.get("description") ?? "").trim() || null,
+        active: data.get("active") === "on",
+      },
+    );
+  }
+
+  async function removeService(serviceType: ServiceTypeItem) {
+    if (!window.confirm(`确认删除服务类型「${serviceType.name}」？`)) return;
+    await execute(`/api/v1/admin/service-types/${serviceType.id}`, "DELETE");
+  }
+
+  async function removeCategory(
+    serviceType: ServiceTypeItem,
+    category: ServiceTypeItem["categories"][number],
+  ) {
+    if (!window.confirm(`确认删除请求分类「${category.name}」？`)) return;
+    await execute(
+      `/api/v1/admin/service-types/${serviceType.id}/request-categories/${category.id}`,
+      "DELETE",
+    );
   }
 
   return (
@@ -187,16 +244,42 @@ export function ServiceTypeManager({
                 <Typography color="text.secondary">
                   {serviceType.description || "未填写服务说明"}
                 </Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={serviceType.active}
-                      onChange={() => toggleService(serviceType)}
-                      disabled={submitting}
-                    />
-                  }
-                  label="启用服务"
-                />
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={serviceType.active}
+                        onChange={() => toggleService(serviceType)}
+                        disabled={submitting}
+                      />
+                    }
+                    label="启用服务"
+                  />
+                  <Button
+                    size="small"
+                    startIcon={<EditOutlinedIcon />}
+                    onClick={() => setEditingService(serviceType)}
+                  >
+                    编辑
+                  </Button>
+                  <Button
+                    size="small"
+                    color="inherit"
+                    startIcon={<DeleteOutlinedIcon />}
+                    disabled={submitting}
+                    onClick={() => void removeService(serviceType)}
+                  >
+                    删除
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<AddOutlinedIcon />}
+                    onClick={() => setDialog({ type: "category", serviceType })}
+                  >
+                    新增分类
+                  </Button>
+                </Stack>
               </Stack>
               <Stack spacing={1}>
                 {serviceType.categories.map((category) => (
@@ -221,16 +304,36 @@ export function ServiceTypeManager({
                         </Typography>
                       ) : null}
                     </Box>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          checked={category.active}
-                          onChange={() => toggleCategory(serviceType, category)}
-                          disabled={submitting}
-                        />
-                      }
-                      label={category.active ? "启用" : "停用"}
-                    />
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={category.active}
+                            onChange={() => toggleCategory(serviceType, category)}
+                            disabled={submitting}
+                          />
+                        }
+                        label={category.active ? "启用" : "停用"}
+                      />
+                      <Button
+                        size="small"
+                        startIcon={<EditOutlinedIcon />}
+                        onClick={() =>
+                          setEditingCategory({ serviceType, category })
+                        }
+                      >
+                        编辑
+                      </Button>
+                      <Button
+                        size="small"
+                        color="inherit"
+                        startIcon={<DeleteOutlinedIcon />}
+                        disabled={submitting}
+                        onClick={() => void removeCategory(serviceType, category)}
+                      >
+                        删除
+                      </Button>
+                    </Stack>
                   </Stack>
                 ))}
                 {serviceType.categories.length === 0 ? (
@@ -326,6 +429,97 @@ export function ServiceTypeManager({
             </Button>
           </DialogActions>
         </Stack>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editingService)}
+        onClose={submitting ? undefined : () => setEditingService(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        {editingService ? (
+          <Stack component="form" onSubmit={updateService}>
+            <DialogTitle>编辑服务类型</DialogTitle>
+            <DialogContent>
+              <Stack spacing={2} sx={{ pt: 1 }}>
+                <TextField
+                  name="name"
+                  label="名称"
+                  defaultValue={editingService.name}
+                  required
+                />
+                <TextField
+                  name="description"
+                  label="说明"
+                  defaultValue={editingService.description || ""}
+                  multiline
+                  minRows={2}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch name="active" defaultChecked={editingService.active} />
+                  }
+                  label="启用服务"
+                />
+              </Stack>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 3 }}>
+              <Button onClick={() => setEditingService(null)} disabled={submitting}>
+                取消
+              </Button>
+              <Button type="submit" variant="contained" disabled={submitting}>
+                保存
+              </Button>
+            </DialogActions>
+          </Stack>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={Boolean(editingCategory)}
+        onClose={submitting ? undefined : () => setEditingCategory(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        {editingCategory ? (
+          <Stack component="form" onSubmit={updateCategory}>
+            <DialogTitle>编辑请求分类</DialogTitle>
+            <DialogContent>
+              <Stack spacing={2} sx={{ pt: 1 }}>
+                <TextField
+                  name="name"
+                  label="分类名称"
+                  defaultValue={editingCategory.category.name}
+                  required
+                />
+                <TextField
+                  name="description"
+                  label="说明"
+                  defaultValue={editingCategory.category.description || ""}
+                  multiline
+                  minRows={2}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      name="active"
+                      defaultChecked={editingCategory.category.active}
+                    />
+                  }
+                  label="启用分类"
+                />
+              </Stack>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 3 }}>
+              <Button onClick={() => setEditingCategory(null)} disabled={submitting}>
+                取消
+              </Button>
+              <Button type="submit" variant="contained" disabled={submitting}>
+                保存
+              </Button>
+            </DialogActions>
+          </Stack>
+        ) : null}
       </Dialog>
     </Stack>
   );

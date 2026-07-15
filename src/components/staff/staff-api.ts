@@ -22,10 +22,16 @@ export async function staffApi<T>(
   return payload.data;
 }
 
-export function jsonRequest(method: "POST" | "PATCH", body: unknown) {
+export function jsonRequest(
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
+  body?: unknown,
+) {
+  if (method === "DELETE" && body === undefined) {
+    return { method } satisfies RequestInit;
+  }
   return {
     method,
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   } satisfies RequestInit;
 }

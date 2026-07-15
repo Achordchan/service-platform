@@ -325,3 +325,46 @@ export function updateCustomerSpace(
     return space;
   });
 }
+
+export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    const existing = await tx.customerSpace.findUnique({
+      where: { id: customerSpaceId },
+      select: {
+        id: true,
+        name: true,
+        _count: {
+          select: {
+            projects: true,
+            memberships: true,
+          },
+        },
+      },
+    });
+    assertFound(existing, "客户空间不存在");
+
+    if (existing._count.projects > 0) {
+      throw new DomainError(
+        "CUSTOMER_SPACE_HAS_PROJECTS",
+        "客户空间下仍有项目，请先删除或转移项目后再删除",
+        409,
+      );
+    }
+
+    await tx.invitation.deleteMany({ where: { customerSpaceId } });
+    await tx.membership.deleteMany({ where: { customerSpaceId } });
+    await tx.customerSpace.delete({ where: { id: customerSpaceId } });
+    await writeAuditLog(tx, actor, {
+      action: "CUSTOMER_SPACE_DELETED",
+      resourceType: "CustomerSpace",
+      resourceId: existing.id,
+      customerSpaceId: existing.id,
+      metadata: {
+        name: existing.name,
+        membershipCount: existing._count.memberships,
+      },
+    });
+  });
+}
+

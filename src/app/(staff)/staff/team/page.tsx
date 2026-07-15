@@ -45,6 +45,8 @@ export default async function StaffTeamPage() {
     roleGroupId: user.roleGroupId,
     roleGroupName: user.roleGroup?.name ?? null,
     projectCount: user._count.projectAssignments,
+    requestCount:
+      user._count.requestsAssigned + user._count.requestAssignees,
     createdAt: user.createdAt.toISOString(),
   }));
 

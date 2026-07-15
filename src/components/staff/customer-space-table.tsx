@@ -19,6 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
@@ -84,6 +85,32 @@ export function CustomerSpaceTable({
     }
   }
 
+  async function removeSpace(space: CustomerSpaceItem) {
+    if (space.projectCount > 0) {
+      setError("该客户下仍有项目，请先处理项目后再删除");
+      return;
+    }
+    if (!window.confirm(`确认删除客户「${space.name}」？此操作不可恢复。`)) {
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await staffApi(
+        `/api/v1/admin/customer-spaces/${space.id}`,
+        jsonRequest("DELETE"),
+      );
+      setEditing(null);
+      router.refresh();
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error ? removeError.message : "客户空间删除失败",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   const columns = useMemo<GridColDef<CustomerSpaceItem>[]>(
     () => [
       { field: "name", headerName: "客户空间", minWidth: 180, flex: 1 },
@@ -131,27 +158,42 @@ export function CustomerSpaceTable({
         headerName: "操作",
         sortable: false,
         filterable: false,
-        minWidth: 100,
+        minWidth: 180,
         display: "flex",
         renderCell: ({ row }) => (
-          <Button
-            size="small"
-            startIcon={<EditOutlinedIcon />}
-            onClick={(event) => {
-              event.stopPropagation();
-              setEditing(row);
-            }}
-          >
-            管理
-          </Button>
+          <Stack direction="row" spacing={0.5}>
+            <Button
+              size="small"
+              startIcon={<EditOutlinedIcon />}
+              onClick={(event) => {
+                event.stopPropagation();
+                setEditing(row);
+              }}
+            >
+              编辑
+            </Button>
+            <Button
+              size="small"
+              color="inherit"
+              startIcon={<DeleteOutlinedIcon />}
+              disabled={submitting || row.projectCount > 0}
+              onClick={(event) => {
+                event.stopPropagation();
+                void removeSpace(row);
+              }}
+            >
+              删除
+            </Button>
+          </Stack>
         ),
       },
     ],
-    [],
+    [submitting],
   );
 
   return (
     <Stack spacing={2}>
+      {error && !editing ? <Alert severity="error" onClose={() => setError("")}>{error}</Alert> : null}
       {created ? (
         <Alert
           severity="success"
@@ -259,13 +301,24 @@ export function CustomerSpaceTable({
               <Typography variant="body2" color="text.secondary">
                 成员 {space.memberCount}/{space.memberLimit} · 项目 {space.projectCount}
               </Typography>
-              <Button
-                variant="outlined"
-                startIcon={<EditOutlinedIcon />}
-                onClick={() => setEditing(space)}
-              >
-                管理客户空间
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="outlined"
+                  startIcon={<EditOutlinedIcon />}
+                  onClick={() => setEditing(space)}
+                >
+                  编辑
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="inherit"
+                  startIcon={<DeleteOutlinedIcon />}
+                  disabled={submitting || space.projectCount > 0}
+                  onClick={() => void removeSpace(space)}
+                >
+                  删除
+                </Button>
+              </Stack>
             </Stack>
           ))}
         </Stack>
@@ -313,13 +366,22 @@ export function CustomerSpaceTable({
                 </Alert>
               </Stack>
             </DialogContent>
-            <DialogActions sx={{ px: 3, pb: 3 }}>
-              <Button onClick={() => setEditing(null)} disabled={submitting}>
-                取消
+            <DialogActions sx={{ px: 3, pb: 3, justifyContent: "space-between" }}>
+              <Button
+                color="inherit"
+                disabled={submitting || editing.projectCount > 0}
+                onClick={() => void removeSpace(editing)}
+              >
+                删除客户
               </Button>
-              <Button type="submit" variant="contained" disabled={submitting}>
-                保存
-              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button onClick={() => setEditing(null)} disabled={submitting}>
+                  取消
+                </Button>
+                <Button type="submit" variant="contained" disabled={submitting}>
+                  保存
+                </Button>
+              </Stack>
             </DialogActions>
           </Stack>
         ) : null}

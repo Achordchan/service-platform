@@ -5,7 +5,10 @@ import {
   requireApiActor,
   routeError,
 } from "@/modules/projects/api-utils";
-import { updateStaffProfile } from "@/modules/users/staff-invitation-service";
+import {
+  deactivateStaffUser,
+  updateStaffProfile,
+} from "@/modules/users/staff-invitation-service";
 
 const updateSchema = z.object({
   name: z.string().trim().min(2).max(60).optional(),
@@ -48,6 +51,23 @@ export async function PATCH(
         projectCount: user._count.projectAssignments,
       },
     });
+  } catch (error) {
+    return routeError(error);
+  }
+}
+
+
+export async function DELETE(
+  _request: Request,
+  context: { params: Promise<{ userId: string }> },
+) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { userId } = await context.params;
+    await deactivateStaffUser(auth.actor, userId);
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);
   }

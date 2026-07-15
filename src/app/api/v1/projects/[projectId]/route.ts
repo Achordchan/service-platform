@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  deleteProject,
   getProject,
   updateProject,
 } from "@/modules/projects/project-service";
@@ -36,6 +37,20 @@ export async function PATCH(request: Request, context: RouteContext) {
     const input = updateProjectSchema.parse(await readJson(request));
     const project = await updateProject(auth.actor, projectId, input);
     return NextResponse.json({ data: project });
+  } catch (error) {
+    return routeError(error);
+  }
+}
+
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { projectId } = await context.params;
+    await deleteProject(auth.actor, projectId);
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);
   }

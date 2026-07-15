@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { updateRequestCategory } from "@/modules/projects/service-type-service";
+import {
+  deleteRequestCategory,
+  updateRequestCategory,
+} from "@/modules/projects/service-type-service";
 import { updateRequestCategorySchema } from "@/modules/projects/schemas";
 import {
   readJson,
@@ -28,6 +31,24 @@ export async function PATCH(request: Request, context: RouteContext) {
       input,
     );
     return NextResponse.json({ data: category });
+  } catch (error) {
+    return routeError(error);
+  }
+}
+
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { serviceTypeId, requestCategoryId } = await context.params;
+    await deleteRequestCategory(
+      auth.actor,
+      serviceTypeId,
+      requestCategoryId,
+    );
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);
   }

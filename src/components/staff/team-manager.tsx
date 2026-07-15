@@ -22,6 +22,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
@@ -47,6 +48,7 @@ export type TeamMemberView = {
   roleGroupId: string | null;
   roleGroupName: string | null;
   projectCount: number;
+  requestCount: number;
   createdAt: string;
 };
 
@@ -203,6 +205,40 @@ export function TeamManager({
     }
   }
 
+  async function removeMember(member: TeamMemberView) {
+    if (member.platformRole === "PLATFORM_ADMIN") {
+      setError("不能删除平台管理员");
+      return;
+    }
+    if (member.projectCount > 0 || member.requestCount > 0) {
+      setError("该成员仍有项目或工单分配，请先解除后再删除");
+      return;
+    }
+    if (!window.confirm(`确认删除协作成员「${member.name}」？此操作不可恢复。`)) {
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    setSuccess(null);
+    try {
+      await staffApi(
+        `/api/v1/admin/users/${member.id}`,
+        jsonRequest("DELETE"),
+      );
+      if (editing?.id === member.id) {
+        setEditing(null);
+      }
+      setSuccess(`已删除协作成员 ${member.name}`);
+      router.refresh();
+    } catch (removeError) {
+      setError(
+        removeError instanceof Error ? removeError.message : "删除失败",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <Stack spacing={3}>
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -311,9 +347,24 @@ export function TeamManager({
                       {member.platformRole === "PLATFORM_ADMIN" ? (
                         "—"
                       ) : (
-                        <Button size="small" onClick={() => openEdit(member)}>
-                          编辑资料
-                        </Button>
+                        <Stack direction="row" spacing={0.5}>
+                          <Button size="small" onClick={() => openEdit(member)}>
+                            编辑资料
+                          </Button>
+                          <Button
+                            size="small"
+                            color="inherit"
+                            startIcon={<DeleteOutlinedIcon />}
+                            disabled={
+                              submitting ||
+                              member.projectCount > 0 ||
+                              member.requestCount > 0
+                            }
+                            onClick={() => void removeMember(member)}
+                          >
+                            删除
+                          </Button>
+                        </Stack>
                       )}
                     </TableCell>
                   </TableRow>
@@ -549,28 +600,46 @@ export function TeamManager({
             />
           </Stack>
         </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setOpen(false);
-              setEditing(null);
-            }}
-            disabled={submitting}
-          >
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            onClick={editing ? saveProfile : invite}
-            disabled={
-              submitting ||
-              !form.name.trim() ||
-              (!editing && !form.email.trim()) ||
-              !form.roleGroupId
-            }
-          >
-            {submitting ? "提交中" : editing ? "保存资料" : "发送邀请"}
-          </Button>
+        <DialogActions sx={{ px: 3, pb: 2, justifyContent: "space-between" }}>
+          {editing ? (
+            <Button
+              color="inherit"
+              startIcon={<DeleteOutlinedIcon />}
+              disabled={
+                submitting ||
+                editing.projectCount > 0 ||
+                editing.requestCount > 0
+              }
+              onClick={() => void removeMember(editing)}
+            >
+              删除成员
+            </Button>
+          ) : (
+            <span />
+          )}
+          <Stack direction="row" spacing={1}>
+            <Button
+              onClick={() => {
+                setOpen(false);
+                setEditing(null);
+              }}
+              disabled={submitting}
+            >
+              取消
+            </Button>
+            <Button
+              variant="contained"
+              onClick={editing ? saveProfile : invite}
+              disabled={
+                submitting ||
+                !form.name.trim() ||
+                (!editing && !form.email.trim()) ||
+                !form.roleGroupId
+              }
+            >
+              {submitting ? "提交中" : editing ? "保存资料" : "发送邀请"}
+            </Button>
+          </Stack>
         </DialogActions>
       </Dialog>
     </Stack>

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Box,
+  Button,
   InputAdornment,
   MenuItem,
   Paper,
@@ -13,6 +14,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import {
@@ -137,8 +139,28 @@ export function RequestTable({
         renderCell: ({ row }) =>
           dateFormatter.format(new Date(row.updatedAt)),
       },
+      {
+        field: "actions",
+        headerName: "操作",
+        sortable: false,
+        filterable: false,
+        minWidth: 110,
+        display: "flex",
+        renderCell: ({ row }) => (
+          <Button
+            size="small"
+            startIcon={<EditOutlinedIcon />}
+            onClick={(event) => {
+              event.stopPropagation();
+              router.push(`/staff/requests/${row.id}`);
+            }}
+          >
+            处理
+          </Button>
+        ),
+      },
     ],
-    [],
+    [router],
   );
 
   return (

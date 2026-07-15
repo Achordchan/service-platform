@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  deleteServiceType,
   getServiceType,
   updateServiceType,
 } from "@/modules/projects/service-type-service";
@@ -40,6 +41,20 @@ export async function PATCH(request: Request, context: RouteContext) {
       input,
     );
     return NextResponse.json({ data: serviceType });
+  } catch (error) {
+    return routeError(error);
+  }
+}
+
+
+export async function DELETE(_request: Request, context: RouteContext) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { serviceTypeId } = await context.params;
+    await deleteServiceType(auth.actor, serviceTypeId);
+    return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);
   }

@@ -340,3 +340,41 @@ export function updateProject(
     };
   });
 }
+
+export function deleteProject(actor: Actor, projectId: string) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    const existing = await tx.project.findUnique({
+      where: { id: projectId },
+      select: {
+        id: true,
+        title: true,
+        customerSpaceId: true,
+        _count: {
+          select: {
+            requests: true,
+            updates: true,
+            milestones: true,
+          },
+        },
+      },
+    });
+    assertFound(existing, "项目不存在");
+
+    await tx.project.delete({ where: { id: projectId } });
+    await writeAuditLog(tx, actor, {
+      action: "PROJECT_DELETED",
+      resourceType: "Project",
+      resourceId: existing.id,
+      customerSpaceId: existing.customerSpaceId,
+      projectId: existing.id,
+      metadata: {
+        title: existing.title,
+        requestCount: existing._count.requests,
+        updateCount: existing._count.updates,
+        milestoneCount: existing._count.milestones,
+      },
+    });
+  });
+}
+
