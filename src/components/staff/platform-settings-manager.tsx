@@ -69,11 +69,15 @@ export function PlatformSettingsManager({
   initialMessages,
   currentAdminEmail,
   sections,
+  embedded = false,
+  onSettingsChange,
 }: {
   initialSettings: PlatformSettingsView;
   initialMessages: MailMessageView[];
   currentAdminEmail: string;
   sections?: PlatformSettingsSection[];
+  embedded?: boolean;
+  onSettingsChange?: (settings: PlatformSettingsView) => void;
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [messages, setMessages] = useState(initialMessages);
@@ -118,6 +122,7 @@ export function PlatformSettingsManager({
         jsonRequest("PATCH", payload),
       );
       setSettings(next);
+      onSettingsChange?.(next);
       setCustomerReplyAttachmentsEnabled(next.customerReplyAttachmentsEnabled);
       setSuccess("附件策略已保存");
     } catch (submitError) {
@@ -164,7 +169,13 @@ export function PlatformSettingsManager({
       ) : null}
 
       {showAttachments ? (
-      <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          p: embedded ? 0 : { xs: 2.5, md: 3 },
+          border: embedded ? 0 : undefined,
+        }}
+      >
         <Stack key={`attachments-${settings.updatedAt ?? "init"}`} spacing={2.5} component="form" onSubmit={handleSubmit}>
           <TextField
             name="attachmentMaxSizeMb"
@@ -202,7 +213,13 @@ export function PlatformSettingsManager({
       ) : null}
 
       {showOutbox ? (
-      <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          p: embedded ? 0 : { xs: 2.5, md: 3 },
+          border: embedded ? 0 : undefined,
+        }}
+      >
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}

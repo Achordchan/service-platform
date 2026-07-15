@@ -57,8 +57,12 @@ const emptyForm = {
 
 export function RoleGroupManager({
   roleGroups,
+  embedded = false,
+  showHeading = false,
 }: {
   roleGroups: RoleGroupView[];
+  embedded?: boolean;
+  showHeading?: boolean;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -185,16 +189,36 @@ export function RoleGroupManager({
     <Stack spacing={2}>
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
-      <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
+      <Paper
+        variant="outlined"
+        sx={{
+          p: embedded ? 0 : { xs: 2.25, md: 3 },
+          border: embedded ? 0 : undefined,
+        }}
+      >
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}
           sx={{
             mb: 2,
             alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "flex-end",
+            justifyContent: "space-between",
           }}
         >
+          {showHeading ? (
+            <Box>
+              <Typography sx={{ fontWeight: 700 }}>角色与权限</Typography>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ mt: 0.5 }}
+              >
+                {roleGroups.length} 个角色组
+              </Typography>
+            </Box>
+          ) : (
+            <Box />
+          )}
           <Button
             variant="contained"
             startIcon={<AddOutlinedIcon />}

@@ -1,24 +1,12 @@
 import { redirect } from "next/navigation";
+import { Container, Stack } from "@mui/material";
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
-  Container,
-  Stack,
-  Typography,
-} from "@mui/material";
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import {
-  PlatformSettingsManager,
   type MailMessageView,
+  type MailTemplateView,
   type PlatformSettingsView,
-} from "@/components/staff/platform-settings-manager";
-import { MailTemplateManager } from "@/components/staff/mail-template-manager";
-import type { MailTemplateView } from "@/components/staff/platform-settings-types";
-import {
-  RoleGroupManager,
-  type RoleGroupView,
-} from "@/components/staff/role-group-manager";
+} from "@/components/staff/platform-settings-types";
+import { PlatformSettingsHub } from "@/components/staff/platform-settings-hub";
+import type { RoleGroupView } from "@/components/staff/role-group-manager";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { requireUserWithAccess } from "@/lib/session";
 import {
@@ -116,69 +104,13 @@ export default async function StaffSettingsPage() {
     >
       <Stack spacing={3}>
         <StaffPageHeading title="设置" />
-
-        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
-          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Typography sx={{ fontWeight: 700 }}>角色与权限</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <RoleGroupManager roleGroups={roleGroupViews} />
-          </AccordionDetails>
-        </Accordion>
-
-        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
-          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Typography sx={{ fontWeight: 700 }}>邮件设置</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <PlatformSettingsManager
-              initialSettings={settingsView}
-              initialMessages={messageViews}
-              currentAdminEmail={actor.email}
-              sections={["site-mail"]}
-            />
-          </AccordionDetails>
-        </Accordion>
-
-        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
-          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Typography sx={{ fontWeight: 700 }}>邮件模板</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <MailTemplateManager
-              initialTemplates={templateViews}
-              currentAdminEmail={actor.email}
-            />
-          </AccordionDetails>
-        </Accordion>
-
-        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
-          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Typography sx={{ fontWeight: 700 }}>附件</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <PlatformSettingsManager
-              initialSettings={settingsView}
-              initialMessages={messageViews}
-              currentAdminEmail={actor.email}
-              sections={["attachments"]}
-            />
-          </AccordionDetails>
-        </Accordion>
-
-        <Accordion disableGutters elevation={0} sx={{ border: "1px solid", borderColor: "divider", borderRadius: "10px !important", overflow: "hidden", "&:before": { display: "none" } }}>
-          <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-            <Typography sx={{ fontWeight: 700 }}>发件箱</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <PlatformSettingsManager
-              initialSettings={settingsView}
-              initialMessages={messageViews}
-              currentAdminEmail={actor.email}
-              sections={["outbox"]}
-            />
-          </AccordionDetails>
-        </Accordion>
+        <PlatformSettingsHub
+          initialSettings={settingsView}
+          initialMessages={messageViews}
+          initialTemplates={templateViews}
+          roleGroups={roleGroupViews}
+          currentAdminEmail={actor.email}
+        />
       </Stack>
     </Container>
   );

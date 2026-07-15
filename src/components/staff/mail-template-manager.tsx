@@ -2,24 +2,22 @@
 
 import { useState } from "react";
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   Paper,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
-import type {
-  MailTemplateView,
-} from "@/components/staff/platform-settings-types";
+import type { MailTemplateView } from "@/components/staff/platform-settings-types";
 
 function MailTemplateEditor({
   template,
@@ -131,187 +129,147 @@ function MailTemplateEditor({
   }
 
   return (
-    <Accordion
-      disableGutters
-      elevation={0}
-      sx={{
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px !important",
-        overflow: "hidden",
-        "&:before": { display: "none" },
-      }}
+    <Stack
+      key={`${template.key}-${template.updatedAt ?? "default"}`}
+      component="form"
+      spacing={2}
+      onSubmit={saveTemplate}
     >
-      <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+      {template.variables.length > 0 ? (
         <Stack
-          direction={{ xs: "column", sm: "row" }}
+          direction="row"
           spacing={1}
-          sx={{
-            width: "100%",
-            pr: 1,
-            alignItems: { sm: "center" },
-            justifyContent: "space-between",
-          }}
+          useFlexGap
+          sx={{ flexWrap: "wrap" }}
         >
-          <Box>
-            <Typography sx={{ fontWeight: 700 }}>{template.name}</Typography>
-            <Typography variant="body2" color="text.secondary">
-              {template.description}
-            </Typography>
-          </Box>
-          <Chip
-            size="small"
-            label={template.customized ? "已自定义" : "系统默认"}
-            color={template.customized ? "primary" : "default"}
-          />
-        </Stack>
-      </AccordionSummary>
-      <AccordionDetails sx={{ pt: 0 }}>
-        <Stack
-          key={`${template.key}-${template.updatedAt ?? "default"}`}
-          component="form"
-          spacing={2}
-          onSubmit={saveTemplate}
-        >
-          {template.variables.length > 0 ? (
-            <Stack
-              direction="row"
-              spacing={1}
-              useFlexGap
-              sx={{ flexWrap: "wrap" }}
-            >
-              <Typography variant="body2" color="text.secondary">
-                可用变量：
-              </Typography>
-              {template.variables.map((variable) => (
-                <Chip
-                  key={variable.key}
-                  size="small"
-                  variant="outlined"
-                  label={`{{${variable.key}}} · ${variable.label}`}
-                  sx={{ fontFamily: "monospace" }}
-                />
-              ))}
-            </Stack>
-          ) : null}
-          <TextField
-            name="subject"
-            label="邮件主题"
-            value={subject}
-            onChange={(event) => setSubject(event.target.value)}
-            required
-            fullWidth
-          />
-          <TextField
-            name="previewText"
-            label="收件箱预览文字"
-            value={previewText}
-            onChange={(event) => setPreviewText(event.target.value)}
-            required
-            fullWidth
-            helperText="多数邮箱会在主题后显示这段摘要"
-          />
-          <TextField
-            name="heading"
-            label="正文标题"
-            value={heading}
-            onChange={(event) => setHeading(event.target.value)}
-            required
-            fullWidth
-          />
-          <TextField
-            name="body"
-            label="正文"
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            required
-            multiline
-            minRows={4}
-            fullWidth
-          />
-          <TextField
-            name="actionLabel"
-            label="按钮文字"
-            value={actionLabel}
-            onChange={(event) => setActionLabel(event.target.value)}
-            fullWidth
-            helperText="留空则不显示操作按钮"
-          />
-
-          <Paper
-            variant="outlined"
-            sx={{
-              p: { xs: 2, sm: 2.5 },
-              bgcolor: "grey.50",
-              overflow: "hidden",
-            }}
-          >
-            <Typography variant="overline" color="text.secondary">
-              示例预览
-            </Typography>
-            <Typography sx={{ mt: 0.5, fontWeight: 700 }}>
-              {renderSample(subject)}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {renderSample(previewText)}
-            </Typography>
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="h3" sx={{ fontSize: 20, fontWeight: 700 }}>
-              {renderSample(heading)}
-            </Typography>
-            <Typography
-              color="text.secondary"
-              sx={{ mt: 1, whiteSpace: "pre-line" }}
-            >
-              {renderSample(body)}
-            </Typography>
-            {actionLabel ? (
-              <Button variant="contained" size="small" sx={{ mt: 2 }}>
-                {renderSample(actionLabel)}
-              </Button>
-            ) : null}
-          </Paper>
-
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ justifyContent: "space-between" }}
-          >
-            <Button
-              type="button"
-              color="error"
-              onClick={resetTemplate}
-              disabled={busy !== null || !template.customized}
-            >
-              恢复默认
-            </Button>
-            <Button type="submit" variant="contained" disabled={busy !== null}>
-              {busy === actionKey ? "处理中" : "保存模板"}
-            </Button>
-          </Stack>
-
-          <Divider />
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-            <TextField
-              label="测试收件邮箱"
-              type="email"
-              value={testEmail}
-              onChange={(event) => setTestEmail(event.target.value)}
-              fullWidth
-            />
-            <Button
-              type="button"
+          <Typography variant="body2" color="text.secondary">
+            可用变量：
+          </Typography>
+          {template.variables.map((variable) => (
+            <Chip
+              key={variable.key}
+              size="small"
               variant="outlined"
-              onClick={sendTest}
-              disabled={busy !== null || !testEmail.trim()}
-              sx={{ whiteSpace: "nowrap" }}
-            >
-              发送此模板测试
-            </Button>
-          </Stack>
+              label={`{{${variable.key}}} · ${variable.label}`}
+              sx={{ fontFamily: "monospace" }}
+            />
+          ))}
         </Stack>
-      </AccordionDetails>
-    </Accordion>
+      ) : null}
+      <TextField
+        name="subject"
+        label="邮件主题"
+        value={subject}
+        onChange={(event) => setSubject(event.target.value)}
+        required
+        fullWidth
+      />
+      <TextField
+        name="previewText"
+        label="收件箱预览文字"
+        value={previewText}
+        onChange={(event) => setPreviewText(event.target.value)}
+        required
+        fullWidth
+      />
+      <TextField
+        name="heading"
+        label="正文标题"
+        value={heading}
+        onChange={(event) => setHeading(event.target.value)}
+        required
+        fullWidth
+      />
+      <TextField
+        name="body"
+        label="正文"
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        required
+        multiline
+        minRows={4}
+        fullWidth
+      />
+      <TextField
+        name="actionLabel"
+        label="按钮文字"
+        value={actionLabel}
+        onChange={(event) => setActionLabel(event.target.value)}
+        fullWidth
+      />
+
+      <Paper
+        variant="outlined"
+        sx={{
+          p: { xs: 2, sm: 2.5 },
+          bgcolor: "grey.50",
+          overflow: "hidden",
+        }}
+      >
+        <Typography variant="overline" color="text.secondary">
+          预览
+        </Typography>
+        <Typography sx={{ mt: 0.5, fontWeight: 700 }}>
+          {renderSample(subject)}
+        </Typography>
+        <Typography variant="body2" color="text.secondary">
+          {renderSample(previewText)}
+        </Typography>
+        <Divider sx={{ my: 2 }} />
+        <Typography variant="h3" sx={{ fontSize: 20, fontWeight: 700 }}>
+          {renderSample(heading)}
+        </Typography>
+        <Typography
+          color="text.secondary"
+          sx={{ mt: 1, whiteSpace: "pre-line" }}
+        >
+          {renderSample(body)}
+        </Typography>
+        {actionLabel ? (
+          <Button variant="contained" size="small" sx={{ mt: 2 }}>
+            {renderSample(actionLabel)}
+          </Button>
+        ) : null}
+      </Paper>
+
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1}
+        sx={{ justifyContent: "space-between" }}
+      >
+        <Button
+          type="button"
+          color="error"
+          onClick={resetTemplate}
+          disabled={busy !== null || !template.customized}
+        >
+          恢复默认
+        </Button>
+        <Button type="submit" variant="contained" disabled={busy !== null}>
+          {busy === actionKey ? "处理中" : "保存模板"}
+        </Button>
+      </Stack>
+
+      <Divider />
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField
+          label="测试收件邮箱"
+          type="email"
+          value={testEmail}
+          onChange={(event) => setTestEmail(event.target.value)}
+          fullWidth
+        />
+        <Button
+          type="button"
+          variant="outlined"
+          onClick={sendTest}
+          disabled={busy !== null || !testEmail.trim()}
+          sx={{ whiteSpace: "nowrap" }}
+        >
+          发送测试
+        </Button>
+      </Stack>
+    </Stack>
   );
 }
 
@@ -328,25 +286,101 @@ export function MailTemplateManager({
     type: "success" | "error";
     text: string;
   } | null>(null);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const selectedTemplate =
+    templates.find((template) => template.key === selectedKey) ?? null;
 
   return (
-    <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
-      <Stack spacing={2}>
+    <>
+      <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+        <Box sx={{ px: { xs: 2, sm: 2.5 }, py: 2.25 }}>
+          <Typography sx={{ fontWeight: 700 }}>邮件模板</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {templates.length} 个模板
+          </Typography>
+        </Box>
         {message ? (
-          <Alert severity={message.type}>{message.text}</Alert>
+          <Alert severity={message.type} sx={{ mx: 2, mb: 2 }}>
+            {message.text}
+          </Alert>
         ) : null}
-        {templates.map((template) => (
-          <MailTemplateEditor
-            key={`${template.key}-${template.updatedAt ?? "default"}`}
-            template={template}
-            currentAdminEmail={currentAdminEmail}
-            busy={busy}
-            onBusy={setBusy}
-            onTemplatesChange={setTemplates}
-            onMessage={setMessage}
-          />
+        <Divider />
+        {templates.map((template, index) => (
+          <Box key={template.key}>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={2}
+              sx={{
+                px: { xs: 2, sm: 2.5 },
+                py: 2,
+                alignItems: { sm: "center" },
+                justifyContent: "space-between",
+              }}
+            >
+              <Box sx={{ minWidth: 0 }}>
+                <Stack
+                  direction="row"
+                  spacing={1}
+                  useFlexGap
+                  sx={{ alignItems: "center", flexWrap: "wrap" }}
+                >
+                  <Typography sx={{ fontWeight: 650 }}>
+                    {template.name}
+                  </Typography>
+                  <Chip
+                    size="small"
+                    label={template.customized ? "已自定义" : "系统默认"}
+                    color={template.customized ? "primary" : "default"}
+                  />
+                </Stack>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5 }}
+                >
+                  {template.description}
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                onClick={() => setSelectedKey(template.key)}
+                sx={{ alignSelf: { xs: "stretch", sm: "center" } }}
+              >
+                编辑
+              </Button>
+            </Stack>
+            {index < templates.length - 1 ? <Divider /> : null}
+          </Box>
         ))}
-      </Stack>
-    </Paper>
+      </Paper>
+
+      <Dialog
+        open={selectedTemplate !== null}
+        onClose={() => setSelectedKey(null)}
+        fullWidth
+        maxWidth="md"
+        scroll="paper"
+      >
+        <DialogTitle>
+          {selectedTemplate?.name ?? "邮件模板"}
+        </DialogTitle>
+        <DialogContent dividers>
+          {selectedTemplate ? (
+            <MailTemplateEditor
+              key={`${selectedTemplate.key}-${selectedTemplate.updatedAt ?? "default"}`}
+              template={selectedTemplate}
+              currentAdminEmail={currentAdminEmail}
+              busy={busy}
+              onBusy={setBusy}
+              onTemplatesChange={setTemplates}
+              onMessage={setMessage}
+            />
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setSelectedKey(null)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }

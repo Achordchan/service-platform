@@ -3,6 +3,7 @@
 import { useState } from "react";
 import {
   Alert,
+  Box,
   Button,
   Chip,
   Paper,
@@ -31,10 +32,12 @@ export function MailSettingsPanel({
   settings,
   currentAdminEmail,
   onSettingsChange,
+  embedded = false,
 }: {
   settings: PlatformSettingsView;
   currentAdminEmail: string;
   onSettingsChange: (settings: PlatformSettingsView) => void;
+  embedded?: boolean;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [testEmail, setTestEmail] = useState(currentAdminEmail);
@@ -47,6 +50,14 @@ export function MailSettingsPanel({
     settings.hasResendWebhookSecret;
   const resendReady =
     settings.hasResendApiKey && domainVerified && webhookReady;
+  const [showConnectionSetup, setShowConnectionSetup] = useState(
+    !(
+      settings.hasResendApiKey &&
+      settings.resendDomainStatus === "verified" &&
+      settings.resendWebhookStatus === "enabled" &&
+      settings.hasResendWebhookSecret
+    ),
+  );
   const completedSteps = [
     settings.hasResendApiKey,
     domainVerified,
@@ -184,14 +195,120 @@ export function MailSettingsPanel({
     }
   }
 
+  if (resendReady && !showConnectionSetup) {
+    return (
+      <Paper
+        variant="outlined"
+        sx={{
+          p: embedded ? 0 : { xs: 2.5, md: 3 },
+          border: embedded ? 0 : undefined,
+        }}
+      >
+        <Stack spacing={2.5}>
+          {error ? <Alert severity="error">{error}</Alert> : null}
+          {success ? <Alert severity="success">{success}</Alert> : null}
+          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+            <Chip label="Resend 已连接" color="success" />
+            <Chip label="域名已验证" variant="outlined" />
+            <Chip label="Webhook 已启用" variant="outlined" />
+          </Stack>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+              gap: 2,
+            }}
+          >
+            {[
+              ["发信域名", settings.resendDomain],
+              ["发件人", settings.mailFrom],
+              ["回复地址", settings.mailReplyTo],
+              ["站点地址", settings.appUrl],
+            ].map(([label, value]) => (
+              <Box key={label} sx={{ minWidth: 0 }}>
+                <Typography variant="caption" color="text.secondary">
+                  {label}
+                </Typography>
+                <Typography sx={{ mt: 0.4, overflowWrap: "anywhere" }}>
+                  {value}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+            <TextField
+              label="测试收件邮箱"
+              type="email"
+              value={testEmail}
+              onChange={(event) => setTestEmail(event.target.value)}
+              fullWidth
+            />
+            <Button
+              variant="outlined"
+              onClick={sendTestMail}
+              disabled={busy !== null || !testEmail.trim()}
+              sx={{ whiteSpace: "nowrap" }}
+            >
+              {busy === "test" ? "发送中" : "发送测试邮件"}
+            </Button>
+          </Stack>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ justifyContent: "flex-end" }}
+          >
+            {settings.mailMode !== "RESEND" ? (
+              <Button
+                variant="contained"
+                onClick={() =>
+                  saveSettings({ mailMode: "RESEND" }, "Resend 已启用")
+                }
+                disabled={busy !== null}
+              >
+                启用 Resend
+              </Button>
+            ) : null}
+            <Button
+              color="inherit"
+              onClick={() => setShowConnectionSetup(true)}
+              disabled={busy !== null}
+            >
+              修改连接设置
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
+    );
+  }
+
   return (
-    <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
+    <Paper
+      variant="outlined"
+      sx={{
+        p: embedded ? 0 : { xs: 2.5, md: 3 },
+        border: embedded ? 0 : undefined,
+      }}
+    >
       <Stack spacing={3}>
-        <Chip
-          label={`当前通道：${modeLabel[settings.mailMode]}`}
-          color={settings.mailMode === "RESEND" ? "success" : "default"}
-          sx={{ alignSelf: "flex-start" }}
-        />
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
+        >
+          <Chip
+            label={`当前通道：${modeLabel[settings.mailMode]}`}
+            color={settings.mailMode === "RESEND" ? "success" : "default"}
+            sx={{ alignSelf: "flex-start" }}
+          />
+          {resendReady ? (
+            <Button
+              color="inherit"
+              onClick={() => setShowConnectionSetup(false)}
+            >
+              返回概览
+            </Button>
+          ) : null}
+        </Stack>
 
         {error ? <Alert severity="error">{error}</Alert> : null}
         {success ? <Alert severity="success">{success}</Alert> : null}

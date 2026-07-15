@@ -305,10 +305,10 @@ export function TeamManager({
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
-                        {member.phone || "未填手机"}
+                        {member.phone || "—"}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        {member.wechat ? `微信 ${member.wechat}` : "未填微信"}
+                        {member.wechat ? `微信 ${member.wechat}` : "—"}
                       </Typography>
                       {member.location ? (
                         <Typography variant="caption" color="text.secondary">
@@ -367,16 +367,14 @@ export function TeamManager({
         )}
       </Paper>
 
-      <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
-        <Typography
-          variant="h2"
-          sx={{ mb: 2, fontSize: 20, fontWeight: 700 }}
-        >
-          待处理邀请
-        </Typography>
-        {invitations.length === 0 ? (
-          <Alert severity="info">暂无待处理邀请</Alert>
-        ) : (
+      {invitations.length > 0 ? (
+        <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
+          <Typography
+            variant="h2"
+            sx={{ mb: 2, fontSize: 20, fontWeight: 700 }}
+          >
+            待处理邀请
+          </Typography>
           <Box sx={{ overflowX: "auto" }}>
             <Table size="small">
               <TableHead>
@@ -435,8 +433,8 @@ export function TeamManager({
               </TableBody>
             </Table>
           </Box>
-        )}
-      </Paper>
+        </Paper>
+      ) : null}
 
       <Dialog
         open={open || Boolean(editing)}
