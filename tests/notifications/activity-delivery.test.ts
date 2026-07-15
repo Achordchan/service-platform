@@ -89,6 +89,8 @@ describe("请求活动通知规划", () => {
       audience,
       relevantWorkerUserIds: [],
       includeCustomers: true,
+      notifyProjectManagers: true,
+      notifyPlatformAdmins: true,
       eventType: "REQUEST_CREATED",
       eventPayload: {
         projectId: "project-1",
@@ -130,6 +132,8 @@ describe("请求活动通知规划", () => {
       audience,
       relevantWorkerUserIds: ["tech-1"],
       includeCustomers: false,
+      notifyProjectManagers: true,
+      notifyPlatformAdmins: false,
       eventType: "REQUEST_MESSAGE_CREATED",
       eventPayload: {
         requestId: "request-1",
@@ -146,7 +150,6 @@ describe("请求活动通知规划", () => {
 
     expect(delivery.notifications.map((item) => item.userId)).toEqual([
       "manager-1",
-      "admin-1",
     ]);
     expect(delivery.events.map((item) => item.userId)).toEqual([
       "manager-1",
@@ -158,5 +161,68 @@ describe("请求活动通知规划", () => {
         JSON.stringify(item.payload).includes("内部备注"),
       ),
     ).toBe(false);
+  });
+
+  it("已分配请求只通知客户与处理人，但经理和管理员仍收到实时事件", () => {
+    const delivery = planRequestActivity({
+      actorId: "customer-1",
+      audience,
+      relevantWorkerUserIds: ["tech-1"],
+      includeCustomers: true,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: {
+        requestId: "request-1",
+        messageId: "message-1",
+      },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "张伟回复了请求 REQ-1",
+      notificationBody: "具体问题内容",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(delivery.notifications.map((item) => item.userId)).toEqual([
+      "customer-2",
+      "tech-1",
+    ]);
+    expect(delivery.notifications[0]?.aggregationKey).toBe(
+      "request:request-1",
+    );
+    expect(delivery.events.map((item) => item.userId)).toEqual([
+      "customer-1",
+      "customer-2",
+      "manager-1",
+      "admin-1",
+      "tech-1",
+    ]);
+  });
+
+  it("自动状态变化只创建实时事件", () => {
+    const delivery = planRequestActivity({
+      actorId: "tech-1",
+      audience,
+      relevantWorkerUserIds: ["tech-1"],
+      includeCustomers: true,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
+      createNotifications: false,
+      eventType: "REQUEST_STATUS_CHANGED",
+      eventPayload: {
+        requestId: "request-1",
+        status: "WAITING_CUSTOMER",
+      },
+      notificationType: "REQUEST_STATUS",
+      notificationTitle: "状态已更新",
+      notificationBody: "等待客户",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(delivery.notifications).toEqual([]);
+    expect(delivery.events.length).toBeGreaterThan(0);
   });
 });

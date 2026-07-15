@@ -149,13 +149,49 @@ export async function createNotification(
     customerSpaceId?: string;
     projectId?: string;
     serviceRequestId?: string;
+    aggregationKey?: string;
   },
 ) {
-  const notification = {
-    id: randomUUID(),
-    ...input,
+  const notificationId = randomUUID();
+  let notification: {
+    id: string;
+    occurrenceCount: number;
   };
-  await tx.notification.createMany({ data: [notification] });
+  if (
+    input.aggregationKey &&
+    input.customerSpaceId &&
+    input.projectId &&
+    input.serviceRequestId
+  ) {
+    const [aggregated] = await tx.$queryRaw<
+      Array<{ id: string; occurrence_count: number }>
+    >`
+      SELECT *
+      FROM app_upsert_request_notification(
+        ${notificationId},
+        ${input.type},
+        ${input.title},
+        ${input.body},
+        ${input.userId},
+        ${input.customerSpaceId},
+        ${input.projectId},
+        ${input.serviceRequestId},
+        ${input.aggregationKey}
+      )
+    `;
+    if (!aggregated) {
+      throw new Error("请求通知聚合失败");
+    }
+    notification = {
+      id: aggregated.id,
+      occurrenceCount: aggregated.occurrence_count,
+    };
+  } else {
+    await tx.notification.createMany({
+      data: [{ id: notificationId, ...input }],
+    });
+    notification = { id: notificationId, occurrenceCount: 1 };
+  }
   await publishEvent(tx, {
     type: "NOTIFICATION_CREATED",
     userId: input.userId,
@@ -166,7 +202,7 @@ export async function createNotification(
       notificationId: notification.id,
     },
   });
-  return notification;
+  return { ...input, ...notification };
 }
 
 export async function dispatchProjectActivity(
@@ -223,6 +259,9 @@ export async function dispatchRequestActivity(
     notificationBody: string;
     includeCustomers: boolean;
     relevantWorkerUserIds?: Array<string | null | undefined>;
+    notifyProjectManagers: boolean;
+    notifyPlatformAdmins: boolean;
+    createNotifications?: boolean;
     customerSpaceId: string;
     projectId: string;
     serviceRequestId: string;
@@ -254,7 +293,7 @@ export function listNotifications(actor: Actor, limit = 30) {
   return withActorDb(actor, (tx) =>
     tx.notification.findMany({
       where: { userId: actor.id },
-      orderBy: { createdAt: "desc" },
+      orderBy: { updatedAt: "desc" },
       take: Math.min(limit, 100),
     }),
   );
@@ -264,7 +303,7 @@ export function markNotificationRead(actor: Actor, notificationId: string) {
   return withActorDb(actor, (tx) =>
     tx.notification.updateMany({
       where: { id: notificationId, userId: actor.id },
-      data: { readAt: new Date() },
+      data: { readAt: new Date(), aggregationKey: null },
     }),
   );
 }
@@ -273,7 +312,7 @@ export function markAllNotificationsRead(actor: Actor) {
   return withActorDb(actor, (tx) =>
     tx.notification.updateMany({
       where: { userId: actor.id, readAt: null },
-      data: { readAt: new Date() },
+      data: { readAt: new Date(), aggregationKey: null },
     }),
   );
 }
@@ -289,7 +328,7 @@ export function markRequestNotificationsRead(
         serviceRequestId,
         readAt: null,
       },
-      data: { readAt: new Date() },
+      data: { readAt: new Date(), aggregationKey: null },
     }),
   );
 }
@@ -313,7 +352,7 @@ export function markProjectNotificationsRead(
             }
           : {}),
       },
-      data: { readAt: new Date() },
+      data: { readAt: new Date(), aggregationKey: null },
     }),
   );
 }
@@ -465,7 +504,29 @@ async function persistActivityDelivery(
   for (const event of delivery.events) {
     events.push(await publishEvent(tx, event));
   }
+  const requestId = delivery.notifications.find(
+    (notification) => notification.serviceRequestId,
+  )?.serviceRequestId;
+  const activeUserIds = new Set(
+    requestId && delivery.notifications.length > 0
+      ? (
+          await tx.requestPresence.findMany({
+            where: {
+              serviceRequestId: requestId,
+              userId: {
+                in: delivery.notifications.map(
+                  (notification) => notification.userId,
+                ),
+              },
+              expiresAt: { gt: new Date() },
+            },
+            select: { userId: true },
+          })
+        ).map((presence) => presence.userId)
+      : [],
+  );
   for (const notification of delivery.notifications) {
+    if (activeUserIds.has(notification.userId)) continue;
     notifications.push(await createNotification(tx, notification));
   }
 

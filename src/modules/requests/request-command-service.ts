@@ -3,7 +3,10 @@ import "server-only";
 import type { RequestStatus } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
-import { hasMeaningfulHtml } from "@/lib/message-content";
+import {
+  buildMessagePreview,
+  hasMeaningfulHtml,
+} from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
@@ -74,8 +77,6 @@ function workerIdsFromRequest(
   );
 }
 
-
-
 function buildAssignmentSystemMessage(
   actor: Actor,
   previousAssigneeIds: string[],
@@ -131,6 +132,12 @@ function buildAssignmentSystemMessage(
   return `${actor.name} 将处理人设为 ${names.join("、")}`;
 }
 
+function hasAssignedWorkers(
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+) {
+  return Boolean(request.assigneeId || request.assignees.length > 0);
+}
+
 async function createSystemMessage(
   tx: Parameters<typeof writeAuditLog>[0],
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
@@ -154,6 +161,129 @@ async function createSystemMessage(
       createdAt: true,
     },
   });
+}
+
+async function claimRequestOnFirstPublicReply(
+  tx: Parameters<typeof writeAuditLog>[0],
+  actor: Actor,
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+) {
+  if (
+    actor.isPlatformAdmin ||
+    actor.platformRole === "CUSTOMER" ||
+    getProjectRole(request) === null ||
+    hasAssignedWorkers(request)
+  ) {
+    return { request, claimed: false };
+  }
+
+  const locked = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id
+    FROM "ServiceRequest"
+    WHERE id = ${request.id}
+    FOR UPDATE
+  `;
+  if (locked.length === 0) {
+    throw conflict(
+      "REQUEST_ALREADY_CLAIMED",
+      "该请求已由其他人员接手，请刷新后重试",
+    );
+  }
+
+  const current = await findRequestContext(tx, request.id, actor.id);
+  if (!current) throw notFound();
+  if (hasAssignedWorkers(current)) {
+    return { request: current, claimed: false };
+  }
+
+  await tx.serviceRequest.update({
+    where: { id: current.id },
+    data: { assigneeId: actor.id },
+    select: { id: true },
+  });
+  await tx.requestAssignee.create({
+    data: {
+      serviceRequestId: current.id,
+      userId: actor.id,
+      assignedById: actor.id,
+    },
+  });
+
+  await writeAuditLog(tx, actor, {
+    action: "REQUEST_AUTO_CLAIMED",
+    resourceType: "ServiceRequest",
+    resourceId: current.id,
+    customerSpaceId: current.project.customerSpaceId,
+    projectId: current.projectId,
+    serviceRequestId: current.id,
+    metadata: { assigneeId: actor.id, source: "FIRST_PUBLIC_REPLY" },
+  });
+  await createSystemMessage(
+    tx,
+    current,
+    actor,
+    `${actor.name} 已接手此请求`,
+  );
+  await dispatchRequestActivity(tx, actor, {
+    eventType: "REQUEST_ASSIGNED",
+    eventPayload: {
+      requestId: current.id,
+      requestNumber: current.number,
+      assigneeId: actor.id,
+      assigneeIds: [actor.id],
+      actorId: actor.id,
+      source: "FIRST_PUBLIC_REPLY",
+    },
+    notificationType: "REQUEST_ASSIGNED",
+    notificationTitle: `${actor.name} 已接手请求 ${current.number}`,
+    notificationBody: current.title,
+    includeCustomers: true,
+    relevantWorkerUserIds: [actor.id],
+    notifyProjectManagers: false,
+    notifyPlatformAdmins: false,
+    createNotifications: false,
+    customerSpaceId: current.project.customerSpaceId,
+    projectId: current.projectId,
+    serviceRequestId: current.id,
+  });
+
+  const claimedRequest = await findRequestContext(tx, current.id, actor.id);
+  if (!claimedRequest) throw notFound();
+  return { request: claimedRequest, claimed: true };
+}
+
+async function validateReplyTarget(
+  tx: Parameters<typeof writeAuditLog>[0],
+  actor: Actor,
+  requestId: string,
+  input: CreateRequestMessageInput,
+) {
+  if (!input.replyToMessageId) return null;
+  const target = await tx.requestMessage.findFirst({
+    where: {
+      id: input.replyToMessageId,
+      serviceRequestId: requestId,
+    },
+    select: {
+      id: true,
+      visibility: true,
+      isSystem: true,
+    },
+  });
+  if (!target) {
+    throw notFound("回复的原消息不存在或无权访问");
+  }
+  if (target.isSystem) {
+    throw badRequest("SYSTEM_MESSAGE_REPLY_FORBIDDEN", "系统消息不能回复");
+  }
+  if (
+    target.visibility === "INTERNAL" &&
+    (actor.platformRole === "CUSTOMER" ||
+      input.visibility !== "INTERNAL")
+  ) {
+    throw forbidden("内部消息只能通过内部备注回复");
+  }
+  return target.id;
 }
 
 export function assignRequest(
@@ -262,7 +392,6 @@ export function assignRequest(
         name: item.user.name,
       })),
     );
-    await createSystemMessage(tx, request, actor, assignText);
 
     await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_ASSIGNED",
@@ -278,6 +407,8 @@ export function assignRequest(
       notificationBody: assignText,
       includeCustomers: true,
       relevantWorkerUserIds: workerIdsFromRequest(request, assigneeIds),
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
@@ -339,6 +470,7 @@ export function changeRequestStatus(
       request,
       request.status,
       targetStatus,
+      true,
     );
     return updated;
   });
@@ -350,14 +482,19 @@ export function addRequestMessage(
   input: CreateRequestMessageInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const request = await findRequestContext(tx, requestId, actor.id);
+    let request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     if (request.status === "CLOSED") {
       throw conflict("REQUEST_CLOSED", "已关闭的请求不能继续回复");
     }
 
-    const context = accessContext(request);
     const isCustomer = actor.platformRole === "CUSTOMER";
+    if (!isCustomer && input.visibility === "CUSTOMER_VISIBLE") {
+      const claimed = await claimRequestOnFirstPublicReply(tx, actor, request);
+      request = claimed.request;
+    }
+
+    const context = accessContext(request);
     if (input.visibility === "INTERNAL") {
       if (!canWriteInternalNote(actor, context)) {
         throw forbidden("只有请求处理人员可以添加内部备注");
@@ -373,6 +510,12 @@ export function addRequestMessage(
     if (sanitizedBody.length > 20_000) {
       throw badRequest("MESSAGE_TOO_LONG", "回复内容过长");
     }
+    const replyToMessageId = await validateReplyTarget(
+      tx,
+      actor,
+      request.id,
+      input,
+    );
 
     const message = await tx.requestMessage.create({
       data: {
@@ -380,12 +523,14 @@ export function addRequestMessage(
         visibility: input.visibility,
         serviceRequestId: request.id,
         authorId: actor.id,
+        replyToMessageId,
       },
       select: {
         id: true,
         body: true,
         visibility: true,
         authorId: true,
+        replyToMessageId: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -401,8 +546,14 @@ export function addRequestMessage(
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
-      metadata: { visibility: input.visibility },
+      metadata: {
+        visibility: input.visibility,
+        replyToMessageId,
+      },
     });
+    const assignedWorkers = workerIdsFromRequest(request);
+    const requestIsUnassigned = assignedWorkers.length === 0;
+    const isInternal = input.visibility === "INTERNAL";
     await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_MESSAGE_CREATED",
       eventPayload: {
@@ -414,15 +565,14 @@ export function addRequestMessage(
       },
       notificationType: "REQUEST_MESSAGE",
       notificationTitle:
-        input.visibility === "INTERNAL"
-          ? `请求 ${request.number} 有新内部备注`
-          : `请求 ${request.number} 有新回复`,
-      notificationBody:
-        input.visibility === "INTERNAL"
-          ? "服务请求新增了一条内部备注。"
-          : "服务请求收到了一条公开回复。",
-      includeCustomers: input.visibility === "CUSTOMER_VISIBLE",
-      relevantWorkerUserIds: workerIdsFromRequest(request),
+        isInternal
+          ? `${actor.name} 添加了内部备注`
+          : `${actor.name} 回复了请求 ${request.number}`,
+      notificationBody: buildMessagePreview(sanitizedBody),
+      includeCustomers: !isInternal,
+      relevantWorkerUserIds: assignedWorkers,
+      notifyProjectManagers: isInternal || requestIsUnassigned,
+      notifyPlatformAdmins: !isInternal && requestIsUnassigned,
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
@@ -458,6 +608,7 @@ export function addRequestMessage(
         request,
         request.status,
         nextStatus,
+        false,
       );
     }
 
@@ -508,6 +659,7 @@ export function confirmRequestClosed(actor: Actor, requestId: string) {
       request,
       request.status,
       "CLOSED",
+      true,
     );
     return updated;
   });
@@ -530,12 +682,6 @@ async function writeStatusAudit(
     serviceRequestId: request.id,
     metadata: { previousStatus, status, source },
   });
-  await createSystemMessage(
-    tx,
-    request,
-    actor,
-    `${actor.name} 将状态改为「${requestStatusLabel(status)}」`,
-  );
 }
 
 async function dispatchStatusActivity(
@@ -544,6 +690,7 @@ async function dispatchStatusActivity(
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
   previousStatus: RequestStatus,
   status: RequestStatus,
+  createNotifications: boolean,
 ) {
   await dispatchRequestActivity(tx, actor, {
     eventType: "REQUEST_STATUS_CHANGED",
@@ -555,10 +702,13 @@ async function dispatchStatusActivity(
       actorId: actor.id,
     },
     notificationType: "REQUEST_STATUS",
-    notificationTitle: `请求 ${request.number} 状态已更新`,
-    notificationBody: `当前状态：${requestStatusLabel(status)}。`,
+    notificationTitle: `${actor.name} 更新了请求 ${request.number}`,
+    notificationBody: `${request.title} · ${requestStatusLabel(status)}`,
     includeCustomers: true,
     relevantWorkerUserIds: workerIdsFromRequest(request),
+    notifyProjectManagers: false,
+    notifyPlatformAdmins: false,
+    createNotifications,
     customerSpaceId: request.project.customerSpaceId,
     projectId: request.projectId,
     serviceRequestId: request.id,

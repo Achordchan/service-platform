@@ -29,6 +29,7 @@ export type ActivityNotification = {
   customerSpaceId?: string;
   projectId?: string;
   serviceRequestId?: string;
+  aggregationKey?: string;
 };
 
 export type ActivityDelivery = {
@@ -60,6 +61,9 @@ type RequestActivityInput = {
   audience: ActivityAudience;
   relevantWorkerUserIds?: Array<string | null | undefined>;
   includeCustomers: boolean;
+  notifyProjectManagers: boolean;
+  notifyPlatformAdmins: boolean;
+  createNotifications?: boolean;
   eventType: Extract<
     EventType,
     | "REQUEST_CREATED"
@@ -132,16 +136,24 @@ export function planProjectActivity(
 export function planRequestActivity(
   input: RequestActivityInput,
 ): ActivityDelivery {
-  const recipientUserIds = unique([
+  const notificationUserIds = unique([
+    ...(input.includeCustomers ? input.audience.customerUserIds : []),
+    ...(input.notifyProjectManagers
+      ? input.audience.projectManagerUserIds
+      : []),
+    ...(input.notifyPlatformAdmins
+      ? input.audience.platformAdminUserIds
+      : []),
+    ...(input.relevantWorkerUserIds ?? []),
+  ]);
+
+  const eventUserIds = unique([
     ...(input.includeCustomers ? input.audience.customerUserIds : []),
     ...input.audience.projectManagerUserIds,
     ...input.audience.platformAdminUserIds,
     ...(input.relevantWorkerUserIds ?? []),
+    input.actorId,
   ]);
-
-  // 请求事件始终按用户定向，避免仅参与项目但未被分配的技术人员
-  // 通过 projectId 或 serviceRequestId 范围读到请求元数据。
-  const eventUserIds = unique([...recipientUserIds, input.actorId]);
 
   return {
     events: eventUserIds.map((userId) => ({
@@ -152,17 +164,19 @@ export function planRequestActivity(
       projectId: input.projectId,
       serviceRequestId: input.serviceRequestId,
     })),
-    notifications: withoutActor(recipientUserIds, input.actorId).map(
-      (userId) => ({
-        type: input.notificationType,
-        title: input.notificationTitle,
-        body: input.notificationBody,
-        userId,
-        customerSpaceId: input.customerSpaceId,
-        projectId: input.projectId,
-        serviceRequestId: input.serviceRequestId,
-      }),
-    ),
+    notifications:
+      input.createNotifications === false
+        ? []
+        : withoutActor(notificationUserIds, input.actorId).map((userId) => ({
+            type: input.notificationType,
+            title: input.notificationTitle,
+            body: input.notificationBody,
+            userId,
+            customerSpaceId: input.customerSpaceId,
+            projectId: input.projectId,
+            serviceRequestId: input.serviceRequestId,
+            aggregationKey: `request:${input.serviceRequestId}`,
+          })),
   };
 }
 

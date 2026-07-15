@@ -30,18 +30,22 @@ type NotificationItem = {
   readAt?: string | null;
   projectId?: string | null;
   serviceRequestId?: string | null;
+  occurrenceCount?: number;
   createdAt: string;
+  updatedAt: string;
 };
 
 const eventTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
-  "PROJECT_UPDATE_CREATED",
-  "UPDATE_COMMENT_CREATED",
-  "REQUEST_CREATED",
-  "REQUEST_ASSIGNED",
-  "REQUEST_MESSAGE_CREATED",
-  "REQUEST_STATUS_CHANGED",
 ];
+
+const notificationTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
 
 export function NotificationMenu({ staff }: { staff: boolean }) {
   const router = useRouter();
@@ -198,19 +202,40 @@ export function NotificationMenu({ staff }: { staff: boolean }) {
               }}
             >
               <ListItemText
-                primary={item.title}
-                secondary={item.body}
+                primary={`${item.title}${
+                  (item.occurrenceCount ?? 1) > 1
+                    ? ` · ${item.occurrenceCount} 条`
+                    : ""
+                }`}
+                secondary={
+                  <Stack spacing={0.35} sx={{ mt: 0.5 }}>
+                    <Typography
+                      component="span"
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{
+                        display: "-webkit-box",
+                        WebkitLineClamp: 2,
+                        WebkitBoxOrient: "vertical",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {item.body}
+                    </Typography>
+                    <Typography
+                      component="span"
+                      variant="caption"
+                      color="text.secondary"
+                    >
+                      {notificationTimeFormatter.format(
+                        new Date(item.updatedAt || item.createdAt),
+                      )}
+                    </Typography>
+                  </Stack>
+                }
                 slotProps={{
                   primary: { sx: { fontWeight: item.readAt ? 500 : 650 } },
-                  secondary: {
-                    sx: {
-                      mt: 0.5,
-                      display: "-webkit-box",
-                      WebkitLineClamp: 2,
-                      WebkitBoxOrient: "vertical",
-                      overflow: "hidden",
-                    },
-                  },
+                  secondary: { component: "div" },
                 }}
               />
             </ListItemButton>

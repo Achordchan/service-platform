@@ -16,3 +16,30 @@ export function htmlToPlainText(html: string) {
 export function hasMeaningfulHtml(html: string) {
   return htmlToPlainText(html).length > 0;
 }
+
+export function escapeHtmlText(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function truncatePlainText(value: string, maxLength = 120) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxLength - 1)).trimEnd()}…`;
+}
+
+export function buildMessagePreview(html: string, maxLength = 120) {
+  return truncatePlainText(htmlToPlainText(html), maxLength);
+}
+
+export function buildAttachmentOnlyMessage(fileNames: string[]) {
+  const names = fileNames
+    .map((name) => name.trim())
+    .filter(Boolean)
+    .map(escapeHtmlText);
+  return `<p>附件：${names.join("、") || "文件"}</p>`;
+}

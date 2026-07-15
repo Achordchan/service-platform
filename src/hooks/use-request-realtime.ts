@@ -18,7 +18,6 @@ const REQUEST_LIVE_EVENTS: readonly RealtimeEventType[] = [
 
 const REQUEST_SOUND_EVENTS = new Set<RealtimeEventType>([
   "REQUEST_MESSAGE_CREATED",
-  "REQUEST_STATUS_CHANGED",
   "REQUEST_ASSIGNED",
 ]);
 
@@ -45,6 +44,7 @@ export function useRequestRealtime(
   const router = useRouter();
   const suppressUntilRef = useRef(0);
   const pendingCatchupRef = useRef(false);
+  const refreshTimerRef = useRef<number | null>(null);
   const enableSound = options?.enableSound !== false;
   const currentUserId = options?.currentUserId;
 
@@ -61,6 +61,15 @@ export function useRequestRealtime(
 
   useEffect(() => {
     if (!requestId) return;
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+      }
+      refreshTimerRef.current = window.setTimeout(() => {
+        refreshTimerRef.current = null;
+        router.refresh();
+      }, 120);
+    };
 
     const unsubscribeEvents = subscribeRealtime(REQUEST_LIVE_EVENTS, (event) => {
       const payload = event.payload;
@@ -85,18 +94,22 @@ export function useRequestRealtime(
       }
 
       if (!isLocalWindow || !isOwnEvent) {
-        router.refresh();
+        scheduleRefresh();
       }
     });
     const unsubscribeReady = subscribeRealtimeReady(() => {
       if (!pendingCatchupRef.current) return;
       pendingCatchupRef.current = false;
-      router.refresh();
+      scheduleRefresh();
     });
 
     return () => {
       unsubscribeEvents();
       unsubscribeReady();
+      if (refreshTimerRef.current !== null) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
     };
   }, [currentUserId, enableSound, requestId, router]);
 }

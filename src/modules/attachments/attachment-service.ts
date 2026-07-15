@@ -50,13 +50,6 @@ export async function uploadRequestAttachment(
   actor: Actor,
   input: UploadAttachmentInput,
 ) {
-  if (!actor.isStaff && input.requestMessageId) {
-    const policy = await getAttachmentPolicy();
-    if (!policy.customerReplyAttachmentsEnabled) {
-      throw forbidden("当前未开放客户在回复中上传附件");
-    }
-  }
-
   const validated = await validateAttachmentFile(
     input.buffer,
     input.claimedMimeType,
@@ -301,7 +294,12 @@ async function authorizeUploadInTx(
         id: input.requestMessageId,
         serviceRequestId: request.id,
       },
-      select: { id: true, visibility: true },
+      select: {
+        id: true,
+        visibility: true,
+        isInitial: true,
+        authorId: true,
+      },
     });
     if (!message) {
       throw notFound("请求消息不存在");
@@ -315,6 +313,17 @@ async function authorizeUploadInTx(
         "ATTACHMENT_VISIBILITY_MISMATCH",
         "客户可见消息不能包含内部附件",
       );
+    }
+    if (!actor.isStaff) {
+      if (message.isInitial && message.authorId !== actor.id) {
+        throw forbidden("只能为自己创建的请求上传初始附件");
+      }
+      if (!message.isInitial) {
+        const policy = await getAttachmentPolicy();
+        if (!policy.customerReplyAttachmentsEnabled) {
+          throw forbidden("当前未开放客户在回复中上传附件");
+        }
+      }
     }
     return {
       request,

@@ -45,11 +45,22 @@ export default async function CustomerRequestDetailPage({
       id: message.id,
       body: message.body,
       isSystem: message.isSystem,
+      isInitial: message.isInitial,
       authorId: message.authorId,
       authorName: message.author.name,
       authorImage: message.author.image,
       authorPlatformRole: message.author.platformRole,
       createdAt: message.createdAt.toISOString(),
+      replyToMessageId: message.replyToMessageId,
+      replyTo: message.replyTo
+        ? {
+            id: message.replyTo.id,
+            body: message.replyTo.body,
+            authorId: message.replyTo.authorId,
+            authorName: message.replyTo.author.name,
+            attachments: message.replyTo.attachments,
+          }
+        : null,
       attachments: message.attachments.map((attachment) => ({
         id: attachment.id,
         originalName: attachment.originalName,

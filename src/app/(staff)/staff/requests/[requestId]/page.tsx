@@ -25,9 +25,14 @@ export default async function StaffRequestDetailPage({
     ...(request.assigneeId ? [request.assigneeId] : []),
     ...request.assignees.map((item) => item.userId),
   ];
+  const requestUnassigned = assigneeIds.length === 0;
+  const claimRequired = Boolean(
+    !actor.isPlatformAdmin && currentAssignment && requestUnassigned,
+  );
   const canManage =
     canAssign ||
-    (actor.platformRole === "TECHNICIAN" && assigneeIds.includes(actor.id));
+    (actor.platformRole === "TECHNICIAN" && assigneeIds.includes(actor.id)) ||
+    claimRequired;
 
   const requestView: RequestDetail = {
     id: request.id,
@@ -65,12 +70,24 @@ export default async function StaffRequestDetailPage({
       id: message.id,
       body: message.body,
       isSystem: message.isSystem,
+      isInitial: message.isInitial,
       visibility: message.visibility,
       authorId: message.authorId,
       authorName: message.author.name,
       authorImage: message.author.image,
       authorPlatformRole: message.author.platformRole,
       createdAt: message.createdAt.toISOString(),
+      replyToMessageId: message.replyToMessageId,
+      replyTo: message.replyTo
+        ? {
+            id: message.replyTo.id,
+            body: message.replyTo.body,
+            visibility: message.replyTo.visibility,
+            authorId: message.replyTo.authorId,
+            authorName: message.replyTo.author.name,
+            attachments: message.replyTo.attachments,
+          }
+        : null,
       attachments: message.attachments.map((attachment) => ({
         id: attachment.id,
         originalName: attachment.originalName,
@@ -130,6 +147,7 @@ export default async function StaffRequestDetailPage({
           })()}
           canManage={canManage}
           canAssign={canAssign}
+          claimRequired={claimRequired}
         />
       </Box>
     </Container>

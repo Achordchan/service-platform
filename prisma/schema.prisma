@@ -93,6 +93,7 @@ enum EventType {
   REQUEST_MESSAGE_CREATED
   REQUEST_STATUS_CHANGED
   REQUEST_UPDATED
+  REQUEST_PRESENCE_CHANGED
   NOTIFICATION_CREATED
 }
 
@@ -150,6 +151,7 @@ model User {
   requestsAssigned        ServiceRequest[]       @relation("RequestAssignee")
   requestAssignees        RequestAssignee[]
   requestMessages         RequestMessage[]
+  requestPresences        RequestPresence[]
   attachments             Attachment[]
   notifications           Notification[]
   auditLogs               AuditLog[]
@@ -455,6 +457,7 @@ model ServiceRequest {
   assignee      User?             @relation("RequestAssignee", fields: [assigneeId], references: [id])
   assignees     RequestAssignee[]
   messages      RequestMessage[]
+  presences     RequestPresence[]
   attachments   Attachment[]
   notifications Notification[]
   auditLogs     AuditLog[]
@@ -484,16 +487,21 @@ model RequestMessage {
   body             String
   visibility       ContentVisibility @default(CUSTOMER_VISIBLE)
   isSystem         Boolean           @default(false)
+  isInitial        Boolean           @default(false)
   serviceRequestId String
   authorId         String
+  replyToMessageId String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
   serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
   author         User           @relation(fields: [authorId], references: [id])
+  replyTo        RequestMessage?  @relation("RequestMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies        RequestMessage[] @relation("RequestMessageReplies")
   attachments    Attachment[]
 
   @@index([serviceRequestId, createdAt])
+  @@index([replyToMessageId])
 }
 
 model Attachment {
@@ -530,11 +538,14 @@ model Notification {
   title            String
   body             String
   readAt           DateTime?
+  aggregationKey   String?
+  occurrenceCount  Int              @default(1)
   userId           String
   customerSpaceId  String?
   projectId        String?
   serviceRequestId String?
   createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now())
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
@@ -542,6 +553,24 @@ model Notification {
   serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
 
   @@index([userId, readAt, createdAt])
+  @@unique([userId, aggregationKey])
+}
+
+model RequestPresence {
+  id               String   @id @default(cuid())
+  serviceRequestId String
+  userId           String
+  sessionId        String
+  expiresAt        DateTime
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceRequestId, userId, sessionId])
+  @@index([serviceRequestId, expiresAt])
+  @@index([userId, expiresAt])
 }
 
 model EventRecord {

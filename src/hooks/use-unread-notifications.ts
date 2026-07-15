@@ -20,12 +20,6 @@ export type UnreadNotification = {
 
 const streamTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
-  "PROJECT_UPDATE_CREATED",
-  "UPDATE_COMMENT_CREATED",
-  "REQUEST_CREATED",
-  "REQUEST_ASSIGNED",
-  "REQUEST_MESSAGE_CREATED",
-  "REQUEST_STATUS_CHANGED",
 ];
 
 export function useUnreadNotifications() {

@@ -15,30 +15,14 @@ import {
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import ReplyOutlinedIcon from "@mui/icons-material/ReplyOutlined";
 import VerifiedUserOutlinedIcon from "@mui/icons-material/VerifiedUserOutlined";
+import type {
+  ChatAttachment,
+  ChatMessage,
+} from "@/components/shared/request-chat-types";
+import { RequestQuotedMessage } from "@/components/shared/request-reply-preview";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
-
-export type ChatAttachment = {
-  id: string;
-  originalName: string;
-  mimeType: string;
-  size: number;
-  createdAt: string;
-  visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
-};
-
-export type ChatMessage = {
-  id: string;
-  body: string;
-  authorId: string;
-  authorName: string;
-  authorImage?: string | null;
-  authorPlatformRole?: string | null;
-  createdAt: string;
-  visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
-  isSystem?: boolean;
-  attachments: ChatAttachment[];
-};
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -156,10 +140,12 @@ export function RequestChatThread({
   messages,
   currentUserId,
   emptyText = "暂无沟通记录",
+  onReply,
 }: {
   messages: ChatMessage[];
   currentUserId: string;
   emptyText?: string;
+  onReply?: (message: ChatMessage) => void;
 }) {
   const sorted = useMemo(
     () =>
@@ -364,6 +350,23 @@ export function RequestChatThread({
                   sx={{
                     maxWidth: { xs: "82%", md: "72%" },
                     minWidth: 0,
+                    position: "relative",
+                    "& .request-message-reply": {
+                      opacity: 0,
+                      pointerEvents: "none",
+                      transition: "opacity 120ms ease",
+                    },
+                    "&:hover .request-message-reply, &:focus-within .request-message-reply":
+                      {
+                        opacity: 1,
+                        pointerEvents: "auto",
+                      },
+                    "@media (hover: none)": {
+                      "& .request-message-reply": {
+                        opacity: 1,
+                        pointerEvents: "auto",
+                      },
+                    },
                   }}
                 >
                   <Stack
@@ -400,6 +403,21 @@ export function RequestChatThread({
                     <Typography variant="caption" color="text.secondary">
                       {dateFormatter.format(new Date(message.createdAt))}
                     </Typography>
+                    {onReply ? (
+                      <IconButton
+                        className="request-message-reply"
+                        size="small"
+                        onClick={() => onReply(message)}
+                        aria-label={`回复 ${message.authorName} 的消息`}
+                        sx={{
+                          width: 26,
+                          height: 26,
+                          color: "text.secondary",
+                        }}
+                      >
+                        <ReplyOutlinedIcon sx={{ fontSize: 17 }} />
+                      </IconButton>
+                    ) : null}
                   </Stack>
                   <Box
                     sx={{
@@ -441,9 +459,23 @@ export function RequestChatThread({
                       },
                       "& p": { m: 0, mb: 0.75 },
                       "& p:last-child": { mb: 0 },
+                      "& h1, & h2, & h3": {
+                        m: 0,
+                        mb: 0.75,
+                        fontSize: "1rem",
+                        lineHeight: 1.5,
+                        fontWeight: 750,
+                      },
                       "& ul, & ol": { my: 0.5, pl: 2.25 },
                     }}
                   >
+                    <RequestQuotedMessage
+                      reference={message.replyTo}
+                      unavailable={Boolean(
+                        message.replyToMessageId && !message.replyTo,
+                      )}
+                      inverted={(isSelf || isAdmin) && !isInternal}
+                    />
                     {looksLikeHtml(message.body) ? (
                       <Box
                         sx={{

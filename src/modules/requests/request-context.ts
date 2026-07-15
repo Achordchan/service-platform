@@ -10,6 +10,7 @@ export async function findRequestContext(
     select: {
       id: true,
       number: true,
+      title: true,
       status: true,
       assigneeId: true,
       projectId: true,

@@ -1,6 +1,27 @@
-import { expect, test, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import {
+  expect,
+  test,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
+import { Pool } from "pg";
+
+loadLocalEnv();
 
 const password = "ServiceDemo!2026";
+const ownerPool = new Pool({
+  connectionString: process.env.DATABASE_MIGRATION_URL,
+  max: 1,
+});
+const createdRequestIds: string[] = [];
+let adminContext: BrowserContext;
+let customerContext: BrowserContext;
+let technicianContext: BrowserContext;
+let adminPage: Page;
+let customerPage: Page;
+let technicianPage: Page;
 
 async function login(page: Page, email: string) {
   await page.goto("/login");
@@ -17,72 +38,247 @@ async function expectVisibleText(page: Page, text: string) {
 }
 
 test.describe("主流程冒烟", () => {
-  test("管理员可进入项目、客户与服务请求后台", async ({ page }) => {
-    await login(page, "admin@local.test");
+  test.describe.configure({ mode: "serial" });
+
+  test.beforeAll(async ({ browser }) => {
+    adminContext = await browser.newContext();
+    customerContext = await browser.newContext();
+    technicianContext = await browser.newContext();
+    adminPage = await adminContext.newPage();
+    customerPage = await customerContext.newPage();
+    technicianPage = await technicianContext.newPage();
+
+    await login(adminPage, "admin@local.test");
+    await login(customerPage, "client@local.test");
+    await login(technicianPage, "tech@local.test");
+  });
+
+  test.afterAll(async () => {
+    await Promise.all([
+      adminContext.close(),
+      customerContext.close(),
+      technicianContext.close(),
+    ]);
+    if (createdRequestIds.length > 0) {
+      await ownerPool.query(
+        `
+          DELETE FROM "AuditLog"
+          WHERE "serviceRequestId" = ANY($1::text[])
+            OR "resourceId" = ANY($1::text[])
+        `,
+        [createdRequestIds],
+      );
+      await ownerPool.query(
+        'DELETE FROM "ServiceRequest" WHERE id = ANY($1::text[])',
+        [createdRequestIds],
+      );
+    }
+    await ownerPool.end();
+  });
+
+  test("管理员可进入项目、客户与服务请求后台", async () => {
     await expect(
-      page.getByRole("heading", { name: "项目", exact: true }),
+      adminPage.getByRole("heading", { name: "项目", exact: true }),
     ).toBeVisible();
-    await expectVisibleText(page, "官网 SEO 优化服务");
+    await expectVisibleText(adminPage, "官网 SEO 优化服务");
 
-    await page.getByRole("link", { name: "客户", exact: true }).click();
+    await adminPage.getByRole("link", { name: "客户", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "客户", exact: true }),
+      adminPage.getByRole("heading", { name: "客户", exact: true }),
     ).toBeVisible();
-    await expect(page.getByRole("button", { name: "新建客户" })).toBeVisible();
-
-    await page.getByRole("link", { name: "服务请求", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
-
-    await page.goto("/staff/settings");
     await expect(
-      page.getByRole("heading", { name: "设置", exact: true }),
+      adminPage.getByRole("button", { name: "新建客户" }),
     ).toBeVisible();
 
-    const mailTemplates = page.getByRole("button", { name: /邮件模板/ });
-    const roleGroups = page.getByRole("button", { name: /角色与权限/ });
+    await adminPage
+      .getByRole("link", { name: "服务请求", exact: true })
+      .click();
+    await expect(
+      adminPage.getByRole("heading", { name: "服务请求" }),
+    ).toBeVisible();
+
+    await adminPage.goto("/staff/settings");
+    await expect(
+      adminPage.getByRole("heading", { name: "设置", exact: true }),
+    ).toBeVisible();
+
+    const mailTemplates = adminPage.getByRole("button", {
+      name: /邮件模板/,
+    });
+    const roleGroups = adminPage.getByRole("button", {
+      name: /角色与权限/,
+    });
     await expect(mailTemplates).toHaveAttribute("aria-expanded", "false");
     await expect(roleGroups).toHaveAttribute("aria-expanded", "false");
-    await expect(page.getByRole("button", { name: "编辑" })).not.toBeVisible();
     await expect(
-      page.getByRole("button", { name: "新增角色组" }),
+      adminPage.getByRole("button", { name: "编辑" }),
+    ).not.toBeVisible();
+    await expect(
+      adminPage.getByRole("button", { name: "新增角色组" }),
     ).not.toBeVisible();
 
     await mailTemplates.click();
     await expect(mailTemplates).toHaveAttribute("aria-expanded", "true");
     await expect(
-      page.getByRole("button", { name: "编辑" }).first(),
+      adminPage.getByRole("button", { name: "编辑" }).first(),
     ).toBeVisible();
     await mailTemplates.click();
 
     await roleGroups.click();
     await expect(roleGroups).toHaveAttribute("aria-expanded", "true");
     await expect(
-      page.getByRole("button", { name: "新增角色组" }),
+      adminPage.getByRole("button", { name: "新增角色组" }),
     ).toBeVisible();
     await roleGroups.click();
 
-    await page.setViewportSize({ width: 390, height: 844 });
-    const hasHorizontalOverflow = await page.evaluate(
+    await adminPage.setViewportSize({ width: 390, height: 844 });
+    const hasHorizontalOverflow = await adminPage.evaluate(
       () => document.documentElement.scrollWidth > window.innerWidth + 1,
     );
     expect(hasHorizontalOverflow).toBe(false);
   });
 
-  test("客户可查看服务项目与请求列表", async ({ page }) => {
-    await login(page, "client@local.test");
-    await expect(page.getByRole("heading", { name: "我的服务" })).toBeVisible();
-    await expectVisibleText(page, "官网 SEO 优化服务");
+  test("客户可查看服务项目与请求列表", async () => {
+    await expect(
+      customerPage.getByRole("heading", {
+        name: "服务项目",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expectVisibleText(customerPage, "官网 SEO 优化服务");
 
-    await page.goto("/customer/requests");
-    await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
-    await expectVisibleText(page, "关于首页标题优化建议");
+    await customerPage.goto("/customer/requests");
+    await expect(
+      customerPage.getByRole("heading", { name: "服务请求" }),
+    ).toBeVisible();
+    await expectVisibleText(customerPage, "关于首页标题优化建议");
   });
 
-  test("技术人员可进入已分配请求列表", async ({ page }) => {
-    await login(page, "tech@local.test");
-    await page.goto("/staff/requests");
-    await expect(page.getByRole("heading", { name: "服务请求" })).toBeVisible();
-    await expectVisibleText(page, "关于首页标题优化建议");
+  test("技术人员可进入已分配和未分配请求列表", async () => {
+    await technicianPage.goto("/staff/requests");
+    await expect(
+      technicianPage.getByRole("heading", { name: "服务请求" }),
+    ).toBeVisible();
+    await expectVisibleText(technicianPage, "关于首页标题优化建议");
+    await expectVisibleText(technicianPage, "RLS fix smoke");
   });
 
+  test("请求在线提示、自动接手和回复引用保持实时同步", async () => {
+    const created = await customerPage.evaluate(async () => {
+      const projectsResponse = await fetch("/api/v1/projects");
+      const projectsPayload = (await projectsResponse.json()) as {
+        data: Array<{
+          id: string;
+          title: string;
+          serviceType: {
+            requestCategories: Array<{ id: string }>;
+          };
+        }>;
+      };
+      const project = projectsPayload.data.find(
+        (item) => item.title === "官网 SEO 优化服务",
+      );
+      const categoryId = project?.serviceType.requestCategories[0]?.id;
+      if (!project || !categoryId) throw new Error("缺少 E2E 请求项目");
+      const title = `E2E 在线回复 ${Date.now()}`;
+      const response = await fetch(`/api/v1/projects/${project.id}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          description: "<p>E2E 初始请求描述</p>",
+          categoryId,
+          priority: "NORMAL",
+        }),
+      });
+      const payload = (await response.json()) as {
+        data: { id: string; title: string };
+      };
+      if (!response.ok) throw new Error("创建 E2E 请求失败");
+      return payload.data;
+    });
+    createdRequestIds.push(created.id);
+
+    await Promise.all([
+      customerPage.goto(`/customer/requests/${created.id}`),
+      technicianPage.goto(`/staff/requests/${created.id}`),
+    ]);
+
+    await expect(customerPage.getByText("服务人员在线")).toBeVisible();
+    await expect(technicianPage.getByText("客户在线")).toBeVisible();
+    await expect(customerPage.getByText("E2E 初始请求描述")).toBeVisible();
+    await expect(technicianPage.getByText("E2E 初始请求描述")).toBeVisible();
+
+    await technicianPage
+      .locator(".request-rich-editor")
+      .fill("E2E 后台公开回复");
+    await technicianPage
+      .getByRole("button", { name: "回复并接手" })
+      .click();
+
+    await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible();
+    await expect(
+      customerPage.getByText("李工程师 已接手此请求"),
+    ).toBeVisible();
+
+    const staffMessage = customerPage.getByText("E2E 后台公开回复");
+    await staffMessage.hover();
+    await customerPage
+      .getByRole("button", { name: "回复 李工程师 的消息" })
+      .click();
+    await expect(customerPage.getByText("回复 李工程师")).toBeVisible();
+    await customerPage
+      .locator(".request-rich-editor")
+      .fill("E2E 客户引用回复");
+    await customerPage.getByRole("button", { name: "发送回复" }).click();
+
+    await expect(
+      technicianPage.getByText("E2E 客户引用回复"),
+    ).toBeVisible();
+    await expect(
+      technicianPage.getByText("E2E 后台公开回复"),
+    ).toHaveCount(2);
+
+    const unreadForRequest = await technicianPage.evaluate(
+      async (requestId) => {
+        const response = await fetch("/api/v1/notifications", {
+          cache: "no-store",
+        });
+        const payload = (await response.json()) as {
+          data: Array<{
+            serviceRequestId?: string | null;
+            readAt?: string | null;
+          }>;
+        };
+        return payload.data.filter(
+          (item) => item.serviceRequestId === requestId && !item.readAt,
+        ).length;
+      },
+      created.id,
+    );
+    expect(unreadForRequest).toBe(0);
+
+    await customerPage.setViewportSize({ width: 390, height: 844 });
+    await expect(customerPage.getByText("服务人员在线")).toBeVisible();
+    const hasHorizontalOverflow = await customerPage.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(hasHorizontalOverflow).toBe(false);
+  });
 });
+
+function loadLocalEnv() {
+  const source = readFileSync(resolve(process.cwd(), ".env"), "utf8");
+  for (const line of source.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator < 1) continue;
+    const key = trimmed.slice(0, separator);
+    const value = trimmed
+      .slice(separator + 1)
+      .trim()
+      .replace(/^(['"])(.*)\1$/, "$2");
+    process.env[key] ??= value;
+  }
+}

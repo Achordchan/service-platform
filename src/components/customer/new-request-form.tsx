@@ -97,7 +97,7 @@ export function NewRequestForm({
         },
       );
       const payload = (await response.json()) as
-        | { data: { id: string } }
+        | { data: { id: string; initialMessageId: string } }
         | ApiError;
       if (!response.ok || !("data" in payload)) {
         throw new Error(
@@ -108,12 +108,14 @@ export function NewRequestForm({
       }
 
       const requestId = payload.data.id;
+      const initialMessageId = payload.data.initialMessageId;
       if (files.length > 0) {
         setSubmitProgress(`正在上传附件（共 ${files.length} 个）`);
         for (const file of files) {
           const formData = new FormData();
           formData.append("file", file);
           formData.append("serviceRequestId", requestId);
+          formData.append("requestMessageId", initialMessageId);
           formData.append("visibility", "CUSTOMER_VISIBLE");
           const uploadResponse = await fetch("/api/v1/attachments", {
             method: "POST",

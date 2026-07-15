@@ -6,6 +6,7 @@ import {
   useRequestRealtime,
 } from "@/hooks/use-request-realtime";
 import { useRequestNotificationsRead } from "@/hooks/use-request-notifications-read";
+import { useRequestPresence } from "@/hooks/use-request-presence";
 import { useRouter } from "next/navigation";
 import {
   Alert,
@@ -18,9 +19,9 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import { CollapsibleText } from "@/components/shared/collapsible-text";
-import { RequestAttachmentList } from "@/components/staff/request-attachment-list";
+import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
+import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyComposer } from "@/components/staff/request-reply-composer";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import {
@@ -68,16 +69,20 @@ export function RequestDetailWorkspace({
   canManage,
   canAssign,
   currentUserId,
+  claimRequired,
 }: {
   request: RequestDetail;
   projectStaff: ProjectStaffMember[];
   canManage: boolean;
   canAssign: boolean;
   currentUserId: string;
+  claimRequired: boolean;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
+  const customerOnline = useRequestPresence(request.id, "STAFF");
   useRequestRealtime(request.id, { currentUserId });
   useRequestNotificationsRead(request.id);
 
@@ -152,17 +157,24 @@ export function RequestDetailWorkspace({
       >
         <Stack spacing={2.5}>
           <Box>
-            <Typography variant="h3" sx={{ mb: 1.5 }}>
-              沟通记录
-            </Typography>
+            <RequestChatHeading
+              counterpartOnline={customerOnline}
+              counterpartLabel="客户"
+            />
             <RequestChatThread
               messages={request.messages}
               currentUserId={currentUserId}
+              onReply={setReplyTarget}
             />
           </Box>
 
           {canManage && request.status !== "CLOSED" ? (
-            <RequestReplyComposer requestId={request.id} />
+            <RequestReplyComposer
+              requestId={request.id}
+              replyTarget={replyTarget}
+              onCancelReply={() => setReplyTarget(null)}
+              claimRequired={claimRequired}
+            />
           ) : request.status === "CLOSED" ? (
             <Alert severity="info">该服务请求已关闭，不能继续回复。</Alert>
           ) : (
@@ -210,13 +222,6 @@ export function RequestDetailWorkspace({
                 label="最后更新"
                 value={dateFormatter.format(new Date(request.updatedAt))}
               />
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  请求描述
-                </Typography>
-                <CollapsibleText text={request.description} maxLines={5} />
-                <RequestAttachmentList files={request.attachments} />
-              </Box>
             </Stack>
           </Paper>
 

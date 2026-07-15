@@ -13,9 +13,14 @@ import {
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
+import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
-import { hasMeaningfulHtml } from "@/lib/message-content";
+import {
+  buildAttachmentOnlyMessage,
+  hasMeaningfulHtml,
+} from "@/lib/message-content";
 
 type ApiPayload = {
   data?: {
@@ -29,9 +34,13 @@ type ApiPayload = {
 export function RequestReplyForm({
   requestId,
   disabled = false,
+  replyTarget,
+  onCancelReply,
 }: {
   requestId: string;
   disabled?: boolean;
+  replyTarget?: ChatReplyTarget | null;
+  onCancelReply?: () => void;
 }) {
   const router = useRouter();
   const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
@@ -62,8 +71,11 @@ export function RequestReplyForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          body: hasMeaningfulHtml(body) ? body : "<p>（附件）</p>",
+          body: hasMeaningfulHtml(body)
+            ? body
+            : buildAttachmentOnlyMessage(files.map((file) => file.name)),
           visibility: "CUSTOMER_VISIBLE",
+          replyToMessageId: replyTarget?.id,
         }),
       });
       const payload = (await response.json()) as ApiPayload;
@@ -95,6 +107,7 @@ export function RequestReplyForm({
       }
       setBody("");
       setFiles([]);
+      onCancelReply?.();
       markRequestLocalMutation();
       router.refresh();
     } catch (submitError) {
@@ -130,6 +143,12 @@ export function RequestReplyForm({
       {submitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: 2 }}>
         {error ? <Alert severity="error">{error}</Alert> : null}
+        {replyTarget ? (
+          <RequestReplyPreview
+            target={replyTarget}
+            onCancel={() => onCancelReply?.()}
+          />
+        ) : null}
         <RichTextEditor
           value={body}
           onChange={setBody}

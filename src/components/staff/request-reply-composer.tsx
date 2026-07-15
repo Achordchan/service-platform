@@ -15,12 +15,27 @@ import {
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
+import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
-import { hasMeaningfulHtml } from "@/lib/message-content";
+import {
+  buildAttachmentOnlyMessage,
+  hasMeaningfulHtml,
+} from "@/lib/message-content";
 
-export function RequestReplyComposer({ requestId }: { requestId: string }) {
+export function RequestReplyComposer({
+  requestId,
+  replyTarget,
+  onCancelReply,
+  claimRequired = false,
+}: {
+  requestId: string;
+  replyTarget?: ChatReplyTarget | null;
+  onCancelReply?: () => void;
+  claimRequired?: boolean;
+}) {
   const router = useRouter();
   const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
   const [body, setBody] = useState("");
@@ -28,6 +43,8 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const internalReplyLocked = replyTarget?.visibility === "INTERNAL";
+  const effectiveInternal = internalReplyLocked || internal;
 
   function addFiles(next: File[]) {
     const { accepted, error: validateError } = validateFiles(next, files.length);
@@ -47,8 +64,11 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
       const result = await staffApi<{ message: { id: string } }>(
         `/api/v1/requests/${requestId}/messages`,
         jsonRequest("POST", {
-          body: hasMeaningfulHtml(body) ? body : "<p>（附件）</p>",
-          visibility: internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+          body: hasMeaningfulHtml(body)
+            ? body
+            : buildAttachmentOnlyMessage(files.map((file) => file.name)),
+          visibility: effectiveInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+          replyToMessageId: replyTarget?.id,
         }),
       );
       for (const file of files) {
@@ -58,7 +78,7 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
         formData.append("requestMessageId", result.message.id);
         formData.append(
           "visibility",
-          internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+          effectiveInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
         );
         await staffApi("/api/v1/attachments", {
           method: "POST",
@@ -68,6 +88,7 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
       setBody("");
       setFiles([]);
       setInternal(false);
+      onCancelReply?.();
       markRequestLocalMutation();
       router.refresh();
     } catch (submitError) {
@@ -96,32 +117,47 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
       {submitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: { xs: 2, md: 2.5 } }}>
         {error ? <Alert severity="error">{error}</Alert> : null}
+        {replyTarget ? (
+          <RequestReplyPreview
+            target={replyTarget}
+            onCancel={() => onCancelReply?.()}
+          />
+        ) : null}
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1}
           sx={{ justifyContent: "space-between" }}
         >
           <Typography sx={{ fontWeight: 650 }}>
-            {internal ? "添加内部备注" : "回复客户"}
+            {effectiveInternal
+              ? "添加内部备注"
+              : claimRequired
+                ? "回复客户并接手"
+                : "回复客户"}
           </Typography>
           <FormControlLabel
             control={
               <Switch
-                checked={internal}
+                checked={effectiveInternal}
                 onChange={(event) => setInternal(event.target.checked)}
+                disabled={
+                  submitting || internalReplyLocked || claimRequired
+                }
               />
             }
             label="仅内部可见"
           />
         </Stack>
-        {internal ? (
+        {effectiveInternal ? (
           <Alert severity="warning">内部备注不会发送给客户。</Alert>
         ) : null}
         <RichTextEditor
           value={body}
           onChange={setBody}
           disabled={submitting}
-          placeholder={internal ? "记录内部处理信息" : "输入给客户的回复"}
+          placeholder={
+            effectiveInternal ? "记录内部处理信息" : "输入给客户的回复"
+          }
         />
         <Stack
           direction={{ xs: "column", sm: "row" }}
@@ -154,7 +190,11 @@ export function RequestReplyComposer({ requestId }: { requestId: string }) {
               (!hasMeaningfulHtml(body) && files.length === 0)
             }
           >
-            {internal ? "保存备注" : "发送回复"}
+            {effectiveInternal
+              ? "保存备注"
+              : claimRequired
+                ? "回复并接手"
+                : "发送回复"}
           </Button>
         </Stack>
         <Typography variant="body2" color="text.secondary">

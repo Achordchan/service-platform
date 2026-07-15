@@ -163,7 +163,7 @@ describe("客户空间跨租户隔离", () => {
   });
 });
 
-describe("技术人员请求分配隔离", () => {
+describe("技术人员请求访问范围", () => {
   it("技术人员可以读取分配给自己的请求", async () => {
     const rows = await queryAsActor<{ id: string }>(
       fixture.technician,
@@ -173,25 +173,27 @@ describe("技术人员请求分配隔离", () => {
     expect(rows).toEqual([{ id: fixture.assignedRequestAId }]);
   });
 
-  it("RLS 不向技术人员返回未分配给自己的请求", async () => {
+  it("RLS 向同项目技术人员开放未分配请求", async () => {
     const rows = await queryAsActor<{ id: string }>(
       fixture.technician,
       'SELECT id FROM "ServiceRequest" WHERE id = $1',
       [fixture.unassignedRequestAId],
     );
-    expect(rows).toEqual([]);
+    expect(rows).toEqual([{ id: fixture.unassignedRequestAId }]);
   });
 
-  it("领域服务详情和项目请求列表均隐藏未分配请求", async () => {
-    await expect(
-      getRequest(fixture.technician, fixture.unassignedRequestAId),
-    ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+  it("领域服务详情和项目请求列表均展示未分配请求", async () => {
+    const request = await getRequest(
+      fixture.technician,
+      fixture.unassignedRequestAId,
+    );
+    expect(request.id).toBe(fixture.unassignedRequestAId);
 
     const requests = await listProjectRequests(
       fixture.technician,
       fixture.projectAId,
     );
-    expect(requests.map((request) => request.id)).not.toContain(
+    expect(requests.map((item) => item.id)).toContain(
       fixture.unassignedRequestAId,
     );
   });
@@ -291,13 +293,12 @@ describe("附件下载鉴权", () => {
     ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
   });
 
-  it("技术人员不能下载未分配请求的公开附件", async () => {
-    await expect(
-      readAttachmentDownload(
-        fixture.technician,
-        fixture.unassignedAttachmentAId,
-      ),
-    ).rejects.toMatchObject({ code: "NOT_FOUND", status: 404 });
+  it("技术人员可以下载未分配请求的公开附件以便接手", async () => {
+    const result = await readAttachmentDownload(
+      fixture.technician,
+      fixture.unassignedAttachmentAId,
+    );
+    expect(result.attachment.id).toBe(fixture.unassignedAttachmentAId);
   });
 });
 

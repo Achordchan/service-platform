@@ -1,23 +1,21 @@
 "use client";
 
-import Link from "next/link";
+import { useState } from "react";
 import { useRequestRealtime } from "@/hooks/use-request-realtime";
 import { useRequestNotificationsRead } from "@/hooks/use-request-notifications-read";
+import { useRequestPresence } from "@/hooks/use-request-presence";
 import {
   Alert,
   Box,
   Chip,
-  IconButton,
   Paper,
   Stack,
   Typography,
 } from "@mui/material";
-import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
-import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
-import { CollapsibleText } from "@/components/shared/collapsible-text";
+import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
+import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import type {
-  RequestAttachment,
   RequestPriority,
   ServiceRequestDetail,
 } from "@/components/customer/customer-types";
@@ -44,53 +42,6 @@ const priorityMap: Record<
   URGENT: { label: "紧急", color: "error" },
 };
 
-function formatSize(size: number) {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function AttachmentList({ files }: { files: RequestAttachment[] }) {
-  if (files.length === 0) return null;
-  return (
-    <Stack spacing={1} sx={{ mt: 2 }}>
-      {files.map((file) => (
-        <Stack
-          key={file.id}
-          direction="row"
-          spacing={1.5}
-          sx={{
-            p: 1.25,
-            borderRadius: 1.5,
-            bgcolor: "#f8fafc",
-            alignItems: "center",
-          }}
-        >
-          <InsertDriveFileOutlinedIcon
-            sx={{ fontSize: 20, color: "text.secondary" }}
-          />
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography variant="body2" noWrap sx={{ fontWeight: 600 }}>
-              {file.originalName}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {formatSize(file.size)}
-            </Typography>
-          </Box>
-          <IconButton
-            component={Link}
-            href={`/api/v1/attachments/${file.id}`}
-            aria-label={`下载 ${file.originalName}`}
-            size="small"
-          >
-            <DownloadOutlinedIcon fontSize="small" />
-          </IconButton>
-        </Stack>
-      ))}
-    </Stack>
-  );
-}
-
 export function RequestDetail({
   request,
   currentUserId,
@@ -101,6 +52,8 @@ export function RequestDetail({
   created?: boolean;
 }) {
   const priority = priorityMap[request.priority];
+  const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
+  const staffOnline = useRequestPresence(request.id, "CUSTOMER");
   useRequestRealtime(request.id, { currentUserId });
   useRequestNotificationsRead(request.id);
   return (
@@ -126,18 +79,22 @@ export function RequestDetail({
       >
         <Stack spacing={2.5}>
           <Box>
-            <Typography variant="h3" sx={{ mb: 1.5 }}>
-              沟通记录
-            </Typography>
+            <RequestChatHeading
+              counterpartOnline={staffOnline}
+              counterpartLabel="服务人员"
+            />
             <RequestChatThread
               messages={request.messages}
               currentUserId={currentUserId}
+              onReply={setReplyTarget}
             />
           </Box>
 
           <RequestReplyForm
             requestId={request.id}
             disabled={request.status === "CLOSED"}
+            replyTarget={replyTarget}
+            onCancelReply={() => setReplyTarget(null)}
           />
         </Stack>
 
@@ -209,13 +166,6 @@ export function RequestDetail({
                 <Typography sx={{ mt: 0.65 }}>
                   {dateFormatter.format(new Date(request.updatedAt))}
                 </Typography>
-              </Box>
-              <Box>
-                <Typography variant="body2" color="text.secondary">
-                  请求描述
-                </Typography>
-                <CollapsibleText text={request.description} maxLines={5} />
-                <AttachmentList files={request.attachments} />
               </Box>
             </Stack>
           </Paper>

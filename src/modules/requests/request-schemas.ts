@@ -37,6 +37,12 @@ export const createRequestMessageSchema = z.object({
   visibility: z
     .enum(["CUSTOMER_VISIBLE", "INTERNAL"])
     .default("CUSTOMER_VISIBLE"),
+  replyToMessageId: z.string().trim().min(1).nullable().optional(),
+});
+
+export const requestPresenceSchema = z.object({
+  sessionId: z.string().trim().min(8).max(120),
+  action: z.enum(["heartbeat", "leave"]),
 });
 
 export type CreateRequestInput = z.infer<typeof createRequestSchema>;
@@ -44,3 +50,4 @@ export type CreateRequestMessageInput = z.infer<
   typeof createRequestMessageSchema
 >;
 export type AssignRequestInput = z.infer<typeof assignRequestSchema>;
+export type RequestPresenceInput = z.infer<typeof requestPresenceSchema>;

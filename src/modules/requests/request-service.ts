@@ -7,7 +7,11 @@ import { dispatchRequestActivity } from "@/modules/notifications/notification-se
 import { badRequest, notFound } from "@/modules/requests/errors";
 import { generateRequestNumber } from "@/modules/requests/request-number";
 import type { CreateRequestInput } from "@/modules/requests/request-schemas";
-import { hasMeaningfulHtml } from "@/lib/message-content";
+import {
+  buildMessagePreview,
+  escapeHtmlText,
+  hasMeaningfulHtml,
+} from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 
 const userBriefSelect = {
@@ -112,6 +116,16 @@ export function createRequest(
       },
       select: requestSummarySelect,
     });
+    const initialMessage = await tx.requestMessage.create({
+      data: {
+        body: `<h3>${escapeHtmlText(input.title.trim())}</h3>${sanitizedDescription}`,
+        visibility: "CUSTOMER_VISIBLE",
+        isInitial: true,
+        serviceRequestId: request.id,
+        authorId: actor.id,
+      },
+      select: { id: true },
+    });
 
     await writeAuditLog(tx, actor, {
       action: "REQUEST_CREATED",
@@ -135,15 +149,19 @@ export function createRequest(
         actorId: actor.id,
       },
       notificationType: "REQUEST_CREATED",
-      notificationTitle: `新服务请求 ${request.number}`,
-      notificationBody: "服务请求已创建，等待分配处理人。",
+      notificationTitle: `${actor.name} 提交了请求 ${request.number}`,
+      notificationBody: `${request.title}：${buildMessagePreview(
+        sanitizedDescription,
+      )}`,
       includeCustomers: true,
+      notifyProjectManagers: true,
+      notifyPlatformAdmins: true,
       customerSpaceId: project.customerSpaceId,
       projectId,
       serviceRequestId: request.id,
     });
 
-    return request;
+    return { ...request, initialMessageId: initialMessage.id };
   });
 }
 
@@ -165,6 +183,10 @@ export function listProjectRequests(actor: Actor, projectId: string) {
               OR: [
                 { assigneeId: actor.id },
                 { assignees: { some: { userId: actor.id } } },
+                {
+                  assigneeId: null,
+                  assignees: { none: {} },
+                },
               ],
             }
           : {}),
@@ -198,7 +220,9 @@ export function getRequest(actor: Actor, requestId: string) {
             body: true,
             visibility: true,
             isSystem: true,
+            isInitial: true,
             authorId: true,
+            replyToMessageId: true,
             createdAt: true,
             updatedAt: true,
             author: {
@@ -215,8 +239,30 @@ export function getRequest(actor: Actor, requestId: string) {
                 createdAt: true,
               },
             },
+            replyTo: {
+              select: {
+                id: true,
+                body: true,
+                visibility: true,
+                isSystem: true,
+                authorId: true,
+                author: {
+                  select: {
+                    id: true,
+                    name: true,
+                  },
+                },
+                attachments: {
+                  select: {
+                    id: true,
+                    originalName: true,
+                  },
+                  orderBy: { createdAt: "asc" },
+                },
+              },
+            },
           },
-          orderBy: { createdAt: "asc" },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         },
         attachments: {
           where: {

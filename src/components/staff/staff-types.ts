@@ -147,11 +147,24 @@ export type RequestDetail = RequestListItem & {
     body: string;
     visibility: ContentVisibility;
     isSystem?: boolean;
+    isInitial?: boolean;
     authorId: string;
     authorName: string;
     authorImage?: string | null;
     authorPlatformRole?: StaffRole | "CUSTOMER" | null;
     createdAt: string;
+    replyToMessageId?: string | null;
+    replyTo?: {
+      id: string;
+      body: string;
+      visibility: ContentVisibility;
+      authorId: string;
+      authorName: string;
+      attachments: Array<{
+        id: string;
+        originalName: string;
+      }>;
+    } | null;
     attachments: RequestAttachment[];
   }>;
 };

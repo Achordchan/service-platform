@@ -128,11 +128,23 @@ export type RequestMessage = {
   id: string;
   body: string;
   isSystem?: boolean;
+  isInitial?: boolean;
   authorId: string;
   authorName: string;
   authorImage?: string | null;
   authorPlatformRole?: string | null;
   createdAt: string;
+  replyToMessageId?: string | null;
+  replyTo?: {
+    id: string;
+    body: string;
+    authorId: string;
+    authorName: string;
+    attachments: Array<{
+      id: string;
+      originalName: string;
+    }>;
+  } | null;
   attachments: RequestAttachment[];
 };
 
