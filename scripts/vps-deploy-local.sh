@@ -20,6 +20,7 @@ APP_URL=https://support.achord.cn \
 NEXT_PUBLIC_APP_URL=https://support.achord.cn \
 NODE_ENV=production \
 pnpm build
+pnpm verify:runtime-deps
 
 ssh -i "${KEY}" -p "${PORT}" -o IdentitiesOnly=yes "${USER_NAME}@${HOST}" "mkdir -p '${REMOTE_DIR}'"
 rsync -az --delete \
@@ -27,7 +28,7 @@ rsync -az --delete \
   --exclude '.git/' \
   --exclude '.env' \
   --exclude '.env.*' \
-  --exclude 'node_modules/' \
+  --exclude '/node_modules/' \
   --exclude '.next/dev/' \
   --exclude '.next/cache/' \
   --exclude '.data/' \

@@ -16,6 +16,7 @@ import {
   processImageWebpMigrationBatch,
   releaseImageWebpMigrationRun,
 } from "@/modules/plugins/image-webp-runtime-service";
+import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 
 export const EMAIL_JOB = "send-email";
 export const IMAGE_WEBP_JOB = "plugin-image-webp";
@@ -197,6 +198,7 @@ export async function startMailWorker() {
   }
   globalForBoss.bossWorkerStarted = true;
   globalForBoss.bossWorkerPromise = (async () => {
+    await ensurePluginInstallations();
     const boss = await getBoss();
     await boss.work<MailJobData>(
       EMAIL_JOB,

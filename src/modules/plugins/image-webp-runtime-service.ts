@@ -45,9 +45,14 @@ export async function optimizeAttachmentWithWebp(
   const context = await withSystemDb(async (tx) => {
     const installation = await tx.pluginInstallation.findUnique({
       where: { key: IMAGE_WEBP_PLUGIN_KEY },
-      select: { enabled: true, config: true },
+      select: { enabled: true, healthStatus: true, config: true },
     });
-    if (!installation?.enabled) return null;
+    if (
+      !installation?.enabled ||
+      installation.healthStatus !== "READY"
+    ) {
+      return null;
+    }
     const attachment = await tx.attachment.findUnique({
       where: { id: attachmentId },
       select: {
@@ -67,7 +72,7 @@ export async function optimizeAttachmentWithWebp(
     };
   });
   if (!context) {
-    return zeroOutcome("SKIPPED", "PLUGIN_DISABLED_OR_ATTACHMENT_MISSING");
+    return zeroOutcome("SKIPPED", "PLUGIN_UNAVAILABLE_OR_ATTACHMENT_MISSING");
   }
 
   const { attachment, config } = context;
@@ -300,9 +305,12 @@ export async function processImageWebpMigrationBatch(
     }
     const installation = await tx.pluginInstallation.findUnique({
       where: { key: IMAGE_WEBP_PLUGIN_KEY },
-      select: { enabled: true },
+      select: { enabled: true, healthStatus: true },
     });
-    if (!installation?.enabled) {
+    if (
+      !installation?.enabled ||
+      installation.healthStatus !== "READY"
+    ) {
       const paused = await tx.pluginRun.updateMany({
         where: {
           id: runId,

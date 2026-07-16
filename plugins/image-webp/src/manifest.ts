@@ -16,7 +16,7 @@ export const imageWebpManifest: PlatformPluginManifest<ImageWebpConfig> = {
   key: IMAGE_WEBP_PLUGIN_KEY,
   name: "图片 WebP 优化",
   description: "在后台将 JPEG、PNG 附件转换为体积更小的 WebP 文件。",
-  version: "1.0.0",
+  version: "1.0.1",
   category: "存储与附件",
   minimumPlatformVersion: "0.1.0",
   capabilities: [

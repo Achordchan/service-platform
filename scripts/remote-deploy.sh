@@ -17,6 +17,10 @@ if [[ ! -f "${RELEASE_STAGING}/prisma/schema.prisma" ]]; then
   echo "Release missing prisma/schema.prisma" >&2
   exit 1
 fi
+if ! compgen -G "${RELEASE_STAGING}/.next/node_modules/sharp-*" >/dev/null; then
+  echo "Release missing traced sharp runtime alias under .next/node_modules." >&2
+  exit 1
+fi
 if [[ ! -f "${ENV_FILE}" ]]; then
   echo "Runtime env file missing: ${ENV_FILE}" >&2
   exit 1
@@ -72,7 +76,7 @@ rsync -a --delete \
   --exclude ".git/" \
   --exclude ".env" \
   --exclude ".env.*" \
-  --exclude "node_modules/" \
+  --exclude "/node_modules/" \
   --exclude ".data/" \
   --exclude "public/uploads/" \
   --exclude "test-results/" \
@@ -89,6 +93,8 @@ if [[ "${NEEDS_INSTALL}" == true ]]; then
 else
   echo "[deploy] lockfile unchanged; reuse existing node_modules"
 fi
+echo "[deploy] verify traced runtime dependencies"
+sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && node scripts/verify-runtime-dependencies.mjs"
 echo "[deploy] prisma generate + migrate"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && set -a && source ${ENV_FILE} && set +a && NODE_OPTIONS=--max-old-space-size=768 pnpm exec prisma generate && pnpm exec prisma migrate deploy"
 echo "[deploy] restart services"

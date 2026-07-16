@@ -42,6 +42,9 @@ jobs:
           NODE_ENV: production
         run: pnpm build
 
+      - name: Verify runtime dependencies
+        run: pnpm verify:runtime-deps
+
       - name: Prepare SSH
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -79,7 +82,7 @@ jobs:
             --exclude '.git/' \
             --exclude '.env' \
             --exclude '.env.*' \
-            --exclude 'node_modules/' \
+            --exclude '/node_modules/' \
             --exclude '.next/dev/' \
             --exclude '.next/cache/' \
             --exclude '.data/' \

@@ -8,7 +8,7 @@ export async function ensurePluginInstallations() {
   const manifests = listRegisteredPlugins();
   await withSystemDb(async (tx) => {
     for (const manifest of manifests) {
-      await tx.pluginInstallation.upsert({
+      const installation = await tx.pluginInstallation.upsert({
         where: { key: manifest.key },
         create: {
           key: manifest.key,
@@ -16,10 +16,28 @@ export async function ensurePluginInstallations() {
           enabled: false,
           config: manifest.defaultConfig as Prisma.InputJsonValue,
         },
-        update: {
-          version: manifest.version,
-        },
+        update: {},
+        select: { version: true },
       });
+      if (installation.version !== manifest.version) {
+        await tx.pluginInstallation.update({
+          where: { key: manifest.key },
+          data: {
+            version: manifest.version,
+            enabled: false,
+            healthStatus: "UNKNOWN",
+            lastCheckedAt: null,
+            lastError: null,
+          },
+        });
+        await tx.pluginRun.updateMany({
+          where: {
+            pluginKey: manifest.key,
+            status: { in: ["QUEUED", "RUNNING"] },
+          },
+          data: { status: "PAUSED" },
+        });
+      }
     }
   });
 }

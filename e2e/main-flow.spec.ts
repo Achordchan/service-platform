@@ -103,8 +103,37 @@ test.describe("主流程冒烟", () => {
     await expect(
       adminPage.getByRole("heading", { name: "插件中心", exact: true }),
     ).toBeVisible();
-    await expect(adminPage.getByText("图片 WebP 优化")).toBeVisible();
-    await expect(adminPage.getByText("未启用")).toBeVisible();
+    await expect(
+      adminPage.getByRole("button", { name: "管理图片 WebP 优化" }),
+    ).toBeVisible();
+    const pluginGuideButton = adminPage.getByRole("button", {
+      name: "插件开发规范",
+    });
+    await expect(pluginGuideButton).toBeVisible();
+    await pluginGuideButton.click();
+    await expect(
+      adminPage.getByRole("dialog", { name: "插件开发规范" }),
+    ).toBeVisible();
+    await expect(
+      adminPage.getByRole("tab", { name: "开发流程" }),
+    ).toBeVisible();
+    await expect(
+      adminPage.getByRole("tab", { name: "权限边界" }),
+    ).toBeVisible();
+    await expect(
+      adminPage.getByRole("tab", { name: "发布验收" }),
+    ).toBeVisible();
+    await adminPage.getByRole("button", { name: "关闭" }).click();
+
+    await adminPage.setViewportSize({ width: 390, height: 844 });
+    await pluginGuideButton.click();
+    await adminPage.getByRole("tab", { name: "发布验收" }).click();
+    const pluginPageHasHorizontalOverflow = await adminPage.evaluate(
+      () => document.documentElement.scrollWidth > window.innerWidth + 1,
+    );
+    expect(pluginPageHasHorizontalOverflow).toBe(false);
+    await adminPage.getByRole("button", { name: "关闭" }).click();
+    await adminPage.setViewportSize({ width: 1280, height: 720 });
 
     await adminPage.goto("/staff/settings");
     await expect(

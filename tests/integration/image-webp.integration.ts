@@ -39,8 +39,12 @@ let customerId = "";
 let serviceTypeId = "";
 let replacementStorageKey = "";
 let previousInstallation: {
+  version: string;
   enabled: boolean;
   config: Record<string, unknown>;
+  healthStatus: string;
+  lastCheckedAt: Date | null;
+  lastError: string | null;
 } | null = null;
 
 beforeAll(async () => {
@@ -70,11 +74,21 @@ beforeAll(async () => {
   serviceTypeId = row.service_type_id;
 
   const installation = await pool.query<{
+    version: string;
     enabled: boolean;
     config: Record<string, unknown>;
+    healthStatus: string;
+    lastCheckedAt: Date | null;
+    lastError: string | null;
   }>(
     `
-      SELECT enabled, config
+      SELECT
+        version,
+        enabled,
+        config,
+        "healthStatus",
+        "lastCheckedAt",
+        "lastError"
       FROM "PluginInstallation"
       WHERE "key" = $1
     `,
@@ -86,6 +100,9 @@ beforeAll(async () => {
       UPDATE "PluginInstallation"
       SET
         enabled = true,
+        "healthStatus" = 'READY',
+        "lastCheckedAt" = NOW(),
+        "lastError" = NULL,
         config = $2::jsonb,
         "updatedAt" = NOW()
       WHERE "key" = $1
@@ -230,15 +247,23 @@ afterAll(async () => {
       `
         UPDATE "PluginInstallation"
         SET
-          enabled = $2,
-          config = $3::jsonb,
+          version = $2,
+          enabled = $3,
+          config = $4::jsonb,
+          "healthStatus" = $5,
+          "lastCheckedAt" = $6,
+          "lastError" = $7,
           "updatedAt" = NOW()
         WHERE "key" = $1
       `,
       [
         IMAGE_WEBP_PLUGIN_KEY,
+        previousInstallation.version,
         previousInstallation.enabled,
         JSON.stringify(previousInstallation.config),
+        previousInstallation.healthStatus,
+        previousInstallation.lastCheckedAt,
+        previousInstallation.lastError,
       ],
     );
   }

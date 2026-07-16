@@ -10,13 +10,18 @@ import { IMAGE_WEBP_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
 export async function scheduleAttachmentPluginJobs(attachmentId: string) {
   try {
     await ensurePluginInstallations();
-    const enabled = await withSystemDb((tx) =>
+    const installation = await withSystemDb((tx) =>
       tx.pluginInstallation.findUnique({
         where: { key: IMAGE_WEBP_PLUGIN_KEY },
-        select: { enabled: true },
+        select: { enabled: true, healthStatus: true },
       }),
     );
-    if (!enabled?.enabled) return;
+    if (
+      !installation?.enabled ||
+      installation.healthStatus !== "READY"
+    ) {
+      return;
+    }
     await queueImageWebpAttachment(attachmentId);
   } catch (error) {
     console.error("PLUGIN_ATTACHMENT_JOB_QUEUE_FAILED", {

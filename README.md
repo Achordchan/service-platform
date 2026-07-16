@@ -93,6 +93,7 @@ pnpm test
 pnpm exec vitest run --config vitest.integration.config.ts
 pnpm test:e2e
 pnpm build
+pnpm verify:runtime-deps
 pnpm check
 ```
 
@@ -106,7 +107,7 @@ pnpm check
 - `e2e`：Playwright 主流程
 - `packages/platform-plugin-sdk`：可信构建期插件契约
 - `plugins`：随平台构建的受信任插件
-- `docs/plugins`：插件开发 SOP 与边界
+- `docs/plugins`：插件开发 SOP 与边界；后台入口为「插件中心 → 插件开发规范」
 
 ## 开发约束
 

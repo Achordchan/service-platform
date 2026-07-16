@@ -208,6 +208,13 @@ export async function startPluginHistoryRun(
         409,
       );
     }
+    if (installation.healthStatus !== "READY") {
+      throw new DomainError(
+        "PLUGIN_NOT_READY",
+        "插件版本已更新，请先重新检测运行环境",
+        409,
+      );
+    }
     const activeRun = await tx.pluginRun.findFirst({
       where: {
         pluginKey,
@@ -343,12 +350,19 @@ export async function controlPluginRun(
     }
     const installation = await tx.pluginInstallation.findUnique({
       where: { key: pluginKey },
-      select: { enabled: true },
+      select: { enabled: true, healthStatus: true },
     });
     if (!installation?.enabled) {
       throw new DomainError(
         "PLUGIN_DISABLED",
         "请先启用插件再继续任务",
+        409,
+      );
+    }
+    if (installation.healthStatus !== "READY") {
+      throw new DomainError(
+        "PLUGIN_NOT_READY",
+        "插件版本已更新，请先重新检测运行环境",
         409,
       );
     }

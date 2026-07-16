@@ -9,12 +9,14 @@ import {
   Alert,
   Box,
   Button,
+  Card,
+  CardActionArea,
+  CardContent,
   Chip,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   LinearProgress,
   Paper,
   Stack,
@@ -22,8 +24,10 @@ import {
   Typography,
 } from "@mui/material";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
+import ArrowForwardOutlinedIcon from "@mui/icons-material/ArrowForwardOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
-import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
+import { PluginDeveloperGuideDialog } from "@/components/staff/plugin-developer-guide-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useRealtimeRouteRefresh } from "@/hooks/use-realtime-route-refresh";
 
@@ -88,6 +92,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [guideOpen, setGuideOpen] = useState(false);
   const selected = useMemo(
     () => plugins.find((plugin) => plugin.key === selectedKey) ?? null,
     [plugins, selectedKey],
@@ -116,11 +121,18 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   async function checkHealth() {
     if (!selected) return;
     await execute("check", async () => {
-      await staffApi(
+      const result = await staffApi<{
+        healthStatus: string;
+        lastError: string | null;
+      }>(
         `/api/v1/admin/plugins/${selected.key}/check`,
         jsonRequest("POST"),
       );
-      setSuccess("环境检测已完成");
+      if (result.healthStatus === "READY") {
+        setSuccess("运行环境检测通过");
+      } else {
+        setError(result.lastError || "运行环境检测未通过");
+      }
     });
   }
 
@@ -173,53 +185,63 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     setSuccess("");
     try {
       await action();
-      router.refresh();
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "插件操作失败",
       );
     } finally {
+      router.refresh();
       setBusy("");
     }
   }
 
   return (
     <Stack spacing={2.5}>
-      <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.5}
-          sx={{
-            px: { xs: 2, sm: 2.5 },
-            py: 2.25,
-            alignItems: { sm: "center" },
-            justifyContent: "space-between",
-          }}
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1.5}
+        sx={{
+          alignItems: { sm: "center" },
+          justifyContent: "space-between",
+        }}
+      >
+        <Box>
+          <Typography sx={{ fontWeight: 700 }}>已安装插件</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+            共 {plugins.length} 个受信任扩展
+          </Typography>
+        </Box>
+        <Button
+          variant="outlined"
+          startIcon={<MenuBookOutlinedIcon />}
+          onClick={() => setGuideOpen(true)}
         >
-          <Box>
-            <Typography sx={{ fontWeight: 700 }}>已安装插件</Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              插件随平台版本部署，代码来源由构建白名单控制。
-            </Typography>
-          </Box>
-          <Chip label={`${plugins.length} 个`} />
-        </Stack>
-      </Paper>
+          插件开发规范
+        </Button>
+      </Stack>
 
       {plugins.length === 0 ? (
         <EmptyState />
       ) : (
-        <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-          {plugins.map((plugin, index) => (
-            <Box key={plugin.key}>
-              {index > 0 ? <Divider /> : null}
-              <PluginRow
-                plugin={plugin}
-                onSettings={() => openSettings(plugin)}
-              />
-            </Box>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "minmax(0, 1fr)",
+              sm: "repeat(2, minmax(0, 1fr))",
+              lg: "repeat(3, minmax(0, 1fr))",
+            },
+            gap: 2,
+          }}
+        >
+          {plugins.map((plugin) => (
+            <PluginCard
+              key={plugin.key}
+              plugin={plugin}
+              onOpen={() => openSettings(plugin)}
+            />
           ))}
-        </Paper>
+        </Box>
       )}
 
       <Dialog
@@ -326,7 +348,11 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                     <Button
                       variant="outlined"
                       onClick={() => setConfirmMigrationKey(selected.key)}
-                      disabled={!selected.enabled || Boolean(busy)}
+                      disabled={
+                        !selected.enabled ||
+                        selected.healthStatus !== "READY" ||
+                        Boolean(busy)
+                      }
                     >
                       启动新的历史迁移
                     </Button>
@@ -376,72 +402,136 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <PluginDeveloperGuideDialog
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+      />
     </Stack>
   );
 }
 
-function PluginRow({
+function PluginCard({
   plugin,
-  onSettings,
+  onOpen,
 }: {
   plugin: PluginView;
-  onSettings: () => void;
+  onOpen: () => void;
 }) {
   const latestRun = plugin.runs[0];
+  const healthError = plugin.healthStatus === "ERROR";
+  const healthReady = plugin.healthStatus === "READY";
+  const status = healthError
+    ? { label: "环境异常", color: "error" as const }
+    : !healthReady
+      ? { label: "待检测", color: "warning" as const }
+      : plugin.enabled
+        ? { label: "已启用", color: "success" as const }
+        : { label: "未启用", color: "default" as const };
   return (
-    <Stack
-      direction={{ xs: "column", md: "row" }}
-      spacing={2}
+    <Card
+      variant="outlined"
       sx={{
-        px: { xs: 2, sm: 2.5 },
-        py: 2.25,
-        alignItems: { md: "center" },
-        justifyContent: "space-between",
+        minWidth: 0,
+        minHeight: { xs: 270, sm: 0 },
+        aspectRatio: { sm: "1 / 1" },
+        borderColor: healthError ? "error.light" : "divider",
       }}
     >
-      <Box sx={{ minWidth: 0 }}>
-        <Stack
-          direction="row"
-          spacing={1}
-          useFlexGap
-          sx={{ alignItems: "center", flexWrap: "wrap" }}
-        >
-          <Typography sx={{ fontWeight: 700 }}>{plugin.name}</Typography>
-          <Chip
-            size="small"
-            label={plugin.enabled ? "已启用" : "未启用"}
-            color={plugin.enabled ? "success" : "default"}
-          />
-          <Chip size="small" variant="outlined" label={`v${plugin.version}`} />
-        </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-          {plugin.description}
-        </Typography>
-        {latestRun ? (
-          <Typography
-            variant="caption"
-            color="text.secondary"
-            sx={{ display: "block", mt: 0.75 }}
-          >
-            最近任务：{runStatusLabel(latestRun.status)} · 已处理{" "}
-            {latestRun.processedCount}/{latestRun.totalCount}
-          </Typography>
-        ) : null}
-      </Box>
-      <Button
-        variant="outlined"
-        startIcon={<SettingsOutlinedIcon />}
-        onClick={onSettings}
-        sx={{ alignSelf: { xs: "stretch", md: "center" }, flexShrink: 0 }}
+      <CardActionArea
+        onClick={onOpen}
+        aria-label={`管理${plugin.name}`}
+        sx={{ height: "100%", alignItems: "stretch" }}
       >
-        管理
-      </Button>
-    </Stack>
+        <CardContent sx={{ height: "100%", p: 2.25 }}>
+          <Stack spacing={2} sx={{ height: "100%", minWidth: 0 }}>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "flex-start", justifyContent: "space-between" }}
+            >
+              <Box
+                sx={{
+                  width: 46,
+                  height: 46,
+                  borderRadius: 2,
+                  bgcolor: "action.hover",
+                  color: "text.secondary",
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <ExtensionOutlinedIcon />
+              </Box>
+              <Chip
+                size="small"
+                label={status.label}
+                color={status.color}
+              />
+            </Stack>
+
+            <Box sx={{ minWidth: 0 }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                useFlexGap
+                sx={{ alignItems: "baseline", flexWrap: "wrap" }}
+              >
+                <Typography sx={{ fontWeight: 750 }}>{plugin.name}</Typography>
+                <Typography variant="caption" color="text.secondary">
+                  v{plugin.version}
+                </Typography>
+              </Stack>
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{
+                  mt: 0.75,
+                  display: "-webkit-box",
+                  WebkitBoxOrient: "vertical",
+                  WebkitLineClamp: 3,
+                  overflow: "hidden",
+                }}
+              >
+                {plugin.description}
+              </Typography>
+            </Box>
+
+            <Stack spacing={0.75} sx={{ mt: "auto", minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary">
+                {plugin.category}
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                {healthError
+                  ? "运行环境检测失败，打开查看原因"
+                  : !healthReady
+                    ? "版本已更新，需要重新检测运行环境"
+                    : latestRun
+                      ? `最近任务：${runStatusLabel(latestRun.status)} · ${latestRun.processedCount}/${latestRun.totalCount}`
+                      : "尚未执行后台任务"}
+              </Typography>
+              <Stack
+                direction="row"
+                spacing={0.5}
+                sx={{ alignItems: "center", color: "primary.main", pt: 0.25 }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  管理插件
+                </Typography>
+                <ArrowForwardOutlinedIcon fontSize="small" />
+              </Stack>
+            </Stack>
+          </Stack>
+        </CardContent>
+      </CardActionArea>
+    </Card>
   );
 }
 
 function PluginStatusSummary({ plugin }: { plugin: PluginView }) {
   const ready = plugin.healthStatus === "READY";
+  const failed = plugin.healthStatus === "ERROR";
   return (
     <Stack
       spacing={1}
@@ -456,15 +546,15 @@ function PluginStatusSummary({ plugin }: { plugin: PluginView }) {
         <Typography sx={{ fontWeight: 700 }}>运行状态</Typography>
         <Chip
           size="small"
-          label={ready ? "环境正常" : "尚未通过检测"}
-          color={ready ? "success" : "default"}
+          label={ready ? "环境正常" : failed ? "环境异常" : "等待检测"}
+          color={ready ? "success" : failed ? "error" : "warning"}
         />
       </Stack>
       <Typography variant="body2" color="text.secondary">
         {plugin.lastError ||
           (plugin.lastCheckedAt
             ? `最后检测：${formatDate(plugin.lastCheckedAt)}`
-            : "启用前需要完成一次运行环境检测。")}
+            : "插件版本变化后需要重新检测，检测通过前不会执行任务。")}
       </Typography>
     </Stack>
   );

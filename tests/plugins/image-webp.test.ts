@@ -14,6 +14,7 @@ describe("图片 WebP 插件", () => {
       minimumSavingsPercent: 5,
     });
     expect(imageWebpManifest.key).toBe("image-webp");
+    expect(imageWebpManifest.version).toBe("1.0.1");
   });
 
   it("将 JPEG 转换为可解码的 WebP", async () => {
