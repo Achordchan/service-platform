@@ -2,7 +2,7 @@ import { startMailWorker } from "@/lib/jobs";
 
 async function main() {
   await startMailWorker();
-  process.stdout.write("邮件任务 worker 已启动\n");
+  process.stdout.write("邮件任务 worker 已启动；插件后台任务已就绪\n");
 }
 
 main().catch((error) => {

@@ -19,6 +19,7 @@ import {
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
+import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 
 const contactFields = {
   phone: z.string().trim().max(40).optional().or(z.literal("")),
@@ -401,13 +402,7 @@ export function updateStaffProfile(
 export function deactivateStaffUser(actor: Actor, userId: string) {
   assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
-    if (userId === actor.id) {
-      throw new DomainError(
-        "CANNOT_DELETE_SELF",
-        "不能删除当前登录账号",
-        409,
-      );
-    }
+    await assertDeletionAllowedInTx(tx, actor, "STAFF_USER", userId);
 
     const user = await tx.user.findUnique({
       where: { id: userId },
@@ -434,54 +429,6 @@ export function deactivateStaffUser(actor: Actor, userId: string) {
       },
     });
     assertFound(user, "用户不存在");
-    if (user.platformRole === "PLATFORM_ADMIN") {
-      throw new DomainError(
-        "ADMIN_CANNOT_DEACTIVATE",
-        "不能删除平台管理员",
-        409,
-      );
-    }
-    if (user.platformRole === "CUSTOMER") {
-      throw new DomainError(
-        "NOT_INTERNAL_USER",
-        "只能移除内部/外包协作人员",
-        409,
-      );
-    }
-    if (user._count.ownedSpaces > 0) {
-      throw new DomainError(
-        "STAFF_OWNS_CUSTOMER_SPACE",
-        "该成员仍是客户空间所有者，请先转移后再删除",
-        409,
-      );
-    }
-    if (
-      user._count.projectAssignments > 0 ||
-      user._count.requestsAssigned > 0 ||
-      user._count.requestAssignees > 0
-    ) {
-      throw new DomainError(
-        "STAFF_STILL_ASSIGNED",
-        "该成员仍有项目或工单分配，请先解除后再删除",
-        409,
-      );
-    }
-    if (
-      user._count.projectsCreated > 0 ||
-      user._count.milestonesCreated > 0 ||
-      user._count.projectUpdates > 0 ||
-      user._count.updateComments > 0 ||
-      user._count.requestsCreated > 0 ||
-      user._count.requestMessages > 0 ||
-      user._count.attachments > 0
-    ) {
-      throw new DomainError(
-        "STAFF_HAS_HISTORY",
-        "该成员已有历史内容记录，暂不支持直接删除",
-        409,
-      );
-    }
-
     await tx.session.deleteMany({ where: { userId } });
     await tx.account.deleteMany({ where: { userId } });
     await tx.staffInvitation.deleteMany({ where: { email: user.email } });

@@ -11,12 +11,29 @@ import {
   getRuntimeMailSettings,
 } from "@/modules/platform-settings/mail-settings-runtime";
 import { assertDeliveryModeReady } from "@/modules/platform-settings/mail-delivery-readiness";
+import {
+  optimizeAttachmentWithWebp,
+  processImageWebpMigrationBatch,
+  releaseImageWebpMigrationRun,
+} from "@/modules/plugins/image-webp-runtime-service";
 
 export const EMAIL_JOB = "send-email";
+export const IMAGE_WEBP_JOB = "plugin-image-webp";
 
 type MailJobData = {
   mailMessageId: string;
 };
+
+type ImageWebpJobData =
+  | {
+      kind: "ATTACHMENT";
+      attachmentId: string;
+    }
+  | {
+      kind: "MIGRATION";
+      runId: string;
+      executionToken: string;
+    };
 
 export type EnqueueMailInput = {
   to: string;
@@ -36,6 +53,7 @@ async function startBoss() {
   const boss = new PgBoss(env.JOB_DATABASE_URL);
   await boss.start();
   await boss.createQueue(EMAIL_JOB);
+  await boss.createQueue(IMAGE_WEBP_JOB);
   return boss;
 }
 
@@ -126,6 +144,53 @@ export async function enqueueMail(input: EnqueueMailInput) {
   }
 }
 
+export async function queueImageWebpAttachment(attachmentId: string) {
+  if (isInlineMailWorkerEnabled()) {
+    await startMailWorker();
+  }
+  const boss = await getBoss();
+  const jobId = await boss.send(
+    IMAGE_WEBP_JOB,
+    { kind: "ATTACHMENT", attachmentId },
+    {
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+      singletonKey: attachmentId,
+      singletonSeconds: 60,
+      group: { id: IMAGE_WEBP_JOB },
+    },
+  );
+  if (!jobId) {
+    throw new Error("图片优化任务未能加入队列");
+  }
+  return jobId;
+}
+
+export async function queueImageWebpMigrationRun(
+  runId: string,
+  executionToken: string,
+) {
+  if (isInlineMailWorkerEnabled()) {
+    await startMailWorker();
+  }
+  const boss = await getBoss();
+  const jobId = await boss.send(
+    IMAGE_WEBP_JOB,
+    { kind: "MIGRATION", runId, executionToken },
+    {
+      retryLimit: 2,
+      retryDelay: 30,
+      retryBackoff: true,
+      group: { id: IMAGE_WEBP_JOB },
+    },
+  );
+  if (!jobId) {
+    throw new Error("历史图片迁移任务未能加入队列");
+  }
+  return jobId;
+}
+
 export async function startMailWorker() {
   if (globalForBoss.bossWorkerStarted) {
     return globalForBoss.bossWorkerPromise;
@@ -141,6 +206,43 @@ export async function startMailWorker() {
           await processMailMessage(job.data.mailMessageId, {
             finalAttempt: job.retryCount >= job.retryLimit,
           });
+        }
+      },
+    );
+    await boss.work<ImageWebpJobData>(
+      IMAGE_WEBP_JOB,
+      {
+        batchSize: 1,
+        localConcurrency: 1,
+        groupConcurrency: 1,
+      },
+      async (jobs) => {
+        for (const job of jobs) {
+          if (job.data.kind === "ATTACHMENT") {
+            await optimizeAttachmentWithWebp(job.data.attachmentId, {
+              source: "UPLOAD",
+            });
+          } else {
+            try {
+              const shouldContinue = await processImageWebpMigrationBatch(
+                job.data.runId,
+                job.data.executionToken,
+              );
+              if (shouldContinue) {
+                await queueImageWebpMigrationRun(
+                  job.data.runId,
+                  job.data.executionToken,
+                );
+              }
+            } catch (error) {
+              await releaseImageWebpMigrationRun(
+                job.data.runId,
+                job.data.executionToken,
+                error,
+              );
+              throw error;
+            }
+          }
         }
       },
     );

@@ -103,7 +103,8 @@ test.describe("主流程冒烟", () => {
     await expect(
       adminPage.getByRole("heading", { name: "插件中心", exact: true }),
     ).toBeVisible();
-    await expect(adminPage.getByText("暂无插件")).toBeVisible();
+    await expect(adminPage.getByText("图片 WebP 优化")).toBeVisible();
+    await expect(adminPage.getByText("未启用")).toBeVisible();
 
     await adminPage.goto("/staff/settings");
     await expect(

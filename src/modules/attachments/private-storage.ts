@@ -20,6 +20,16 @@ export function createProjectStorageKey(
   return path.posix.join("projects", projectId, `${randomUUID()}.${extension}`);
 }
 
+export function createReplacementStorageKey(
+  currentStorageKey: string,
+  extension: string,
+) {
+  return path.posix.join(
+    path.posix.dirname(currentStorageKey),
+    `${randomUUID()}.${extension}`,
+  );
+}
+
 export function resolveStoragePath(storageKey: string) {
   const root = storageRoot();
   const target = path.resolve(root, storageKey);

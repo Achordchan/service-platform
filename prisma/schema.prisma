@@ -94,6 +94,7 @@ enum EventType {
   REQUEST_STATUS_CHANGED
   REQUEST_UPDATED
   REQUEST_PRESENCE_CHANGED
+  PLUGIN_RUN_UPDATED
   NOTIFICATION_CREATED
 }
 
@@ -114,6 +115,30 @@ enum MailMessageStatus {
   SUPPRESSED
   FAILED
   CANCELLED
+}
+
+enum UserEmailChangeStatus {
+  PENDING
+  COMPLETING
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum PluginRunStatus {
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum PluginResourceStatus {
+  PROCESSING
+  COMPLETED
+  SKIPPED
+  FAILED
 }
 
 model User {
@@ -156,6 +181,10 @@ model User {
   notifications           Notification[]
   auditLogs               AuditLog[]
   mailTemplatesUpdated    MailTemplateOverride[]
+  emailChanges            UserEmailChange[]      @relation("EmailChangeUser")
+  emailChangesRequested   UserEmailChange[]      @relation("EmailChangeRequester")
+  pluginInstallationsUpdated PluginInstallation[] @relation("PluginInstallationUpdater")
+  pluginRunsRequested     PluginRun[]             @relation("PluginRunRequester")
 
   @@index([roleGroupId])
 }
@@ -644,6 +673,91 @@ model PlatformSetting {
   updatedAt                       DateTime         @updatedAt
   updatedById                     String?
   updatedBy                       User?            @relation("PlatformSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+model UserEmailChange {
+  id            String                @id @default(cuid())
+  userId        String
+  oldEmail      String
+  newEmail      String
+  tokenHash     String                @unique
+  status        UserEmailChangeStatus @default(PENDING)
+  expiresAt     DateTime
+  lastSentAt    DateTime
+  completedAt   DateTime?
+  cancelledAt   DateTime?
+  requestedById String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  user        User @relation("EmailChangeUser", fields: [userId], references: [id], onDelete: Cascade)
+  requestedBy User? @relation("EmailChangeRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([newEmail, status])
+  @@index([expiresAt, status])
+}
+
+model PluginInstallation {
+  key           String   @id
+  version       String
+  enabled       Boolean  @default(false)
+  config        Json
+  healthStatus  String   @default("UNKNOWN")
+  lastCheckedAt DateTime?
+  lastError     String?
+  updatedAt     DateTime @updatedAt
+  updatedById   String?
+
+  updatedBy      User?                 @relation("PluginInstallationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  runs           PluginRun[]
+  resourceStates PluginResourceState[]
+}
+
+model PluginRun {
+  id            String          @id @default(cuid())
+  pluginKey     String
+  kind          String
+  status        PluginRunStatus @default(QUEUED)
+  executionToken String?
+  totalCount    Int             @default(0)
+  processedCount Int            @default(0)
+  successCount  Int             @default(0)
+  skippedCount  Int             @default(0)
+  failedCount   Int             @default(0)
+  sourceBytes   BigInt          @default(0)
+  outputBytes   BigInt          @default(0)
+  savedBytes    BigInt          @default(0)
+  cursor        String?
+  lastError     String?
+  requestedById String?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  plugin      PluginInstallation @relation(fields: [pluginKey], references: [key], onDelete: Cascade)
+  requestedBy User?              @relation("PluginRunRequester", fields: [requestedById], references: [id], onDelete: SetNull)
+
+  @@index([pluginKey, status, createdAt])
+}
+
+model PluginResourceState {
+  pluginKey       String
+  resourceType    String
+  resourceId      String
+  status          PluginResourceStatus
+  inputFingerprint String
+  metadata        Json?
+  lastError       String?
+  processedAt     DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  plugin PluginInstallation @relation(fields: [pluginKey], references: [key], onDelete: Cascade)
+
+  @@id([pluginKey, resourceType, resourceId])
+  @@index([pluginKey, status, updatedAt])
 }
 
 model MailMessage {

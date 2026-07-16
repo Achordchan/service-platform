@@ -6,6 +6,7 @@ import {
   Alert,
   Box,
   Button,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -24,6 +25,8 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { CreateCustomerSpaceDialog } from "@/components/staff/create-customer-space-dialog";
+import { CustomerEmailChangeDialog } from "@/components/staff/customer-email-change-dialog";
+import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
 
@@ -44,6 +47,10 @@ export function CustomerSpaceTable({
   const [editing, setEditing] = useState<CustomerSpaceItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [deleteTarget, setDeleteTarget] =
+    useState<CustomerSpaceItem | null>(null);
+  const [emailTarget, setEmailTarget] =
+    useState<CustomerSpaceItem | null>(null);
   const [created, setCreated] = useState<{
     name: string;
     previewUrl?: string;
@@ -85,30 +92,9 @@ export function CustomerSpaceTable({
     }
   }
 
-  async function removeSpace(space: CustomerSpaceItem) {
-    if (space.projectCount > 0) {
-      setError("该客户下仍有项目，请先处理项目后再删除");
-      return;
-    }
-    if (!window.confirm(`确认删除客户「${space.name}」？此操作不可恢复。`)) {
-      return;
-    }
-    setSubmitting(true);
-    setError("");
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${space.id}`,
-        jsonRequest("DELETE"),
-      );
-      setEditing(null);
-      router.refresh();
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error ? removeError.message : "客户删除失败",
-      );
-    } finally {
-      setSubmitting(false);
-    }
+  function removeSpace(space: CustomerSpaceItem) {
+    setEditing(null);
+    setDeleteTarget(space);
   }
 
   const columns = useMemo<GridColDef<CustomerSpaceItem>[]>(
@@ -135,6 +121,16 @@ export function CustomerSpaceTable({
             >
               {row.ownerEmail}
             </Typography>
+            {row.pendingEmailChange ? (
+              <Typography
+                variant="caption"
+                color="warning.main"
+                noWrap
+                sx={{ display: "block" }}
+              >
+                待验证：{row.pendingEmailChange.newEmail}
+              </Typography>
+            ) : null}
           </Box>
         ),
       },
@@ -176,10 +172,10 @@ export function CustomerSpaceTable({
               size="small"
               color="inherit"
               startIcon={<DeleteOutlinedIcon />}
-              disabled={submitting || row.projectCount > 0}
+              disabled={submitting}
               onClick={(event) => {
                 event.stopPropagation();
-                void removeSpace(row);
+                removeSpace(row);
               }}
             >
               删除
@@ -298,6 +294,15 @@ export function CustomerSpaceTable({
               <Typography variant="body2" color="text.secondary">
                 {space.ownerName} · {space.ownerEmail}
               </Typography>
+              {space.pendingEmailChange ? (
+                <Chip
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  label={`待验证 ${space.pendingEmailChange.newEmail}`}
+                  sx={{ alignSelf: "flex-start", maxWidth: "100%" }}
+                />
+              ) : null}
               <Typography variant="body2" color="text.secondary">
                 成员 {space.memberCount}/{space.memberLimit} · 项目 {space.projectCount}
               </Typography>
@@ -313,8 +318,8 @@ export function CustomerSpaceTable({
                   variant="outlined"
                   color="inherit"
                   startIcon={<DeleteOutlinedIcon />}
-                  disabled={submitting || space.projectCount > 0}
-                  onClick={() => void removeSpace(space)}
+                  disabled={submitting}
+                  onClick={() => removeSpace(space)}
                 >
                   删除
                 </Button>
@@ -361,6 +366,33 @@ export function CustomerSpaceTable({
                   <MenuItem value="SUSPENDED">暂停</MenuItem>
                   <MenuItem value="ARCHIVED">归档</MenuItem>
                 </TextField>
+                <Stack
+                  direction={{ xs: "column", sm: "row" }}
+                  spacing={1}
+                  sx={{ alignItems: { sm: "center" } }}
+                >
+                  <TextField
+                    label="负责人登录邮箱"
+                    value={editing.ownerEmail}
+                    disabled
+                    fullWidth
+                  />
+                  <Button
+                    variant="outlined"
+                    sx={{ flexShrink: 0 }}
+                    onClick={() => {
+                      setEmailTarget(editing);
+                      setEditing(null);
+                    }}
+                  >
+                    修改邮箱
+                  </Button>
+                </Stack>
+                {editing.pendingEmailChange ? (
+                  <Alert severity="warning">
+                    新邮箱 {editing.pendingEmailChange.newEmail} 正在等待验证。
+                  </Alert>
+                ) : null}
                 <Alert severity="info">
                   当前成员 {editing.memberCount} 人，成员上限不能低于当前人数。
                 </Alert>
@@ -369,8 +401,8 @@ export function CustomerSpaceTable({
             <DialogActions sx={{ px: 3, pb: 3, justifyContent: "space-between" }}>
               <Button
                 color="inherit"
-                disabled={submitting || editing.projectCount > 0}
-                onClick={() => void removeSpace(editing)}
+                disabled={submitting}
+                onClick={() => removeSpace(editing)}
               >
                 删除客户
               </Button>
@@ -398,6 +430,33 @@ export function CustomerSpaceTable({
           });
           router.refresh();
         }}
+      />
+      <DeletionPreflightDialog
+        target={
+          deleteTarget
+            ? {
+                resourceType: "CUSTOMER_SPACE",
+                resourceId: deleteTarget.id,
+                resourceLabel: deleteTarget.name,
+              }
+            : null
+        }
+        deleteUrl={
+          deleteTarget
+            ? `/api/v1/admin/customer-spaces/${deleteTarget.id}`
+            : null
+        }
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          router.refresh();
+        }}
+      />
+      <CustomerEmailChangeDialog
+        key={emailTarget?.ownerId ?? "closed-email-change"}
+        customer={emailTarget}
+        onClose={() => setEmailTarget(null)}
+        onChanged={() => router.refresh()}
       />
     </Stack>
   );

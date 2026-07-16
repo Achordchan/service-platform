@@ -72,6 +72,9 @@ export type MailTemplateView = {
     | "STAFF_INVITATION"
     | "CUSTOMER_OWNER_INVITATION"
     | "CUSTOMER_MEMBER_INVITATION"
+    | "CUSTOMER_EMAIL_CHANGE_VERIFY"
+    | "CUSTOMER_EMAIL_CHANGE_COMPLETED"
+    | "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE"
     | "TEST_EMAIL";
   name: string;
   description: string;

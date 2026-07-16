@@ -22,8 +22,17 @@ export default async function StaffCustomersPage() {
     slug: space.slug,
     memberLimit: space.memberLimit,
     status: space.status,
+    ownerId: space.owner.id,
     ownerName: space.owner.name,
     ownerEmail: space.owner.email,
+    pendingEmailChange: space.owner.emailChanges[0]
+      ? {
+          id: space.owner.emailChanges[0].id,
+          newEmail: space.owner.emailChanges[0].newEmail,
+          expiresAt: space.owner.emailChanges[0].expiresAt.toISOString(),
+          lastSentAt: space.owner.emailChanges[0].lastSentAt.toISOString(),
+        }
+      : null,
     memberCount: space._count.memberships,
     projectCount: space._count.projects,
     updatedAt: space.updatedAt.toISOString(),

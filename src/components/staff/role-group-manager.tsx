@@ -27,6 +27,7 @@ import {
   Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
+import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { ROLE_PERMISSION_OPTIONS } from "@/modules/users/role-permissions";
 
@@ -69,6 +70,8 @@ export function RoleGroupManager({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const [deleteTarget, setDeleteTarget] =
+    useState<RoleGroupView | null>(null);
 
   const permissionOptions = useMemo(() => {
     if (form.accessLevel === "TECHNICIAN") {
@@ -164,23 +167,8 @@ export function RoleGroupManager({
     }
   }
 
-  async function remove(group: RoleGroupView) {
-    if (group.isSystem) return;
-    setSubmitting(true);
-    setError("");
-    try {
-      await staffApi(`/api/v1/admin/role-groups/${group.id}`, {
-        method: "DELETE",
-      });
-      setSuccess("角色组已删除");
-      router.refresh();
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error ? removeError.message : "删除失败",
-      );
-    } finally {
-      setSubmitting(false);
-    }
+  function remove(group: RoleGroupView) {
+    setDeleteTarget(group);
   }
 
   return (
@@ -260,16 +248,14 @@ export function RoleGroupManager({
                       <Button size="small" onClick={() => openEdit(group)}>
                         编辑
                       </Button>
-                      {!group.isSystem ? (
-                        <Button
-                          size="small"
-                          color="inherit"
-                          disabled={submitting}
-                          onClick={() => remove(group)}
-                        >
-                          删除
-                        </Button>
-                      ) : null}
+                      <Button
+                        size="small"
+                        color="inherit"
+                        disabled={submitting}
+                        onClick={() => remove(group)}
+                      >
+                        删除
+                      </Button>
                     </Stack>
                   </TableCell>
                 </TableRow>
@@ -408,6 +394,28 @@ export function RoleGroupManager({
           </Button>
         </DialogActions>
       </Dialog>
+      <DeletionPreflightDialog
+        target={
+          deleteTarget
+            ? {
+                resourceType: "ROLE_GROUP",
+                resourceId: deleteTarget.id,
+                resourceLabel: deleteTarget.name,
+              }
+            : null
+        }
+        deleteUrl={
+          deleteTarget
+            ? `/api/v1/admin/role-groups/${deleteTarget.id}`
+            : null
+        }
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setSuccess("角色组已删除");
+          setDeleteTarget(null);
+          router.refresh();
+        }}
+      />
     </Stack>
   );
 }

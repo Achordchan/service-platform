@@ -1,0 +1,15 @@
+{
+  "name": "@achord/plugin-image-webp",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/manifest.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "dependencies": {
+    "@achord/platform-plugin-sdk": "workspace:*",
+    "sharp": "0.35.3",
+    "zod": "^4.4.3"
+  }
+}

@@ -175,8 +175,15 @@ export type CustomerSpaceItem = {
   slug: string;
   memberLimit: number;
   status: "ACTIVE" | "SUSPENDED" | "ARCHIVED";
+  ownerId: string;
   ownerName: string;
   ownerEmail: string;
+  pendingEmailChange: {
+    id: string;
+    newEmail: string;
+    expiresAt: string;
+    lastSentAt: string;
+  } | null;
   memberCount: number;
   projectCount: number;
   updatedAt: string;

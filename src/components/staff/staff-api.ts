@@ -1,5 +1,17 @@
 "use client";
 
+export class StaffApiError extends Error {
+  constructor(
+    message: string,
+    public readonly code?: string,
+    public readonly details?: unknown,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "StaffApiError";
+  }
+}
+
 export async function staffApi<T>(
   url: string,
   init?: RequestInit,
@@ -10,14 +22,19 @@ export async function staffApi<T>(
   }
   const payload = (await response.json().catch(() => ({}))) as {
     data?: T;
-    error?: { message?: string } | string;
+    error?: { code?: string; message?: string; details?: unknown } | string;
   };
   if (!response.ok || payload.data === undefined) {
     const message =
       typeof payload.error === "string"
         ? payload.error
         : payload.error?.message;
-    throw new Error(message || "操作失败，请稍后重试");
+    throw new StaffApiError(
+      message || "操作失败，请稍后重试",
+      typeof payload.error === "string" ? undefined : payload.error?.code,
+      typeof payload.error === "string" ? undefined : payload.error?.details,
+      response.status,
+    );
   }
   return payload.data;
 }

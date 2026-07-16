@@ -27,7 +27,7 @@ export async function GET(request: Request, context: RouteContext) {
         "Content-Type": attachment.mimeType,
         "Content-Length": String(buffer.byteLength),
         "Content-Disposition": contentDisposition(
-          attachment.originalName,
+          downloadFileName(attachment.originalName, attachment.mimeType),
           inline ? "inline" : "attachment",
         ),
         "Cache-Control": "private, no-store",
@@ -37,6 +37,14 @@ export async function GET(request: Request, context: RouteContext) {
   } catch (error) {
     return apiErrorResponse(error);
   }
+}
+
+function downloadFileName(fileName: string, mimeType: string) {
+  if (mimeType !== "image/webp" || /\.webp$/i.test(fileName)) {
+    return fileName;
+  }
+  const base = fileName.replace(/\.[^.]+$/, "") || "image";
+  return `${base}.webp`;
 }
 
 function contentDisposition(

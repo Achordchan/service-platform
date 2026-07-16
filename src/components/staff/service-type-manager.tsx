@@ -26,6 +26,7 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
+import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { ServiceTypeItem } from "@/components/staff/staff-types";
 
@@ -33,6 +34,13 @@ type DialogState =
   | { type: "service" }
   | { type: "category"; serviceType: ServiceTypeItem }
   | null;
+
+type DeleteTarget = {
+  resourceType: "SERVICE_TYPE" | "REQUEST_CATEGORY";
+  resourceId: string;
+  resourceLabel: string;
+  deleteUrl: string;
+};
 
 export function ServiceTypeManager({
   serviceTypes,
@@ -48,10 +56,11 @@ export function ServiceTypeManager({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   async function execute(
     url: string,
-    method: "POST" | "PATCH" | "DELETE",
+    method: "POST" | "PATCH",
     body?: unknown,
   ) {
     setSubmitting(true);
@@ -163,20 +172,25 @@ export function ServiceTypeManager({
     );
   }
 
-  async function removeService(serviceType: ServiceTypeItem) {
-    if (!window.confirm(`确认删除服务类型「${serviceType.name}」？`)) return;
-    await execute(`/api/v1/admin/service-types/${serviceType.id}`, "DELETE");
+  function removeService(serviceType: ServiceTypeItem) {
+    setDeleteTarget({
+      resourceType: "SERVICE_TYPE",
+      resourceId: serviceType.id,
+      resourceLabel: serviceType.name,
+      deleteUrl: `/api/v1/admin/service-types/${serviceType.id}`,
+    });
   }
 
-  async function removeCategory(
+  function removeCategory(
     serviceType: ServiceTypeItem,
     category: ServiceTypeItem["categories"][number],
   ) {
-    if (!window.confirm(`确认删除请求分类「${category.name}」？`)) return;
-    await execute(
-      `/api/v1/admin/service-types/${serviceType.id}/request-categories/${category.id}`,
-      "DELETE",
-    );
+    setDeleteTarget({
+      resourceType: "REQUEST_CATEGORY",
+      resourceId: category.id,
+      resourceLabel: category.name,
+      deleteUrl: `/api/v1/admin/service-types/${serviceType.id}/request-categories/${category.id}`,
+    });
   }
 
   return (
@@ -267,7 +281,7 @@ export function ServiceTypeManager({
                     color="inherit"
                     startIcon={<DeleteOutlinedIcon />}
                     disabled={submitting}
-                    onClick={() => void removeService(serviceType)}
+                    onClick={() => removeService(serviceType)}
                   >
                     删除
                   </Button>
@@ -329,7 +343,7 @@ export function ServiceTypeManager({
                         color="inherit"
                         startIcon={<DeleteOutlinedIcon />}
                         disabled={submitting}
-                        onClick={() => void removeCategory(serviceType, category)}
+                        onClick={() => removeCategory(serviceType, category)}
                       >
                         删除
                       </Button>
@@ -521,6 +535,23 @@ export function ServiceTypeManager({
           </Stack>
         ) : null}
       </Dialog>
+      <DeletionPreflightDialog
+        target={
+          deleteTarget
+            ? {
+                resourceType: deleteTarget.resourceType,
+                resourceId: deleteTarget.resourceId,
+                resourceLabel: deleteTarget.resourceLabel,
+              }
+            : null
+        }
+        deleteUrl={deleteTarget?.deleteUrl ?? null}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          router.refresh();
+        }}
+      />
     </Stack>
   );
 }

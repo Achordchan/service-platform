@@ -5,6 +5,7 @@ import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { removePrivateFile } from "@/modules/attachments/private-storage";
+import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 import {
   publishProjectChange,
   publishProjectDeleted,
@@ -359,6 +360,7 @@ export function updateProject(
 export async function deleteProject(actor: Actor, projectId: string) {
   assertAllowed(actor.isPlatformAdmin);
   const storageKeys = await withActorDb(actor, async (tx) => {
+    await assertDeletionAllowedInTx(tx, actor, "PROJECT", projectId);
     const existing = await tx.project.findUnique({
       where: { id: projectId },
       select: {

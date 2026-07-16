@@ -36,6 +36,7 @@ import {
   canWorkOnRequest,
   canWriteInternalNote,
 } from "@/modules/requests/request-permissions";
+import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
 
 export type UploadAttachmentInput = {
   fileName: string;
@@ -62,8 +63,9 @@ export async function uploadRequestAttachment(
   );
 
   await writePrivateFile(storageKey, input.buffer);
+  let attachment;
   try {
-    return await withActorDb(actor, async (tx) => {
+    attachment = await withActorDb(actor, async (tx) => {
       const context = await authorizeUploadInTx(tx, actor, input);
       const { request } = context;
 
@@ -120,13 +122,16 @@ export async function uploadRequestAttachment(
             : {}),
         },
       });
-
       return attachment;
     });
   } catch (error) {
     await removePrivateFile(storageKey);
     throw error;
   }
+  if (["image/jpeg", "image/png"].includes(attachment.mimeType)) {
+    await scheduleAttachmentPluginJobs(attachment.id);
+  }
+  return attachment;
 }
 
 export type UploadProjectAttachmentInput = {
@@ -153,8 +158,9 @@ export async function uploadProjectAttachment(
   );
 
   await writePrivateFile(storageKey, input.buffer);
+  let attachment;
   try {
-    return await withActorDb(actor, async (tx) => {
+    attachment = await withActorDb(actor, async (tx) => {
       const project = await assertCanManageProjectDelivery(
         tx,
         actor,
@@ -208,6 +214,10 @@ export async function uploadProjectAttachment(
     await removePrivateFile(storageKey);
     throw error;
   }
+  if (["image/jpeg", "image/png"].includes(attachment.mimeType)) {
+    await scheduleAttachmentPluginJobs(attachment.id);
+  }
+  return attachment;
 }
 
 export function readAttachmentDownload(

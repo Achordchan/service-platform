@@ -9,7 +9,7 @@
 - MUI 9 / MUI X DataGrid
 - Better Auth
 - PostgreSQL 16 + Prisma
-- pg-boss 邮件任务
+- pg-boss 邮件与插件后台任务
 - 本地发件箱（后台可查看）/ Resend API / SMTP
 
 ## 本地启动
@@ -57,7 +57,7 @@ pnpm dev
 访问 [http://localhost:3000](http://localhost:3000)。
 
 本地默认只需要这一个进程：邮件会进入后台「平台设置 → 发件箱」。  
-`pnpm worker` 仅在你想单独拆任务进程时可选。
+`pnpm worker` 用于单独运行邮件和插件后台任务。
 
 生产环境使用独立的 `service-platform-worker`，Web 进程不会再重复启动邮件 Worker；如需显式配置，请在生产环境设置 `MAIL_INLINE_WORKER=false`。
 
@@ -78,7 +78,7 @@ pnpm dev
 - 域名：`https://support.achord.cn`
 - 运行方式：systemd + Nginx 反代 + PostgreSQL（非 Docker / 非宝塔）
 - 代码目录：`/var/www/service-platform`
-- 服务：`service-platform`（Web）、`service-platform-worker`（邮件任务）
+- 服务：`service-platform`（Web）、`service-platform-worker`（邮件与插件任务）
 - 推送到 `main` 或手动触发 GitHub Action `Deploy to VPS` 即可更新（**构建在 GitHub 完成，VPS 不执行 next build**）
 - 本地紧急部署：`scripts/vps-deploy-local.sh`
 
@@ -104,6 +104,9 @@ pnpm check
 - `prisma`：数据模型与迁移
 - `tests`：单元与安全集成测试
 - `e2e`：Playwright 主流程
+- `packages/platform-plugin-sdk`：可信构建期插件契约
+- `plugins`：随平台构建的受信任插件
+- `docs/plugins`：插件开发 SOP 与边界
 
 ## 开发约束
 

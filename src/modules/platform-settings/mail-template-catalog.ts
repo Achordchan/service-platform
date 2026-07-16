@@ -3,6 +3,9 @@ export const MAIL_TEMPLATE_KEYS = [
   "STAFF_INVITATION",
   "CUSTOMER_OWNER_INVITATION",
   "CUSTOMER_MEMBER_INVITATION",
+  "CUSTOMER_EMAIL_CHANGE_VERIFY",
+  "CUSTOMER_EMAIL_CHANGE_COMPLETED",
+  "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
   "TEST_EMAIL",
 ] as const;
 
@@ -152,6 +155,60 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       heading: "你已被邀请加入服务支持中心",
       body: "{{inviterName}} 邀请你加入“{{customerName}}”客户服务空间。请在 {{expiresIn}} 内完成账号设置，之后即可查看项目进度并提交服务请求。",
       actionLabel: "接受邀请",
+    },
+  },
+  CUSTOMER_EMAIL_CHANGE_VERIFY: {
+    key: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+    name: "客户邮箱变更验证",
+    description: "管理员发起客户登录邮箱变更后，向新邮箱发送。",
+    variables: [
+      { key: "recipientName", label: "客户姓名", sample: "张三" },
+      { key: "oldEmail", label: "原登录邮箱", sample: "old@example.com" },
+      { key: "newEmail", label: "新登录邮箱", sample: "new@example.com" },
+      { key: "operatorName", label: "操作管理员", sample: "平台管理员" },
+      { key: "expiresIn", label: "有效时间", sample: "24 小时" },
+    ],
+    defaults: {
+      subject: "{{recipientName}}，请确认新的登录邮箱",
+      previewText: "确认后登录邮箱将由 {{oldEmail}} 修改为 {{newEmail}}",
+      heading: "确认新的登录邮箱",
+      body: "{{operatorName}} 已申请将你的登录邮箱由 {{oldEmail}} 修改为 {{newEmail}}。请在 {{expiresIn}} 内确认；确认后现有登录会话将退出。",
+      actionLabel: "确认修改邮箱",
+    },
+  },
+  CUSTOMER_EMAIL_CHANGE_COMPLETED: {
+    key: "CUSTOMER_EMAIL_CHANGE_COMPLETED",
+    name: "客户邮箱变更完成",
+    description: "客户确认新邮箱后，向新邮箱发送完成通知。",
+    variables: [
+      { key: "recipientName", label: "客户姓名", sample: "张三" },
+      { key: "oldEmail", label: "原登录邮箱", sample: "old@example.com" },
+      { key: "newEmail", label: "新登录邮箱", sample: "new@example.com" },
+    ],
+    defaults: {
+      subject: "{{recipientName}}，登录邮箱已修改",
+      previewText: "现在可以使用 {{newEmail}} 登录服务支持中心",
+      heading: "登录邮箱修改完成",
+      body: "你的登录邮箱已由 {{oldEmail}} 修改为 {{newEmail}}，原有登录会话已退出。请使用新邮箱重新登录。",
+      actionLabel: "重新登录",
+    },
+  },
+  CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE: {
+    key: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
+    name: "客户原邮箱安全提醒",
+    description: "客户邮箱修改完成后，向原邮箱发送安全提醒。",
+    variables: [
+      { key: "recipientName", label: "客户姓名", sample: "张三" },
+      { key: "oldEmail", label: "原登录邮箱", sample: "old@example.com" },
+      { key: "newEmail", label: "新登录邮箱", sample: "new@example.com" },
+      { key: "supportEmail", label: "支持邮箱", sample: "support@achord.cn" },
+    ],
+    defaults: {
+      subject: "{{recipientName}}，你的登录邮箱已发生变更",
+      previewText: "登录邮箱已由 {{oldEmail}} 修改为 {{newEmail}}",
+      heading: "账号安全提醒",
+      body: "你的服务支持中心登录邮箱已由 {{oldEmail}} 修改为 {{newEmail}}。若这不是预期操作，请立即联系 {{supportEmail}}。",
+      actionLabel: null,
     },
   },
   TEST_EMAIL: {

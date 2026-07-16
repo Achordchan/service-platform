@@ -22,6 +22,7 @@ import {
   buildSpaceSlug,
   nextSlugCandidate,
 } from "@/modules/customer-spaces/slug";
+import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 
 const spaceSelect = {
   id: true,
@@ -37,6 +38,17 @@ const spaceSelect = {
       id: true,
       name: true,
       email: true,
+      emailChanges: {
+        where: { status: "PENDING" as const },
+        orderBy: { createdAt: "desc" as const },
+        take: 1,
+        select: {
+          id: true,
+          newEmail: true,
+          expiresAt: true,
+          lastSentAt: true,
+        },
+      },
     },
   },
   _count: {
@@ -49,12 +61,19 @@ const spaceSelect = {
 
 export function listCustomerSpaces(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
-  return withActorDb(actor, (tx) =>
-    tx.customerSpace.findMany({
+  return withActorDb(actor, async (tx) => {
+    await tx.userEmailChange.updateMany({
+      where: {
+        status: "PENDING",
+        expiresAt: { lte: new Date() },
+      },
+      data: { status: "EXPIRED" },
+    });
+    return tx.customerSpace.findMany({
       select: spaceSelect,
       orderBy: { createdAt: "desc" },
-    }),
-  );
+    });
+  });
 }
 
 export async function createCustomerSpace(
@@ -341,6 +360,12 @@ export function updateCustomerSpace(
 export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
   assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertDeletionAllowedInTx(
+      tx,
+      actor,
+      "CUSTOMER_SPACE",
+      customerSpaceId,
+    );
     const existing = await tx.customerSpace.findUnique({
       where: { id: customerSpaceId },
       select: {
@@ -355,14 +380,6 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
       },
     });
     assertFound(existing, "客户空间不存在");
-
-    if (existing._count.projects > 0) {
-      throw new DomainError(
-        "CUSTOMER_SPACE_HAS_PROJECTS",
-        "客户空间下仍有项目，请先删除或转移项目后再删除",
-        409,
-      );
-    }
 
     await tx.invitation.deleteMany({ where: { customerSpaceId } });
     await tx.membership.deleteMany({ where: { customerSpaceId } });

@@ -24,6 +24,7 @@ import {
 } from "@mui/material";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
 export type RoleGroupOption = {
@@ -100,6 +101,8 @@ export function TeamManager({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] =
+    useState<TeamMemberView | null>(null);
 
   const activeRoleGroups = useMemo(
     () => roleGroups.filter((group) => group.active),
@@ -205,38 +208,10 @@ export function TeamManager({
     }
   }
 
-  async function removeMember(member: TeamMemberView) {
-    if (member.platformRole === "PLATFORM_ADMIN") {
-      setError("不能删除平台管理员");
-      return;
-    }
-    if (member.projectCount > 0 || member.requestCount > 0) {
-      setError("该成员仍有项目或工单分配，请先解除后再删除");
-      return;
-    }
-    if (!window.confirm(`确认删除协作成员「${member.name}」？此操作不可恢复。`)) {
-      return;
-    }
-    setSubmitting(true);
-    setError("");
-    setSuccess(null);
-    try {
-      await staffApi(
-        `/api/v1/admin/users/${member.id}`,
-        jsonRequest("DELETE"),
-      );
-      if (editing?.id === member.id) {
-        setEditing(null);
-      }
-      setSuccess(`已删除协作成员 ${member.name}`);
-      router.refresh();
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error ? removeError.message : "删除失败",
-      );
-    } finally {
-      setSubmitting(false);
-    }
+  function removeMember(member: TeamMemberView) {
+    setOpen(false);
+    setEditing(null);
+    setDeleteTarget(member);
   }
 
   return (
@@ -336,28 +311,22 @@ export function TeamManager({
                     </TableCell>
                     <TableCell>{member.projectCount}</TableCell>
                     <TableCell>
-                      {member.platformRole === "PLATFORM_ADMIN" ? (
-                        "—"
-                      ) : (
-                        <Stack direction="row" spacing={0.5}>
+                      <Stack direction="row" spacing={0.5}>
+                        {member.platformRole !== "PLATFORM_ADMIN" ? (
                           <Button size="small" onClick={() => openEdit(member)}>
                             编辑资料
                           </Button>
+                        ) : null}
                           <Button
                             size="small"
                             color="inherit"
                             startIcon={<DeleteOutlinedIcon />}
-                            disabled={
-                              submitting ||
-                              member.projectCount > 0 ||
-                              member.requestCount > 0
-                            }
-                            onClick={() => void removeMember(member)}
+                            disabled={submitting}
+                            onClick={() => removeMember(member)}
                           >
                             删除
                           </Button>
-                        </Stack>
-                      )}
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -595,12 +564,8 @@ export function TeamManager({
             <Button
               color="inherit"
               startIcon={<DeleteOutlinedIcon />}
-              disabled={
-                submitting ||
-                editing.projectCount > 0 ||
-                editing.requestCount > 0
-              }
-              onClick={() => void removeMember(editing)}
+              disabled={submitting}
+              onClick={() => removeMember(editing)}
             >
               删除成员
             </Button>
@@ -632,6 +597,26 @@ export function TeamManager({
           </Stack>
         </DialogActions>
       </Dialog>
+      <DeletionPreflightDialog
+        target={
+          deleteTarget
+            ? {
+                resourceType: "STAFF_USER",
+                resourceId: deleteTarget.id,
+                resourceLabel: deleteTarget.name,
+              }
+            : null
+        }
+        deleteUrl={
+          deleteTarget ? `/api/v1/admin/users/${deleteTarget.id}` : null
+        }
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setSuccess(`已删除协作成员 ${deleteTarget?.name ?? ""}`);
+          setDeleteTarget(null);
+          router.refresh();
+        }}
+      />
     </Stack>
   );
 }

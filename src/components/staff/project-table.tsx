@@ -20,8 +20,8 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import FilterAltOffOutlinedIcon from "@mui/icons-material/FilterAltOffOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { CreateProjectDialog } from "@/components/staff/create-project-dialog";
-import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { StaffStatus } from "@/components/staff/staff-status";
 import type {
   ProjectListItem,
@@ -68,8 +68,9 @@ export function ProjectTable({
   const [status, setStatus] = useState("ALL");
   const [serviceTypeId, setServiceTypeId] = useState("ALL");
   const [createOpen, setCreateOpen] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [deleteTarget, setDeleteTarget] =
+    useState<ProjectListItem | null>(null);
   const serviceOptions = useMemo(
     () =>
       Array.from(
@@ -193,10 +194,9 @@ export function ProjectTable({
                 size="small"
                 color="inherit"
                 startIcon={<DeleteOutlinedIcon />}
-                disabled={submitting}
                 onClick={(event) => {
                   event.stopPropagation();
-                  void removeProject(row);
+                  setDeleteTarget(row);
                 }}
               >
                 删除
@@ -206,35 +206,13 @@ export function ProjectTable({
         ),
       },
     ],
-    [canCreate, router, submitting],
+    [canCreate, router],
   );
 
   function resetFilters() {
     setKeyword("");
     setStatus("ALL");
     setServiceTypeId("ALL");
-  }
-
-  async function removeProject(project: ProjectListItem) {
-    if (
-      !window.confirm(
-        `确认删除项目「${project.title}」？将一并删除其进度、请求与附件记录。`,
-      )
-    ) {
-      return;
-    }
-    setSubmitting(true);
-    setError("");
-    try {
-      await staffApi(`/api/v1/projects/${project.id}`, jsonRequest("DELETE"));
-      router.refresh();
-    } catch (removeError) {
-      setError(
-        removeError instanceof Error ? removeError.message : "项目删除失败",
-      );
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   return (
@@ -408,8 +386,7 @@ export function ProjectTable({
                     variant="outlined"
                     color="inherit"
                     startIcon={<DeleteOutlinedIcon />}
-                    disabled={submitting}
-                    onClick={() => void removeProject(project)}
+                    onClick={() => setDeleteTarget(project)}
                   >
                     删除
                   </Button>
@@ -432,6 +409,26 @@ export function ProjectTable({
         serviceTypes={serviceTypes}
         managerCandidates={managerCandidates}
         currentUserId={currentUserId}
+      />
+      <DeletionPreflightDialog
+        target={
+          deleteTarget
+            ? {
+                resourceType: "PROJECT",
+                resourceId: deleteTarget.id,
+                resourceLabel: deleteTarget.title,
+              }
+            : null
+        }
+        deleteUrl={
+          deleteTarget ? `/api/v1/projects/${deleteTarget.id}` : null
+        }
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={() => {
+          setDeleteTarget(null);
+          setError("");
+          router.refresh();
+        }}
       />
     </Stack>
   );

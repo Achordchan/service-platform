@@ -8,6 +8,7 @@ import {
   writePrivateFile,
 } from "@/modules/attachments/private-storage";
 import { deleteCustomerSpace } from "@/modules/customer-spaces/customer-space-service";
+import { getDeletionPreflight } from "@/modules/deletion/deletion-service";
 import { routeError } from "@/modules/projects/api-utils";
 import { deleteProject } from "@/modules/projects/project-service";
 
@@ -21,6 +22,9 @@ const fixture = {
   deletedSpaceId: randomUUID(),
   projectId: randomUUID(),
   storageKey: `projects/delete-audit-${randomUUID()}.txt`,
+  roleGroupId: randomUUID(),
+  historicalInvitationId: randomUUID(),
+  pendingInvitationId: randomUUID(),
 };
 
 let admin: Actor;
@@ -89,6 +93,51 @@ beforeAll(async () => {
       admin.id,
     ],
   );
+  await ownerPool.query(
+    `
+      INSERT INTO "RoleGroup" (
+        id,
+        "key",
+        name,
+        "accessLevel",
+        permissions,
+        "updatedAt"
+      )
+      VALUES ($1, $2, '删除检测角色组', 'TECHNICIAN', ARRAY[]::text[], NOW())
+    `,
+    [fixture.roleGroupId, `delete-check-${randomUUID()}`],
+  );
+  await ownerPool.query(
+    `
+      INSERT INTO "StaffInvitation" (
+        id,
+        email,
+        "tokenHash",
+        "platformRole",
+        "roleGroupId",
+        "expiresAt",
+        "acceptedAt",
+        "invitedById"
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        'TECHNICIAN',
+        $4,
+        NOW() - INTERVAL '1 day',
+        NOW() - INTERVAL '2 days',
+        $5
+      )
+    `,
+    [
+      fixture.historicalInvitationId,
+      `historical-${randomUUID()}@local.test`,
+      randomUUID(),
+      fixture.roleGroupId,
+      admin.id,
+    ],
+  );
   await writePrivateFile(
     fixture.storageKey,
     new TextEncoder().encode("delete audit fixture"),
@@ -118,6 +167,13 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await ownerPool.query(
+    'DELETE FROM "StaffInvitation" WHERE id = ANY($1::text[])',
+    [[fixture.historicalInvitationId, fixture.pendingInvitationId]],
+  );
+  await ownerPool.query('DELETE FROM "RoleGroup" WHERE id = $1', [
+    fixture.roleGroupId,
+  ]);
   await ownerPool.query('DELETE FROM "Project" WHERE id = $1', [
     fixture.projectId,
   ]);
@@ -134,6 +190,93 @@ afterAll(async () => {
 });
 
 describe("删除操作审计", () => {
+  it("删除检测区分阻断项和级联影响", async () => {
+    const projectReport = await getDeletionPreflight(
+      admin,
+      "PROJECT",
+      fixture.projectId,
+    );
+    expect(projectReport.allowed).toBe(true);
+    expect(projectReport.confirmationMode).toBe("TYPE_NAME");
+    expect(
+      projectReport.checks.some((check) => check.status === "WARN"),
+    ).toBe(true);
+
+    const spaceReport = await getDeletionPreflight(
+      admin,
+      "CUSTOMER_SPACE",
+      fixture.projectSpaceId,
+    );
+    expect(spaceReport.allowed).toBe(false);
+    expect(spaceReport.checks).toContainEqual(
+      expect.objectContaining({
+        key: "projects",
+        status: "BLOCK",
+        count: 1,
+      }),
+    );
+  });
+
+  it("角色组只被真实待处理邀请阻断，不受历史邀请影响", async () => {
+    const historicalOnly = await getDeletionPreflight(
+      admin,
+      "ROLE_GROUP",
+      fixture.roleGroupId,
+    );
+    expect(historicalOnly.allowed).toBe(true);
+    expect(historicalOnly.checks).toContainEqual(
+      expect.objectContaining({
+        key: "invitations",
+        status: "PASS",
+        count: 0,
+      }),
+    );
+
+    await ownerPool.query(
+      `
+        INSERT INTO "StaffInvitation" (
+          id,
+          email,
+          "tokenHash",
+          "platformRole",
+          "roleGroupId",
+          "expiresAt",
+          "invitedById"
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          'TECHNICIAN',
+          $4,
+          NOW() + INTERVAL '1 day',
+          $5
+        )
+      `,
+      [
+        fixture.pendingInvitationId,
+        `pending-${randomUUID()}@local.test`,
+        randomUUID(),
+        fixture.roleGroupId,
+        admin.id,
+      ],
+    );
+
+    const pending = await getDeletionPreflight(
+      admin,
+      "ROLE_GROUP",
+      fixture.roleGroupId,
+    );
+    expect(pending.allowed).toBe(false);
+    expect(pending.checks).toContainEqual(
+      expect.objectContaining({
+        key: "invitations",
+        status: "BLOCK",
+        count: 1,
+      }),
+    );
+  });
+
   it("删除项目后保留审计记录且不触发外键冲突", async () => {
     await deleteProject(admin, fixture.projectId);
 

@@ -14,6 +14,7 @@ import type {
   UpdateRequestCategoryInput,
   UpdateServiceTypeInput,
 } from "@/modules/projects/schemas";
+import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 
 export function listServiceTypes(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
@@ -224,6 +225,12 @@ export function updateRequestCategory(
 export function deleteServiceType(actor: Actor, serviceTypeId: string) {
   assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertDeletionAllowedInTx(
+      tx,
+      actor,
+      "SERVICE_TYPE",
+      serviceTypeId,
+    );
     const existing = await tx.serviceType.findUnique({
       where: { id: serviceTypeId },
       select: {
@@ -239,14 +246,6 @@ export function deleteServiceType(actor: Actor, serviceTypeId: string) {
       },
     });
     assertFound(existing, "服务类型不存在");
-    if (existing._count.projects > 0) {
-      throw new DomainError(
-        "SERVICE_TYPE_IN_USE",
-        "仍有项目使用该服务类型，无法删除",
-        409,
-      );
-    }
-
     await tx.requestCategory.deleteMany({ where: { serviceTypeId } });
     await tx.serviceType.delete({ where: { id: serviceTypeId } });
     await writeAuditLog(tx, actor, {
@@ -269,6 +268,12 @@ export function deleteRequestCategory(
 ) {
   assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertDeletionAllowedInTx(
+      tx,
+      actor,
+      "REQUEST_CATEGORY",
+      requestCategoryId,
+    );
     const existing = await tx.requestCategory.findFirst({
       where: {
         id: requestCategoryId,
@@ -281,14 +286,6 @@ export function deleteRequestCategory(
       },
     });
     assertFound(existing, "请求分类不存在");
-    if (existing._count.requests > 0) {
-      throw new DomainError(
-        "REQUEST_CATEGORY_IN_USE",
-        "仍有服务请求使用该分类，无法删除",
-        409,
-      );
-    }
-
     await tx.requestCategory.delete({ where: { id: requestCategoryId } });
     await writeAuditLog(tx, actor, {
       action: "REQUEST_CATEGORY_DELETED",
@@ -301,4 +298,3 @@ export function deleteRequestCategory(
     });
   });
 }
-

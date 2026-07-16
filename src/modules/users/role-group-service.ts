@@ -13,6 +13,7 @@ import {
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
+import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 
 const createRoleGroupSchema = z.object({
   name: z.string().trim().min(2).max(60),
@@ -193,6 +194,7 @@ export function updateRoleGroup(
 export function deleteRoleGroup(actor: Actor, roleGroupId: string) {
   assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertDeletionAllowedInTx(tx, actor, "ROLE_GROUP", roleGroupId);
     const existing = await tx.roleGroup.findUnique({
       where: { id: roleGroupId },
       include: {
@@ -205,21 +207,6 @@ export function deleteRoleGroup(actor: Actor, roleGroupId: string) {
       },
     });
     assertFound(existing, "角色组不存在");
-    if (existing.isSystem) {
-      throw new DomainError(
-        "SYSTEM_ROLE_LOCKED",
-        "系统角色不可删除，可改为停用",
-        409,
-      );
-    }
-    if (existing._count.users > 0 || existing._count.invitations > 0) {
-      throw new DomainError(
-        "ROLE_GROUP_IN_USE",
-        "角色组仍有成员或待处理邀请，请先迁移后再删除",
-        409,
-      );
-    }
-
     await tx.roleGroup.delete({ where: { id: roleGroupId } });
     await writeAuditLog(tx, actor, {
       action: "ROLE_GROUP_DELETED",
