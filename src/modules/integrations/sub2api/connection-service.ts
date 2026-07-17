@@ -10,6 +10,7 @@ import {
   checkSub2ApiConnection,
   normalizeSub2ApiBaseUrl,
 } from "@/modules/integrations/sub2api/client";
+import { resolveSub2ApiConnectionAddress } from "@/modules/integrations/sub2api/connection-utils";
 import type {
   externalContactPatchSchema,
   sub2ApiConnectionPatchSchema,
@@ -168,16 +169,13 @@ export async function saveSub2ApiIntegration(
     await assertPluginReady(tx);
     const project = await assertExternalProject(tx, projectId);
     const current = await loadConnection(tx, projectId);
+    const connectionAddress = resolveSub2ApiConnectionAddress(
+      normalized,
+      current,
+    );
     const baseUrlChanged = Boolean(
       normalized && normalized.baseUrl !== current?.baseUrl,
     );
-    if (!current && !normalized) {
-      throw new DomainError(
-        "SUB2API_URL_REQUIRED",
-        "首次配置必须填写 Sub2API 地址",
-        422,
-      );
-    }
 
     const clearKey = input.clearAdminApiKey === true;
     const newKey = input.adminApiKey?.trim();
@@ -257,8 +255,8 @@ export async function saveSub2ApiIntegration(
       where: { bindingId: binding.id },
       create: {
         bindingId: binding.id,
-        baseUrl: normalized!.baseUrl,
-        sourceOrigin: normalized!.sourceOrigin,
+        baseUrl: connectionAddress.baseUrl,
+        sourceOrigin: connectionAddress.sourceOrigin,
         adminApiKeyEncrypted: encryptedKey,
         emailNotificationsEnabled:
           input.emailNotificationsEnabled ?? true,

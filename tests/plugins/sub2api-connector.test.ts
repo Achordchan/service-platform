@@ -6,6 +6,7 @@ import {
   normalizeSub2ApiBaseUrl,
   normalizeSub2ApiUser,
 } from "@/modules/integrations/sub2api/client-utils";
+import { resolveSub2ApiConnectionAddress } from "@/modules/integrations/sub2api/connection-utils";
 import {
   SUB2API_CONNECTOR_PLUGIN_KEY,
   parseSub2ApiConnectorConfig,
@@ -13,6 +14,17 @@ import {
 } from "@achord/plugin-sub2api-connector";
 
 describe("Sub2API 连接器", () => {
+  it("状态切换未提交地址时复用已保存连接", () => {
+    const current = {
+      baseUrl: "https://sub.achord.cn:8443",
+      sourceOrigin: "https://sub.achord.cn:8443",
+    };
+    expect(resolveSub2ApiConnectionAddress(null, current)).toEqual(current);
+    expect(() => resolveSub2ApiConnectionAddress(null, null)).toThrow(
+      "首次配置必须填写",
+    );
+  });
+
   it("以默认关闭的可信插件清单注册", () => {
     expect(SUB2API_CONNECTOR_PLUGIN_KEY).toBe("sub2api-connector");
     expect(sub2ApiConnectorManifest.capabilities).toContain(
