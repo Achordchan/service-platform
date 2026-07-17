@@ -5,6 +5,11 @@ import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry"
 import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 import type { Actor } from "@/lib/actor";
 import { addRequestMessage } from "@/modules/requests/request-command-service";
+import {
+  createProject,
+  deleteProject,
+} from "@/modules/projects/project-service";
+import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
 
 const owner = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -27,6 +32,9 @@ const ids = {
 
 let previousPlugin: { enabled: boolean; healthStatus: string };
 let adminActor: Actor;
+let serviceTypeId = "";
+let managedProjectId = "";
+let managedCustomerSpaceId = "";
 
 beforeAll(async () => {
   await ensurePluginInstallations();
@@ -66,7 +74,7 @@ beforeAll(async () => {
     `,
   );
   const row = base.rows[0];
-  if (!row) throw new Error("请先执行 pnpm db:seed");
+  if (!row) throw new Error("请先执行 pnpm test:integration:prepare");
   adminActor = {
     id: row.createdById,
     name: row.creatorName,
@@ -75,6 +83,7 @@ beforeAll(async () => {
     isPlatformAdmin: true,
     isStaff: true,
   };
+  serviceTypeId = row.serviceTypeId;
 
   await owner.query(
     `INSERT INTO "Project" (id, title, status, kind, "customerSpaceId", "serviceTypeId", "createdById", "updatedAt") VALUES ($1, 'Sub2API RLS 集成测试', 'ACTIVE', 'EXTERNAL_INTEGRATION', $2, $3, $4, NOW())`,
@@ -116,6 +125,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (managedProjectId) {
+    await owner.query(`DELETE FROM "Project" WHERE id = $1`, [managedProjectId]);
+  }
+  if (managedCustomerSpaceId) {
+    await owner.query(`DELETE FROM "CustomerSpace" WHERE id = $1`, [managedCustomerSpaceId]);
+  }
   await owner.query(`DELETE FROM "Project" WHERE id = $1`, [ids.project]);
   await owner.query(
     `UPDATE "PluginInstallation" SET enabled = $2, "healthStatus" = $3, "updatedAt" = NOW() WHERE key = $1`,
@@ -173,6 +188,49 @@ describe("Sub2API 外部联系人 RLS", () => {
       `SELECT COUNT(*)::text AS count FROM "EventRecord" WHERE "serviceRequestId" = '${ids.requestA}' AND type = 'REQUEST_MESSAGE_CREATED' AND payload->>'messageId' = '${result.message.id}'`,
     );
     expect(events).toEqual([{ count: "1" }]);
+  });
+});
+
+describe("Sub2API 外部项目空间隔离", () => {
+  it("创建时自动生成托管空间且不进入客户列表，删除项目时同步清理", async () => {
+    const project = await createProject(adminActor, {
+      title: "自动托管空间测试",
+      kind: "EXTERNAL_INTEGRATION",
+      status: "DRAFT",
+      serviceTypeId,
+    });
+    managedProjectId = project.id;
+    managedCustomerSpaceId = project.customerSpaceId;
+
+    const space = await owner.query<{
+      kind: string;
+      memberLimit: number;
+      membershipCount: string;
+    }>(
+      `SELECT space.kind, space."memberLimit", COUNT(membership.id)::text AS "membershipCount"
+       FROM "CustomerSpace" space
+       LEFT JOIN "Membership" membership ON membership."customerSpaceId" = space.id
+       WHERE space.id = $1
+       GROUP BY space.id`,
+      [managedCustomerSpaceId],
+    );
+    expect(space.rows[0]).toEqual({
+      kind: "EXTERNAL_MANAGED",
+      memberLimit: 0,
+      membershipCount: "0",
+    });
+
+    const customerSpaces = await listCustomerSpaces(adminActor);
+    expect(customerSpaces.some((item) => item.id === managedCustomerSpaceId)).toBe(false);
+
+    await deleteProject(adminActor, managedProjectId);
+    managedProjectId = "";
+    const remaining = await owner.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM "CustomerSpace" WHERE id = $1`,
+      [managedCustomerSpaceId],
+    );
+    expect(remaining.rows[0]?.count).toBe("0");
+    managedCustomerSpaceId = "";
   });
 });
 

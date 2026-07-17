@@ -2,7 +2,32 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import { withSystemDb } from "@/lib/system-db";
-import { listRegisteredPlugins } from "@/modules/plugins/plugin-registry";
+import {
+  configsMatch,
+  listRegisteredPlugins,
+  tryParseRegisteredPluginConfig,
+} from "@/modules/plugins/plugin-registry";
+
+/** Pause active runs and revoke embed sessions. Safe to call repeatedly. */
+export async function applyPluginDisableSideEffects(
+  tx: Prisma.TransactionClient,
+  pluginKey: string,
+) {
+  await tx.pluginRun.updateMany({
+    where: {
+      pluginKey,
+      status: { in: ["QUEUED", "RUNNING"] },
+    },
+    data: { status: "PAUSED" },
+  });
+  await tx.externalEmbedSession.updateMany({
+    where: {
+      binding: { pluginKey },
+      revokedAt: null,
+    },
+    data: { revokedAt: new Date() },
+  });
+}
 
 export async function ensurePluginInstallations() {
   const manifests = listRegisteredPlugins();
@@ -17,33 +42,74 @@ export async function ensurePluginInstallations() {
           config: manifest.defaultConfig as Prisma.InputJsonValue,
         },
         update: {},
-        select: { version: true },
+        select: {
+          version: true,
+          config: true,
+          enabled: true,
+          healthStatus: true,
+          lastError: true,
+        },
       });
-      if (installation.version !== manifest.version) {
+      const versionChanged = installation.version !== manifest.version;
+      const parsed = tryParseRegisteredPluginConfig(
+        manifest.key,
+        installation.config,
+      );
+
+      if (!parsed.ok) {
+        const nextError = `配置无效：${parsed.error}`;
+        const needsInvalidState =
+          versionChanged ||
+          installation.healthStatus !== "ERROR" ||
+          installation.lastError !== nextError ||
+          installation.enabled;
+        if (needsInvalidState) {
+          await tx.pluginInstallation.update({
+            where: { key: manifest.key },
+            data: {
+              ...(versionChanged
+                ? {
+                    version: manifest.version,
+                    lastCheckedAt: null,
+                  }
+                : {}),
+              enabled: false,
+              healthStatus: "ERROR",
+              lastError: nextError,
+            },
+          });
+        }
+        // Always enforce full disable semantics for invalid config, including
+        // same-version re-entry, so stale embed tokens cannot revive later.
+        await applyPluginDisableSideEffects(tx, manifest.key);
+        continue;
+      }
+
+      const configChanged = !configsMatch(
+        installation.config,
+        parsed.config,
+      );
+      if (versionChanged || configChanged) {
         await tx.pluginInstallation.update({
           where: { key: manifest.key },
           data: {
-            version: manifest.version,
-            enabled: false,
-            healthStatus: "UNKNOWN",
-            lastCheckedAt: null,
-            lastError: null,
+            ...(versionChanged
+              ? {
+                  version: manifest.version,
+                  enabled: false,
+                  healthStatus: "UNKNOWN" as const,
+                  lastCheckedAt: null,
+                  lastError: null,
+                }
+              : {}),
+            ...(configChanged
+              ? { config: parsed.config as Prisma.InputJsonValue }
+              : {}),
           },
         });
-        await tx.pluginRun.updateMany({
-          where: {
-            pluginKey: manifest.key,
-            status: { in: ["QUEUED", "RUNNING"] },
-          },
-          data: { status: "PAUSED" },
-        });
-        await tx.externalEmbedSession.updateMany({
-          where: {
-            binding: { pluginKey: manifest.key },
-            revokedAt: null,
-          },
-          data: { revokedAt: new Date() },
-        });
+        if (versionChanged) {
+          await applyPluginDisableSideEffects(tx, manifest.key);
+        }
       }
     }
   });

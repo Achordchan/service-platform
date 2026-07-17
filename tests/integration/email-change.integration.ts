@@ -53,7 +53,7 @@ beforeAll(async () => {
   adminId = context.rows[0]?.admin_id ?? "";
   customerSpaceId = context.rows[0]?.customer_space_id ?? "";
   if (!adminId || !customerSpaceId) {
-    throw new Error("请先执行 pnpm db:seed");
+    throw new Error("请先执行 pnpm test:integration:prepare");
   }
 
   await pool.query(

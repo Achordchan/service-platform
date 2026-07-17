@@ -35,6 +35,7 @@ export async function getInvitationPreview(token: string) {
           select: {
             name: true,
             slug: true,
+            kind: true,
           },
         },
       },
@@ -43,7 +44,8 @@ export async function getInvitationPreview(token: string) {
       !invitation ||
       invitation.acceptedAt ||
       invitation.revokedAt ||
-      invitation.expiresAt <= new Date()
+      invitation.expiresAt <= new Date() ||
+      invitation.customerSpace.kind !== "STANDARD"
     ) {
       return null;
     }
@@ -91,7 +93,8 @@ export async function acceptInvitation(
       !invitation ||
       invitation.acceptedAt ||
       invitation.revokedAt ||
-      invitation.expiresAt <= now
+      invitation.expiresAt <= now ||
+      invitation.customerSpace.kind !== "STANDARD"
     ) {
       throw new Error("INVITATION_INVALID");
     }

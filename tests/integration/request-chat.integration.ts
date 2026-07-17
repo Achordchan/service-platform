@@ -69,7 +69,7 @@ beforeAll(async () => {
   );
   const row = result.rows[0];
   if (!row) {
-    throw new Error("请先执行 pnpm db:seed 创建请求聊天测试数据");
+    throw new Error("请先执行 pnpm test:integration:prepare 准备 *_test 库与种子数据");
   }
   projectId = row.project_id;
   categoryId = row.category_id;

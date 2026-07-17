@@ -23,7 +23,9 @@
     "db:studio": "prisma studio",
     "worker": "tsx --tsconfig tsconfig.worker.json --env-file=.env src/worker.ts",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:integration:prepare": "node scripts/prepare-integration-db.mjs"
   },
   "dependencies": {
     "@achord/platform-plugin-sdk": "workspace:*",

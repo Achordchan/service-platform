@@ -48,7 +48,7 @@ const projectFieldsSchema = z.object({
   showProgress: z.boolean().optional(),
   startDate: optionalDate,
   endDate: optionalDate,
-  customerSpaceId: z.cuid(),
+  customerSpaceId: z.cuid().optional(),
   serviceTypeId: z.cuid(),
 });
 
@@ -62,7 +62,24 @@ export const createProjectSchema = projectFieldsSchema
       !value.endDate ||
       new Date(value.endDate) >= new Date(value.startDate),
     { message: "结束日期不能早于开始日期", path: ["endDate"] },
-  );
+  )
+  .superRefine((value, context) => {
+    const kind = value.kind ?? "STANDARD";
+    if (kind === "STANDARD" && !value.customerSpaceId) {
+      context.addIssue({
+        code: "custom",
+        message: "标准项目必须选择客户",
+        path: ["customerSpaceId"],
+      });
+    }
+    if (kind === "EXTERNAL_INTEGRATION" && value.customerSpaceId) {
+      context.addIssue({
+        code: "custom",
+        message: "外部接入项目由系统管理接入空间，不能绑定普通客户",
+        path: ["customerSpaceId"],
+      });
+    }
+  });
 
 export const updateProjectSchema = projectFieldsSchema
   .omit({ customerSpaceId: true, serviceTypeId: true })

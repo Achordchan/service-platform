@@ -1,4 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
+import { e2eWebServerEnv, loadE2EEnv } from "./e2e/load-e2e-env";
+
+const loadedFrom = loadE2EEnv();
+const webServerEnv = e2eWebServerEnv();
+
+// Destructive E2E always targets a local server bound to the *_test database.
+// Remote/production acceptance must use a separate read-only suite.
+const LOCAL_BASE_URL = "http://127.0.0.1:3000";
 
 export default defineConfig({
   testDir: "./e2e",
@@ -12,16 +20,20 @@ export default defineConfig({
     timeout: 15_000,
   },
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3000",
+    baseURL: LOCAL_BASE_URL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     video: "off",
   },
   webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000/login",
-    reuseExistingServer: !process.env.CI,
+    command: "pnpm dev -H 127.0.0.1 -p 3000",
+    url: `${LOCAL_BASE_URL}/login`,
+    reuseExistingServer: false,
     timeout: 120_000,
+    env: webServerEnv,
+  },
+  metadata: {
+    e2eEnvFile: loadedFrom,
   },
   projects: [
     {

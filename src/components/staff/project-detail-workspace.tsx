@@ -216,7 +216,14 @@ export function ProjectDetailWorkspace({
                 mt: 3,
               }}
             >
-              <SummaryField label="客户" value={project.customerSpace.name} />
+              <SummaryField
+                label={project.kind === "EXTERNAL_INTEGRATION" ? "接入对象" : "客户"}
+                value={
+                  project.kind === "EXTERNAL_INTEGRATION"
+                    ? "Sub2API 外部用户"
+                    : project.customerSpace.name
+                }
+              />
               <SummaryField label="服务类型" value={project.serviceType.name} />
               <SummaryField
                 label="当前阶段"

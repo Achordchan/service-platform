@@ -83,7 +83,10 @@ export function CreateProjectDialog({
           status: String(formData.get("status") ?? "DRAFT"),
           currentStage:
             String(formData.get("currentStage") ?? "").trim() || null,
-          customerSpaceId: String(formData.get("customerSpaceId") ?? ""),
+          customerSpaceId:
+            kind === "STANDARD"
+              ? String(formData.get("customerSpaceId") ?? "")
+              : undefined,
           serviceTypeId: String(formData.get("serviceTypeId") ?? ""),
           startDate: formData.get("startDate")
             ? new Date(String(formData.get("startDate"))).toISOString()
@@ -141,25 +144,27 @@ export function CreateProjectDialog({
             ) : null}
             {kind === "EXTERNAL_INTEGRATION" ? (
               <Alert severity="info">
-                创建后在项目详情配置 Sub2API 地址并激活嵌入入口。
+                无需选择客户。创建后配置 Sub2API 地址，外部用户将自动作为联系人进入该项目。
               </Alert>
             ) : null}
             <TextField name="title" label="项目名称" required fullWidth />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                name="customerSpaceId"
-                label="客户"
-                select
-                required
-                fullWidth
-                defaultValue=""
-              >
-                {customerSpaces.map((option) => (
-                  <MenuItem key={option.id} value={option.id}>
-                    {option.name}
-                  </MenuItem>
-                ))}
-              </TextField>
+              {kind === "STANDARD" ? (
+                <TextField
+                  name="customerSpaceId"
+                  label="客户"
+                  select
+                  required
+                  fullWidth
+                  defaultValue=""
+                >
+                  {customerSpaces.map((option) => (
+                    <MenuItem key={option.id} value={option.id}>
+                      {option.name}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              ) : null}
               <TextField
                 name="serviceTypeId"
                 label="服务类型"

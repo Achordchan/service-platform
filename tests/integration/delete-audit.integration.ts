@@ -58,7 +58,7 @@ beforeAll(async () => {
   );
   const row = context.rows[0];
   if (!row) {
-    throw new Error("请先执行 pnpm db:seed 创建删除测试所需数据");
+    throw new Error("请先执行 pnpm test:integration:prepare 创建删除测试所需数据");
   }
 
   admin = {

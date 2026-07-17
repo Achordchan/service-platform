@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
@@ -212,23 +213,11 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
         );
       }
     }
-    const customerSpace = await tx.customerSpace.findUnique({
-      where: { id: input.customerSpaceId },
-      select: { id: true, status: true },
-    });
     const serviceType = await tx.serviceType.findUnique({
       where: { id: input.serviceTypeId },
       select: { id: true, active: true },
     });
-    assertFound(customerSpace, "客户空间不存在");
     assertFound(serviceType, "服务类型不存在");
-    if (customerSpace.status !== "ACTIVE") {
-      throw new DomainError(
-        "CUSTOMER_SPACE_NOT_ACTIVE",
-        "只能为启用中的客户空间创建项目",
-        409,
-      );
-    }
     if (!serviceType.active) {
       throw new DomainError(
         "SERVICE_TYPE_NOT_ACTIVE",
@@ -237,11 +226,45 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       );
     }
 
-    const { managerUserIds, ...projectInput } = input;
+    const {
+      managerUserIds,
+      customerSpaceId: requestedCustomerSpaceId,
+      ...projectInput
+    } = input;
+    let customerSpace: { id: string; status: "ACTIVE" | "SUSPENDED" | "ARCHIVED" };
+    if (kind === "EXTERNAL_INTEGRATION") {
+      customerSpace = await tx.customerSpace.create({
+        data: {
+          name: `Sub2API · ${input.title}`,
+          slug: `external-${randomUUID()}`,
+          kind: "EXTERNAL_MANAGED",
+          memberLimit: 0,
+          status: "ACTIVE",
+          ownerId: actor.id,
+        },
+        select: { id: true, status: true },
+      });
+    } else {
+      assertFound(requestedCustomerSpaceId, "请选择客户");
+      const standardSpace = await tx.customerSpace.findFirst({
+        where: { id: requestedCustomerSpaceId, kind: "STANDARD" },
+        select: { id: true, status: true },
+      });
+      assertFound(standardSpace, "客户空间不存在");
+      customerSpace = standardSpace;
+      if (customerSpace.status !== "ACTIVE") {
+        throw new DomainError(
+          "CUSTOMER_SPACE_NOT_ACTIVE",
+          "只能为启用中的客户空间创建项目",
+          409,
+        );
+      }
+    }
     const project = await tx.project.create({
       data: {
         ...projectInput,
         kind,
+        customerSpaceId: customerSpace.id,
         createdById: actor.id,
       },
       include: projectSummaryInclude,
@@ -291,6 +314,9 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       projectId: project.id,
       metadata: auditMetadata({
         ...projectInput,
+        kind,
+        customerSpaceMode:
+          kind === "EXTERNAL_INTEGRATION" ? "EXTERNAL_MANAGED" : "STANDARD",
         managerUserIds: selectedManagerIds,
       }),
     });
@@ -321,7 +347,9 @@ export function updateProject(
       where: { id: projectId },
       select: {
         id: true,
+        title: true,
         customerSpaceId: true,
+        customerSpace: { select: { kind: true } },
         startDate: true,
         endDate: true,
         kind: true,
@@ -373,6 +401,12 @@ export function updateProject(
             409,
           );
         }
+      } else if (existing.kind === "EXTERNAL_INTEGRATION") {
+        throw new DomainError(
+          "PROJECT_KIND_CHANGE_REQUIRES_CUSTOMER",
+          "外部接入项目不能直接转为标准项目，请新建标准项目并选择客户",
+          409,
+        );
       }
     }
 
@@ -396,11 +430,45 @@ export function updateProject(
       );
     }
 
+    let managedCustomerSpaceId: string | undefined;
+    if (
+      input.kind === "EXTERNAL_INTEGRATION" &&
+      existing.kind !== "EXTERNAL_INTEGRATION"
+    ) {
+      const managedSpace = await tx.customerSpace.create({
+        data: {
+          name: `Sub2API · ${input.title ?? existing.title}`,
+          slug: `external-${randomUUID()}`,
+          kind: "EXTERNAL_MANAGED",
+          memberLimit: 0,
+          status: "ACTIVE",
+          ownerId: actor.id,
+        },
+        select: { id: true },
+      });
+      managedCustomerSpaceId = managedSpace.id;
+    }
+
     const project = await tx.project.update({
       where: { id: projectId },
-      data: input,
+      data: {
+        ...input,
+        ...(managedCustomerSpaceId
+          ? { customerSpaceId: managedCustomerSpaceId }
+          : {}),
+      },
       include: projectSummaryInclude,
     });
+    if (
+      input.title &&
+      existing.customerSpace.kind === "EXTERNAL_MANAGED" &&
+      !managedCustomerSpaceId
+    ) {
+      await tx.customerSpace.update({
+        where: { id: existing.customerSpaceId },
+        data: { name: `Sub2API · ${input.title}` },
+      });
+    }
     await writeAuditLog(tx, actor, {
       action: "PROJECT_UPDATED",
       resourceType: "Project",
@@ -435,6 +503,7 @@ export async function deleteProject(actor: Actor, projectId: string) {
         id: true,
         title: true,
         customerSpaceId: true,
+        customerSpace: { select: { kind: true } },
         _count: {
           select: {
             requests: true,
@@ -465,6 +534,11 @@ export async function deleteProject(actor: Actor, projectId: string) {
     });
     await publishProjectDeleted(tx, actor, projectId);
     await tx.project.delete({ where: { id: projectId } });
+    if (existing.customerSpace.kind === "EXTERNAL_MANAGED") {
+      await tx.customerSpace.delete({
+        where: { id: existing.customerSpaceId },
+      });
+    }
     return attachments.map((attachment) => attachment.storageKey);
   });
 

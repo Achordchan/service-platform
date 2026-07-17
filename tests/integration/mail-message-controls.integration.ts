@@ -44,7 +44,7 @@ beforeAll(async () => {
   );
   const user = result.rows[0];
   if (!user) {
-    throw new Error("请先执行 pnpm db:seed 创建管理员测试账号");
+    throw new Error("请先执行 pnpm test:integration:prepare 创建管理员测试账号");
   }
   admin = {
     ...user,

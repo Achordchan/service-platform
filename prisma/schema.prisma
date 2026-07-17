@@ -48,6 +48,11 @@ enum ProjectKind {
   EXTERNAL_INTEGRATION
 }
 
+enum CustomerSpaceKind {
+  STANDARD
+  EXTERNAL_MANAGED
+}
+
 enum ProjectStaffRole {
   PROJECT_MANAGER
   TECHNICIAN
@@ -252,14 +257,15 @@ model Verification {
 }
 
 model CustomerSpace {
-  id          String      @id @default(cuid())
+  id          String            @id @default(cuid())
   name        String
-  slug        String      @unique
-  memberLimit Int         @default(2)
-  status      SpaceStatus @default(ACTIVE)
+  slug        String            @unique
+  kind        CustomerSpaceKind @default(STANDARD)
+  memberLimit Int               @default(2)
+  status      SpaceStatus       @default(ACTIVE)
   ownerId     String
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
 
   owner         User           @relation("SpaceOwner", fields: [ownerId], references: [id])
   memberships   Membership[]
@@ -271,6 +277,7 @@ model CustomerSpace {
   events        EventRecord[]
 
   @@index([ownerId])
+  @@index([kind, status])
 }
 
 model Membership {

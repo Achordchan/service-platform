@@ -108,7 +108,9 @@ export PATH="/opt/homebrew/opt/node@24/bin:$PATH"
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm exec vitest run --config vitest.integration.config.ts
+pnpm test:integration:prepare
+pnpm test:integration
+# 必须先有 .env.integration；禁止为集成测试裸跑 prisma migrate deploy / pnpm db:seed
 pnpm build
 pnpm verify:runtime-deps
 ```

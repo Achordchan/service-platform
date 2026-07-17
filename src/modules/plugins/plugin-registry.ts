@@ -11,6 +11,26 @@ import {
 } from "@achord/plugin-sub2api-connector";
 import { DomainError } from "@/modules/projects/errors";
 
+
+function stableSerialize(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+    .join(",")}}`;
+}
+
+/** Structural equality that ignores object key order (PostgreSQL jsonb may reorder keys). */
+export function configsMatch(left: unknown, right: unknown) {
+  return stableSerialize(left) === stableSerialize(right);
+}
+
 export type RegisteredPlugin = {
   manifest: PlatformPluginManifest<Record<string, unknown>>;
   parseConfig: (value: unknown) => Record<string, unknown>;
@@ -50,6 +70,38 @@ export { IMAGE_WEBP_PLUGIN_KEY, SUB2API_CONNECTOR_PLUGIN_KEY };
 
 export function listRegisteredPlugins() {
   return registeredPlugins.map((plugin) => plugin.manifest);
+}
+
+export type PluginConfigParseResult =
+  | { ok: true; config: Record<string, unknown> }
+  | { ok: false; error: string };
+
+export function tryParseRegisteredPluginConfig(
+  pluginKey: string,
+  value: unknown,
+): PluginConfigParseResult {
+  const plugin = getRegisteredPlugin(pluginKey);
+  try {
+    return { ok: true, config: plugin.parseConfig(value) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "插件配置无效",
+    };
+  }
+}
+
+/** Parse config for display. Invalid configs keep raw values and never fall back to defaults. */
+export function normalizeRegisteredPluginConfig(
+  pluginKey: string,
+  value: unknown,
+) {
+  const parsed = tryParseRegisteredPluginConfig(pluginKey, value);
+  if (parsed.ok) return parsed.config;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
 }
 
 export function getRegisteredPlugin(pluginKey: string) {

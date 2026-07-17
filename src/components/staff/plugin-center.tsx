@@ -77,8 +77,27 @@ export type PluginView = {
     max?: number;
     step?: number;
   }>;
+  actions?: Array<{
+    key: string;
+    label: string;
+    description: string;
+    destructive?: boolean;
+  }>;
   runs: PluginRunView[];
 };
+
+export function hasPluginSettings(
+  plugin: Pick<PluginView, "settings">,
+) {
+  return plugin.settings.length > 0;
+}
+
+export function supportsPluginAction(
+  plugin: Pick<PluginView, "actions">,
+  actionKey: string,
+) {
+  return plugin.actions?.some((action) => action.key === actionKey) === true;
+}
 
 const pluginEvents = ["PLUGIN_RUN_UPDATED"] as const;
 
@@ -282,85 +301,89 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                 </Button>
               </Stack>
 
-              <Accordion variant="outlined" disableGutters>
-                <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-                  <Typography sx={{ fontWeight: 650 }}>转换配置</Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Stack spacing={2}>
-                    {selected.settings.map((field) =>
-                      field.type === "number" ? (
-                        <TextField
-                          key={field.key}
-                          type="number"
-                          label={field.label}
-                          value={Number(config[field.key] ?? 0)}
-                          onChange={(event) =>
-                            setConfig((current) => ({
-                              ...current,
-                              [field.key]: Number(event.target.value),
-                            }))
-                          }
-                          helperText={field.description}
-                          slotProps={{
-                            htmlInput: {
-                              min: field.min,
-                              max: field.max,
-                              step: field.step ?? 1,
-                            },
-                          }}
-                          fullWidth
-                        />
-                      ) : null,
-                    )}
-                    <Button
-                      variant="contained"
-                      onClick={() => void saveConfig()}
-                      disabled={Boolean(busy)}
-                    >
-                      保存配置
-                    </Button>
-                  </Stack>
-                </AccordionDetails>
-              </Accordion>
+              {hasPluginSettings(selected) ? (
+                <Accordion variant="outlined" disableGutters>
+                  <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+                    <Typography sx={{ fontWeight: 650 }}>插件设置</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Stack spacing={2}>
+                      {selected.settings.map((field) =>
+                        field.type === "number" ? (
+                          <TextField
+                            key={field.key}
+                            type="number"
+                            label={field.label}
+                            value={Number(config[field.key] ?? 0)}
+                            onChange={(event) =>
+                              setConfig((current) => ({
+                                ...current,
+                                [field.key]: Number(event.target.value),
+                              }))
+                            }
+                            helperText={field.description}
+                            slotProps={{
+                              htmlInput: {
+                                min: field.min,
+                                max: field.max,
+                                step: field.step ?? 1,
+                              },
+                            }}
+                            fullWidth
+                          />
+                        ) : null,
+                      )}
+                      <Button
+                        variant="contained"
+                        onClick={() => void saveConfig()}
+                        disabled={Boolean(busy)}
+                      >
+                        保存配置
+                      </Button>
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
+              ) : null}
 
-              <Accordion variant="outlined" disableGutters>
-                <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
-                  <Typography sx={{ fontWeight: 650 }}>
-                    历史图片迁移
-                  </Typography>
-                </AccordionSummary>
-                <AccordionDetails>
-                  <Stack spacing={1.5}>
-                    <Alert severity="warning">
-                      转换成功后不保留原始字节。任务单并发运行，可暂停或取消。
-                    </Alert>
-                    {selected.runs.length > 0 ? (
-                      <RunCard
-                        pluginKey={selected.key}
-                        run={selected.runs[0]}
-                        busy={busy}
-                        onControl={controlRun}
-                      />
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        尚未执行历史迁移。
-                      </Typography>
-                    )}
-                    <Button
-                      variant="outlined"
-                      onClick={() => setConfirmMigrationKey(selected.key)}
-                      disabled={
-                        !selected.enabled ||
-                        selected.healthStatus !== "READY" ||
-                        Boolean(busy)
-                      }
-                    >
-                      启动新的历史迁移
-                    </Button>
-                  </Stack>
-                </AccordionDetails>
-              </Accordion>
+              {supportsPluginAction(selected, "migrate-history") ? (
+                <Accordion variant="outlined" disableGutters>
+                  <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+                    <Typography sx={{ fontWeight: 650 }}>
+                      历史图片迁移
+                    </Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Stack spacing={1.5}>
+                      <Alert severity="warning">
+                        转换成功后不保留原始字节。任务单并发运行，可暂停或取消。
+                      </Alert>
+                      {selected.runs.length > 0 ? (
+                        <RunCard
+                          pluginKey={selected.key}
+                          run={selected.runs[0]}
+                          busy={busy}
+                          onControl={controlRun}
+                        />
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          尚未执行历史迁移。
+                        </Typography>
+                      )}
+                      <Button
+                        variant="outlined"
+                        onClick={() => setConfirmMigrationKey(selected.key)}
+                        disabled={
+                          !selected.enabled ||
+                          selected.healthStatus !== "READY" ||
+                          Boolean(busy)
+                        }
+                      >
+                        启动新的历史迁移
+                      </Button>
+                    </Stack>
+                  </AccordionDetails>
+                </Accordion>
+              ) : null}
             </Stack>
           ) : null}
         </DialogContent>
@@ -510,7 +533,11 @@ function PluginCard({
                     ? "版本已更新，需要重新检测运行环境"
                     : latestRun
                       ? `最近任务：${runStatusLabel(latestRun.status)} · ${latestRun.processedCount}/${latestRun.totalCount}`
-                      : "尚未执行后台任务"}
+                      : supportsPluginAction(plugin, "migrate-history")
+                        ? "尚未执行后台任务"
+                        : plugin.enabled
+                          ? "插件正在运行"
+                          : "运行环境已就绪"}
               </Typography>
               <Stack
                 direction="row"

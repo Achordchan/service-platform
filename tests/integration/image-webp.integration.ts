@@ -68,7 +68,7 @@ beforeAll(async () => {
     `,
   );
   const row = context.rows[0];
-  if (!row) throw new Error("请先执行 pnpm db:seed");
+  if (!row) throw new Error("请先执行 pnpm test:integration:prepare");
   adminId = row.admin_id;
   customerId = row.customer_id;
   serviceTypeId = row.service_type_id;

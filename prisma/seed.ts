@@ -5,9 +5,18 @@ import {
   type PlatformRole,
 } from "../src/generated/prisma/client";
 
-const databaseUrl =
-  process.env.DATABASE_MIGRATION_URL ??
-  "postgresql://a1234@localhost:5438/service_platform?schema=public";
+const databaseUrl = (() => {
+  if (process.env.DATABASE_MIGRATION_URL) {
+    return process.env.DATABASE_MIGRATION_URL;
+  }
+  // Avoid silent seed against the main database during integration setup.
+  if (process.env.INTEGRATION_TEST_PREPARE === "1") {
+    throw new Error(
+      "DATABASE_MIGRATION_URL is required for integration test preparation",
+    );
+  }
+  return "postgresql://a1234@localhost:5438/service_platform?schema=public";
+})();
 const prisma = new PrismaClient({ adapter: new PrismaPg(databaseUrl) });
 const password = "ServiceDemo!2026";
 

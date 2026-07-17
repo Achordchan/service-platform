@@ -10,11 +10,16 @@ import {
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { publishEvent } from "@/modules/notifications/notification-service";
 import { publishPluginRunEvent } from "@/modules/plugins/plugin-events";
-import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
+import {
+  applyPluginDisableSideEffects,
+  ensurePluginInstallations,
+} from "@/modules/plugins/plugin-installation-service";
 import {
   getRegisteredPlugin,
   IMAGE_WEBP_PLUGIN_KEY,
   listRegisteredPlugins,
+  normalizeRegisteredPluginConfig,
+  tryParseRegisteredPluginConfig,
 } from "@/modules/plugins/plugin-registry";
 import {
   assertAllowed,
@@ -46,7 +51,10 @@ export async function listPluginViews(actor: Actor) {
       {
         ...manifest,
         enabled: installation.enabled,
-        config: installation.config as Record<string, unknown>,
+        config: normalizeRegisteredPluginConfig(
+          installation.key,
+          installation.config,
+        ),
         healthStatus: installation.healthStatus,
         lastCheckedAt: installation.lastCheckedAt?.toISOString() ?? null,
         lastError: installation.lastError,
@@ -74,7 +82,10 @@ export async function updatePluginInstallation(
       : registered.parseConfig(input.config);
 
   if (input.enabled === true) {
-    const health = await runPluginHealthCheck(actor, pluginKey);
+    const health = await runPluginHealthCheck(actor, pluginKey, {
+      // Use the config that would be saved in this same request.
+      configOverride: parsedConfig,
+    });
     if (health.healthStatus !== "READY") {
       throw new DomainError(
         "PLUGIN_NOT_READY",
@@ -89,6 +100,21 @@ export async function updatePluginInstallation(
       where: { key: pluginKey },
     });
     assertFound(current, "插件未安装");
+    if (input.enabled === true) {
+      const configToValidate =
+        parsedConfig !== undefined ? parsedConfig : current.config;
+      const configCheck = tryParseRegisteredPluginConfig(
+        pluginKey,
+        configToValidate,
+      );
+      if (!configCheck.ok) {
+        throw new DomainError(
+          "PLUGIN_CONFIG_INVALID",
+          `插件配置无效，无法启用：${configCheck.error}`,
+          409,
+        );
+      }
+    }
     await tx.pluginInstallation.update({
       where: { key: pluginKey },
       data: {
@@ -100,20 +126,7 @@ export async function updatePluginInstallation(
       },
     });
     if (input.enabled === false) {
-      await tx.pluginRun.updateMany({
-        where: {
-          pluginKey,
-          status: { in: ["QUEUED", "RUNNING"] },
-        },
-        data: { status: "PAUSED" },
-      });
-      await tx.externalEmbedSession.updateMany({
-        where: {
-          binding: { pluginKey },
-          revokedAt: null,
-        },
-        data: { revokedAt: new Date() },
-      });
+      await applyPluginDisableSideEffects(tx, pluginKey);
     }
     await writeAuditLog(tx, actor, {
       action: "PLUGIN_INSTALLATION_UPDATED",
@@ -138,6 +151,9 @@ export async function updatePluginInstallation(
 export async function runPluginHealthCheck(
   actor: Actor,
   pluginKey: string,
+  options?: {
+    configOverride?: Record<string, unknown>;
+  },
 ) {
   assertAllowed(actor.isPlatformAdmin);
   await ensurePluginInstallations();
@@ -146,26 +162,53 @@ export async function runPluginHealthCheck(
   let healthStatus = "READY";
   let lastError: string | null = null;
   let detail: Record<string, string> = {};
-  try {
-    detail = registered.healthCheck
-      ? await registered.healthCheck()
-      : { runtime: "ready" };
-  } catch (error) {
+
+  const installation = await withActorDb(actor, (tx) =>
+    tx.pluginInstallation.findUnique({
+      where: { key: pluginKey },
+      select: { config: true, enabled: true },
+    }),
+  );
+  assertFound(installation, "插件未安装");
+
+  const configCandidate =
+    options?.configOverride !== undefined
+      ? options.configOverride
+      : installation.config;
+  const configCheck = tryParseRegisteredPluginConfig(pluginKey, configCandidate);
+  if (!configCheck.ok) {
     healthStatus = "ERROR";
-    lastError =
-      error instanceof Error ? error.message : "插件运行环境加载失败";
+    lastError = `配置无效：${configCheck.error}`;
+    detail = { config: "invalid" };
+  } else {
+    try {
+      detail = registered.healthCheck
+        ? await registered.healthCheck()
+        : { runtime: "ready" };
+    } catch (error) {
+      healthStatus = "ERROR";
+      lastError =
+        error instanceof Error ? error.message : "插件运行环境加载失败";
+    }
   }
 
   await withActorDb(actor, async (tx) => {
+    const shouldDisableForInvalidConfig =
+      healthStatus === "ERROR" && !configCheck.ok;
     await tx.pluginInstallation.update({
       where: { key: pluginKey },
       data: {
+        // Invalid config must never stay enabled after a health check.
+        ...(shouldDisableForInvalidConfig ? { enabled: false } : {}),
         healthStatus,
         lastCheckedAt: checkedAt,
         lastError,
         updatedById: actor.id,
       },
     });
+    if (shouldDisableForInvalidConfig) {
+      await applyPluginDisableSideEffects(tx, pluginKey);
+    }
     await writeAuditLog(tx, actor, {
       action: "PLUGIN_HEALTH_CHECKED",
       resourceType: "PluginInstallation",
@@ -174,6 +217,7 @@ export async function runPluginHealthCheck(
       metadata: {
         healthStatus,
         detail,
+        configValid: configCheck.ok,
       },
     });
   });

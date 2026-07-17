@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   expect,
   test,
@@ -7,8 +5,10 @@ import {
   type Page,
 } from "@playwright/test";
 import { Pool } from "pg";
+import { randomUUID } from "node:crypto";
+import { loadE2EEnv } from "./load-e2e-env";
 
-loadLocalEnv();
+loadE2EEnv();
 
 const password = "ServiceDemo!2026";
 const ownerPool = new Pool({
@@ -16,6 +16,8 @@ const ownerPool = new Pool({
   max: 1,
 });
 const createdRequestIds: string[] = [];
+let unassignedRequestId: string | null = null;
+let unassignedRequestTitle = "";
 let adminContext: BrowserContext;
 let customerContext: BrowserContext;
 let technicianContext: BrowserContext;
@@ -58,6 +60,78 @@ test.describe("主流程冒烟", () => {
     await login(adminPage, "admin@local.test");
     await login(customerPage, "client@local.test");
     await login(technicianPage, "tech@local.test");
+
+    unassignedRequestTitle = `E2E 未分配请求 ${Date.now()}`;
+    unassignedRequestId = randomUUID();
+    const seedProject = await ownerPool.query<{
+      projectId: string;
+      categoryId: string;
+      createdById: string;
+    }>(
+      `
+        SELECT
+          project.id AS "projectId",
+          category.id AS "categoryId",
+          client.id AS "createdById"
+        FROM "Project" project
+        JOIN "ServiceType" service_type ON service_type.id = project."serviceTypeId"
+        JOIN "RequestCategory" category
+          ON category."serviceTypeId" = service_type.id
+         AND category.active = true
+        JOIN "User" client ON client.email = 'client@local.test'
+        WHERE project.title = '官网 SEO 优化服务'
+        ORDER BY category.name ASC, category.id ASC
+        LIMIT 1
+      `,
+    );
+    const projectRow = seedProject.rows[0];
+    if (!projectRow) {
+      throw new Error(
+        "缺少 seed 项目「官网 SEO 优化服务」或客户账号，请先 pnpm test:integration:prepare",
+      );
+    }
+    await ownerPool.query(
+      `
+        INSERT INTO "ServiceRequest" (
+          id,
+          number,
+          title,
+          description,
+          priority,
+          status,
+          "projectId",
+          "categoryId",
+          "createdById",
+          "assigneeId",
+          "createdAt",
+          "updatedAt"
+        )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          'NORMAL',
+          'PENDING',
+          $5,
+          $6,
+          $7,
+          NULL,
+          NOW(),
+          NOW()
+        )
+      `,
+      [
+        unassignedRequestId,
+        `E2E-UNASSIGNED-${Date.now()}`,
+        unassignedRequestTitle,
+        "E2E 自建未分配请求，不依赖开发库历史数据。",
+        projectRow.projectId,
+        projectRow.categoryId,
+        projectRow.createdById,
+      ],
+    );
+    createdRequestIds.push(unassignedRequestId);
   });
 
   test.afterAll(async () => {
@@ -72,6 +146,13 @@ test.describe("主流程冒烟", () => {
           DELETE FROM "AuditLog"
           WHERE "serviceRequestId" = ANY($1::text[])
             OR "resourceId" = ANY($1::text[])
+        `,
+        [createdRequestIds],
+      );
+      await ownerPool.query(
+        `
+          DELETE FROM "EventRecord"
+          WHERE "serviceRequestId" = ANY($1::text[])
         `,
         [createdRequestIds],
       );
@@ -291,7 +372,7 @@ test.describe("主流程冒烟", () => {
       technicianPage.getByRole("heading", { name: "服务请求" }),
     ).toBeVisible();
     await expectVisibleText(technicianPage, "关于首页标题优化建议");
-    await expectVisibleText(technicianPage, "RLS fix smoke");
+    await expectVisibleText(technicianPage, unassignedRequestTitle);
 
     await technicianPage.goto("/staff/plugins");
     await technicianPage.waitForURL("/staff/projects");
@@ -428,22 +509,6 @@ test.describe("主流程冒烟", () => {
     expect(hasHorizontalOverflow).toBe(false);
   });
 });
-
-function loadLocalEnv() {
-  const source = readFileSync(resolve(process.cwd(), ".env"), "utf8");
-  for (const line of source.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const separator = trimmed.indexOf("=");
-    if (separator < 1) continue;
-    const key = trimmed.slice(0, separator);
-    const value = trimmed
-      .slice(separator + 1)
-      .trim()
-      .replace(/^(['"])(.*)\1$/, "$2");
-    process.env[key] ??= value;
-  }
-}
 
 async function simulatePageVisibility(
   page: Page,

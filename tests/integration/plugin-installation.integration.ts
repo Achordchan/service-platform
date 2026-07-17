@@ -2,32 +2,44 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Pool } from "pg";
 import { imageWebpManifest } from "@achord/plugin-image-webp";
-import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
+import {
+  applyPluginDisableSideEffects,
+  ensurePluginInstallations,
+} from "@/modules/plugins/plugin-installation-service";
 import { IMAGE_WEBP_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
+import { assertIntegrationTestDatabase } from "./require-test-database";
+
+assertIntegrationTestDatabase();
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
   max: 1,
 });
-const testRunId = randomUUID();
 
-let previousInstallation: {
+const ids = {
+  versionRun: randomUUID(),
+  invalidConfigRun: randomUUID(),
+};
+
+let previousWebp: {
   version: string;
   enabled: boolean;
   healthStatus: string;
   lastCheckedAt: Date | null;
   lastError: string | null;
+  config: unknown;
 } | null = null;
-let previousActiveRuns: Array<{ id: string; status: string }> = [];
 
 beforeAll(async () => {
   await ensurePluginInstallations();
-  const result = await pool.query<{
+
+  const webp = await pool.query<{
     version: string;
     enabled: boolean;
     healthStatus: string;
     lastCheckedAt: Date | null;
     lastError: string | null;
+    config: unknown;
   }>(
     `
       SELECT
@@ -35,23 +47,16 @@ beforeAll(async () => {
         enabled,
         "healthStatus",
         "lastCheckedAt",
-        "lastError"
+        "lastError",
+        config
       FROM "PluginInstallation"
       WHERE "key" = $1
     `,
     [IMAGE_WEBP_PLUGIN_KEY],
   );
-  previousInstallation = result.rows[0] ?? null;
-  const activeRuns = await pool.query<{ id: string; status: string }>(
-    `
-      SELECT id, status::text
-      FROM "PluginRun"
-      WHERE "pluginKey" = $1
-        AND status IN ('QUEUED', 'RUNNING')
-    `,
-    [IMAGE_WEBP_PLUGIN_KEY],
-  );
-  previousActiveRuns = activeRuns.rows;
+  previousWebp = webp.rows[0] ?? null;
+
+  // Disposable test DB only: these are the only runs we intentionally create.
   await pool.query(
     `
       INSERT INTO "PluginRun" (
@@ -61,25 +66,20 @@ beforeAll(async () => {
         status,
         "updatedAt"
       )
-      VALUES ($1, $2, 'VERSION_SYNC_TEST', 'RUNNING', NOW())
+      VALUES
+        ($1, $3, 'VERSION_SYNC_TEST', 'RUNNING', NOW()),
+        ($2, $3, 'INVALID_CONFIG_TEST', 'RUNNING', NOW())
     `,
-    [testRunId, IMAGE_WEBP_PLUGIN_KEY],
+    [ids.versionRun, ids.invalidConfigRun, IMAGE_WEBP_PLUGIN_KEY],
   );
 });
 
 afterAll(async () => {
-  await pool.query(`DELETE FROM "PluginRun" WHERE id = $1`, [testRunId]);
-  for (const run of previousActiveRuns) {
-    await pool.query(
-      `
-        UPDATE "PluginRun"
-        SET status = $2::"PluginRunStatus", "updatedAt" = NOW()
-        WHERE id = $1
-      `,
-      [run.id, run.status],
-    );
-  }
-  if (previousInstallation) {
+  await pool.query(`DELETE FROM "PluginRun" WHERE id = ANY($1::text[])`, [
+    [ids.versionRun, ids.invalidConfigRun],
+  ]);
+
+  if (previousWebp) {
     await pool.query(
       `
         UPDATE "PluginInstallation"
@@ -89,23 +89,26 @@ afterAll(async () => {
           "healthStatus" = $4,
           "lastCheckedAt" = $5,
           "lastError" = $6,
+          config = $7::jsonb,
           "updatedAt" = NOW()
         WHERE "key" = $1
       `,
       [
         IMAGE_WEBP_PLUGIN_KEY,
-        previousInstallation.version,
-        previousInstallation.enabled,
-        previousInstallation.healthStatus,
-        previousInstallation.lastCheckedAt,
-        previousInstallation.lastError,
+        previousWebp.version,
+        previousWebp.enabled,
+        previousWebp.healthStatus,
+        previousWebp.lastCheckedAt,
+        previousWebp.lastError,
+        JSON.stringify(previousWebp.config ?? {}),
       ],
     );
   }
+
   await pool.end();
 });
 
-describe("插件安装版本同步", () => {
+describe("插件安装同步", () => {
   it("版本变化时停用插件并清除旧健康结果", async () => {
     await pool.query(
       `
@@ -120,6 +123,14 @@ describe("插件安装版本同步", () => {
         WHERE "key" = $1
       `,
       [IMAGE_WEBP_PLUGIN_KEY],
+    );
+    await pool.query(
+      `
+        UPDATE "PluginRun"
+        SET status = 'RUNNING', "updatedAt" = NOW()
+        WHERE id = $1
+      `,
+      [ids.versionRun],
     );
 
     await ensurePluginInstallations();
@@ -141,11 +152,10 @@ describe("插件安装版本同步", () => {
           installation."lastError",
           run.status::text AS "runStatus"
         FROM "PluginInstallation" installation
-        JOIN "PluginRun" run ON run."pluginKey" = installation.key
+        JOIN "PluginRun" run ON run.id = $2
         WHERE installation.key = $1
-          AND run.id = $2
       `,
-      [IMAGE_WEBP_PLUGIN_KEY, testRunId],
+      [IMAGE_WEBP_PLUGIN_KEY, ids.versionRun],
     );
 
     expect(result.rows[0]).toEqual({
@@ -156,5 +166,100 @@ describe("插件安装版本同步", () => {
       lastError: null,
       runStatus: "PAUSED",
     });
+  });
+
+  it("同版本非法配置会停用插件并暂停本插件任务", async () => {
+    await pool.query(
+      `
+        UPDATE "PluginInstallation"
+        SET
+          version = $2,
+          enabled = true,
+          "healthStatus" = 'READY',
+          "lastCheckedAt" = NOW(),
+          "lastError" = NULL,
+          config = '123'::jsonb,
+          "updatedAt" = NOW()
+        WHERE "key" = $1
+      `,
+      [IMAGE_WEBP_PLUGIN_KEY, previousWebp?.version ?? imageWebpManifest.version],
+    );
+    await pool.query(
+      `
+        UPDATE "PluginRun"
+        SET status = 'RUNNING', "updatedAt" = NOW()
+        WHERE id = $1
+      `,
+      [ids.invalidConfigRun],
+    );
+
+    await ensurePluginInstallations();
+
+    const result = await pool.query<{
+      enabled: boolean;
+      healthStatus: string;
+      lastError: string | null;
+      runStatus: string;
+    }>(
+      `
+        SELECT
+          installation.enabled,
+          installation."healthStatus",
+          installation."lastError",
+          run.status::text AS "runStatus"
+        FROM "PluginInstallation" installation
+        JOIN "PluginRun" run ON run.id = $2
+        WHERE installation.key = $1
+      `,
+      [IMAGE_WEBP_PLUGIN_KEY, ids.invalidConfigRun],
+    );
+
+    expect(result.rows[0]?.enabled).toBe(false);
+    expect(result.rows[0]?.healthStatus).toBe("ERROR");
+    expect(result.rows[0]?.lastError ?? "").toContain("配置无效");
+    expect(result.rows[0]?.runStatus).toBe("PAUSED");
+  });
+
+  it("applyPluginDisableSideEffects 会暂停运行中任务并撤销未过期嵌入会话", async () => {
+    const calls: Array<{ table: string; where: unknown; data: unknown }> = [];
+    const tx = {
+      pluginRun: {
+        updateMany: async (args: { where: unknown; data: unknown }) => {
+          calls.push({ table: "PluginRun", where: args.where, data: args.data });
+          return { count: 1 };
+        },
+      },
+      externalEmbedSession: {
+        updateMany: async (args: { where: unknown; data: unknown }) => {
+          calls.push({
+            table: "ExternalEmbedSession",
+            where: args.where,
+            data: args.data,
+          });
+          return { count: 1 };
+        },
+      },
+    };
+
+    await applyPluginDisableSideEffects(tx as never, "sub2api-connector");
+
+    expect(calls).toEqual([
+      {
+        table: "PluginRun",
+        where: {
+          pluginKey: "sub2api-connector",
+          status: { in: ["QUEUED", "RUNNING"] },
+        },
+        data: { status: "PAUSED" },
+      },
+      {
+        table: "ExternalEmbedSession",
+        where: {
+          binding: { pluginKey: "sub2api-connector" },
+          revokedAt: null,
+        },
+        data: { revokedAt: expect.any(Date) },
+      },
+    ]);
   });
 });

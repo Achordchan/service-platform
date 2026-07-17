@@ -19,7 +19,10 @@ import {
 export function listCustomerSpacesForMember(actor: Actor) {
   return withActorDb(actor, (tx) =>
     tx.membership.findMany({
-      where: { userId: actor.id },
+      where: {
+        userId: actor.id,
+        customerSpace: { kind: "STANDARD" },
+      },
       select: {
         role: true,
         customerSpace: {
@@ -45,6 +48,7 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
         id: true,
         name: true,
         slug: true,
+        kind: true,
         memberLimit: true,
         status: true,
         ownerId: true,
@@ -90,9 +94,22 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
         },
       },
     });
-    assertFound(space, "客户空间不存在");
+    assertStandardCustomerSpace(space);
     assertOwnerOrAdmin(actor, space.memberships, "管理成员");
-    return space;
+    return {
+      id: space.id,
+      name: space.name,
+      slug: space.slug,
+      memberLimit: space.memberLimit,
+      status: space.status,
+      ownerId: space.ownerId,
+      createdAt: space.createdAt,
+      updatedAt: space.updatedAt,
+      owner: space.owner,
+      _count: space._count,
+      memberships: space.memberships,
+      invitations: space.invitations,
+    };
   });
 }
 
@@ -106,6 +123,7 @@ export function getCustomerSpaceMembers(
       select: {
         id: true,
         name: true,
+        kind: true,
         memberLimit: true,
         memberships: {
           select: {
@@ -125,9 +143,14 @@ export function getCustomerSpaceMembers(
         },
       },
     });
-    assertFound(space, "客户空间不存在");
+    assertStandardCustomerSpace(space);
     assertOwnerOrAdmin(actor, space.memberships, "查看成员");
-    return space;
+    return {
+      id: space.id,
+      name: space.name,
+      memberLimit: space.memberLimit,
+      memberships: space.memberships,
+    };
   });
 }
 
@@ -140,6 +163,7 @@ export function removeCustomerSpaceMember(
     const space = await tx.customerSpace.findUnique({
       where: { id: customerSpaceId },
       select: {
+        kind: true,
         ownerId: true,
         memberships: {
           where: { userId: actor.id },
@@ -147,7 +171,7 @@ export function removeCustomerSpaceMember(
         },
       },
     });
-    assertFound(space, "客户空间不存在");
+    assertStandardCustomerSpace(space);
     assertAllowed(
       actor.isPlatformAdmin || space.memberships[0]?.role === "OWNER",
       "仅管理员或空间所有者可以移除成员",
@@ -199,6 +223,7 @@ export async function createInvitation(
       where: { id: customerSpaceId },
       select: {
         name: true,
+        kind: true,
         status: true,
         memberLimit: true,
         memberships: {
@@ -208,7 +233,7 @@ export async function createInvitation(
         _count: { select: { memberships: true } },
       },
     });
-    assertFound(space, "客户空间不存在");
+    assertStandardCustomerSpace(space);
     assertAllowed(
       actor.isPlatformAdmin || space.memberships[0]?.role === "OWNER",
       "仅管理员或空间所有者可以邀请成员",
@@ -314,6 +339,20 @@ export async function createInvitation(
     previewUrl:
       process.env.NODE_ENV === "development" ? actionUrl : undefined,
   };
+}
+
+
+function assertStandardCustomerSpace<T extends { kind?: string | null }>(
+  space: T | null | undefined,
+): asserts space is T & { kind: "STANDARD" } {
+  assertFound(space, "客户空间不存在");
+  if (space.kind !== "STANDARD") {
+    throw new DomainError(
+      "EXTERNAL_MANAGED_SPACE",
+      "外部接入托管空间不支持客户成员与邀请管理",
+      404,
+    );
+  }
 }
 
 function assertOwnerOrAdmin(

@@ -73,6 +73,28 @@ pnpm dev
 | 客户 Owner | `client@local.test` |
 | 客户成员 | `client2@local.test` |
 
+## 集成测试
+
+集成测试必须使用独立 `*_test` 库，禁止对主库 `service_platform` 执行。
+
+```bash
+createdb service_platform_test
+# 按 .env.example 创建 .env.integration（三个 URL 都指向 *_test）
+pnpm test:integration:prepare
+pnpm test:integration
+```
+
+不要为集成测试裸跑 `pnpm exec prisma migrate deploy` 或 `pnpm db:seed`（会读主 `.env`）。
+
+Playwright 只接受 `.env.e2e` / `.env.integration` 中的同一 `*_test` 库，并固定启动 `http://127.0.0.1:3000`：
+
+```bash
+cp .env.integration .env.e2e   # 如需独立文件
+pnpm test:e2e
+```
+
+破坏性 E2E 禁止设置 `PLAYWRIGHT_BASE_URL` 指向生产，也禁止复用未经验证的本地服务。
+
 ## 生产部署（VPS）
 
 - 域名：`https://support.achord.cn`
@@ -90,7 +112,8 @@ pnpm dev
 pnpm lint
 pnpm typecheck
 pnpm test
-pnpm exec vitest run --config vitest.integration.config.ts
+pnpm test:integration:prepare
+pnpm test:integration
 pnpm test:e2e
 pnpm build
 pnpm verify:runtime-deps

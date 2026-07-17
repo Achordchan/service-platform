@@ -122,7 +122,10 @@ export function ProjectTable({
         headerName: "客户",
         minWidth: 105,
         flex: 0.8,
-        renderCell: ({ row }) => row.customerSpace.name,
+        renderCell: ({ row }) =>
+          row.kind === "EXTERNAL_INTEGRATION"
+            ? "Sub2API 外部用户"
+            : row.customerSpace.name,
       },
       {
         field: "serviceType",
@@ -386,7 +389,9 @@ export function ProjectTable({
                   <Chip label="外部接入" size="small" variant="outlined" sx={{ alignSelf: "flex-start" }} />
                 ) : null}
                 <Typography variant="body2" color="text.secondary">
-                  {project.customerSpace.name} · {project.serviceType.name}
+                  {project.kind === "EXTERNAL_INTEGRATION"
+                    ? "Sub2API 外部用户"
+                    : project.customerSpace.name} · {project.serviceType.name}
                 </Typography>
                 {project.showProgress !== false ? (
                   <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
