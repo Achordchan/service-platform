@@ -10,6 +10,22 @@ export type Sub2ApiUser = {
   name: string;
 };
 
+export type Sub2ApiPinnedAddress = {
+  address: string;
+  family: number;
+};
+
+export function createSub2ApiRequestIdentity(
+  target: URL,
+  pinned: Sub2ApiPinnedAddress | null,
+) {
+  return {
+    hostname: pinned?.address ?? target.hostname,
+    servername: target.hostname,
+    hostHeader: target.host,
+  };
+}
+
 export function isPrivateHostname(hostname: string) {
   const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (

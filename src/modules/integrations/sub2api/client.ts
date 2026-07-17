@@ -9,9 +9,11 @@ import {
 } from "@/modules/integrations/sub2api/constants";
 import { DomainError } from "@/modules/projects/errors";
 import {
+  createSub2ApiRequestIdentity,
   isDevelopmentLocalHostname,
   isPrivateHostname,
   normalizeSub2ApiUser,
+  type Sub2ApiPinnedAddress,
 } from "@/modules/integrations/sub2api/client-utils";
 
 export {
@@ -21,9 +23,9 @@ export {
   type Sub2ApiUser,
 } from "@/modules/integrations/sub2api/client-utils";
 
-type PinnedAddress = { address: string; family: number };
-
-async function resolveSafeAddresses(hostname: string): Promise<PinnedAddress[]> {
+async function resolveSafeAddresses(
+  hostname: string,
+): Promise<Sub2ApiPinnedAddress[]> {
   const addresses = await lookup(hostname, { all: true, verbatim: true }).catch(() => {
     throw new DomainError("SUB2API_DNS_FAILED", "无法解析 Sub2API 地址", 502);
   });
@@ -95,7 +97,7 @@ async function fetchSub2ApiJson(
     );
   }
 
-  let pinned: PinnedAddress | null = null;
+  let pinned: Sub2ApiPinnedAddress | null = null;
   if (!developmentLocal) {
     const addresses = await resolveSafeAddresses(target.hostname);
     pinned =
@@ -109,7 +111,8 @@ async function fetchSub2ApiJson(
 
   const transport = target.protocol === "https:" ? https : http;
   const requestHeaders = headersToRecord(headers);
-  requestHeaders.Host = target.host;
+  const requestIdentity = createSub2ApiRequestIdentity(target, pinned);
+  requestHeaders.Host = requestIdentity.hostHeader;
 
   return await new Promise<unknown>((resolve, reject) => {
     let settled = false;
@@ -130,19 +133,12 @@ async function fetchSub2ApiJson(
     const request = transport.request(
       {
         protocol: target.protocol,
-        hostname: target.hostname,
+        hostname: requestIdentity.hostname,
         port: target.port || undefined,
         path: `${target.pathname}${target.search}`,
         method: "GET",
         headers: requestHeaders,
-        servername: target.hostname,
-        // Keep the TCP connect pinned to the validated address so DNS cannot
-        // rebind between the private-IP check and the actual connection.
-        lookup: pinned
-          ? (_hostname, _options, callback) => {
-              callback(null, pinned.address, pinned.family);
-            }
-          : undefined,
+        servername: requestIdentity.servername,
       },
       (response) => {
         if (

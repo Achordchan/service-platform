@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createSub2ApiRequestIdentity,
   isPrivateHostname,
   jwtExpiryDate,
   normalizeSub2ApiBaseUrl,
@@ -65,6 +66,19 @@ describe("Sub2API 连接器", () => {
 
 
 describe("Sub2API 网络边界", () => {
+  it("固定连接已校验 IP 并保留域名 SNI 与端口", () => {
+    expect(
+      createSub2ApiRequestIdentity(
+        new URL("https://sub.achord.cn:8443/api/v1/settings/public"),
+        { address: "95.169.2.68", family: 4 },
+      ),
+    ).toEqual({
+      hostname: "95.169.2.68",
+      servername: "sub.achord.cn",
+      hostHeader: "sub.achord.cn:8443",
+    });
+  });
+
   it("识别 0.0.0.0、IPv4-mapped 与链路本地地址", () => {
     expect(isPrivateHostname("0.0.0.0")).toBe(true);
     expect(isPrivateHostname("127.0.0.1")).toBe(true);
