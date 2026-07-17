@@ -90,8 +90,8 @@ manifest 字段：
 ## 5. 原生依赖
 
 - 原生依赖必须锁定精确版本，并在 Node.js 24、GitHub Ubuntu 和 VPS Linux 上验证。
-- Next/Turbopack 会在 `.next/node_modules` 生成哈希运行时别名，例如 `sharp-<hash>`；部署 rsync 只能排除根目录 `/node_modules/`，不得排除 `.next/node_modules/`。
-- 生产构建后必须执行 `pnpm verify:runtime-deps`，部署脚本会在重启服务前再次验证。
+- 原生依赖必须同时作为主应用直接生产依赖安装，运行时从应用根目录解析，禁止依赖 Turbopack 生成的 `sharp-<hash>` 别名。
+- 生产构建后必须执行 `pnpm verify:runtime-deps`；脚本会拒绝仍引用哈希别名的构建，工作流部署后还会在 VPS 再次加载验证。
 - 新增其他原生运行时依赖时，必须同步扩展 `scripts/verify-runtime-dependencies.mjs`。
 
 ## 6. 版本、发布与回滚

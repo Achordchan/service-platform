@@ -1,9 +1,16 @@
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
 import type {
   BinaryTransformInput,
   BinaryTransformResult,
 } from "@achord/platform-plugin-sdk";
-import sharp from "sharp";
 import type { ImageWebpConfig } from "./manifest";
+
+const requireFromApp = createRequire(resolve(process.cwd(), "package.json"));
+const sharpPackageName = ["sh", "arp"].join("");
+const sharp = requireFromApp(sharpPackageName) as (
+  typeof import("sharp")
+)["default"];
 
 sharp.concurrency(1);
 sharp.cache({ memory: 32, files: 0, items: 32 });

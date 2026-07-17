@@ -108,6 +108,8 @@ jobs:
                 find \"\${APP_DIR}/node_modules\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
               fi
               sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'
+              cd \"\${APP_DIR}\"
+              node scripts/verify-runtime-dependencies.mjs
             "
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \

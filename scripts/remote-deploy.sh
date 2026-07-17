@@ -17,8 +17,8 @@ if [[ ! -f "${RELEASE_STAGING}/prisma/schema.prisma" ]]; then
   echo "Release missing prisma/schema.prisma" >&2
   exit 1
 fi
-if ! compgen -G "${RELEASE_STAGING}/.next/node_modules/sharp-*" >/dev/null; then
-  echo "Release missing traced sharp runtime alias under .next/node_modules." >&2
+if [[ ! -f "${RELEASE_STAGING}/scripts/verify-runtime-dependencies.mjs" ]]; then
+  echo "Release missing runtime dependency verification script." >&2
   exit 1
 fi
 if [[ ! -f "${ENV_FILE}" ]]; then
@@ -93,7 +93,7 @@ if [[ "${NEEDS_INSTALL}" == true ]]; then
 else
   echo "[deploy] lockfile unchanged; reuse existing node_modules"
 fi
-echo "[deploy] verify traced runtime dependencies"
+echo "[deploy] verify runtime dependencies"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && node scripts/verify-runtime-dependencies.mjs"
 echo "[deploy] prisma generate + migrate"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && set -a && source ${ENV_FILE} && set +a && NODE_OPTIONS=--max-old-space-size=768 pnpm exec prisma generate && pnpm exec prisma migrate deploy"
@@ -129,4 +129,11 @@ wait_for_stable_service() {
 wait_for_stable_service service-platform
 wait_for_stable_service service-platform-worker
 systemctl is-active --quiet x-ui
+if ! cmp -s "${RELEASE_STAGING}/scripts/remote-deploy.sh" /opt/service-platform/deploy.sh; then
+  echo "[deploy] update canonical deploy script"
+  install -o root -g root -m 755 \
+    "${RELEASE_STAGING}/scripts/remote-deploy.sh" \
+    /opt/service-platform/deploy.sh.next
+  mv /opt/service-platform/deploy.sh.next /opt/service-platform/deploy.sh
+fi
 echo "[deploy] done"

@@ -22,6 +22,13 @@ let technicianContext: BrowserContext;
 let adminPage: Page;
 let customerPage: Page;
 let technicianPage: Page;
+let previousPluginState: {
+  enabled: boolean;
+  healthStatus: string;
+  lastCheckedAt: Date | null;
+  lastError: string | null;
+} | null = null;
+let pluginTestStartedAt: Date | null = null;
 
 async function login(page: Page, email: string) {
   await page.goto("/login");
@@ -73,6 +80,47 @@ test.describe("主流程冒烟", () => {
         [createdRequestIds],
       );
     }
+    if (previousPluginState) {
+      await ownerPool.query(
+        `
+          UPDATE "PluginInstallation"
+          SET
+            enabled = $2,
+            "healthStatus" = $3,
+            "lastCheckedAt" = $4,
+            "lastError" = $5,
+            "updatedAt" = NOW()
+          WHERE "key" = $1
+        `,
+        [
+          "image-webp",
+          previousPluginState.enabled,
+          previousPluginState.healthStatus,
+          previousPluginState.lastCheckedAt,
+          previousPluginState.lastError,
+        ],
+      );
+    }
+    if (pluginTestStartedAt) {
+      await ownerPool.query(
+        `
+          DELETE FROM "AuditLog"
+          WHERE "resourceType" = 'PluginInstallation'
+            AND "resourceId" = 'image-webp'
+            AND "createdAt" >= $1
+        `,
+        [pluginTestStartedAt],
+      );
+      await ownerPool.query(
+        `
+          DELETE FROM "EventRecord"
+          WHERE type = 'PLUGIN_RUN_UPDATED'
+            AND payload ->> 'pluginKey' = 'image-webp'
+            AND "createdAt" >= $1
+        `,
+        [pluginTestStartedAt],
+      );
+    }
     await ownerPool.end();
   });
 
@@ -103,9 +151,54 @@ test.describe("主流程冒烟", () => {
     await expect(
       adminPage.getByRole("heading", { name: "插件中心", exact: true }),
     ).toBeVisible();
-    await expect(
-      adminPage.getByRole("button", { name: "管理图片 WebP 优化" }),
-    ).toBeVisible();
+    const pluginCard = adminPage.getByRole("button", {
+      name: "管理图片 WebP 优化",
+    });
+    await expect(pluginCard).toBeVisible();
+    const pluginCardBox = await pluginCard.boundingBox();
+    expect(pluginCardBox?.width).toBeLessThanOrEqual(300);
+    expect(pluginCardBox?.height).toBeLessThanOrEqual(260);
+    const currentPluginState = await ownerPool.query<{
+      enabled: boolean;
+      healthStatus: string;
+      lastCheckedAt: Date | null;
+      lastError: string | null;
+    }>(
+      `
+        SELECT
+          enabled,
+          "healthStatus",
+          "lastCheckedAt",
+          "lastError"
+        FROM "PluginInstallation"
+        WHERE "key" = 'image-webp'
+      `,
+    );
+    previousPluginState = currentPluginState.rows[0] ?? null;
+    pluginTestStartedAt = new Date();
+    await ownerPool.query(
+      `
+        UPDATE "PluginInstallation"
+        SET
+          enabled = false,
+          "healthStatus" = 'UNKNOWN',
+          "lastCheckedAt" = NULL,
+          "lastError" = NULL,
+          "updatedAt" = NOW()
+        WHERE "key" = 'image-webp'
+      `,
+    );
+    await adminPage.reload();
+    await adminPage
+      .getByRole("button", { name: "管理图片 WebP 优化" })
+      .click();
+    await adminPage.getByRole("button", { name: "运行环境检测" }).click();
+    await expect(adminPage.getByText("运行环境检测通过")).toBeVisible();
+    await adminPage.getByRole("button", { name: "启用插件" }).click();
+    await expect(adminPage.getByText("插件已启用")).toBeVisible();
+    await adminPage.getByRole("button", { name: "停用插件" }).click();
+    await expect(adminPage.getByText("插件已停用")).toBeVisible();
+    await adminPage.getByRole("button", { name: "关闭" }).click();
     const pluginGuideButton = adminPage.getByRole("button", {
       name: "插件开发规范",
     });

@@ -1,33 +1,15 @@
 import { createRequire } from "node:module";
-import { readdir, realpath } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-const nextNodeModules = resolve(".next/node_modules");
-let entries;
-try {
-  entries = await readdir(nextNodeModules);
-} catch (error) {
-  throw new Error(
-    "Next.js 构建产物缺少 .next/node_modules，无法验证原生运行时依赖",
-    { cause: error },
-  );
-}
-const sharpAlias = entries.find((entry) => entry.startsWith("sharp-"));
-
-if (!sharpAlias) {
-  throw new Error("Next.js 构建产物缺少 sharp 运行时别名");
-}
-
-const aliasPath = resolve(nextNodeModules, sharpAlias);
-const targetPath = await realpath(aliasPath);
-const runtimePath = resolve(".next/server/chunks/[turbopack]_runtime.js");
-const requireFromServerChunk = createRequire(runtimePath);
+const requireFromApp = createRequire(resolve("package.json"));
+const sharpPackageName = ["sh", "arp"].join("");
 let sharp;
 try {
-  sharp = requireFromServerChunk(sharpAlias);
+  sharp = requireFromApp(sharpPackageName);
 } catch (error) {
   throw new Error(
-    `无法从 Next.js 服务端运行时加载 ${sharpAlias}，请检查部署是否保留 .next/node_modules`,
+    "无法从应用根依赖加载 sharp，请确认它是主应用的生产依赖",
     { cause: error },
   );
 }
@@ -36,6 +18,37 @@ if (!sharp?.versions?.sharp || !sharp?.versions?.webp) {
   throw new Error("sharp 已加载，但 WebP 运行能力不可用");
 }
 
-process.stdout.write(
-  `sharp runtime ok: alias=${sharpAlias}, target=${targetPath}, sharp=${sharp.versions.sharp}, webp=${sharp.versions.webp}\n`,
+const hashedReferences = await findHashedSharpReferences(
+  resolve(".next/server/chunks"),
 );
+if (hashedReferences.length > 0) {
+  throw new Error(
+    `Next.js 构建仍引用 Turbopack sharp 哈希别名：${hashedReferences.join(", ")}`,
+  );
+}
+
+process.stdout.write(
+  `sharp runtime ok: source=app-root, sharp=${sharp.versions.sharp}, webp=${sharp.versions.webp}\n`,
+);
+
+async function findHashedSharpReferences(directory) {
+  const matches = [];
+  await visit(directory);
+  return matches;
+
+  async function visit(current) {
+    const entries = await readdir(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) {
+        await visit(path);
+        continue;
+      }
+      if (!entry.isFile() || !entry.name.endsWith(".js")) continue;
+      const source = await readFile(path, "utf8");
+      if (/sharp-[a-f0-9]{8,}/i.test(source)) {
+        matches.push(path.replace(`${process.cwd()}/`, ""));
+      }
+    }
+  }
+}

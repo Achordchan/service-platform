@@ -228,10 +228,10 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
             display: "grid",
             gridTemplateColumns: {
               xs: "minmax(0, 1fr)",
-              sm: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(3, minmax(0, 1fr))",
+              sm: "repeat(auto-fill, minmax(240px, 280px))",
             },
-            gap: 2,
+            justifyContent: "start",
+            gap: 1.5,
           }}
         >
           {plugins.map((plugin) => (
@@ -255,7 +255,9 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         <DialogContent>
           {selected ? (
             <Stack spacing={2.25} sx={{ pt: 0.5 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
+              {error && error !== selected.lastError ? (
+                <Alert severity="error">{error}</Alert>
+              ) : null}
               {success ? <Alert severity="success">{success}</Alert> : null}
               <PluginStatusSummary plugin={selected} />
               <Stack
@@ -433,8 +435,7 @@ function PluginCard({
       variant="outlined"
       sx={{
         minWidth: 0,
-        minHeight: { xs: 270, sm: 0 },
-        aspectRatio: { sm: "1 / 1" },
+        minHeight: 220,
         borderColor: healthError ? "error.light" : "divider",
       }}
     >
@@ -443,8 +444,8 @@ function PluginCard({
         aria-label={`管理${plugin.name}`}
         sx={{ height: "100%", alignItems: "stretch" }}
       >
-        <CardContent sx={{ height: "100%", p: 2.25 }}>
-          <Stack spacing={2} sx={{ height: "100%", minWidth: 0 }}>
+        <CardContent sx={{ height: "100%", p: 2 }}>
+          <Stack spacing={1.5} sx={{ height: "100%", minWidth: 0 }}>
             <Stack
               direction="row"
               spacing={1}
@@ -452,8 +453,8 @@ function PluginCard({
             >
               <Box
                 sx={{
-                  width: 46,
-                  height: 46,
+                  width: 40,
+                  height: 40,
                   borderRadius: 2,
                   bgcolor: "action.hover",
                   color: "text.secondary",
@@ -490,7 +491,7 @@ function PluginCard({
                   mt: 0.75,
                   display: "-webkit-box",
                   WebkitBoxOrient: "vertical",
-                  WebkitLineClamp: 3,
+                  WebkitLineClamp: 2,
                   overflow: "hidden",
                 }}
               >

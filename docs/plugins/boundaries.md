@@ -60,6 +60,6 @@
 ## 生产依赖与部署
 
 - 原生依赖必须固定版本并在 Node.js 24、GitHub Ubuntu 和 VPS Linux 验证。
-- 发布包必须保留 `.next/node_modules` 的 Turbopack 运行时别名。
-- rsync 仅排除根目录 `/node_modules/`；部署前后执行 `pnpm verify:runtime-deps`。
+- 原生依赖必须由主应用直接安装并从应用根目录加载，不得依赖 Turbopack 哈希别名。
+- 部署前后执行 `pnpm verify:runtime-deps`，并拒绝仍引用 `sharp-<hash>` 的构建。
 - 任何依赖或运行逻辑变化都必须提升插件版本，并保留可回滚的主项目提交。
