@@ -180,6 +180,12 @@ export function planRequestActivity(
   };
 }
 
+export function planExternalRequestActivity(
+  input: Omit<RequestActivityInput, "actorId">,
+): ActivityDelivery {
+  return planRequestActivity({ ...input, actorId: "" });
+}
+
 function withoutActor(userIds: string[], actorId: string) {
   return userIds.filter((userId) => userId !== actorId);
 }

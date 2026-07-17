@@ -502,11 +502,6 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
               {session.contact.name} · Sub2API
             </Typography>
           </Box>
-          {!detail && list.project.writable ? (
-            <Button variant="contained" startIcon={<AddOutlinedIcon />} onClick={() => setCreateOpen(true)}>
-              新建工单
-            </Button>
-          ) : null}
         </Toolbar>
       </AppBar>
 
@@ -584,6 +579,18 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
           </Stack>
         ) : (
           <Stack spacing={1.5}>
+            {list.project.writable ? (
+              <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
+                <Button
+                  variant="contained"
+                  startIcon={<AddOutlinedIcon />}
+                  onClick={() => setCreateOpen(true)}
+                  sx={{ width: { xs: "100%", sm: "auto" } }}
+                >
+                  新建工单
+                </Button>
+              </Box>
+            ) : null}
             {!list.project.writable ? <Alert severity="info">当前项目只允许查看历史工单。</Alert> : null}
             {list.requests.map((request) => (
               <Paper

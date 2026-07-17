@@ -11,7 +11,9 @@ import type {
 import type { Actor } from "@/lib/actor";
 import type { ExternalActor } from "@/lib/external-actor";
 import { withActorDb } from "@/lib/actor";
+import { withSystemDb } from "@/lib/system-db";
 import {
+  planExternalRequestActivity,
   planProjectActivity,
   planRequestActivity,
   type ActivityAudience,
@@ -312,8 +314,7 @@ export async function dispatchRequestActivity(
   const audience = await loadProjectAudience(tx, input.projectId);
   const delivery = await persistActivityDelivery(
     tx,
-    planRequestActivity({
-      actorId: actor.id,
+    planExternalRequestActivity({
       audience,
       ...input,
     }),
@@ -359,7 +360,9 @@ export async function dispatchExternalRequestActivity(
     serviceRequestId: string;
   },
 ) {
-  const audience = await loadProjectAudience(tx, input.projectId);
+  const audience = await withSystemDb((systemTx) =>
+    loadProjectAudience(systemTx, input.projectId),
+  );
   const delivery = await persistActivityDelivery(
     tx,
     planRequestActivity({
@@ -603,27 +606,25 @@ async function loadProjectAudience(
   const project = await tx.project.findUniqueOrThrow({
     where: { id: projectId },
     select: {
-      customerSpace: {
-        select: {
-          memberships: {
-            select: { userId: true },
-          },
-        },
-      },
+      customerSpaceId: true,
       staff: {
         select: { userId: true, role: true },
       },
     },
   });
-  const platformAdmins = await tx.user.findMany({
-    where: { platformRole: "PLATFORM_ADMIN" },
-    select: { id: true },
-  });
+  const [memberships, platformAdmins] = await Promise.all([
+    tx.membership.findMany({
+      where: { customerSpaceId: project.customerSpaceId },
+      select: { userId: true },
+    }),
+    tx.user.findMany({
+      where: { platformRole: "PLATFORM_ADMIN" },
+      select: { id: true },
+    }),
+  ]);
 
   return {
-    customerUserIds: project.customerSpace.memberships.map(
-      (membership) => membership.userId,
-    ),
+    customerUserIds: memberships.map((membership) => membership.userId),
     projectStaffUserIds: project.staff.map((staff) => staff.userId),
     projectManagerUserIds: project.staff
       .filter((staff) => staff.role === "PROJECT_MANAGER")

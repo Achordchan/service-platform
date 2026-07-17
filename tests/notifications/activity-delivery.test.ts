@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  planExternalRequestActivity,
   planProjectActivity,
   planRequestActivity,
   type ActivityAudience,
@@ -83,6 +84,36 @@ describe("项目活动通知规划", () => {
 });
 
 describe("请求活动通知规划", () => {
+  it("外部联系人不会被当作正式用户事件接收人", () => {
+    const delivery = planExternalRequestActivity({
+      audience,
+      includeCustomers: false,
+      notifyProjectManagers: true,
+      notifyPlatformAdmins: true,
+      eventType: "REQUEST_CREATED",
+      eventPayload: {
+        actorType: "EXTERNAL_CONTACT",
+        actorId: "external-contact-1",
+        requestId: "request-1",
+      },
+      notificationType: "REQUEST_CREATED",
+      notificationTitle: "外部工单已创建",
+      notificationBody: "问题详情",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(delivery.events.map((item) => item.userId)).toEqual([
+      "manager-1",
+      "admin-1",
+    ]);
+    expect(delivery.notifications.map((item) => item.userId)).toEqual([
+      "manager-1",
+      "admin-1",
+    ]);
+  });
+
   it("请求创建不通知未分配技术人员，事件仅按相关用户定向", () => {
     const delivery = planRequestActivity({
       actorId: "customer-1",

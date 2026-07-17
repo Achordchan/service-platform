@@ -10,6 +10,7 @@ import {
   deleteProject,
 } from "@/modules/projects/project-service";
 import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
+import { createExternalRequest } from "@/modules/integrations/sub2api/external-request-service";
 
 const owner = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -33,6 +34,8 @@ const ids = {
 let previousPlugin: { enabled: boolean; healthStatus: string };
 let adminActor: Actor;
 let serviceTypeId = "";
+let categoryId = "";
+let externalCustomerSpaceId = "";
 let managedProjectId = "";
 let managedCustomerSpaceId = "";
 
@@ -84,6 +87,8 @@ beforeAll(async () => {
     isStaff: true,
   };
   serviceTypeId = row.serviceTypeId;
+  categoryId = row.categoryId;
+  externalCustomerSpaceId = row.customerSpaceId;
 
   await owner.query(
     `INSERT INTO "Project" (id, title, status, kind, "customerSpaceId", "serviceTypeId", "createdById", "updatedAt") VALUES ($1, 'Sub2API RLS 集成测试', 'ACTIVE', 'EXTERNAL_INTEGRATION', $2, $3, $4, NOW())`,
@@ -145,6 +150,38 @@ afterAll(async () => {
 });
 
 describe("Sub2API 外部联系人 RLS", () => {
+  it("创建工单时使用系统受众视角发送通知", async () => {
+    const created = await createExternalRequest(
+      {
+        id: ids.contactA,
+        bindingId: ids.binding,
+        externalUserId: "external-a",
+        name: "外部用户 A",
+        email: null,
+        username: null,
+        projectId: ids.project,
+        customerSpaceId: externalCustomerSpaceId,
+      },
+      {
+        title: "外部创建通知回归",
+        description: "<p>验证外部身份不会被客户空间 RLS 阻断。</p>",
+        categoryId,
+        priority: "NORMAL",
+      },
+      { customerMemberNotificationsEnabled: false },
+    );
+
+    try {
+      const events = await owner.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM "EventRecord" WHERE "serviceRequestId" = $1 AND type = 'REQUEST_CREATED'`,
+        [created.id],
+      );
+      expect(events.rows[0]?.count).not.toBe("0");
+    } finally {
+      await owner.query(`DELETE FROM "ServiceRequest" WHERE id = $1`, [created.id]);
+    }
+  });
+
   it("只能读取自己的工单和消息，不能读取项目动态", async () => {
     const result = await queryAsExternal<{
       ownRequests: string;
