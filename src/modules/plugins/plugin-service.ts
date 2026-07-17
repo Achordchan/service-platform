@@ -107,6 +107,13 @@ export async function updatePluginInstallation(
         },
         data: { status: "PAUSED" },
       });
+      await tx.externalEmbedSession.updateMany({
+        where: {
+          binding: { pluginKey },
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      });
     }
     await writeAuditLog(tx, actor, {
       action: "PLUGIN_INSTALLATION_UPDATED",
@@ -134,18 +141,15 @@ export async function runPluginHealthCheck(
 ) {
   assertAllowed(actor.isPlatformAdmin);
   await ensurePluginInstallations();
-  getRegisteredPlugin(pluginKey);
+  const registered = getRegisteredPlugin(pluginKey);
   const checkedAt = new Date();
   let healthStatus = "READY";
   let lastError: string | null = null;
   let detail: Record<string, string> = {};
   try {
-    if (pluginKey === IMAGE_WEBP_PLUGIN_KEY) {
-      const { getImageWebpRuntimeHealth } = await import(
-        "@achord/plugin-image-webp/runtime"
-      );
-      detail = getImageWebpRuntimeHealth();
-    }
+    detail = registered.healthCheck
+      ? await registered.healthCheck()
+      : { runtime: "ready" };
   } catch (error) {
     healthStatus = "ERROR";
     lastError =

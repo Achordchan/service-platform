@@ -16,6 +16,7 @@ import ReplyOutlinedIcon from "@mui/icons-material/ReplyOutlined";
 import VerifiedUserOutlinedIcon from "@mui/icons-material/VerifiedUserOutlined";
 import { RequestMessageAttachments } from "@/components/shared/request-chat-attachments";
 import type { ChatMessage } from "@/components/shared/request-chat-types";
+import type { ChatAttachment } from "@/components/shared/request-chat-types";
 import { RequestQuotedMessage } from "@/components/shared/request-reply-preview";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 
@@ -107,12 +108,16 @@ export function RequestChatThread({
   emptyText = "暂无沟通记录",
   onReply,
   counterpartTypingLabel,
+  attachmentUrl,
+  onAttachmentDownload,
 }: {
   messages: ChatMessage[];
   currentUserId: string;
   emptyText?: string;
   onReply?: (message: ChatMessage) => void;
   counterpartTypingLabel?: string | null;
+  attachmentUrl?: (file: ChatAttachment, inline: boolean) => string;
+  onAttachmentDownload?: (file: ChatAttachment) => void;
 }) {
   const sorted = useMemo(
     () =>
@@ -357,6 +362,9 @@ export function RequestChatThread({
                         }}
                       />
                     ) : null}
+                    {message.authorSource === "SUB2API" ? (
+                      <Chip label="Sub2API" size="small" variant="outlined" sx={{ height: 22 }} />
+                    ) : null}
                     {isInternal ? (
                       <Chip
                         icon={<LockOutlinedIcon />}
@@ -465,6 +473,8 @@ export function RequestChatThread({
                     <RequestMessageAttachments
                       files={message.attachments}
                       tone={tone}
+                      resolveUrl={attachmentUrl}
+                      onDownload={onAttachmentDownload}
                     />
                   </Box>
                 </Box>

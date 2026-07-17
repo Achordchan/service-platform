@@ -14,6 +14,8 @@ import {
   MenuItem,
   Stack,
   TextField,
+  ToggleButton,
+  ToggleButtonGroup,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
@@ -37,6 +39,7 @@ export function CreateProjectDialog({
   serviceTypes,
   managerCandidates,
   currentUserId,
+  externalIntegrationAvailable,
 }: {
   open: boolean;
   onClose: () => void;
@@ -44,6 +47,7 @@ export function CreateProjectDialog({
   serviceTypes: ProjectOption[];
   managerCandidates: StaffCandidate[];
   currentUserId: string;
+  externalIntegrationAvailable: boolean;
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -51,11 +55,15 @@ export function CreateProjectDialog({
   const [managerUserIds, setManagerUserIds] = useState<string[]>([
     currentUserId,
   ]);
+  const [kind, setKind] = useState<"STANDARD" | "EXTERNAL_INTEGRATION">(
+    "STANDARD",
+  );
 
   function handleClose() {
     if (submitting) return;
     setError("");
     setManagerUserIds([currentUserId]);
+    setKind("STANDARD");
     onClose();
   }
 
@@ -69,6 +77,7 @@ export function CreateProjectDialog({
         "/api/v1/projects",
         jsonRequest("POST", {
           title: String(formData.get("title") ?? "").trim(),
+          kind,
           description:
             String(formData.get("description") ?? "").trim() || null,
           status: String(formData.get("status") ?? "DRAFT"),
@@ -88,6 +97,7 @@ export function CreateProjectDialog({
       );
       setError("");
       setManagerUserIds([currentUserId]);
+      setKind("STANDARD");
       onClose();
       router.push(`/staff/projects/${project.id}`);
       router.refresh();
@@ -113,6 +123,27 @@ export function CreateProjectDialog({
         <DialogContent>
           <Stack spacing={2.25} sx={{ pt: 1 }}>
             {error ? <Alert severity="error">{error}</Alert> : null}
+            {externalIntegrationAvailable ? (
+              <ToggleButtonGroup
+                exclusive
+                fullWidth
+                value={kind}
+                onChange={(_, value) => {
+                  if (value) setKind(value);
+                }}
+                aria-label="项目类型"
+              >
+                <ToggleButton value="STANDARD">标准项目</ToggleButton>
+                <ToggleButton value="EXTERNAL_INTEGRATION">
+                  外部接入项目
+                </ToggleButton>
+              </ToggleButtonGroup>
+            ) : null}
+            {kind === "EXTERNAL_INTEGRATION" ? (
+              <Alert severity="info">
+                创建后在项目详情配置 Sub2API 地址并激活嵌入入口。
+              </Alert>
+            ) : null}
             <TextField name="title" label="项目名称" required fullWidth />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField

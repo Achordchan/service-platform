@@ -22,6 +22,15 @@ const userBriefSelect = {
   platformRole: true,
 } as const;
 
+const externalContactBriefSelect = {
+  id: true,
+  externalUserId: true,
+  email: true,
+  username: true,
+  displayName: true,
+  status: true,
+} as const;
+
 const requestSummarySelect = {
   id: true,
   number: true,
@@ -32,6 +41,7 @@ const requestSummarySelect = {
   projectId: true,
   categoryId: true,
   createdById: true,
+  createdByExternalContactId: true,
   assigneeId: true,
   resolvedAt: true,
   closedAt: true,
@@ -53,6 +63,9 @@ const requestSummarySelect = {
   },
   createdBy: {
     select: userBriefSelect,
+  },
+  createdByExternalContact: {
+    select: externalContactBriefSelect,
   },
 } as const;
 
@@ -222,11 +235,15 @@ export function getRequest(actor: Actor, requestId: string) {
             isSystem: true,
             isInitial: true,
             authorId: true,
+            externalAuthorId: true,
             replyToMessageId: true,
             createdAt: true,
             updatedAt: true,
             author: {
               select: userBriefSelect,
+            },
+            externalAuthor: {
+              select: externalContactBriefSelect,
             },
             attachments: {
               where: visibleContent,
@@ -246,11 +263,15 @@ export function getRequest(actor: Actor, requestId: string) {
                 visibility: true,
                 isSystem: true,
                 authorId: true,
+                externalAuthorId: true,
                 author: {
                   select: {
                     id: true,
                     name: true,
                   },
+                },
+                externalAuthor: {
+                  select: externalContactBriefSelect,
                 },
                 attachments: {
                   select: {

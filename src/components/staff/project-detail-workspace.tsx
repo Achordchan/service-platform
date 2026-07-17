@@ -27,6 +27,10 @@ import {
 } from "@/hooks/use-unread-notifications";
 import { RequestTable } from "@/components/staff/request-table";
 import { StaffStatus } from "@/components/staff/staff-status";
+import {
+  ExternalContactsPanel,
+  Sub2ApiIntegrationPanel,
+} from "@/components/staff/sub2api-integration-panel";
 import type {
   MilestoneStatus,
   ProjectDetail,
@@ -39,7 +43,9 @@ type ProjectTab =
   | "milestones"
   | "updates"
   | "requests"
-  | "files";
+  | "files"
+  | "integration"
+  | "contacts";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -183,6 +189,12 @@ export function ProjectDetailWorkspace({
             }
           />
           <Tab value="files" label={`文件资料 ${project.attachments.length}`} />
+          {project.kind === "EXTERNAL_INTEGRATION" ? (
+            <Tab value="integration" label="外部接入" />
+          ) : null}
+          {project.kind === "EXTERNAL_INTEGRATION" ? (
+            <Tab value="contacts" label="外部联系人" />
+          ) : null}
         </Tabs>
       </Paper>
 
@@ -378,6 +390,12 @@ export function ProjectDetailWorkspace({
           files={project.attachments}
           canUpload={canManage}
         />
+      ) : null}
+      {activeTab === "integration" && project.kind === "EXTERNAL_INTEGRATION" ? (
+        <Sub2ApiIntegrationPanel projectId={project.id} canEdit={canEditProject} />
+      ) : null}
+      {activeTab === "contacts" && project.kind === "EXTERNAL_INTEGRATION" ? (
+        <ExternalContactsPanel projectId={project.id} />
       ) : null}
     </Stack>
   );

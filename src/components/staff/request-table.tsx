@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   Box,
   Button,
+  Chip,
   InputAdornment,
   MenuItem,
   Paper,
@@ -92,7 +93,18 @@ export function RequestTable({
   const columns = useMemo<GridColDef<RequestListItem>[]>(
     () => [
       { field: "number", headerName: "请求编号", minWidth: 170 },
-      { field: "title", headerName: "标题", minWidth: 210, flex: 1.3 },
+      {
+        field: "title",
+        headerName: "标题",
+        minWidth: 230,
+        flex: 1.3,
+        renderCell: ({ row }) => (
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+            <Typography variant="body2" noWrap>{row.title}</Typography>
+            {row.source === "SUB2API" ? <Chip size="small" label="Sub2API" variant="outlined" /> : null}
+          </Stack>
+        ),
+      },
       {
         field: "customer",
         headerName: "客户",

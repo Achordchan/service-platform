@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { resolve as pathResolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 let worker: ChildProcess | null = null;
@@ -22,16 +23,28 @@ afterEach(async () => {
 
 describe("mail worker startup", () => {
   it("starts outside Next.js without triggering the server-only sentinel", async () => {
-    const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-    worker = spawn(command, ["worker"], {
-      cwd: process.cwd(),
-      detached: process.platform !== "win32",
-      env: {
-        ...process.env,
-        NODE_ENV: "test",
+    // Use local tsx + process.execPath so the test never re-enters the package
+    // manager (pnpm worker can reinstall deps and exceed the startup budget).
+    const tsxCli = pathResolve(process.cwd(), "node_modules/tsx/dist/cli.mjs");
+    worker = spawn(
+      process.execPath,
+      [
+        tsxCli,
+        "--tsconfig",
+        "tsconfig.worker.json",
+        "--env-file=.env",
+        "src/worker.ts",
+      ],
+      {
+        cwd: process.cwd(),
+        detached: process.platform !== "win32",
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+        },
+        stdio: ["ignore", "pipe", "pipe"],
       },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    );
 
     let output = "";
     worker.stdout?.on("data", (chunk) => {

@@ -249,6 +249,7 @@ async function projectReport(tx: Tx, resourceId: string) {
           milestones: true,
           attachments: true,
           staff: true,
+          pluginBindings: true,
         },
       },
     },
@@ -258,6 +259,21 @@ async function projectReport(tx: Tx, resourceId: string) {
     where: { projectId: resourceId },
     _sum: { size: true },
   });
+  const [externalContactCount, embedSessionCount, externalRequestCount] =
+    await Promise.all([
+      tx.externalContact.count({
+        where: { binding: { projectId: resourceId } },
+      }),
+      tx.externalEmbedSession.count({
+        where: { binding: { projectId: resourceId } },
+      }),
+      tx.serviceRequest.count({
+        where: {
+          projectId: resourceId,
+          createdByExternalContactId: { not: null },
+        },
+      }),
+    ]);
   const checks: DeletionCheck[] = [
     {
       key: "project-cascade",
@@ -289,6 +305,24 @@ async function projectReport(tx: Tx, resourceId: string) {
       project._count.attachments,
       `附件文件会被删除，共 ${formatBytes(fileSize._sum.size ?? 0)}`,
     ),
+    impactCheck(
+      "plugin-bindings",
+      "外部连接",
+      project._count.pluginBindings,
+      "项目连接配置会被删除，现有嵌入入口立即失效",
+    ),
+    impactCheck(
+      "external-contacts",
+      "外部联系人",
+      externalContactCount,
+      "外部联系人身份映射会被删除",
+    ),
+    impactCheck(
+      "embed-sessions",
+      "嵌入会话",
+      embedSessionCount,
+      "所有嵌入会话会立即失效",
+    ),
   ];
   return {
     resourceLabel: project.title,
@@ -300,6 +334,15 @@ async function projectReport(tx: Tx, resourceId: string) {
       impact("milestones", "里程碑", project._count.milestones, "DELETE"),
       impact("attachments", "附件", project._count.attachments, "DELETE"),
       impact("staff", "项目成员分配", project._count.staff, "DELETE"),
+      impact(
+        "plugin-bindings",
+        "外部连接",
+        project._count.pluginBindings,
+        "DELETE",
+      ),
+      impact("external-contacts", "外部联系人", externalContactCount, "DELETE"),
+      impact("embed-sessions", "嵌入会话", embedSessionCount, "DELETE"),
+      impact("external-requests", "外部工单", externalRequestCount, "DELETE"),
     ],
   };
 }

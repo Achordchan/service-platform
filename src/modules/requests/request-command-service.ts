@@ -3,6 +3,7 @@ import "server-only";
 import type { RequestStatus } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
+import { enqueueMail } from "@/lib/jobs";
 import {
   buildMessagePreview,
   hasMeaningfulHtml,
@@ -38,6 +39,71 @@ import {
   statusAfterCustomerReply,
   statusAfterStaffPublicReply,
 } from "@/modules/requests/request-state-machine";
+import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";
+
+type ExternalRequestMail = {
+  to: string;
+  templateKey: MailTemplateKey;
+  variables: Record<string, string>;
+  actionUrl: string;
+};
+
+async function enqueueExternalRequestMail(mail: ExternalRequestMail | null) {
+  if (!mail) return;
+  try {
+    await enqueueMail(mail);
+  } catch (error) {
+    console.error("EXTERNAL_REQUEST_MAIL_QUEUE_FAILED", {
+      templateKey: mail.templateKey,
+      error: error instanceof Error ? error.message : "unknown",
+    });
+  }
+}
+
+
+function canSendExternalContactMail(
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+) {
+  const contact = request.createdByExternalContact;
+  const binding = contact?.binding;
+  const connection = binding?.sub2ApiConnection;
+  return Boolean(
+    contact?.email &&
+      contact.status === "ACTIVE" &&
+      binding?.status === "ACTIVE" &&
+      binding.plugin.enabled &&
+      binding.plugin.healthStatus === "READY" &&
+      connection?.emailNotificationsEnabled,
+  );
+}
+
+function statusMail(
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+  status: RequestStatus,
+): ExternalRequestMail | null {
+  const contact = request.createdByExternalContact;
+  const connection = contact?.binding.sub2ApiConnection;
+  if (!canSendExternalContactMail(request) || !connection) return null;
+  const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
+    WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
+    RESOLVED: "EXTERNAL_REQUEST_RESOLVED",
+    CLOSED: "EXTERNAL_REQUEST_CLOSED",
+  };
+  const templateKey = statusTemplates[status];
+  if (!templateKey) return null;
+  if (!contact?.email) return null;
+  return {
+    to: contact.email,
+    templateKey,
+    actionUrl: connection.baseUrl,
+    variables: {
+      recipientName: contact.displayName,
+      requestNumber: request.number,
+      requestTitle: request.title,
+      projectName: request.project.title,
+    },
+  };
+}
 
 function accessContext(
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
@@ -74,6 +140,16 @@ function workerIdsFromRequest(
         ...extra,
       ].filter((value): value is string => Boolean(value)),
     ),
+  );
+}
+
+function includeCustomerMembers(
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+) {
+  if (!request.createdByExternalContact) return true;
+  return (
+    request.createdByExternalContact.binding.sub2ApiConnection
+      ?.customerMemberNotificationsEnabled === true
   );
 }
 
@@ -237,7 +313,8 @@ async function claimRequestOnFirstPublicReply(
     notificationType: "REQUEST_ASSIGNED",
     notificationTitle: `${actor.name} 已接手请求 ${current.number}`,
     notificationBody: current.title,
-    includeCustomers: true,
+    includeCustomers: includeCustomerMembers(current),
+    includeExternalContact: Boolean(current.createdByExternalContactId),
     relevantWorkerUserIds: [actor.id],
     notifyProjectManagers: false,
     notifyPlatformAdmins: false,
@@ -405,7 +482,8 @@ export function assignRequest(
       notificationType: "REQUEST_ASSIGNED",
       notificationTitle: `请求 ${request.number} 处理人已更新`,
       notificationBody: assignText,
-      includeCustomers: true,
+      includeCustomers: includeCustomerMembers(request),
+      includeExternalContact: Boolean(request.createdByExternalContactId),
       relevantWorkerUserIds: workerIdsFromRequest(request, assigneeIds),
       notifyProjectManagers: false,
       notifyPlatformAdmins: false,
@@ -418,12 +496,12 @@ export function assignRequest(
   });
 }
 
-export function changeRequestStatus(
+export async function changeRequestStatus(
   actor: Actor,
   requestId: string,
   targetStatus: RequestStatus,
 ) {
-  return withActorDb(actor, async (tx) => {
+  const result = await withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     if (!canWorkOnRequest(actor, accessContext(request))) {
@@ -472,16 +550,18 @@ export function changeRequestStatus(
       targetStatus,
       true,
     );
-    return updated;
+    return { updated, externalMail: statusMail(request, targetStatus) };
   });
+  await enqueueExternalRequestMail(result.externalMail);
+  return result.updated;
 }
 
-export function addRequestMessage(
+export async function addRequestMessage(
   actor: Actor,
   requestId: string,
   input: CreateRequestMessageInput,
 ) {
-  return withActorDb(actor, async (tx) => {
+  const result = await withActorDb(actor, async (tx) => {
     let request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     if (request.status === "CLOSED") {
@@ -569,7 +649,9 @@ export function addRequestMessage(
           ? `${actor.name} 添加了内部备注`
           : `${actor.name} 回复了请求 ${request.number}`,
       notificationBody: buildMessagePreview(sanitizedBody),
-      includeCustomers: !isInternal,
+      includeCustomers: !isInternal && includeCustomerMembers(request),
+      includeExternalContact:
+        !isInternal && Boolean(request.createdByExternalContactId),
       relevantWorkerUserIds: assignedWorkers,
       notifyProjectManagers: isInternal || requestIsUnassigned,
       notifyPlatformAdmins: !isInternal && requestIsUnassigned,
@@ -612,8 +694,32 @@ export function addRequestMessage(
       );
     }
 
-    return { message, requestStatus: nextStatus };
+    const contact = request.createdByExternalContact;
+    const connection = contact?.binding.sub2ApiConnection;
+    const externalMail =
+      !isCustomer &&
+      input.visibility === "CUSTOMER_VISIBLE" &&
+      canSendExternalContactMail(request) &&
+      contact &&
+      connection
+        ? {
+            to: contact.email!,
+            templateKey: "EXTERNAL_REQUEST_PUBLIC_REPLY" as const,
+            actionUrl: connection.baseUrl,
+            variables: {
+              recipientName: contact.displayName,
+              requestNumber: request.number,
+              requestTitle: request.title,
+              senderName: actor.name,
+              messagePreview: buildMessagePreview(sanitizedBody),
+              projectName: request.project.title,
+            },
+          }
+        : null;
+    return { message, requestStatus: nextStatus, externalMail };
   });
+  await enqueueExternalRequestMail(result.externalMail);
+  return { message: result.message, requestStatus: result.requestStatus };
 }
 
 export function confirmRequestClosed(actor: Actor, requestId: string) {
@@ -704,7 +810,8 @@ async function dispatchStatusActivity(
     notificationType: "REQUEST_STATUS",
     notificationTitle: `${actor.name} 更新了请求 ${request.number}`,
     notificationBody: `${request.title} · ${requestStatusLabel(status)}`,
-    includeCustomers: true,
+    includeCustomers: includeCustomerMembers(request),
+    includeExternalContact: Boolean(request.createdByExternalContactId),
     relevantWorkerUserIds: workerIdsFromRequest(request),
     notifyProjectManagers: false,
     notifyPlatformAdmins: false,

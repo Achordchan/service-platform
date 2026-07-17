@@ -68,7 +68,81 @@ stop_service() {
   return 1
 }
 
+ensure_sub2api_nginx_log_hardening() {
+  local source_dir="$1"
+  if [[ ! -d /etc/nginx ]]; then
+    return 0
+  fi
+  if [[ ! -f "${source_dir}/scripts/nginx-sub2api-embed-log-format.conf" || ! -f "${source_dir}/scripts/nginx-sub2api-embed-location.conf" ]]; then
+    echo "[deploy] ERROR: release missing Sub2API Nginx log hardening snippets" >&2
+    return 1
+  fi
+  echo "[deploy] ensure Sub2API embed Nginx log hardening is live (before service stop)"
+  install -d -m 755 /etc/nginx/snippets
+  install -m 644 "${source_dir}/scripts/nginx-sub2api-embed-log-format.conf" /etc/nginx/snippets/sub2api-embed-log-format.conf
+  install -m 644 "${source_dir}/scripts/nginx-sub2api-embed-location.conf" /etc/nginx/snippets/sub2api-embed-location.conf
+
+  local LIVE_FORMAT_MATCH=0
+  local LIVE_LOCATION_MATCH=0
+  local LIVE_NO_ARGS_MATCH=0
+  if grep -Rqs --include='*.conf' "sub2api-embed-log-format.conf" /etc/nginx/nginx.conf /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
+    LIVE_FORMAT_MATCH=1
+  fi
+  if grep -Rqs --include='*.conf' "sub2api-embed-location.conf" /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
+    LIVE_LOCATION_MATCH=1
+  fi
+  if [[ "${LIVE_LOCATION_MATCH}" == "1" ]]; then
+    LIVE_NO_ARGS_MATCH=1
+  elif grep -RIn --include='*.conf' -A 30 'location ^~ /embed/sub2api/' /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null | grep -q 'main_no_args'; then
+    LIVE_NO_ARGS_MATCH=1
+    LIVE_LOCATION_MATCH=1
+  fi
+  if [[ "${LIVE_FORMAT_MATCH}" != "1" || "${LIVE_LOCATION_MATCH}" != "1" || "${LIVE_NO_ARGS_MATCH}" != "1" ]]; then
+    echo "[deploy] ERROR: Sub2API embed Nginx JWT log protection is not live." >&2
+    echo "[deploy] include snippets/sub2api-embed-log-format.conf in http {}, and snippets/sub2api-embed-location.conf in the HTTPS server {}." >&2
+    echo "[deploy] the /embed/sub2api/ location must use access_log ... main_no_args." >&2
+    if [[ "${LIVE_FORMAT_MATCH}" != "1" ]]; then
+      echo "[deploy] missing live include for log_format snippet." >&2
+    fi
+    if [[ "${LIVE_LOCATION_MATCH}" != "1" ]]; then
+      echo "[deploy] missing live include/location for /embed/sub2api/." >&2
+    fi
+    if [[ "${LIVE_NO_ARGS_MATCH}" != "1" ]]; then
+      echo "[deploy] missing verified main_no_args access_log for /embed/sub2api/." >&2
+    fi
+    return 1
+  fi
+  if ! command -v nginx >/dev/null 2>&1; then
+    echo "[deploy] ERROR: nginx binary not found after installing Sub2API snippets" >&2
+    return 1
+  fi
+  if ! nginx -t; then
+    echo "[deploy] ERROR: nginx -t failed after Sub2API embed log hardening" >&2
+    return 1
+  fi
+  systemctl reload nginx
+  echo "[deploy] nginx config valid; reload requested"
+}
+
+# Fail closed on JWT logging before we ever take the app offline.
+ensure_sub2api_nginx_log_hardening "${RELEASE_STAGING}"
+
+DEPLOY_SERVICES_STOPPED=0
+restore_services_if_needed() {
+  local code=$?
+  if [[ "${DEPLOY_SERVICES_STOPPED}" == "1" ]]; then
+    echo "[deploy] restoring services after deploy failure (exit=${code})" >&2
+    systemctl restart service-platform || true
+    systemctl restart service-platform-worker || true
+  fi
+  return "${code}"
+}
+trap restore_services_if_needed EXIT
+
 echo "[deploy] stop app processes before swap"
+# Arm restore before the first stop. If either unit fails mid-stop, EXIT trap
+# must still bring both services back up.
+DEPLOY_SERVICES_STOPPED=1
 stop_service service-platform
 stop_service service-platform-worker
 echo "[deploy] sync release -> ${APP_DIR}"
@@ -97,9 +171,12 @@ echo "[deploy] verify runtime dependencies"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && node scripts/verify-runtime-dependencies.mjs"
 echo "[deploy] prisma generate + migrate"
 sudo -u ${APP_USER} -H bash -lc "cd ${APP_DIR} && set -a && source ${ENV_FILE} && set +a && NODE_OPTIONS=--max-old-space-size=768 pnpm exec prisma generate && pnpm exec prisma migrate deploy"
+
+# Nginx JWT protection was already verified before stopping services.
 echo "[deploy] restart services"
 systemctl restart service-platform
 systemctl restart service-platform-worker
+DEPLOY_SERVICES_STOPPED=0
 
 wait_for_stable_service() {
   local unit="$1"

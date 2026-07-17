@@ -55,12 +55,16 @@ function attachmentColors(tone: AttachmentTone) {
 function MessageImage({
   file,
   tone,
+  resolveUrl,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
+  resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
 }) {
   const colors = attachmentColors(tone);
-  const inlineUrl = `/api/v1/attachments/${file.id}?disposition=inline`;
+  const inlineUrl = resolveUrl
+    ? resolveUrl(file, true)
+    : `/api/v1/attachments/${file.id}?disposition=inline`;
   return (
     <Box
       component="a"
@@ -118,9 +122,13 @@ function MessageImage({
 function MessageFile({
   file,
   tone,
+  resolveUrl,
+  onDownload,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
+  resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
+  onDownload?: (file: ChatAttachment) => void;
 }) {
   const colors = attachmentColors(tone);
   return (
@@ -153,8 +161,14 @@ function MessageFile({
         </Typography>
       </Box>
       <IconButton
-        component="a"
-        href={`/api/v1/attachments/${file.id}`}
+        {...(onDownload
+          ? { onClick: () => onDownload(file) }
+          : {
+              component: "a" as const,
+              href: resolveUrl
+                ? resolveUrl(file, false)
+                : `/api/v1/attachments/${file.id}`,
+            })}
         aria-label={`下载 ${file.originalName}`}
         size="small"
         sx={{ color: colors.secondary }}
@@ -168,9 +182,13 @@ function MessageFile({
 export function RequestMessageAttachments({
   files,
   tone,
+  resolveUrl,
+  onDownload,
 }: {
   files: ChatAttachment[];
   tone: AttachmentTone;
+  resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
+  onDownload?: (file: ChatAttachment) => void;
 }) {
   if (files.length === 0) return null;
   const images = files.filter((file) => isImageMimeType(file.mimeType));
@@ -190,12 +208,18 @@ export function RequestMessageAttachments({
           }}
         >
           {images.map((file) => (
-            <MessageImage key={file.id} file={file} tone={tone} />
+            <MessageImage key={file.id} file={file} tone={tone} resolveUrl={resolveUrl} />
           ))}
         </Box>
       ) : null}
       {documents.map((file) => (
-        <MessageFile key={file.id} file={file} tone={tone} />
+        <MessageFile
+          key={file.id}
+          file={file}
+          tone={tone}
+          resolveUrl={resolveUrl}
+          onDownload={onDownload}
+        />
       ))}
     </Stack>
   );

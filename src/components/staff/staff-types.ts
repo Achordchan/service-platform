@@ -10,6 +10,8 @@ export type ProjectStatus =
   | "COMPLETED"
   | "EXPIRED";
 
+export type ProjectKind = "STANDARD" | "EXTERNAL_INTEGRATION";
+
 export type MilestoneStatus =
   | "NOT_STARTED"
   | "IN_PROGRESS"
@@ -38,6 +40,7 @@ export type ProjectListItem = {
   title: string;
   description?: string | null;
   status: ProjectStatus;
+  kind: ProjectKind;
   currentStage?: string | null;
   showMilestones?: boolean;
   showProgress?: boolean;
@@ -120,6 +123,7 @@ export type RequestListItem = {
   assigneeId?: string | null;
   assigneeName?: string | null;
   createdByName: string;
+  source?: "ACHORD" | "SUB2API";
 };
 
 export type RequestAttachment = {
@@ -140,6 +144,12 @@ export type RequestAssignee = {
 };
 
 export type RequestDetail = RequestListItem & {
+  externalContact?: {
+    externalUserId: string;
+    email: string | null;
+    username: string | null;
+    status: "ACTIVE" | "BLOCKED";
+  } | null;
   assignees?: RequestAssignee[];
   attachments: RequestAttachment[];
   messages: Array<{
@@ -152,6 +162,7 @@ export type RequestDetail = RequestListItem & {
     authorName: string;
     authorImage?: string | null;
     authorPlatformRole?: StaffRole | "CUSTOMER" | null;
+    authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
     createdAt: string;
     replyToMessageId?: string | null;
     replyTo?: {
@@ -160,6 +171,7 @@ export type RequestDetail = RequestListItem & {
       visibility: ContentVisibility;
       authorId: string;
       authorName: string;
+      authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
       attachments: Array<{
         id: string;
         originalName: string;

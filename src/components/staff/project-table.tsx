@@ -13,6 +13,7 @@ import {
   Stack,
   TextField,
   Typography,
+  Chip,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
@@ -55,6 +56,7 @@ export function ProjectTable({
   serviceTypes = [],
   managerCandidates = [],
   currentUserId = "",
+  externalIntegrationAvailable = false,
 }: {
   projects: ProjectListItem[];
   canCreate: boolean;
@@ -62,11 +64,13 @@ export function ProjectTable({
   serviceTypes?: ProjectOption[];
   managerCandidates?: StaffCandidate[];
   currentUserId?: string;
+  externalIntegrationAvailable?: boolean;
 }) {
   const router = useRouter();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("ALL");
   const [serviceTypeId, setServiceTypeId] = useState("ALL");
+  const [kind, setKind] = useState("ALL");
   const [createOpen, setCreateOpen] = useState(false);
   const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] =
@@ -90,11 +94,12 @@ export function ProjectTable({
         (status === "ALL" || project.status === status) &&
         (serviceTypeId === "ALL" ||
           project.serviceType.id === serviceTypeId) &&
+        (kind === "ALL" || project.kind === kind) &&
         (!normalized ||
           project.title.toLowerCase().includes(normalized) ||
           project.customerSpace.name.toLowerCase().includes(normalized)),
     );
-  }, [keyword, projects, serviceTypeId, status]);
+  }, [keyword, kind, projects, serviceTypeId, status]);
 
   const columns = useMemo<GridColDef<ProjectListItem>[]>(
     () => [
@@ -103,6 +108,14 @@ export function ProjectTable({
         headerName: "项目",
         minWidth: 170,
         flex: 1.3,
+        renderCell: ({ row }) => (
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+            <Typography variant="body2" noWrap>{row.title}</Typography>
+            {row.kind === "EXTERNAL_INTEGRATION" ? (
+              <Chip label="外部接入" size="small" variant="outlined" />
+            ) : null}
+          </Stack>
+        ),
       },
       {
         field: "customer",
@@ -213,6 +226,7 @@ export function ProjectTable({
     setKeyword("");
     setStatus("ALL");
     setServiceTypeId("ALL");
+    setKind("ALL");
   }
 
   return (
@@ -256,6 +270,17 @@ export function ProjectTable({
                 {option.label}
               </MenuItem>
             ))}
+          </TextField>
+          <TextField
+            select
+            label="项目类型"
+            value={kind}
+            onChange={(event) => setKind(event.target.value)}
+            sx={{ minWidth: { lg: 140 }, width: { xs: "100%", lg: 140 } }}
+          >
+            <MenuItem value="ALL">全部类型</MenuItem>
+            <MenuItem value="STANDARD">标准项目</MenuItem>
+            <MenuItem value="EXTERNAL_INTEGRATION">外部接入</MenuItem>
           </TextField>
           <TextField
             select
@@ -357,6 +382,9 @@ export function ProjectTable({
                   <Typography sx={{ fontWeight: 650 }}>{project.title}</Typography>
                   <StaffStatus value={project.status} compact />
                 </Stack>
+                {project.kind === "EXTERNAL_INTEGRATION" ? (
+                  <Chip label="外部接入" size="small" variant="outlined" sx={{ alignSelf: "flex-start" }} />
+                ) : null}
                 <Typography variant="body2" color="text.secondary">
                   {project.customerSpace.name} · {project.serviceType.name}
                 </Typography>
@@ -409,6 +437,7 @@ export function ProjectTable({
         serviceTypes={serviceTypes}
         managerCandidates={managerCandidates}
         currentUserId={currentUserId}
+        externalIntegrationAvailable={externalIntegrationAvailable}
       />
       <DeletionPreflightDialog
         target={

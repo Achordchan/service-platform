@@ -1,0 +1,14 @@
+{
+  "name": "@achord/plugin-sub2api-connector",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/manifest.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "dependencies": {
+    "@achord/platform-plugin-sdk": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

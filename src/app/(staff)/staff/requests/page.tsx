@@ -26,7 +26,11 @@ export default async function StaffRequestsPage() {
         return [];
       }
       return projectRequests
-        .filter((request) => request.category && request.createdBy)
+        .filter(
+          (request) =>
+            request.category &&
+            (request.createdBy || request.createdByExternalContact),
+        )
         .map((request) => ({
           id: request.id,
           number: request.number,
@@ -46,7 +50,13 @@ export default async function StaffRequestsPage() {
             (request.assignees.length
               ? request.assignees.map((item) => item.user.name).join("、")
               : request.assignee?.name) ?? null,
-          createdByName: request.createdBy.name,
+          createdByName:
+            request.createdBy?.name ??
+            request.createdByExternalContact?.displayName ??
+            "原提交人已不可用",
+          source: request.createdByExternalContact
+            ? ("SUB2API" as const)
+            : ("ACHORD" as const),
         }));
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

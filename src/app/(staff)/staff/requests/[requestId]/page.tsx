@@ -57,7 +57,21 @@ export default async function StaffRequestDetailPage({
       image: item.user.image,
       platformRole: item.user.platformRole,
     })),
-    createdByName: request.createdBy.name,
+    createdByName:
+      request.createdBy?.name ??
+      request.createdByExternalContact?.displayName ??
+      "原提交人已不可用",
+    source: request.createdByExternalContact
+      ? ("SUB2API" as const)
+      : ("ACHORD" as const),
+    externalContact: request.createdByExternalContact
+      ? {
+          externalUserId: request.createdByExternalContact.externalUserId,
+          email: request.createdByExternalContact.email,
+          username: request.createdByExternalContact.username,
+          status: request.createdByExternalContact.status,
+        }
+      : null,
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
@@ -72,10 +86,14 @@ export default async function StaffRequestDetailPage({
       isSystem: message.isSystem,
       isInitial: message.isInitial,
       visibility: message.visibility,
-      authorId: message.authorId,
-      authorName: message.author.name,
-      authorImage: message.author.image,
-      authorPlatformRole: message.author.platformRole,
+      authorId: message.authorId ?? message.externalAuthorId ?? "unavailable",
+      authorName:
+        message.author?.name ??
+        message.externalAuthor?.displayName ??
+        "原作者已不可用",
+      authorImage: message.author?.image ?? null,
+      authorPlatformRole: message.author?.platformRole ?? null,
+      authorSource: message.externalAuthor ? "SUB2API" : message.author ? "ACHORD" : "SYSTEM",
       createdAt: message.createdAt.toISOString(),
       replyToMessageId: message.replyToMessageId,
       replyTo: message.replyTo
@@ -83,8 +101,19 @@ export default async function StaffRequestDetailPage({
             id: message.replyTo.id,
             body: message.replyTo.body,
             visibility: message.replyTo.visibility,
-            authorId: message.replyTo.authorId,
-            authorName: message.replyTo.author.name,
+            authorId:
+              message.replyTo.authorId ??
+              message.replyTo.externalAuthorId ??
+              "unavailable",
+            authorName:
+              message.replyTo.author?.name ??
+              message.replyTo.externalAuthor?.displayName ??
+              "原作者已不可用",
+            authorSource: message.replyTo.externalAuthor
+              ? "SUB2API"
+              : message.replyTo.author
+                ? "ACHORD"
+                : "SYSTEM",
             attachments: message.replyTo.attachments,
           }
         : null,

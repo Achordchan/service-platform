@@ -26,6 +26,7 @@ export type ChatMessage = {
   authorName: string;
   authorImage?: string | null;
   authorPlatformRole?: string | null;
+  authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
   createdAt: string;
   visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
   isSystem?: boolean;

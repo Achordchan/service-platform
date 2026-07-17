@@ -2,7 +2,12 @@ export type PluginCapability =
   | "attachment:read"
   | "attachment:transform"
   | "jobs:enqueue"
-  | "events:publish";
+  | "events:publish"
+  | "project:bind"
+  | "external-identity:verify"
+  | "network:sub2api"
+  | "embed-session:issue"
+  | "mail:enqueue";
 
 export type PluginSettingField =
   | {

@@ -33,7 +33,10 @@ export default async function CustomerRequestDetailPage({
     category: request.category,
     assigneeName: request.assignee?.name ?? null,
     assigneeNames: request.assignees.map((item) => item.user.name),
-    createdByName: request.createdBy.name,
+    createdByName:
+      request.createdBy?.name ??
+      request.createdByExternalContact?.displayName ??
+      "原提交人已不可用",
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
@@ -46,18 +49,33 @@ export default async function CustomerRequestDetailPage({
       body: message.body,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
-      authorId: message.authorId,
-      authorName: message.author.name,
-      authorImage: message.author.image,
-      authorPlatformRole: message.author.platformRole,
+      authorId: message.authorId ?? message.externalAuthorId ?? "unavailable",
+      authorName:
+        message.author?.name ??
+        message.externalAuthor?.displayName ??
+        "原作者已不可用",
+      authorImage: message.author?.image ?? null,
+      authorPlatformRole: message.author?.platformRole ?? null,
+      authorSource: message.externalAuthor ? "SUB2API" : message.author ? "ACHORD" : "SYSTEM",
       createdAt: message.createdAt.toISOString(),
       replyToMessageId: message.replyToMessageId,
       replyTo: message.replyTo
         ? {
             id: message.replyTo.id,
             body: message.replyTo.body,
-            authorId: message.replyTo.authorId,
-            authorName: message.replyTo.author.name,
+            authorId:
+              message.replyTo.authorId ??
+              message.replyTo.externalAuthorId ??
+              "unavailable",
+            authorName:
+              message.replyTo.author?.name ??
+              message.replyTo.externalAuthor?.displayName ??
+              "原作者已不可用",
+            authorSource: message.replyTo.externalAuthor
+              ? "SUB2API"
+              : message.replyTo.author
+                ? "ACHORD"
+                : "SYSTEM",
             attachments: message.replyTo.attachments,
           }
         : null,

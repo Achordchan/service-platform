@@ -52,6 +52,7 @@ export default async function StaffProjectDetailPage({
     title: project.title,
     description: project.description,
     status: project.status,
+    kind: project.kind,
     currentStage: project.currentStage,
     showMilestones: project.showMilestones,
     showProgress: project.showProgress,
@@ -129,7 +130,13 @@ export default async function StaffProjectDetailPage({
       (request.assignees.length
         ? request.assignees.map((item) => item.user.name).join("、")
         : request.assignee?.name) ?? null,
-    createdByName: request.createdBy.name,
+    createdByName:
+      request.createdBy?.name ??
+      request.createdByExternalContact?.displayName ??
+      "原提交人已不可用",
+    source: request.createdByExternalContact
+      ? ("SUB2API" as const)
+      : ("ACHORD" as const),
   }));
 
   const canManage =

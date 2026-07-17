@@ -182,6 +182,10 @@ export function updateRequestPresence(
         await publishTransientEvent(tx, {
           type: "REQUEST_TYPING_CHANGED",
           userIds: counterpartUserIds,
+          externalContactIds:
+            actor.isStaff && request.createdByExternalContactId
+              ? [request.createdByExternalContactId]
+              : [],
           payload: {
             requestId: request.id,
             serviceRequestId: request.id,

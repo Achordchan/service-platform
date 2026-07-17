@@ -9,6 +9,7 @@ import type {
   RequestStatus,
 } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import type { ExternalActor } from "@/lib/external-actor";
 import { withActorDb } from "@/lib/actor";
 import {
   planProjectActivity,
@@ -28,7 +29,8 @@ type EventInput = {
 
 type TransientEventInput = {
   type: "REQUEST_TYPING_CHANGED";
-  userIds: string[];
+  userIds?: string[];
+  externalContactIds?: string[];
   payload: Prisma.InputJsonObject;
 };
 
@@ -51,13 +53,23 @@ export async function publishTransientEvent(
   tx: Prisma.TransactionClient,
   input: TransientEventInput,
 ) {
-  const userIds = uniqueStrings(input.userIds);
-  if (userIds.length === 0) return null;
+  const userIds = uniqueStrings(input.userIds ?? []);
+  const externalContactIds = uniqueStrings(input.externalContactIds ?? []);
+  if (userIds.length === 0 && externalContactIds.length === 0) return null;
 
-  for (let index = 0; index < userIds.length; index += 100) {
+  const chunkCount = Math.max(
+    1,
+    Math.ceil(userIds.length / 100),
+    Math.ceil(externalContactIds.length / 100),
+  );
+  for (let index = 0; index < chunkCount; index += 1) {
     const envelope = JSON.stringify({
       type: input.type,
-      userIds: userIds.slice(index, index + 100),
+      userIds: userIds.slice(index * 100, index * 100 + 100),
+      externalContactIds: externalContactIds.slice(
+        index * 100,
+        index * 100 + 100,
+      ),
       payload: input.payload,
     });
     if (Buffer.byteLength(envelope, "utf8") > 7_000) {
@@ -67,7 +79,7 @@ export async function publishTransientEvent(
       SELECT pg_notify('service_platform_transient_events', ${envelope})
     `;
   }
-  return { ...input, userIds };
+  return { ...input, userIds, externalContactIds };
 }
 
 export function publishProjectChange(
@@ -291,13 +303,14 @@ export async function dispatchRequestActivity(
     notifyProjectManagers: boolean;
     notifyPlatformAdmins: boolean;
     createNotifications?: boolean;
+    includeExternalContact?: boolean;
     customerSpaceId: string;
     projectId: string;
     serviceRequestId: string;
   },
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
-  return persistActivityDelivery(
+  const delivery = await persistActivityDelivery(
     tx,
     planRequestActivity({
       actorId: actor.id,
@@ -305,6 +318,67 @@ export async function dispatchRequestActivity(
       ...input,
     }),
   );
+  if (input.includeExternalContact) {
+    // Embed-only copy: explicitly marked so main-app SSE can ignore it without
+    // dropping legitimate userId=null request events.
+    delivery.events.push(
+      await publishEvent(tx, {
+        type: input.eventType,
+        payload: withExternalEmbedAudience(input.eventPayload),
+        customerSpaceId: input.customerSpaceId,
+        projectId: input.projectId,
+        serviceRequestId: input.serviceRequestId,
+      }),
+    );
+  }
+  return delivery;
+}
+
+export async function dispatchExternalRequestActivity(
+  tx: Prisma.TransactionClient,
+  actor: ExternalActor,
+  input: {
+    eventType: Extract<
+      EventType,
+      "REQUEST_CREATED" | "REQUEST_MESSAGE_CREATED" | "REQUEST_STATUS_CHANGED"
+    >;
+    eventPayload: Prisma.InputJsonValue;
+    notificationType: Extract<
+      NotificationType,
+      "REQUEST_CREATED" | "REQUEST_MESSAGE" | "REQUEST_STATUS"
+    >;
+    notificationTitle: string;
+    notificationBody: string;
+    includeCustomers: boolean;
+    createNotifications?: boolean;
+    relevantWorkerUserIds?: Array<string | null | undefined>;
+    notifyProjectManagers: boolean;
+    notifyPlatformAdmins: boolean;
+    customerSpaceId: string;
+    projectId: string;
+    serviceRequestId: string;
+  },
+) {
+  const audience = await loadProjectAudience(tx, input.projectId);
+  const delivery = await persistActivityDelivery(
+    tx,
+    planRequestActivity({
+      actorId: actor.id,
+      audience,
+      ...input,
+    }),
+  );
+  // Embed multi-tab sync: external contacts only see userId=null request events.
+  delivery.events.push(
+    await publishEvent(tx, {
+      type: input.eventType,
+      payload: withExternalEmbedAudience(input.eventPayload),
+      customerSpaceId: input.customerSpaceId,
+      projectId: input.projectId,
+      serviceRequestId: input.serviceRequestId,
+    }),
+  );
+  return delivery;
 }
 
 export function requestStatusLabel(status: RequestStatus) {
@@ -386,6 +460,32 @@ export function markProjectNotificationsRead(
   );
 }
 
+const EXTERNAL_EMBED_AUDIENCE = "EXTERNAL_EMBED";
+
+function withExternalEmbedAudience(
+  payload: Prisma.InputJsonValue,
+): Prisma.InputJsonValue {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return {
+      ...(payload as Prisma.InputJsonObject),
+      audience: EXTERNAL_EMBED_AUDIENCE,
+    };
+  }
+  return {
+    value: payload,
+    audience: EXTERNAL_EMBED_AUDIENCE,
+  };
+}
+
+function isExternalEmbedAudienceEvent(payload: Prisma.JsonValue) {
+  return (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    (payload as { audience?: unknown }).audience === EXTERNAL_EMBED_AUDIENCE
+  );
+}
+
 export function listVisibleEvents(actor: Actor, afterId: bigint, limit = 100) {
   return withActorDb(actor, async (tx) => {
     const events = await tx.eventRecord.findMany({
@@ -400,9 +500,18 @@ export function listVisibleEvents(actor: Actor, afterId: bigint, limit = 100) {
       orderBy: { id: "asc" },
       take: limit,
     });
+    // Only drop embed-dedicated copies. Legitimate userId=null request
+    // events (and attachments/presence) must still reach the main app.
+    const withoutEmbedOnlyCopies = events.filter(
+      (event) =>
+        !(
+          event.userId === null &&
+          isExternalEmbedAudienceEvent(event.payload)
+        ),
+    );
     const visibleEvents = actor.isPlatformAdmin
-      ? events
-      : await filterVisibleEvents(tx, actor, events);
+      ? withoutEmbedOnlyCopies
+      : await filterVisibleEvents(tx, actor, withoutEmbedOnlyCopies);
 
     return visibleEvents.map((event) => ({
       ...event,

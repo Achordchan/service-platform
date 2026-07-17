@@ -133,6 +133,7 @@ export type RequestMessage = {
   authorName: string;
   authorImage?: string | null;
   authorPlatformRole?: string | null;
+  authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
   createdAt: string;
   replyToMessageId?: string | null;
   replyTo?: {
@@ -140,6 +141,7 @@ export type RequestMessage = {
     body: string;
     authorId: string;
     authorName: string;
+    authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
     attachments: Array<{
       id: string;
       originalName: string;

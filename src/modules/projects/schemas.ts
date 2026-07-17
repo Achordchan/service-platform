@@ -37,6 +37,7 @@ export const updateRequestCategorySchema = createRequestCategorySchema
   });
 
 const projectFieldsSchema = z.object({
+  kind: z.enum(["STANDARD", "EXTERNAL_INTEGRATION"]).optional(),
   title: z.string().trim().min(1).max(200),
   description: optionalText(5000),
   status: z

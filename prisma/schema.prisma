@@ -43,6 +43,11 @@ enum ProjectStatus {
   EXPIRED
 }
 
+enum ProjectKind {
+  STANDARD
+  EXTERNAL_INTEGRATION
+}
+
 enum ProjectStaffRole {
   PROJECT_MANAGER
   TECHNICIAN
@@ -141,6 +146,18 @@ enum PluginResourceStatus {
   FAILED
 }
 
+enum ProjectPluginBindingStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+  ARCHIVED
+}
+
+enum ExternalContactStatus {
+  ACTIVE
+  BLOCKED
+}
+
 model User {
   id                      String            @id @default(cuid())
   name                    String
@@ -160,31 +177,31 @@ model User {
   platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
   updatedAt               DateTime          @updatedAt
 
-  roleGroup               RoleGroup?             @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
-  sessions                Session[]
-  accounts                Account[]
-  memberships             Membership[]
-  ownedSpaces             CustomerSpace[]        @relation("SpaceOwner")
-  invitationsCreated      Invitation[]           @relation("InvitationCreator")
-  staffInvitationsCreated StaffInvitation[]      @relation("StaffInvitationCreator")
-  projectsCreated         Project[]              @relation("ProjectCreator")
-  projectAssignments      ProjectStaff[]
-  milestonesCreated       Milestone[]            @relation("MilestoneCreator")
-  projectUpdates          ProjectUpdate[]
-  updateComments          UpdateComment[]
-  requestsCreated         ServiceRequest[]       @relation("RequestCreator")
-  requestsAssigned        ServiceRequest[]       @relation("RequestAssignee")
-  requestAssignees        RequestAssignee[]
-  requestMessages         RequestMessage[]
-  requestPresences        RequestPresence[]
-  attachments             Attachment[]
-  notifications           Notification[]
-  auditLogs               AuditLog[]
-  mailTemplatesUpdated    MailTemplateOverride[]
-  emailChanges            UserEmailChange[]      @relation("EmailChangeUser")
-  emailChangesRequested   UserEmailChange[]      @relation("EmailChangeRequester")
-  pluginInstallationsUpdated PluginInstallation[] @relation("PluginInstallationUpdater")
-  pluginRunsRequested     PluginRun[]             @relation("PluginRunRequester")
+  roleGroup                  RoleGroup?             @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
+  sessions                   Session[]
+  accounts                   Account[]
+  memberships                Membership[]
+  ownedSpaces                CustomerSpace[]        @relation("SpaceOwner")
+  invitationsCreated         Invitation[]           @relation("InvitationCreator")
+  staffInvitationsCreated    StaffInvitation[]      @relation("StaffInvitationCreator")
+  projectsCreated            Project[]              @relation("ProjectCreator")
+  projectAssignments         ProjectStaff[]
+  milestonesCreated          Milestone[]            @relation("MilestoneCreator")
+  projectUpdates             ProjectUpdate[]
+  updateComments             UpdateComment[]
+  requestsCreated            ServiceRequest[]       @relation("RequestCreator")
+  requestsAssigned           ServiceRequest[]       @relation("RequestAssignee")
+  requestAssignees           RequestAssignee[]
+  requestMessages            RequestMessage[]
+  requestPresences           RequestPresence[]
+  attachments                Attachment[]
+  notifications              Notification[]
+  auditLogs                  AuditLog[]
+  mailTemplatesUpdated       MailTemplateOverride[]
+  emailChanges               UserEmailChange[]      @relation("EmailChangeUser")
+  emailChangesRequested      UserEmailChange[]      @relation("EmailChangeRequester")
+  pluginInstallationsUpdated PluginInstallation[]   @relation("PluginInstallationUpdater")
+  pluginRunsRequested        PluginRun[]            @relation("PluginRunRequester")
 
   @@index([roleGroupId])
 }
@@ -370,6 +387,7 @@ model Project {
   title           String
   description     String?
   status          ProjectStatus @default(DRAFT)
+  kind            ProjectKind   @default(STANDARD)
   currentStage    String?
   showMilestones  Boolean       @default(true)
   showProgress    Boolean       @default(true)
@@ -381,17 +399,18 @@ model Project {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  customerSpace CustomerSpace    @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
-  serviceType   ServiceType      @relation(fields: [serviceTypeId], references: [id])
-  createdBy     User             @relation("ProjectCreator", fields: [createdById], references: [id])
-  staff         ProjectStaff[]
-  milestones    Milestone[]
-  updates       ProjectUpdate[]
-  requests      ServiceRequest[]
-  attachments   Attachment[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  events        EventRecord[]
+  customerSpace  CustomerSpace          @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  serviceType    ServiceType            @relation(fields: [serviceTypeId], references: [id])
+  createdBy      User                   @relation("ProjectCreator", fields: [createdById], references: [id])
+  staff          ProjectStaff[]
+  milestones     Milestone[]
+  updates        ProjectUpdate[]
+  requests       ServiceRequest[]
+  attachments    Attachment[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  events         EventRecord[]
+  pluginBindings ProjectPluginBinding[]
 
   @@index([customerSpaceId, status])
   @@index([serviceTypeId])
@@ -465,35 +484,39 @@ model UpdateComment {
 }
 
 model ServiceRequest {
-  id          String          @id @default(cuid())
-  number      String          @unique
-  title       String
-  description String
-  priority    RequestPriority @default(NORMAL)
-  status      RequestStatus   @default(PENDING)
-  projectId   String
-  categoryId  String
-  createdById String
-  assigneeId  String?
-  resolvedAt  DateTime?
-  closedAt    DateTime?
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
+  id                         String          @id @default(cuid())
+  number                     String          @unique
+  title                      String
+  description                String
+  priority                   RequestPriority @default(NORMAL)
+  status                     RequestStatus   @default(PENDING)
+  projectId                  String
+  categoryId                 String
+  createdById                String?
+  createdByExternalContactId String?
+  assigneeId                 String?
+  resolvedAt                 DateTime?
+  closedAt                   DateTime?
+  createdAt                  DateTime        @default(now())
+  updatedAt                  DateTime        @updatedAt
 
-  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category      RequestCategory   @relation(fields: [categoryId], references: [id])
-  createdBy     User              @relation("RequestCreator", fields: [createdById], references: [id])
-  assignee      User?             @relation("RequestAssignee", fields: [assigneeId], references: [id])
-  assignees     RequestAssignee[]
-  messages      RequestMessage[]
-  presences     RequestPresence[]
-  attachments   Attachment[]
-  notifications Notification[]
-  auditLogs     AuditLog[]
-  events        EventRecord[]
+  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category                 RequestCategory           @relation(fields: [categoryId], references: [id])
+  createdBy                User?                     @relation("RequestCreator", fields: [createdById], references: [id])
+  createdByExternalContact ExternalContact?          @relation("ExternalRequestCreator", fields: [createdByExternalContactId], references: [id])
+  assignee                 User?                     @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  assignees                RequestAssignee[]
+  messages                 RequestMessage[]
+  presences                RequestPresence[]
+  externalPresences        ExternalRequestPresence[]
+  attachments              Attachment[]
+  notifications            Notification[]
+  auditLogs                AuditLog[]
+  events                   EventRecord[]
 
   @@index([projectId, status])
   @@index([assigneeId, status])
+  @@index([createdByExternalContactId, createdAt])
 }
 
 model RequestAssignee {
@@ -518,47 +541,53 @@ model RequestMessage {
   isSystem         Boolean           @default(false)
   isInitial        Boolean           @default(false)
   serviceRequestId String
-  authorId         String
+  authorId         String?
+  externalAuthorId String?
   replyToMessageId String?
   createdAt        DateTime          @default(now())
   updatedAt        DateTime          @updatedAt
 
-  serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  author         User           @relation(fields: [authorId], references: [id])
+  serviceRequest ServiceRequest   @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  author         User?            @relation(fields: [authorId], references: [id])
+  externalAuthor ExternalContact? @relation(fields: [externalAuthorId], references: [id])
   replyTo        RequestMessage?  @relation("RequestMessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
   replies        RequestMessage[] @relation("RequestMessageReplies")
   attachments    Attachment[]
 
   @@index([serviceRequestId, createdAt])
   @@index([replyToMessageId])
+  @@index([externalAuthorId, createdAt])
 }
 
 model Attachment {
-  id               String            @id @default(cuid())
-  originalName     String
-  storageKey       String            @unique
-  mimeType         String
-  size             Int
-  visibility       ContentVisibility @default(CUSTOMER_VISIBLE)
-  customerSpaceId  String
-  projectId        String?
-  projectUpdateId  String?
-  updateCommentId  String?
-  serviceRequestId String?
-  requestMessageId String?
-  uploadedById     String
-  createdAt        DateTime          @default(now())
+  id                          String            @id @default(cuid())
+  originalName                String
+  storageKey                  String            @unique
+  mimeType                    String
+  size                        Int
+  visibility                  ContentVisibility @default(CUSTOMER_VISIBLE)
+  customerSpaceId             String
+  projectId                   String?
+  projectUpdateId             String?
+  updateCommentId             String?
+  serviceRequestId            String?
+  requestMessageId            String?
+  uploadedById                String?
+  uploadedByExternalContactId String?
+  createdAt                   DateTime          @default(now())
 
-  customerSpace  CustomerSpace   @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
-  project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectUpdate  ProjectUpdate?  @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
-  updateComment  UpdateComment?  @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
-  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  requestMessage RequestMessage? @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
-  uploadedBy     User            @relation(fields: [uploadedById], references: [id])
+  customerSpace             CustomerSpace    @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  project                   Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectUpdate             ProjectUpdate?   @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  updateComment             UpdateComment?   @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
+  serviceRequest            ServiceRequest?  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  requestMessage            RequestMessage?  @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
+  uploadedBy                User?            @relation(fields: [uploadedById], references: [id])
+  uploadedByExternalContact ExternalContact? @relation(fields: [uploadedByExternalContactId], references: [id])
 
   @@index([customerSpaceId, projectId])
   @@index([serviceRequestId])
+  @@index([uploadedByExternalContactId, createdAt])
 }
 
 model Notification {
@@ -581,8 +610,8 @@ model Notification {
   project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
 
-  @@index([userId, readAt, createdAt])
   @@unique([userId, aggregationKey])
+  @@index([userId, readAt, createdAt])
 }
 
 model RequestPresence {
@@ -631,17 +660,20 @@ model AuditLog {
   ipAddress        String?
   userAgent        String?
   actorId          String?
+  externalActorId  String?
   customerSpaceId  String?
   projectId        String?
   serviceRequestId String?
   createdAt        DateTime @default(now())
 
-  actor          User?           @relation(fields: [actorId], references: [id], onDelete: SetNull)
-  customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: SetNull)
-  project        Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: SetNull)
+  actor          User?            @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  externalActor  ExternalContact? @relation(fields: [externalActorId], references: [id], onDelete: SetNull)
+  customerSpace  CustomerSpace?   @relation(fields: [customerSpaceId], references: [id], onDelete: SetNull)
+  project        Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  serviceRequest ServiceRequest?  @relation(fields: [serviceRequestId], references: [id], onDelete: SetNull)
 
   @@index([actorId, createdAt])
+  @@index([externalActorId, createdAt])
   @@index([customerSpaceId, createdAt])
 }
 
@@ -690,7 +722,7 @@ model UserEmailChange {
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
 
-  user        User @relation("EmailChangeUser", fields: [userId], references: [id], onDelete: Cascade)
+  user        User  @relation("EmailChangeUser", fields: [userId], references: [id], onDelete: Cascade)
   requestedBy User? @relation("EmailChangeRequester", fields: [requestedById], references: [id], onDelete: SetNull)
 
   @@index([userId, status])
@@ -699,42 +731,143 @@ model UserEmailChange {
 }
 
 model PluginInstallation {
-  key           String   @id
+  key           String    @id
   version       String
-  enabled       Boolean  @default(false)
+  enabled       Boolean   @default(false)
   config        Json
-  healthStatus  String   @default("UNKNOWN")
+  healthStatus  String    @default("UNKNOWN")
   lastCheckedAt DateTime?
   lastError     String?
-  updatedAt     DateTime @updatedAt
+  updatedAt     DateTime  @updatedAt
   updatedById   String?
 
-  updatedBy      User?                 @relation("PluginInstallationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
-  runs           PluginRun[]
-  resourceStates PluginResourceState[]
+  updatedBy       User?                  @relation("PluginInstallationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  runs            PluginRun[]
+  resourceStates  PluginResourceState[]
+  projectBindings ProjectPluginBinding[]
+}
+
+model ProjectPluginBinding {
+  id         String                     @id @default(cuid())
+  projectId  String
+  pluginKey  String
+  publicId   String                     @unique @default(cuid())
+  status     ProjectPluginBindingStatus @default(DRAFT)
+  config     Json                       @default("{}")
+  archivedAt DateTime?
+  createdAt  DateTime                   @default(now())
+  updatedAt  DateTime                   @updatedAt
+
+  project           Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  plugin            PluginInstallation     @relation(fields: [pluginKey], references: [key], onDelete: Restrict)
+  sub2ApiConnection Sub2ApiConnection?
+  externalContacts  ExternalContact[]
+  embedSessions     ExternalEmbedSession[]
+
+  @@unique([projectId, pluginKey])
+  @@index([pluginKey, status])
+  @@index([projectId, status])
+}
+
+model Sub2ApiConnection {
+  bindingId                          String    @id
+  baseUrl                            String
+  sourceOrigin                       String
+  adminApiKeyEncrypted               String?
+  emailNotificationsEnabled          Boolean   @default(true)
+  customerMemberNotificationsEnabled Boolean   @default(false)
+  healthStatus                       String    @default("UNKNOWN")
+  lastCheckedAt                      DateTime?
+  lastError                          String?
+  createdAt                          DateTime  @default(now())
+  updatedAt                          DateTime  @updatedAt
+
+  binding ProjectPluginBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+}
+
+model ExternalContact {
+  id             String                @id @default(cuid())
+  bindingId      String
+  externalUserId String
+  email          String?
+  username       String?
+  displayName    String
+  status         ExternalContactStatus @default(ACTIVE)
+  firstSeenAt    DateTime              @default(now())
+  lastSeenAt     DateTime              @default(now())
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  binding          ProjectPluginBinding      @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  embedSessions    ExternalEmbedSession[]
+  requestsCreated  ServiceRequest[]          @relation("ExternalRequestCreator")
+  requestMessages  RequestMessage[]
+  attachments      Attachment[]
+  requestPresences ExternalRequestPresence[]
+  auditLogs        AuditLog[]
+
+  @@unique([bindingId, externalUserId])
+  @@index([bindingId, status, lastSeenAt])
+  @@index([email])
+}
+
+model ExternalEmbedSession {
+  id                String    @id @default(cuid())
+  tokenHash         String    @unique
+  externalContactId String
+  bindingId         String
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  lastSeenAt        DateTime  @default(now())
+  ipAddress         String?
+  userAgent         String?
+  createdAt         DateTime  @default(now())
+
+  externalContact ExternalContact      @relation(fields: [externalContactId], references: [id], onDelete: Cascade)
+  binding         ProjectPluginBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+
+  @@index([externalContactId, expiresAt])
+  @@index([bindingId, revokedAt, expiresAt])
+}
+
+model ExternalRequestPresence {
+  id                String   @id @default(cuid())
+  serviceRequestId  String
+  externalContactId String
+  sessionId         String
+  expiresAt         DateTime
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  serviceRequest  ServiceRequest  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  externalContact ExternalContact @relation(fields: [externalContactId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceRequestId, externalContactId, sessionId])
+  @@index([serviceRequestId, expiresAt])
+  @@index([externalContactId, expiresAt])
 }
 
 model PluginRun {
-  id            String          @id @default(cuid())
-  pluginKey     String
-  kind          String
-  status        PluginRunStatus @default(QUEUED)
+  id             String          @id @default(cuid())
+  pluginKey      String
+  kind           String
+  status         PluginRunStatus @default(QUEUED)
   executionToken String?
-  totalCount    Int             @default(0)
-  processedCount Int            @default(0)
-  successCount  Int             @default(0)
-  skippedCount  Int             @default(0)
-  failedCount   Int             @default(0)
-  sourceBytes   BigInt          @default(0)
-  outputBytes   BigInt          @default(0)
-  savedBytes    BigInt          @default(0)
-  cursor        String?
-  lastError     String?
-  requestedById String?
-  startedAt     DateTime?
-  completedAt   DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  totalCount     Int             @default(0)
+  processedCount Int             @default(0)
+  successCount   Int             @default(0)
+  skippedCount   Int             @default(0)
+  failedCount    Int             @default(0)
+  sourceBytes    BigInt          @default(0)
+  outputBytes    BigInt          @default(0)
+  savedBytes     BigInt          @default(0)
+  cursor         String?
+  lastError      String?
+  requestedById  String?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   plugin      PluginInstallation @relation(fields: [pluginKey], references: [key], onDelete: Cascade)
   requestedBy User?              @relation("PluginRunRequester", fields: [requestedById], references: [id], onDelete: SetNull)
@@ -743,16 +876,16 @@ model PluginRun {
 }
 
 model PluginResourceState {
-  pluginKey       String
-  resourceType    String
-  resourceId      String
-  status          PluginResourceStatus
+  pluginKey        String
+  resourceType     String
+  resourceId       String
+  status           PluginResourceStatus
   inputFingerprint String
-  metadata        Json?
-  lastError       String?
-  processedAt     DateTime?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
+  metadata         Json?
+  lastError        String?
+  processedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
 
   plugin PluginInstallation @relation(fields: [pluginKey], references: [key], onDelete: Cascade)
 

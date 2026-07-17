@@ -15,12 +15,40 @@ export async function findRequestContext(
       assigneeId: true,
       projectId: true,
       createdById: true,
+      createdByExternalContactId: true,
+      createdByExternalContact: {
+        select: {
+          id: true,
+          displayName: true,
+          email: true,
+          status: true,
+          binding: {
+            select: {
+              status: true,
+              plugin: {
+                select: {
+                  enabled: true,
+                  healthStatus: true,
+                },
+              },
+              sub2ApiConnection: {
+                select: {
+                  baseUrl: true,
+                  emailNotificationsEnabled: true,
+                  customerMemberNotificationsEnabled: true,
+                },
+              },
+            },
+          },
+        },
+      },
       assignees: {
         select: { userId: true },
       },
       project: {
         select: {
           customerSpaceId: true,
+          title: true,
           staff: {
             where: { userId: actorId },
             select: { role: true },

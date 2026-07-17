@@ -8,6 +8,8 @@ import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-ser
 import { listProjects } from "@/modules/projects/project-service";
 import { listServiceTypes } from "@/modules/projects/service-type-service";
 import { listUsers } from "@/modules/users/user-service";
+import { listPluginViews } from "@/modules/plugins/plugin-service";
+import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
 
 export const metadata = {
   title: "项目",
@@ -22,6 +24,7 @@ export default async function StaffProjectsPage() {
         listServiceTypes(actor),
         listUsers(actor, { role: "PROJECT_MANAGER", limit: 200 }),
         listUsers(actor, { role: "PLATFORM_ADMIN", limit: 200 }),
+        listPluginViews(actor),
       ])
     : null;
 
@@ -37,12 +40,18 @@ export default async function StaffProjectsPage() {
             | "TECHNICIAN",
         }))
       : [];
+  const externalIntegrationAvailable = Boolean(
+    adminOptions?.[4].find(
+      (plugin) => plugin.key === SUB2API_CONNECTOR_PLUGIN_KEY,
+    )?.enabled,
+  );
 
   const rows: ProjectListItem[] = projects.map((project) => ({
     id: project.id,
     title: project.title,
     description: project.description,
     status: project.status,
+    kind: project.kind,
     currentStage: project.currentStage,
     showMilestones: project.showMilestones,
     showProgress: project.showProgress,
@@ -86,6 +95,7 @@ export default async function StaffProjectsPage() {
           }
           managerCandidates={managerCandidates}
           currentUserId={actor.id}
+          externalIntegrationAvailable={externalIntegrationAvailable}
         />
       </Stack>
     </Container>

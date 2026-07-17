@@ -123,3 +123,5 @@ pnpm verify:runtime-deps
 - 原生依赖别名已进入发布包，生产运行时可加载。
 - 已验证权限、RLS、审计、SSE、移动端布局和生产构建。
 - 不存在 Mock、调试入口、`console.log`、`debugger` 或临时测试按钮。
+
+连接器类插件还应参考 [Sub2API 工单连接器](./sub2api-connector.md)，重点检查外部身份兑换、会话撤销、SSRF 防护、动态 `frame-ancestors` 和反向代理查询字符串日志。

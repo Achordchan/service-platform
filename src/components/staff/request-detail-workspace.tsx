@@ -13,6 +13,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  Chip,
   LinearProgress,
   Paper,
   Stack,
@@ -216,6 +217,15 @@ export function RequestDetailWorkspace({
               <DetailField label="优先级" value={<PriorityChip value={request.priority} />} />
               <DetailField label="客户" value={request.customerName} />
               <DetailField label="提交人" value={request.createdByName} />
+              {request.externalContact ? (
+                <>
+                  <DetailField label="来源" value={<Chip size="small" label="Sub2API" variant="outlined" />} />
+                  <DetailField label="外部用户 ID" value={request.externalContact.externalUserId} />
+                  <DetailField label="外部邮箱" value={request.externalContact.email || "未提供"} />
+                  <DetailField label="外部用户名" value={request.externalContact.username || "未提供"} />
+                  <DetailField label="联系人状态" value={request.externalContact.status === "ACTIVE" ? "正常" : "已停用"} />
+                </>
+              ) : null}
               <DetailField label="所属项目" value={request.projectTitle} />
               <DetailField label="请求分类" value={request.categoryName} />
               <DetailField label="处理人" value={assigneeNames} />

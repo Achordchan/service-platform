@@ -37,6 +37,13 @@ export async function ensurePluginInstallations() {
           },
           data: { status: "PAUSED" },
         });
+        await tx.externalEmbedSession.updateMany({
+          where: {
+            binding: { pluginKey: manifest.key },
+            revokedAt: null,
+          },
+          data: { revokedAt: new Date() },
+        });
       }
     }
   });

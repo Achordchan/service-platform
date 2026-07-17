@@ -17,6 +17,9 @@ importers:
       '@achord/plugin-image-webp':
         specifier: workspace:*
         version: link:plugins/image-webp
+      '@achord/plugin-sub2api-connector':
+        specifier: workspace:*
+        version: link:plugins/sub2api-connector
       '@emotion/react':
         specifier: ^11.14.0
         version: 11.14.0(@types/react@19.2.17)(react@19.2.7)
@@ -170,6 +173,15 @@ importers:
       sharp:
         specifier: 0.35.3
         version: 0.35.3(@types/node@20.19.43)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  plugins/sub2api-connector:
+    dependencies:
+      '@achord/platform-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/platform-plugin-sdk
       zod:
         specifier: ^4.4.3
         version: 4.4.3

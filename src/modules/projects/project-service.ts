@@ -17,6 +17,8 @@ import {
 } from "@/modules/projects/errors";
 import { assertCanViewProject } from "@/modules/projects/project-access";
 import { calculateProjectProgress } from "@/modules/projects/progress";
+import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
+import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
 import type {
   CreateProjectInput,
   UpdateProjectInput,
@@ -190,9 +192,26 @@ export function getProject(actor: Actor, projectId: string) {
   });
 }
 
-export function createProject(actor: Actor, input: CreateProjectInput) {
+export async function createProject(actor: Actor, input: CreateProjectInput) {
   assertAllowed(actor.isPlatformAdmin);
+  const kind = input.kind ?? "STANDARD";
+  if (kind === "EXTERNAL_INTEGRATION") {
+    await ensurePluginInstallations();
+  }
   return withActorDb(actor, async (tx) => {
+    if (kind === "EXTERNAL_INTEGRATION") {
+      const plugin = await tx.pluginInstallation.findUnique({
+        where: { key: SUB2API_CONNECTOR_PLUGIN_KEY },
+        select: { enabled: true, healthStatus: true },
+      });
+      if (!plugin?.enabled || plugin.healthStatus !== "READY") {
+        throw new DomainError(
+          "SUB2API_PLUGIN_NOT_READY",
+          "请先在插件中心完成 Sub2API 连接器检测并启用",
+          409,
+        );
+      }
+    }
     const customerSpace = await tx.customerSpace.findUnique({
       where: { id: input.customerSpaceId },
       select: { id: true, status: true },
@@ -222,6 +241,7 @@ export function createProject(actor: Actor, input: CreateProjectInput) {
     const project = await tx.project.create({
       data: {
         ...projectInput,
+        kind,
         createdById: actor.id,
       },
       include: projectSummaryInclude,
@@ -304,9 +324,57 @@ export function updateProject(
         customerSpaceId: true,
         startDate: true,
         endDate: true,
+        kind: true,
+        _count: {
+          select: {
+            requests: true,
+            updates: true,
+            milestones: true,
+            attachments: true,
+            pluginBindings: true,
+          },
+        },
       },
     });
     assertFound(existing, "项目不存在");
+
+    if (input.kind && input.kind !== existing.kind) {
+      const businessDataCount =
+        existing._count.requests +
+        existing._count.updates +
+        existing._count.milestones +
+        existing._count.attachments +
+        existing._count.pluginBindings;
+      if (businessDataCount > 0) {
+        throw new DomainError(
+          "PROJECT_KIND_CHANGE_BLOCKED",
+          "项目已有业务数据，不能修改项目类型",
+          409,
+          {
+            checks: {
+              requests: existing._count.requests,
+              updates: existing._count.updates,
+              milestones: existing._count.milestones,
+              attachments: existing._count.attachments,
+              pluginBindings: existing._count.pluginBindings,
+            },
+          },
+        );
+      }
+      if (input.kind === "EXTERNAL_INTEGRATION") {
+        const plugin = await tx.pluginInstallation.findUnique({
+          where: { key: SUB2API_CONNECTOR_PLUGIN_KEY },
+          select: { enabled: true, healthStatus: true },
+        });
+        if (!plugin?.enabled || plugin.healthStatus !== "READY") {
+          throw new DomainError(
+            "SUB2API_PLUGIN_NOT_READY",
+            "请先在插件中心完成 Sub2API 连接器检测并启用",
+            409,
+          );
+        }
+      }
+    }
 
     const startDate =
       input.startDate === undefined
