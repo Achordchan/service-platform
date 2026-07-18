@@ -12,6 +12,7 @@ const ownerPool = new Pool({
 const publicId = `e2e-connect-${randomUUID()}`;
 const projectId = randomUUID();
 const bindingId = randomUUID();
+const password = process.env.E2E_PASSWORD ?? "ServiceDemo!2026";
 let previousPlugin: { enabled: boolean; healthStatus: string } | null = null;
 
 test.beforeAll(async () => {
@@ -206,4 +207,33 @@ test("iframe 仅向可信父 Origin 发送受控状态消息", async ({ page }) 
   );
   expect(JSON.stringify(payloads)).not.toContain("universal-session-token");
   expect(JSON.stringify(payloads)).not.toContain("通用接入测试工单");
+});
+
+test("管理员可在项目页查看状态驱动的接入指南", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("邮箱").fill("admin@local.test");
+  await page.getByLabel("密码").fill(password);
+  await page.getByRole("button", { name: "登录" }).click();
+  await page.waitForURL(/\/staff\//);
+
+  await page.goto(`/staff/projects/${projectId}`);
+  await page.getByRole("tab", { name: "外部接入" }).click();
+  await page.getByRole("button", { name: "接入指南" }).click();
+
+  const guide = page.getByRole("dialog", { name: "Achord Connect 接入指南" });
+  await expect(guide.getByText("当前下一步：生成 Client ID", { exact: false })).toBeVisible();
+  await expect(guide.getByText("固定嵌入地址只是入口基地址")).toBeVisible();
+  await guide.getByRole("tab", { name: "代码示例" }).click();
+  await expect(
+    guide.getByText("/api/v1/integrations/universal/launch-tickets", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await guide.getByRole("tab", { name: "产品边界" }).click();
+  await expect(guide.getByText("原生 App 需要单独的 Native Launch 模式", { exact: false })).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await guide.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
 });

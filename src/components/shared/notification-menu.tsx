@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -22,9 +22,14 @@ import {
   subscribeRealtimeReady,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
+import {
+  summarizeNavigationUnread,
+  type NavigationUnreadState,
+} from "@/lib/notification-navigation";
 
 type NotificationItem = {
   id: string;
+  type: string;
   title: string;
   body: string;
   readAt?: string | null;
@@ -47,11 +52,25 @@ const notificationTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour12: false,
 });
 
-export function NotificationMenu({ staff }: { staff: boolean }) {
+export function NotificationMenu({
+  staff,
+  onUnreadStateChange,
+}: {
+  staff: boolean;
+  onUnreadStateChange?: (state: NavigationUnreadState) => void;
+}) {
   const router = useRouter();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [markingAll, setMarkingAll] = useState(false);
+  const navigationUnread = useMemo(
+    () => summarizeNavigationUnread(items),
+    [items],
+  );
+
+  useEffect(() => {
+    onUnreadStateChange?.(navigationUnread);
+  }, [navigationUnread, onUnreadStateChange]);
 
   useEffect(() => {
     let active = true;

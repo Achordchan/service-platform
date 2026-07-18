@@ -27,7 +27,12 @@ import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
+import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import {
+  UniversalIntegrationGuideDialog,
+  type UniversalGuideStage,
+} from "@/components/staff/universal-integration-guide-dialog";
 
 type ProfileField = {
   key: string;
@@ -131,6 +136,7 @@ export function UniversalIntegrationPanel({
   } | null>(null);
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [deliveries, setDeliveries] = useState<DeliveryView[]>([]);
 
   const applyConnection = useCallback(
@@ -200,6 +206,18 @@ export function UniversalIntegrationPanel({
           view.connection.bindingStatus !== "ACTIVE"
         ? 3
         : 4;
+  const guideStage: UniversalGuideStage = !view?.connection
+    ? "CONFIGURE"
+    : activeCredentialCount === 0
+      ? "CREDENTIALS"
+      : activeStep === 4
+        ? "ACTIVE"
+        : "ACTIVATE";
+  const platformOrigin = view?.connection?.embedUrl
+    ? new URL(view.connection.embedUrl).origin
+    : typeof window === "undefined"
+      ? ""
+      : window.location.origin;
 
   function connectionPayload(options?: {
     rotateWebhookSecret?: boolean;
@@ -376,14 +394,54 @@ export function UniversalIntegrationPanel({
   if (loading) return <LinearProgress />;
   if (!view?.plugin?.enabled || view.plugin.healthStatus !== "READY") {
     return (
-      <Alert severity="warning">
-        通用工单连接器尚未在插件中心完成检测并启用。
-      </Alert>
+      <Stack spacing={2}>
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+        >
+          <Typography variant="h3">Achord Connect</Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<MenuBookOutlinedIcon />}
+            onClick={() => setGuideOpen(true)}
+            sx={{ alignSelf: { xs: "flex-start", sm: "auto" } }}
+          >
+            接入指南
+          </Button>
+        </Stack>
+        <Alert severity="warning">
+          通用工单连接器尚未在插件中心完成检测并启用。
+        </Alert>
+        <UniversalIntegrationGuideDialog
+          open={guideOpen}
+          onClose={() => setGuideOpen(false)}
+          stage="CONFIGURE"
+          platformOrigin={platformOrigin}
+        />
+      </Stack>
     );
   }
 
   return (
     <Stack spacing={2.5}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1}
+        sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+      >
+        <Typography variant="h3">Achord Connect</Typography>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<MenuBookOutlinedIcon />}
+          onClick={() => setGuideOpen(true)}
+          sx={{ alignSelf: { xs: "flex-start", sm: "auto" } }}
+        >
+          接入指南
+        </Button>
+      </Stack>
       {busy ? <LinearProgress /> : null}
       {error ? <Alert severity="error" onClose={() => setError("")}>{error}</Alert> : null}
       {success ? <Alert severity="success" onClose={() => setSuccess("")}>{success}</Alert> : null}
@@ -746,6 +804,12 @@ export function UniversalIntegrationPanel({
           <Button onClick={() => setDeliveryOpen(false)}>关闭</Button>
         </DialogActions>
       </Dialog>
+      <UniversalIntegrationGuideDialog
+        open={guideOpen}
+        onClose={() => setGuideOpen(false)}
+        stage={guideStage}
+        platformOrigin={platformOrigin}
+      />
     </Stack>
   );
 }

@@ -35,6 +35,12 @@ import type {
 } from "@/components/customer/customer-types";
 import { authClient } from "@/lib/auth-client";
 import { NotificationMenu } from "@/components/shared/notification-menu";
+import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
+import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
+import {
+  EMPTY_NAVIGATION_UNREAD,
+  type NavigationUnreadState,
+} from "@/lib/notification-navigation";
 
 const baseNavigation = [
   {
@@ -62,6 +68,8 @@ export function CustomerShell({
   const router = useRouter();
   const pathname = usePathname();
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
+  const [navigationUnread, setNavigationUnread] =
+    useState<NavigationUnreadState>(EMPTY_NAVIGATION_UNREAD);
   const canManageMembers = spaces.some((space) => space.role === "OWNER");
   const navigation = canManageMembers
     ? [
@@ -76,6 +84,7 @@ export function CustomerShell({
 
   return (
     <Box sx={{ minHeight: "100dvh", bgcolor: "background.default" }}>
+      <GlobalRealtimeSound currentUserId={user.id} />
       <AppBar
         position="sticky"
         color="inherit"
@@ -114,18 +123,29 @@ export function CustomerShell({
                 const selected =
                   pathname === item.href ||
                   pathname.startsWith(`${item.href}/`);
+                const hasUnread = item.href === "/customer/projects"
+                  ? navigationUnread.projects
+                  : item.href === "/customer/requests"
+                    ? navigationUnread.requests
+                    : false;
+                const showUnread = hasUnread && !selected;
                 return (
                   <Button
                     key={item.href}
                     component={Link}
                     href={item.href}
+                    aria-label={
+                      showUnread ? `${item.label}，有未读更新` : item.label
+                    }
                     color={selected ? "primary" : "inherit"}
                     sx={{
                       px: 1.5,
                       bgcolor: selected ? "action.selected" : "transparent",
                     }}
                   >
-                    {item.label}
+                    <NavigationUnreadBadge visible={showUnread}>
+                      {item.label}
+                    </NavigationUnreadBadge>
                   </Button>
                 );
               })}
@@ -136,7 +156,10 @@ export function CustomerShell({
               spacing={{ xs: 0.75, md: 1.25 }}
               sx={{ ml: "auto", alignItems: "center" }}
             >
-              <NotificationMenu staff={false} />
+              <NotificationMenu
+                staff={false}
+                onUnreadStateChange={setNavigationUnread}
+              />
               <Stack
                 component="button"
                 type="button"
@@ -189,22 +212,36 @@ export function CustomerShell({
         </Box>
         <Divider />
         <List sx={{ px: 1.5 }}>
-          {navigation.map((item) => (
-            <ListItemButton
-              key={item.href}
-              component={Link}
-              href={item.href}
-              selected={
-                pathname === item.href ||
-                pathname.startsWith(`${item.href}/`)
-              }
-              onClick={() => setDrawerOpen(false)}
-              sx={{ borderRadius: 1.5, my: 0.5 }}
-            >
-              <ListItemIcon sx={{ minWidth: 38 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} />
-            </ListItemButton>
-          ))}
+          {navigation.map((item) => {
+            const selected =
+              pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const hasUnread = item.href === "/customer/projects"
+              ? navigationUnread.projects
+              : item.href === "/customer/requests"
+                ? navigationUnread.requests
+                : false;
+            const showUnread = hasUnread && !selected;
+            return (
+              <ListItemButton
+                key={item.href}
+                component={Link}
+                href={item.href}
+                aria-label={
+                  showUnread ? `${item.label}，有未读更新` : item.label
+                }
+                selected={selected}
+                onClick={() => setDrawerOpen(false)}
+                sx={{ borderRadius: 1.5, my: 0.5 }}
+              >
+                <ListItemIcon sx={{ minWidth: 38 }}>
+                  <NavigationUnreadBadge visible={showUnread}>
+                    {item.icon}
+                  </NavigationUnreadBadge>
+                </ListItemIcon>
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            );
+          })}
         </List>
       </Drawer>
 

@@ -37,6 +37,12 @@ import type { StaffUser } from "@/components/staff/staff-types";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { authClient } from "@/lib/auth-client";
 import { NotificationMenu } from "@/components/shared/notification-menu";
+import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
+import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
+import {
+  EMPTY_NAVIGATION_UNREAD,
+  type NavigationUnreadState,
+} from "@/lib/notification-navigation";
 
 const drawerWidth = 224;
 
@@ -99,6 +105,8 @@ export function StaffShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
+  const [navigationUnread, setNavigationUnread] =
+    useState<NavigationUnreadState>(EMPTY_NAVIGATION_UNREAD);
   const navigation =
     user.role === "PLATFORM_ADMIN"
       ? [...primaryNavigation, ...adminNavigation]
@@ -136,6 +144,12 @@ export function StaffShell({
         {navigation.map((item) => {
           const selected =
             pathname === item.href || pathname.startsWith(`${item.href}/`);
+          const hasUnread = item.href === "/staff/projects"
+            ? navigationUnread.projects
+            : item.href === "/staff/requests"
+              ? navigationUnread.requests
+              : false;
+          const showUnread = hasUnread && !selected;
           return (
             <Tooltip
               key={item.href}
@@ -145,6 +159,9 @@ export function StaffShell({
               <ListItemButton
                 component={Link}
                 href={item.href}
+                aria-label={
+                  showUnread ? `${item.label}，有未读更新` : item.label
+                }
                 selected={selected}
                 onClick={() => setMobileOpen(false)}
                 sx={{
@@ -166,7 +183,9 @@ export function StaffShell({
                     justifyContent: "center",
                   }}
                 >
-                  {item.icon}
+                  <NavigationUnreadBadge visible={showUnread}>
+                    {item.icon}
+                  </NavigationUnreadBadge>
                 </ListItemIcon>
                 {!collapsed ? <ListItemText primary={item.label} /> : null}
               </ListItemButton>
@@ -177,6 +196,7 @@ export function StaffShell({
       <Box sx={{ mt: "auto", p: 1 }}>
         <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
           <ListItemButton
+            aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
             onClick={() => setCollapsed((value) => !value)}
             sx={{
               display: { xs: "none", md: "flex" },
@@ -205,6 +225,7 @@ export function StaffShell({
         bgcolor: "background.default",
       }}
     >
+      <GlobalRealtimeSound currentUserId={user.id} />
       <Drawer
         variant="permanent"
         sx={{
@@ -276,7 +297,10 @@ export function StaffShell({
               spacing={{ xs: 0.5, sm: 1.5 }}
               sx={{ ml: "auto", alignItems: "center" }}
             >
-              <NotificationMenu staff />
+              <NotificationMenu
+                staff
+                onUnreadStateChange={setNavigationUnread}
+              />
               <Stack
                 component="button"
                 type="button"

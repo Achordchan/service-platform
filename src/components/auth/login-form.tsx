@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
+import { unlockUiSound } from "@/lib/ui-sound";
 
 const schema = z.object({
   email: z.email("请输入有效邮箱"),
@@ -35,6 +36,7 @@ export function LoginForm() {
   });
 
   const onSubmit = handleSubmit(async (data) => {
+    unlockUiSound();
     setError("");
     const result = await authClient.signIn.email({
       email: data.email,
@@ -50,7 +52,13 @@ export function LoginForm() {
   });
 
   return (
-    <Stack component="form" onSubmit={onSubmit} spacing={2.25}>
+    <Stack
+      component="form"
+      onSubmit={onSubmit}
+      onPointerDown={unlockUiSound}
+      onKeyDown={unlockUiSound}
+      spacing={2.25}
+    >
       {error ? <Alert severity="error">{error}</Alert> : null}
       <TextField
         label="邮箱"

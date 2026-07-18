@@ -1,0 +1,67 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+import {
+  subscribeRealtime,
+  type RealtimeEvent,
+  type RealtimeEventType,
+} from "@/lib/realtime-client";
+import { bindUiSoundUnlock, playRealtimeUpdateSound } from "@/lib/ui-sound";
+
+export const GLOBAL_SOUND_EVENT_TYPES: readonly RealtimeEventType[] = [
+  "PROJECT_UPDATED",
+  "PROJECT_UPDATE_CREATED",
+  "UPDATE_COMMENT_CREATED",
+  "REQUEST_CREATED",
+  "REQUEST_ASSIGNED",
+  "REQUEST_MESSAGE_CREATED",
+  "REQUEST_STATUS_CHANGED",
+  "REQUEST_UPDATED",
+] as const;
+
+export function shouldPlayGlobalRealtimeSound(
+  event: RealtimeEvent,
+  currentUserId: string,
+  suppressUntil: number,
+  now = Date.now(),
+) {
+  if (!event.live) return false;
+  if (event.payload.actorId) {
+    if (event.payload.actorId === "system") return false;
+    return event.payload.actorId !== currentUserId;
+  }
+  return now >= suppressUntil;
+}
+
+export function GlobalRealtimeSound({
+  currentUserId,
+}: {
+  currentUserId: string;
+}) {
+  const suppressUntilRef = useRef(0);
+
+  useEffect(() => {
+    bindUiSoundUnlock();
+    const markLocalMutation = () => {
+      suppressUntilRef.current = Date.now() + 2_000;
+    };
+    window.addEventListener("request-local-mutation", markLocalMutation);
+    const unsubscribe = subscribeRealtime(GLOBAL_SOUND_EVENT_TYPES, (event) => {
+      if (
+        shouldPlayGlobalRealtimeSound(
+          event,
+          currentUserId,
+          suppressUntilRef.current,
+        )
+      ) {
+        playRealtimeUpdateSound();
+      }
+    });
+    return () => {
+      window.removeEventListener("request-local-mutation", markLocalMutation);
+      unsubscribe();
+    };
+  }, [currentUserId]);
+
+  return null;
+}

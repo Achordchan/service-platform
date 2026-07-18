@@ -65,8 +65,8 @@ function playViaOscillator(context: AudioContext) {
   }
 }
 
-/** Soft chime for live request updates. */
-export function playRequestUpdateSound() {
+/** Soft chime for live updates visible to the signed-in user. */
+export function playRealtimeUpdateSound() {
   if (typeof window === "undefined") return;
 
   const now = Date.now();

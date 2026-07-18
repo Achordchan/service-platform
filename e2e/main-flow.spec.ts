@@ -366,6 +366,95 @@ test.describe("主流程冒烟", () => {
     await expectVisibleText(customerPage, "关于首页标题优化建议");
   });
 
+  test("导航未读红点仅在离开对应栏目时显示", async () => {
+    await adminPage.setViewportSize({ width: 1280, height: 720 });
+    await adminPage.route("**/api/v1/notifications", async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "e2e-project-notification",
+              type: "PROJECT_UPDATE",
+              title: "项目动态已更新",
+              body: "E2E 项目动态",
+              readAt: null,
+              projectId: "e2e-project",
+              serviceRequestId: null,
+              occurrenceCount: 1,
+              createdAt: "2026-07-18T00:00:00.000Z",
+              updatedAt: "2026-07-18T00:00:00.000Z",
+            },
+            {
+              id: "e2e-request-notification",
+              type: "REQUEST_MESSAGE",
+              title: "服务请求有新回复",
+              body: "E2E 服务请求回复",
+              readAt: null,
+              projectId: "e2e-project",
+              serviceRequestId: "e2e-request",
+              occurrenceCount: 1,
+              createdAt: "2026-07-18T00:00:00.000Z",
+              updatedAt: "2026-07-18T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    });
+
+    try {
+      await adminPage.goto("/staff/projects");
+      await expect(
+        adminPage.getByRole("link", { name: "项目", exact: true }),
+      ).toBeVisible();
+      await expect(
+        adminPage.getByRole("link", {
+          name: "服务请求，有未读更新",
+          exact: true,
+        }),
+      ).toBeVisible();
+
+      await adminPage.goto("/staff/customers");
+      await expect(
+        adminPage.getByRole("link", {
+          name: "项目，有未读更新",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await expect(
+        adminPage.getByRole("link", {
+          name: "服务请求，有未读更新",
+          exact: true,
+        }),
+      ).toBeVisible();
+
+      await adminPage
+        .getByRole("button", { name: "收起侧栏" })
+        .click({ force: true });
+      expect(
+        await adminPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      await adminPage.getByRole("button", { name: "打开导航" }).click();
+      await expect(
+        adminPage.getByRole("link", {
+          name: "项目，有未读更新",
+          exact: true,
+        }),
+      ).toBeVisible();
+      expect(
+        await adminPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+    } finally {
+      await adminPage.unroute("**/api/v1/notifications");
+      await adminPage.setViewportSize({ width: 1280, height: 720 });
+      await adminPage.reload();
+    }
+  });
+
   test("技术人员可进入已分配和未分配请求列表", async () => {
     await technicianPage.goto("/staff/requests");
     await expect(
