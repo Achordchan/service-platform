@@ -82,20 +82,22 @@ ensure_sub2api_nginx_log_hardening() {
   install -m 644 "${source_dir}/scripts/nginx-sub2api-embed-log-format.conf" /etc/nginx/snippets/sub2api-embed-log-format.conf
   install -m 644 "${source_dir}/scripts/nginx-sub2api-embed-location.conf" /etc/nginx/snippets/sub2api-embed-location.conf
 
+  local rendered_config
+  if ! rendered_config="$(nginx -T 2>&1)"; then
+    echo "[deploy] ERROR: unable to render active Nginx configuration" >&2
+    return 1
+  fi
   local LIVE_FORMAT_MATCH=0
   local LIVE_LOCATION_MATCH=0
   local LIVE_NO_ARGS_MATCH=0
-  if grep -Rqs --include='*.conf' "sub2api-embed-log-format.conf" /etc/nginx/nginx.conf /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
+  if [[ "${rendered_config}" == *'log_format main_no_args'* ]]; then
     LIVE_FORMAT_MATCH=1
   fi
-  if grep -Rqs --include='*.conf' "sub2api-embed-location.conf" /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
+  if [[ "${rendered_config}" == *'location ^~ /embed/sub2api/'* ]]; then
     LIVE_LOCATION_MATCH=1
   fi
-  if [[ "${LIVE_LOCATION_MATCH}" == "1" ]]; then
+  if [[ "${rendered_config}" == *'access_log /var/log/nginx/sub2api_embed.access.log main_no_args;'* ]]; then
     LIVE_NO_ARGS_MATCH=1
-  elif grep -RIn --include='*.conf' -A 30 'location ^~ /embed/sub2api/' /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null | grep -q 'main_no_args'; then
-    LIVE_NO_ARGS_MATCH=1
-    LIVE_LOCATION_MATCH=1
   fi
   if [[ "${LIVE_FORMAT_MATCH}" != "1" || "${LIVE_LOCATION_MATCH}" != "1" || "${LIVE_NO_ARGS_MATCH}" != "1" ]]; then
     echo "[deploy] ERROR: Sub2API embed Nginx JWT log protection is not live." >&2
