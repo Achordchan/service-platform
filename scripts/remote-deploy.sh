@@ -138,11 +138,6 @@ ensure_universal_request_body_limits() {
   fi
   install -d -m 755 /etc/nginx/snippets
   install -m 644 "${snippet}" /etc/nginx/snippets/universal-request-body-limits.conf
-  if ! grep -Rqs --include='*.conf' "universal-request-body-limits.conf" /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
-    echo "[deploy] ERROR: Universal public request body limits are not live." >&2
-    echo "[deploy] include snippets/universal-request-body-limits.conf in the support.achord.cn HTTPS server {}." >&2
-    return 1
-  fi
   local rendered_config
   if ! rendered_config="$(nginx -T 2>&1)"; then
     echo "[deploy] ERROR: unable to render active Nginx configuration" >&2
