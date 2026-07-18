@@ -170,13 +170,6 @@ jobs:
             "${USER_NAME}@${VPS_HOST}" "
               set -euo pipefail
               APP_DIR=/var/www/service-platform
-              test -f '${REMOTE_DIR}/scripts/remote-deploy.sh'
-              sudo install -o root -g root -m 755 \
-                '${REMOTE_DIR}/scripts/remote-deploy.sh' \
-                /opt/service-platform/deploy.sh.next
-              sudo mv \
-                /opt/service-platform/deploy.sh.next \
-                /opt/service-platform/deploy.sh
               sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'
               cd \"\${APP_DIR}\"
               node scripts/verify-runtime-dependencies.mjs
