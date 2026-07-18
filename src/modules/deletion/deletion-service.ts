@@ -259,21 +259,18 @@ async function projectReport(tx: Tx, resourceId: string) {
     where: { projectId: resourceId },
     _sum: { size: true },
   });
-  const [externalContactCount, embedSessionCount, externalRequestCount] =
-    await Promise.all([
-      tx.externalContact.count({
-        where: { binding: { projectId: resourceId } },
-      }),
-      tx.externalEmbedSession.count({
-        where: { binding: { projectId: resourceId } },
-      }),
-      tx.serviceRequest.count({
-        where: {
-          projectId: resourceId,
-          createdByExternalContactId: { not: null },
-        },
-      }),
-    ]);
+  const externalContactCount = await tx.externalContact.count({
+    where: { binding: { projectId: resourceId } },
+  });
+  const embedSessionCount = await tx.externalEmbedSession.count({
+    where: { binding: { projectId: resourceId } },
+  });
+  const externalRequestCount = await tx.serviceRequest.count({
+    where: {
+      projectId: resourceId,
+      createdByExternalContactId: { not: null },
+    },
+  });
   const checks: DeletionCheck[] = [
     {
       key: "project-cascade",

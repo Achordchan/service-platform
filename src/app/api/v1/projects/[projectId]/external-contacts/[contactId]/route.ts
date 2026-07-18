@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { updateExternalContact } from "@/modules/integrations/sub2api/connection-service";
-import { externalContactPatchSchema } from "@/modules/integrations/sub2api/schemas";
+import { updateExternalContact } from "@/modules/integrations/external/contact-service";
+import { externalContactPatchSchema } from "@/modules/integrations/external/schemas";
 import {
   readJson,
   requireApiActor,

@@ -1,14 +1,14 @@
 import "server-only";
 
-import { createHash, randomBytes } from "node:crypto";
-import type { ExternalActor } from "@/lib/external-actor";
 import { withSystemDb } from "@/lib/system-db";
 import { decryptSecret } from "@/lib/secret-crypto";
+import { issueExternalEmbedSession } from "@/modules/integrations/external/session-service";
 import {
   fetchSub2ApiAdminUser,
   jwtExpiryDate,
   verifySub2ApiUser,
 } from "@/modules/integrations/sub2api/client";
+import { extractSub2ApiClientFingerprint } from "@/modules/integrations/sub2api/client-utils";
 import { EMBED_SESSION_MAX_AGE_MS } from "@/modules/integrations/sub2api/constants";
 import type { sub2ApiExchangeSchema } from "@/modules/integrations/sub2api/schemas";
 import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
@@ -17,31 +17,8 @@ import type { z } from "zod";
 
 type ExchangeInput = z.infer<typeof sub2ApiExchangeSchema>;
 
-function tokenHash(token: string) {
-  return createHash("sha256").update(token).digest("base64url");
-}
-
-function bearerToken(request: Request) {
-  const authorization = request.headers.get("authorization") ?? "";
-  const match = /^Embed\s+([^\s]+)$/i.exec(authorization);
-  if (!match) {
-    throw new DomainError(
-      "EMBED_SESSION_REQUIRED",
-      "请返回 Sub2API 后重新进入",
-      401,
-    );
-  }
-  return match[1];
-}
-
 function requestMetadata(request: Request) {
-  return {
-    ipAddress:
-      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-      request.headers.get("x-real-ip") ||
-      null,
-    userAgent: request.headers.get("user-agent")?.slice(0, 500) || null,
-  };
+  return extractSub2ApiClientFingerprint(request.headers);
 }
 
 export async function exchangeSub2ApiIdentity(
@@ -91,9 +68,11 @@ export async function exchangeSub2ApiIdentity(
       401,
     );
   }
+  const metadata = requestMetadata(request);
   const verified = await verifySub2ApiUser(
     binding.sub2ApiConnection.baseUrl,
     input.token,
+    metadata,
   );
   if (verified.id !== input.userId) {
     throw new DomainError(
@@ -128,8 +107,6 @@ export async function exchangeSub2ApiIdentity(
   const expiresAt = new Date(
     Math.min(jwtExpiresAt.getTime(), now.getTime() + EMBED_SESSION_MAX_AGE_MS),
   );
-  const rawToken = randomBytes(32).toString("base64url");
-  const metadata = requestMetadata(request);
   const result = await withSystemDb(async (tx) => {
     const contact = await tx.externalContact.upsert({
       where: {
@@ -159,14 +136,11 @@ export async function exchangeSub2ApiIdentity(
         403,
       );
     }
-    await tx.externalEmbedSession.create({
-      data: {
-        tokenHash: tokenHash(rawToken),
-        externalContactId: contact.id,
-        bindingId: binding.id,
-        expiresAt,
-        ...metadata,
-      },
+    const issued = await issueExternalEmbedSession(tx, {
+      bindingId: binding.id,
+      externalContactId: contact.id,
+      expiresAt,
+      fingerprint: metadata,
     });
     await tx.auditLog.createMany({
       data: [{
@@ -184,19 +158,20 @@ export async function exchangeSub2ApiIdentity(
         },
       }],
     });
-    return contact;
+    return { contact, rawToken: issued.rawToken };
   });
 
   return {
-    token: rawToken,
+    token: result.rawToken,
     expiresAt: expiresAt.toISOString(),
     contact: {
-      id: result.id,
-      externalUserId: result.externalUserId,
-      name: result.displayName,
-      email: result.email,
-      username: result.username,
+      id: result.contact.id,
+      externalUserId: result.contact.externalUserId,
+      name: result.contact.displayName,
+      email: result.contact.email,
+      username: result.contact.username,
     },
+    parentOrigins: [binding.sub2ApiConnection.sourceOrigin],
     project: {
       id: binding.project.id,
       title: binding.project.title,
@@ -205,101 +180,7 @@ export async function exchangeSub2ApiIdentity(
   };
 }
 
-export async function requireExternalSession(request: Request) {
-  const rawToken = bearerToken(request);
-  const now = new Date();
-  const session = await withSystemDb((tx) =>
-    tx.externalEmbedSession.findUnique({
-      where: { tokenHash: tokenHash(rawToken) },
-      include: {
-        externalContact: true,
-        binding: {
-          include: {
-            plugin: true,
-            sub2ApiConnection: true,
-            project: {
-              select: {
-                id: true,
-                title: true,
-                kind: true,
-                status: true,
-                customerSpaceId: true,
-                serviceTypeId: true,
-              },
-            },
-          },
-        },
-      },
-    }),
-  );
-  if (
-    !session ||
-    session.revokedAt ||
-    session.expiresAt <= now ||
-    session.externalContact.status !== "ACTIVE" ||
-    session.binding.status !== "ACTIVE" ||
-    !session.binding.plugin.enabled ||
-    session.binding.plugin.healthStatus !== "READY" ||
-    session.binding.project.kind !== "EXTERNAL_INTEGRATION" ||
-    !session.binding.sub2ApiConnection
-  ) {
-    throw new DomainError(
-      "EMBED_SESSION_INVALID",
-      "会话已失效，请返回 Sub2API 后重新进入",
-      401,
-    );
-  }
-  await withSystemDb((tx) =>
-    tx.externalEmbedSession.update({
-      where: { id: session.id },
-      data: { lastSeenAt: now },
-      select: { id: true },
-    }),
-  );
-  const actor: ExternalActor = {
-    id: session.externalContact.id,
-    bindingId: session.bindingId,
-    externalUserId: session.externalContact.externalUserId,
-    name: session.externalContact.displayName,
-    email: session.externalContact.email,
-    username: session.externalContact.username,
-    projectId: session.binding.project.id,
-    customerSpaceId: session.binding.project.customerSpaceId,
-  };
-  return {
-    actor,
-    sessionId: session.id,
-    expiresAt: session.expiresAt,
-    project: session.binding.project,
-    connection: session.binding.sub2ApiConnection,
-  };
-}
-
-export function isExternalSessionActive(sessionId: string) {
-  const now = new Date();
-  return withSystemDb(async (tx) => {
-    const session = await tx.externalEmbedSession.findUnique({
-      where: { id: sessionId },
-      select: {
-        revokedAt: true,
-        expiresAt: true,
-        externalContact: { select: { status: true } },
-        binding: {
-          select: {
-            status: true,
-            plugin: { select: { enabled: true, healthStatus: true } },
-          },
-        },
-      },
-    });
-    return Boolean(
-      session &&
-      !session.revokedAt &&
-      session.expiresAt > now &&
-      session.externalContact.status === "ACTIVE" &&
-      session.binding.status === "ACTIVE" &&
-      session.binding.plugin.enabled &&
-      session.binding.plugin.healthStatus === "READY",
-    );
-  });
-}
+export {
+  isExternalSessionActive,
+  requireExternalSession,
+} from "@/modules/integrations/external/session-service";

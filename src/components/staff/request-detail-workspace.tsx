@@ -219,7 +219,16 @@ export function RequestDetailWorkspace({
               <DetailField label="提交人" value={request.createdByName} />
               {request.externalContact ? (
                 <>
-                  <DetailField label="来源" value={<Chip size="small" label="Sub2API" variant="outlined" />} />
+                  <DetailField
+                    label="来源"
+                    value={
+                      <Chip
+                        size="small"
+                        label={request.externalContact.sourceLabel}
+                        variant="outlined"
+                      />
+                    }
+                  />
                   <DetailField label="外部用户 ID" value={request.externalContact.externalUserId} />
                   <DetailField label="外部邮箱" value={request.externalContact.email || "未提供"} />
                   <DetailField label="外部用户名" value={request.externalContact.username || "未提供"} />

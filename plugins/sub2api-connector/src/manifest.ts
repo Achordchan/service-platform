@@ -10,6 +10,7 @@ export type Sub2ApiConnectorConfig = z.infer<
 
 export const sub2ApiConnectorManifest: PlatformPluginManifest<Sub2ApiConnectorConfig> = {
   key: SUB2API_CONNECTOR_PLUGIN_KEY,
+  kind: "EXTERNAL_CONNECTOR",
   name: "Sub2API 工单连接器",
   description: "将 Sub2API 登录用户安全映射为项目外部联系人并提供独立工单门户。",
   version: "1.0.0",

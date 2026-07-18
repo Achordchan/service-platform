@@ -1,5 +1,5 @@
-import { confirmExternalRequestClosed } from "@/modules/integrations/sub2api/external-request-service";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+import { confirmExternalRequestClosed } from "@/modules/integrations/external/request-service";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { routeError } from "@/modules/projects/api-utils";
 
 type RouteContext = { params: Promise<{ requestId: string }> };

@@ -1,5 +1,5 @@
 import { fileTypeFromBuffer } from "file-type";
-import { badRequest } from "@/modules/requests/errors";
+import { badRequest, payloadTooLarge } from "@/modules/requests/errors";
 import { getRuntimeAttachmentPolicy } from "@/modules/platform-settings/platform-setting-service";
 
 export const DEFAULT_MAX_ATTACHMENT_SIZE = 20 * 1024 * 1024;
@@ -64,7 +64,7 @@ export async function validateAttachmentFile(
     throw badRequest("EMPTY_ATTACHMENT", "附件不能为空");
   }
   if (buffer.byteLength > maxBytes) {
-    throw badRequest(
+    throw payloadTooLarge(
       "ATTACHMENT_TOO_LARGE",
       `附件大小不能超过 ${policy.maxSizeMb}MB`,
     );

@@ -1,30 +1,13 @@
 "use client";
 
-import { createTheme } from "@mui/material/styles";
+import {
+  createTheme,
+  type PaletteOptions,
+  type ThemeOptions,
+} from "@mui/material/styles";
 import type {} from "@mui/x-data-grid/themeAugmentation";
 
-export const appTheme = createTheme({
-  cssVariables: true,
-  palette: {
-    mode: "light",
-    primary: {
-      main: "#1677ff",
-      dark: "#0b5fd7",
-      light: "#eaf3ff",
-    },
-    background: {
-      default: "#ffffff",
-      paper: "#ffffff",
-    },
-    text: {
-      primary: "#1d1d1f",
-      secondary: "#667085",
-    },
-    divider: "#e5e7eb",
-    success: { main: "#16a466" },
-    warning: { main: "#d98b16" },
-    error: { main: "#d14343" },
-  },
+const commonThemeOptions = {
   shape: {
     borderRadius: 10,
   },
@@ -80,4 +63,59 @@ export const appTheme = createTheme({
       },
     },
   },
+} satisfies ThemeOptions;
+
+const lightPalette: PaletteOptions = {
+  mode: "light",
+  primary: {
+    main: "#1677ff",
+    dark: "#0b5fd7",
+    light: "#eaf3ff",
+  },
+  background: {
+    default: "#ffffff",
+    paper: "#ffffff",
+  },
+  text: {
+    primary: "#1d1d1f",
+    secondary: "#667085",
+  },
+  divider: "#e5e7eb",
+  success: { main: "#16a466" },
+  warning: { main: "#d98b16" },
+  error: { main: "#d14343" },
+};
+
+const darkPalette: PaletteOptions = {
+  mode: "dark",
+  primary: {
+    main: "#5aa2ff",
+    dark: "#2d7de0",
+    light: "#d8e9ff",
+  },
+  background: {
+    default: "#111418",
+    paper: "#171b21",
+  },
+  text: {
+    primary: "#f4f6f8",
+    secondary: "#a7b0bf",
+  },
+  divider: "#2c333d",
+  success: { main: "#35bd7f" },
+  warning: { main: "#e7a642" },
+  error: { main: "#ef6b6b" },
+};
+
+export const appTheme = createTheme({
+  cssVariables: true,
+  ...commonThemeOptions,
+  palette: lightPalette,
 });
+
+export function createEmbedTheme(mode: "light" | "dark") {
+  return createTheme({
+    ...commonThemeOptions,
+    palette: mode === "dark" ? darkPalette : lightPalette,
+  });
+}

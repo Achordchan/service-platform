@@ -450,8 +450,7 @@ async function assertEmailAvailable(
   userId: string,
   currentChangeId?: string,
 ) {
-  const [user, invitation, staffInvitation, pendingChange] = await Promise.all([
-    tx.user.findFirst({
+  const user = await tx.user.findFirst({
       where: {
         email: {
           equals: newEmail,
@@ -459,20 +458,8 @@ async function assertEmailAvailable(
         },
       },
       select: { id: true },
-    }),
-    tx.invitation.findFirst({
-      where: {
-        email: {
-          equals: newEmail,
-          mode: "insensitive",
-        },
-        acceptedAt: null,
-        revokedAt: null,
-        expiresAt: { gt: new Date() },
-      },
-      select: { id: true },
-    }),
-    tx.staffInvitation.findFirst({
+    });
+  const invitation = await tx.invitation.findFirst({
       where: {
         email: {
           equals: newEmail,
@@ -483,16 +470,27 @@ async function assertEmailAvailable(
         expiresAt: { gt: new Date() },
       },
       select: { id: true },
-    }),
-    tx.userEmailChange.findFirst({
+    });
+  const staffInvitation = await tx.staffInvitation.findFirst({
+      where: {
+        email: {
+          equals: newEmail,
+          mode: "insensitive",
+        },
+        acceptedAt: null,
+        revokedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      select: { id: true },
+    });
+  const pendingChange = await tx.userEmailChange.findFirst({
       where: {
         newEmail,
         status: { in: ["PENDING", "COMPLETING"] },
         ...(currentChangeId ? { id: { not: currentChangeId } } : {}),
       },
       select: { id: true, userId: true },
-    }),
-  ]);
+    });
   if (user && user.id !== userId) {
     throw new DomainError(
       "EMAIL_ALREADY_IN_USE",

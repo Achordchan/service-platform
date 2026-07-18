@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
+  Avatar,
   Box,
   Button,
   Chip,
@@ -13,6 +14,7 @@ import {
   FormControlLabel,
   IconButton,
   LinearProgress,
+  MenuItem,
   Paper,
   Stack,
   Switch,
@@ -60,10 +62,19 @@ type ExternalContact = {
   email: string | null;
   username: string | null;
   displayName: string;
+  avatarUrl: string | null;
+  profileAttributes: Record<string, string | number | boolean>;
+  sourceKey: string;
+  sourceLabel: string;
   status: "ACTIVE" | "BLOCKED";
   firstSeenAt: string;
   lastSeenAt: string;
   _count: { requestsCreated: number };
+};
+
+type ExternalContactPage = {
+  items: ExternalContact[];
+  nextCursor: string | null;
 };
 
 function statusLabel(status: string) {
@@ -388,49 +399,46 @@ function ConnectionDialog({
 export function ExternalContactsPanel({ projectId }: { projectId: string }) {
   const [contacts, setContacts] = useState<ExternalContact[]>([]);
   const [keyword, setKeyword] = useState("");
+  const [status, setStatus] = useState<"ALL" | "ACTIVE" | "BLOCKED">("ALL");
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
-  async function load() {
-    setLoading(true);
+  const [detailContact, setDetailContact] = useState<ExternalContact | null>(null);
+  const requestSequence = useRef(0);
+  const load = useCallback(async (
+    cursor: string | null = null,
+    append = false,
+  ) => {
+    const sequence = ++requestSequence.current;
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError("");
     try {
-      setContacts(await staffApi(`/api/v1/projects/${projectId}/external-contacts`));
+      const params = new URLSearchParams({ limit: "50" });
+      if (keyword.trim()) params.set("q", keyword.trim());
+      if (status !== "ALL") params.set("status", status);
+      if (cursor) params.set("cursor", cursor);
+      const page = await staffApi<ExternalContactPage>(
+        `/api/v1/projects/${projectId}/external-contacts?${params}`,
+      );
+      if (sequence !== requestSequence.current) return;
+      setContacts((current) => append ? [...current, ...page.items] : page.items);
+      setNextCursor(page.nextCursor);
     } catch (loadError) {
+      if (sequence !== requestSequence.current) return;
       setError(loadError instanceof Error ? loadError.message : "联系人加载失败");
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) {
+        setLoading(false);
+        setLoadingMore(false);
+      }
     }
-  }
+  }, [keyword, projectId, status]);
   useEffect(() => {
-    let active = true;
-    staffApi<ExternalContact[]>(
-      `/api/v1/projects/${projectId}/external-contacts`,
-    )
-      .then((next) => {
-        if (active) setContacts(next);
-      })
-      .catch((loadError) => {
-        if (active) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "联系人加载失败",
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [projectId]);
-  const rows = useMemo(() => {
-    const value = keyword.trim().toLowerCase();
-    return contacts.filter((contact) =>
-      !value || [contact.displayName, contact.email, contact.username, contact.externalUserId]
-        .some((item) => item?.toLowerCase().includes(value)),
-    );
-  }, [contacts, keyword]);
+    const timer = window.setTimeout(() => void load(), 250);
+    return () => window.clearTimeout(timer);
+  }, [load]);
   async function toggle(contact: ExternalContact) {
     try {
       await staffApi(
@@ -446,17 +454,31 @@ export function ExternalContactsPanel({ projectId }: { projectId: string }) {
   return (
     <Stack spacing={2}>
       {error ? <Alert severity="error">{error}</Alert> : null}
-      <TextField
-        value={keyword}
-        onChange={(event) => setKeyword(event.target.value)}
-        placeholder="搜索姓名、邮箱、用户名或外部 ID"
-        sx={{ maxWidth: 420 }}
-      />
+      <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
+        <TextField
+          value={keyword}
+          onChange={(event) => setKeyword(event.target.value)}
+          placeholder="搜索姓名、邮箱、用户名或外部 ID"
+          sx={{ width: { xs: "100%", sm: 420 } }}
+        />
+        <TextField
+          select
+          label="状态"
+          value={status}
+          onChange={(event) => setStatus(event.target.value as typeof status)}
+          sx={{ width: { xs: "100%", sm: 150 } }}
+        >
+          <MenuItem value="ALL">全部</MenuItem>
+          <MenuItem value="ACTIVE">正常</MenuItem>
+          <MenuItem value="BLOCKED">已停用</MenuItem>
+        </TextField>
+      </Stack>
       <TableContainer component={Paper} variant="outlined" sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ minWidth: 780 }}>
+        <Table size="small" sx={{ minWidth: 900 }}>
           <TableHead>
             <TableRow>
               <TableCell>联系人</TableCell>
+              <TableCell>来源</TableCell>
               <TableCell>外部用户 ID</TableCell>
               <TableCell>邮箱 / 用户名</TableCell>
               <TableCell align="right">工单</TableCell>
@@ -465,29 +487,91 @@ export function ExternalContactsPanel({ projectId }: { projectId: string }) {
             </TableRow>
           </TableHead>
           <TableBody>
-            {rows.map((contact) => (
+            {contacts.map((contact) => (
               <TableRow key={contact.id} hover>
                 <TableCell>
                   <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                    <Avatar src={contact.avatarUrl ?? undefined} sx={{ width: 28, height: 28 }}>
+                      {contact.displayName.slice(0, 1)}
+                    </Avatar>
                     <Typography variant="body2">{contact.displayName}</Typography>
                     <Chip size="small" label={contact.status === "ACTIVE" ? "正常" : "已停用"} color={contact.status === "ACTIVE" ? "success" : "default"} />
                   </Stack>
+                </TableCell>
+                <TableCell>
+                  <Chip size="small" label={contact.sourceLabel} variant="outlined" />
                 </TableCell>
                 <TableCell>{contact.externalUserId}</TableCell>
                 <TableCell>{contact.email || contact.username || "未提供"}</TableCell>
                 <TableCell align="right">{contact._count.requestsCreated}</TableCell>
                 <TableCell>{new Date(contact.lastSeenAt).toLocaleString("zh-CN")}</TableCell>
                 <TableCell align="right">
-                  <Button size="small" color={contact.status === "ACTIVE" ? "inherit" : "primary"} onClick={() => toggle(contact)}>
-                    {contact.status === "ACTIVE" ? "停用" : "恢复"}
-                  </Button>
+                  <Stack direction="row" spacing={0.5} sx={{ justifyContent: "flex-end" }}>
+                    <Button size="small" onClick={() => setDetailContact(contact)}>查看资料</Button>
+                    <Button size="small" color={contact.status === "ACTIVE" ? "inherit" : "primary"} onClick={() => toggle(contact)}>
+                      {contact.status === "ACTIVE" ? "停用" : "恢复"}
+                    </Button>
+                  </Stack>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </TableContainer>
-      {rows.length === 0 ? <Alert severity="info">暂无外部联系人。</Alert> : null}
+      {contacts.length === 0 ? <Alert severity="info">暂无外部联系人。</Alert> : null}
+      {nextCursor ? (
+        <Button
+          variant="outlined"
+          onClick={() => void load(nextCursor, true)}
+          disabled={loadingMore}
+          sx={{ alignSelf: "center" }}
+        >
+          {loadingMore ? "加载中" : "加载更多"}
+        </Button>
+      ) : null}
+      <Dialog
+        open={Boolean(detailContact)}
+        onClose={() => setDetailContact(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>外部联系人资料</DialogTitle>
+        <DialogContent>
+          {detailContact ? (
+            <Stack spacing={1.5} sx={{ pt: 1 }}>
+              <ContactDetailRow label="来源" value={detailContact.sourceLabel} />
+              <ContactDetailRow label="外部用户 ID" value={detailContact.externalUserId} />
+              <ContactDetailRow label="显示名称" value={detailContact.displayName} />
+              <ContactDetailRow label="邮箱" value={detailContact.email || "未提供"} />
+              <ContactDetailRow label="用户名" value={detailContact.username || "未提供"} />
+              {Object.entries(detailContact.profileAttributes).map(([key, value]) => (
+                <ContactDetailRow key={key} label={key} value={String(value)} />
+              ))}
+              {Object.keys(detailContact.profileAttributes).length === 0 ? (
+                <Alert severity="info">该联系人没有自定义资料。</Alert>
+              ) : null}
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDetailContact(null)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
+  );
+}
+
+function ContactDetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: { xs: "1fr", sm: "140px minmax(0, 1fr)" },
+        gap: 0.5,
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">{label}</Typography>
+      <Typography variant="body2" sx={{ overflowWrap: "anywhere" }}>{value}</Typography>
+    </Box>
   );
 }

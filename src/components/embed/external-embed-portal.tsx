@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppBar,
+  Badge,
   Box,
   Button,
   Chip,
@@ -21,7 +22,9 @@ import {
   Toolbar,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { ThemeProvider } from "@mui/material/styles";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
@@ -38,6 +41,7 @@ import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attach
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { hasMeaningfulHtml } from "@/lib/message-content";
+import { createEmbedTheme } from "@/theme/theme";
 
 type ProjectStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "EXPIRED";
 type RequestStatus = "PENDING" | "IN_PROGRESS" | "WAITING_CUSTOMER" | "RESOLVED" | "CLOSED";
@@ -53,6 +57,8 @@ type SessionView = {
     username: string | null;
   };
   project: { id: string; title: string; status: ProjectStatus };
+  context?: { theme?: "light" | "dark" | "system"; locale?: string };
+  parentOrigins: string[];
 };
 
 type RequestSummary = {
@@ -65,6 +71,7 @@ type RequestSummary = {
   createdAt: string;
   updatedAt: string;
   category: { id: string; name: string };
+  unreadCount: number;
 };
 
 type RequestListView = {
@@ -79,7 +86,9 @@ type ApiAuthor = {
   name: string;
   email: string | null;
   image: string | null;
-  source: "ACHORD" | "SUB2API" | "SYSTEM";
+  source: "ACHORD" | "SUB2API" | "UNIVERSAL" | "SYSTEM";
+  sourceKey?: string;
+  sourceLabel?: string;
   platformRole?: string;
 };
 
@@ -118,8 +127,25 @@ function createSessionId() {
   return crypto.randomUUID();
 }
 
-export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
-  const storageKey = `achord-sub2api-session:${publicId}`;
+function normalizeLocale(value: string | undefined) {
+  if (!value) return "zh-CN";
+  try {
+    return Intl.getCanonicalLocales(value)[0] ?? "zh-CN";
+  } catch {
+    return "zh-CN";
+  }
+}
+
+function ExternalEmbedPortal({
+  publicId,
+  connector,
+}: {
+  publicId: string;
+  connector: "SUB2API" | "UNIVERSAL";
+}) {
+  const connectorLabel =
+    connector === "UNIVERSAL" ? "Achord Connect" : "Sub2API";
+  const storageKey = `achord-${connector.toLowerCase()}-session:${publicId}`;
   const [session, setSession] = useState<SessionView | null>(null);
   const [streamReady, setStreamReady] = useState(false);
   const [list, setList] = useState<RequestListView | null>(null);
@@ -134,6 +160,40 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
   const tokenRef = useRef("");
   const detailIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef(createSessionId());
+  const parentOriginRef = useRef<string | null>(null);
+  const prefersDarkMode = useMediaQuery("(prefers-color-scheme: dark)");
+  const locale = normalizeLocale(session?.context?.locale);
+  const requestedTheme = session?.context?.theme ?? "light";
+  const colorMode =
+    requestedTheme === "system"
+      ? prefersDarkMode
+        ? "dark"
+        : "light"
+      : requestedTheme;
+  const embedTheme = useMemo(
+    () => createEmbedTheme(colorMode),
+    [colorMode],
+  );
+
+  useEffect(() => {
+    const previous = document.documentElement.lang;
+    document.documentElement.lang = locale;
+    return () => {
+      document.documentElement.lang = previous;
+    };
+  }, [locale]);
+
+  const postParentMessage = useCallback(
+    (type: "ready" | "height" | "unread-changed" | "session-expired", data: Record<string, unknown> = {}) => {
+      const targetOrigin = parentOriginRef.current;
+      if (!targetOrigin || window.parent === window) return;
+      window.parent.postMessage(
+        { source: "achord-connect-v1", type, ...data },
+        targetOrigin,
+      );
+    },
+    [],
+  );
 
   const api = useCallback(async <T,>(path: string, init?: RequestInit) => {
     const response = await fetch(path, {
@@ -152,11 +212,12 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
     if (!response.ok || payload.data === undefined) {
       if (response.status === 401 || response.status === 403) {
         sessionStorage.removeItem(storageKey);
+        postParentMessage("session-expired");
       }
       throw new Error(payload.error?.message || "请求失败");
     }
     return payload.data;
-  }, [storageKey]);
+  }, [postParentMessage, storageKey]);
 
   const loadList = useCallback(async () => {
     const next = await api<RequestListView>("/api/v1/embed/requests");
@@ -167,6 +228,16 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
   const loadDetail = useCallback(async (requestId: string) => {
     const next = await api<RequestDetailView>(`/api/v1/embed/requests/${requestId}`);
     setDetail(next);
+    setList((current) =>
+      current
+        ? {
+            ...current,
+            requests: current.requests.map((request) =>
+              request.id === requestId ? { ...request, unreadCount: 0 } : request,
+            ),
+          }
+        : current,
+    );
     detailIdRef.current = requestId;
     return next;
   }, [api]);
@@ -176,18 +247,48 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
     async function bootstrap() {
       try {
         const params = new URLSearchParams(window.location.search);
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
         const sourceToken = params.get("token");
         const userId = params.get("user_id");
         const srcHost = params.get("src_host") ?? undefined;
+        const launchTicket = fragment.get("ticket");
         window.history.replaceState({}, "", window.location.pathname);
+        const parentOrigin = [
+          document.referrer,
+          window.location.ancestorOrigins?.[0] ?? "",
+        ]
+          .filter(Boolean)
+          .map((value) => {
+            try {
+              return new URL(value).origin;
+            } catch {
+              return "";
+            }
+          })
+          .find(Boolean);
+        if (connector === "UNIVERSAL" && launchTicket && !parentOrigin) {
+          throw new Error("无法确认 iframe 宿主来源，请返回原系统重新进入");
+        }
         let nextSession: SessionView;
-        if (sourceToken && userId) {
-          const response = await fetch("/api/v1/embed/sub2api/exchange", {
+        if (
+          (connector === "SUB2API" && sourceToken && userId) ||
+          (connector === "UNIVERSAL" && launchTicket)
+        ) {
+          const response = await fetch(
+            connector === "UNIVERSAL"
+              ? "/api/v1/embed/universal/exchange"
+              : "/api/v1/embed/sub2api/exchange",
+            {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ publicId, userId, token: sourceToken, srcHost }),
+            body: JSON.stringify(
+              connector === "UNIVERSAL"
+                ? { publicId, ticket: launchTicket, parentOrigin }
+                : { publicId, userId, token: sourceToken, srcHost },
+            ),
             cache: "no-store",
-          });
+            },
+          );
           const payload = await response.json() as {
             data?: SessionView;
             error?: { message?: string };
@@ -199,11 +300,26 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
           sessionStorage.setItem(storageKey, JSON.stringify(nextSession));
         } else {
           const stored = sessionStorage.getItem(storageKey);
-          if (!stored) throw new Error("请返回 Sub2API 后重新进入");
+          if (!stored) throw new Error("请返回原系统后重新进入");
           nextSession = JSON.parse(stored) as SessionView;
         }
         if (cancelled) return;
         tokenRef.current = nextSession.token;
+        const candidates = [
+          document.referrer,
+          window.location.ancestorOrigins?.[0] ?? "",
+        ]
+          .filter(Boolean)
+          .map((value) => {
+            try {
+              return new URL(value).origin;
+            } catch {
+              return "";
+            }
+          });
+        parentOriginRef.current =
+          candidates.find((origin) => nextSession.parentOrigins.includes(origin)) ??
+          null;
         setStreamReady(false);
         setSession(nextSession);
         // Keep loading until STREAM_READY + first list fetch finish.
@@ -216,7 +332,7 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
     }
     void bootstrap();
     return () => { cancelled = true; };
-  }, [publicId, storageKey]);
+  }, [connector, publicId, storageKey]);
 
   useEffect(() => {
     if (!session) return;
@@ -253,7 +369,8 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
             setStreamReady(false);
             setSession(null);
             setLoading(false);
-            setError("会话已失效，请返回 Sub2API 后重新进入");
+            setError("会话已失效，请返回原系统后重新进入");
+            postParentMessage("session-expired");
             return;
           }
           if (!response.ok || !response.body) throw new Error("实时连接失败");
@@ -326,7 +443,28 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
       // Defer so unmount cleanup does not trip set-state-in-effect lint.
       queueMicrotask(() => setStreamReady(false));
     };
-  }, [loadDetail, loadList, session, storageKey]);
+  }, [loadDetail, loadList, postParentMessage, session, storageKey]);
+
+  useEffect(() => {
+    if (!session) return;
+    postParentMessage("ready");
+    const observer = new ResizeObserver(() => {
+      postParentMessage("height", {
+        height: Math.ceil(document.documentElement.scrollHeight),
+      });
+    });
+    observer.observe(document.documentElement);
+    return () => observer.disconnect();
+  }, [postParentMessage, session]);
+
+  const totalUnread = useMemo(
+    () => list?.requests.reduce((sum, request) => sum + request.unreadCount, 0) ?? 0,
+    [list],
+  );
+  useEffect(() => {
+    if (!session || !list) return;
+    postParentMessage("unread-changed", { unreadCount: totalUnread });
+  }, [list, postParentMessage, session, totalUnread]);
 
   useEffect(() => {
     if (!session || !streamReady) return;
@@ -414,7 +552,7 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
   useEffect(() => {
     if (!detailRequestId) return;
     const requestId = detailRequestId;
-    const report = (action: "heartbeat" | "leave") => fetch(
+    const report = (action: "heartbeat" | "leave", keepalive = false) => fetch(
       `/api/v1/embed/requests/${requestId}/presence`,
       {
         method: "POST",
@@ -423,7 +561,7 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
           Authorization: `Embed ${tokenRef.current}`,
         },
         body: JSON.stringify({ action, sessionId: sessionIdRef.current }),
-        keepalive: action === "leave",
+        keepalive,
       },
     ).then(async (response) => {
       if (action === "heartbeat" && response.ok) {
@@ -431,11 +569,21 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
         setCounterpartOnline(payload.data?.counterpartOnline === true);
       }
     }).catch(() => undefined);
+    const refreshHeartbeat = () => void report("heartbeat");
+    const handlePageHide = () => void report("leave", true);
     void report("heartbeat");
-    const timer = window.setInterval(() => void report("heartbeat"), 30_000);
+    const timer = window.setInterval(refreshHeartbeat, 30_000);
+    document.addEventListener("visibilitychange", refreshHeartbeat);
+    window.addEventListener("focus", refreshHeartbeat);
+    window.addEventListener("pageshow", refreshHeartbeat);
+    window.addEventListener("pagehide", handlePageHide);
     return () => {
       window.clearInterval(timer);
-      void report("leave");
+      document.removeEventListener("visibilitychange", refreshHeartbeat);
+      window.removeEventListener("focus", refreshHeartbeat);
+      window.removeEventListener("pageshow", refreshHeartbeat);
+      window.removeEventListener("pagehide", handlePageHide);
+      void report("leave", true);
     };
   }, [detailRequestId]);
 
@@ -460,6 +608,8 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
     authorImage: message.author.image,
     authorPlatformRole: message.author.platformRole,
     authorSource: message.author.source,
+    authorSourceKey: message.author.sourceKey,
+    authorSourceLabel: message.author.sourceLabel,
     createdAt: message.createdAt,
     isSystem: message.isSystem,
     isInitial: message.isInitial,
@@ -476,17 +626,29 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
     attachments: message.attachments,
   })) ?? [], [detail]);
 
-  if (loading) return <LinearProgress />;
+  if (loading) {
+    return (
+      <ThemeProvider theme={embedTheme}>
+        <LinearProgress />
+      </ThemeProvider>
+    );
+  }
   if (error || !session || !list) {
     return (
-      <Container maxWidth="sm" sx={{ py: 6 }}>
-        <Alert severity="error">{error || "请返回 Sub2API 后重新进入"}</Alert>
-      </Container>
+      <ThemeProvider theme={embedTheme}>
+        <Container maxWidth="sm" sx={{ py: 6 }}>
+          <Alert severity="error">{error || "请返回原系统后重新进入"}</Alert>
+        </Container>
+      </ThemeProvider>
     );
   }
 
   return (
-    <Box sx={{ minHeight: "100dvh", bgcolor: "#f6f7f9" }}>
+    <ThemeProvider theme={embedTheme}>
+    <Box
+      data-testid="external-embed-shell"
+      sx={{ minHeight: "100dvh", bgcolor: "background.default" }}
+    >
       <AppBar position="sticky" elevation={0} color="inherit" sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
         <Toolbar sx={{ gap: 1.5 }}>
           {detail ? (
@@ -499,7 +661,7 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Typography sx={{ fontWeight: 750 }} noWrap>{list.project.title}</Typography>
             <Typography variant="caption" color="text.secondary" noWrap>
-              {session.contact.name} · Sub2API
+              {session.contact.name} · {connectorLabel}
             </Typography>
           </Box>
         </Toolbar>
@@ -543,6 +705,7 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
               counterpartTypingLabel={counterpartTyping ? "服务人员" : null}
               attachmentUrl={(file) => attachmentUrls[file.id] || "about:blank"}
               onAttachmentDownload={downloadAttachment}
+              locale={locale}
             />
             {detail.writable ? (
               <EmbedReplyComposer
@@ -603,7 +766,17 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
               >
                 <Stack direction="row" spacing={1.5} sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
                   <Box sx={{ minWidth: 0 }}>
-                    <Typography sx={{ fontWeight: 700 }} noWrap>{request.title}</Typography>
+                    <Badge
+                      color="error"
+                      badgeContent={request.unreadCount}
+                      invisible={request.unreadCount === 0}
+                      max={99}
+                      sx={{ maxWidth: "100%" }}
+                    >
+                      <Typography sx={{ fontWeight: 700, pr: request.unreadCount ? 2 : 0 }} noWrap>
+                        {request.title}
+                      </Typography>
+                    </Badge>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                       {request.number} · {request.category.name}
                     </Typography>
@@ -628,7 +801,16 @@ export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
         }}
       />
     </Box>
+    </ThemeProvider>
   );
+}
+
+export function Sub2ApiEmbedPortal({ publicId }: { publicId: string }) {
+  return <ExternalEmbedPortal publicId={publicId} connector="SUB2API" />;
+}
+
+export function UniversalEmbedPortal({ publicId }: { publicId: string }) {
+  return <ExternalEmbedPortal publicId={publicId} connector="UNIVERSAL" />;
 }
 
 function EmbedReplyComposer({

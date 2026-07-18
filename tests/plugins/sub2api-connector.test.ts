@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSub2ApiRequestIdentity,
+  extractSub2ApiClientFingerprint,
   isPrivateHostname,
   jwtExpiryDate,
   normalizeSub2ApiBaseUrl,
@@ -14,6 +15,22 @@ import {
 } from "@achord/plugin-sub2api-connector";
 
 describe("Sub2API 连接器", () => {
+  it("提取原始浏览器指纹供会话绑定校验", () => {
+    expect(
+      extractSub2ApiClientFingerprint(
+        new Headers({
+          "CF-Connecting-IP": "203.0.113.8",
+          "X-Real-IP": "198.51.100.9",
+          "X-Forwarded-For": "192.0.2.10, 10.0.0.1",
+          "User-Agent": "Browser/1.0",
+        }),
+      ),
+    ).toEqual({
+      ipAddress: "198.51.100.9",
+      userAgent: "Browser/1.0",
+    });
+  });
+
   it("状态切换未提交地址时复用已保存连接", () => {
     const current = {
       baseUrl: "https://sub.achord.cn:8443",

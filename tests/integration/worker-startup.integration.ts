@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { resolve as pathResolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -26,13 +27,16 @@ describe("mail worker startup", () => {
     // Use local tsx + process.execPath so the test never re-enters the package
     // manager (pnpm worker can reinstall deps and exceed the startup budget).
     const tsxCli = pathResolve(process.cwd(), "node_modules/tsx/dist/cli.mjs");
+    const envFile = existsSync(pathResolve(process.cwd(), ".env.integration"))
+      ? ".env.integration"
+      : ".env";
     worker = spawn(
       process.execPath,
       [
         tsxCli,
         "--tsconfig",
         "tsconfig.worker.json",
-        "--env-file=.env",
+        `--env-file=${envFile}`,
         "src/worker.ts",
       ],
       {

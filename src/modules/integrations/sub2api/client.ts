@@ -13,6 +13,7 @@ import {
   isDevelopmentLocalHostname,
   isPrivateHostname,
   normalizeSub2ApiUser,
+  type Sub2ApiClientFingerprint,
   type Sub2ApiPinnedAddress,
 } from "@/modules/integrations/sub2api/client-utils";
 
@@ -220,11 +221,24 @@ async function fetchSub2ApiJson(
   });
 }
 
-export async function verifySub2ApiUser(baseUrl: string, token: string) {
+export async function verifySub2ApiUser(
+  baseUrl: string,
+  token: string,
+  fingerprint?: Sub2ApiClientFingerprint,
+) {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+  };
+  if (fingerprint?.userAgent) {
+    headers["User-Agent"] = fingerprint.userAgent;
+  }
+  if (fingerprint?.ipAddress) {
+    headers["CF-Connecting-IP"] = fingerprint.ipAddress;
+    headers["X-Real-IP"] = fingerprint.ipAddress;
+    headers["X-Forwarded-For"] = fingerprint.ipAddress;
+  }
   return normalizeSub2ApiUser(
-    await fetchSub2ApiJson(baseUrl, "/api/v1/auth/me", {
-      Authorization: `Bearer ${token}`,
-    }),
+    await fetchSub2ApiJson(baseUrl, "/api/v1/auth/me", headers),
   );
 }
 

@@ -12,7 +12,21 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: service_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d service_platform_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,8 +41,66 @@ jobs:
         with:
           version: 11.7.0
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.24.x
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Go SDK tests
+        run: pnpm test:sdk:go
+
+      - name: PHP SDK tests
+        run: pnpm test:sdk:php
+
+      - name: Prepare integration database roles
+        run: |
+          set -euo pipefail
+          docker exec -i "${{ job.services.postgres.id }}" \
+            psql -U postgres -d service_platform_test -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE service_platform_app LOGIN PASSWORD 'app-test-password';
+          CREATE ROLE service_platform_jobs LOGIN PASSWORD 'jobs-test-password';
+          SQL
+
+      - name: Write disposable test environment
+        run: |
+          set -euo pipefail
+          cat > .env.integration <<'EOF'
+          DATABASE_URL="postgresql://service_platform_app:app-test-password@127.0.0.1:5432/service_platform_test?schema=public"
+          DATABASE_MIGRATION_URL="postgresql://postgres:postgres@127.0.0.1:5432/service_platform_test?schema=public"
+          JOB_DATABASE_URL="postgresql://service_platform_jobs:jobs-test-password@127.0.0.1:5432/service_platform_test"
+          MAIL_INLINE_WORKER="true"
+          BETTER_AUTH_SECRET="github-actions-integration-secret-at-least-32-characters"
+          BETTER_AUTH_URL="http://127.0.0.1:3000"
+          APP_URL="http://127.0.0.1:3000"
+          UPLOAD_DIR=".data/test-uploads"
+          PLATFORM_SECRET_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+          EOF
+
+      - name: Migrate and seed integration database
+        run: pnpm test:integration:prepare
+
+      - name: Integration tests
+        env:
+          NODE_OPTIONS: --trace-deprecation
+        run: pnpm test:integration
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
 
       - name: Build app
         env:
@@ -98,15 +170,13 @@ jobs:
             "${USER_NAME}@${VPS_HOST}" "
               set -euo pipefail
               APP_DIR=/var/www/service-platform
-              NEEDS_CLEAN_INSTALL=false
-              if [[ ! -f \"\${APP_DIR}/pnpm-lock.yaml\" ]] ||
-                 ! cmp -s '${REMOTE_DIR}/pnpm-lock.yaml' \"\${APP_DIR}/pnpm-lock.yaml\"; then
-                NEEDS_CLEAN_INSTALL=true
-              fi
-              if [[ \"\${NEEDS_CLEAN_INSTALL}\" == true && -d \"\${APP_DIR}/node_modules\" ]]; then
-                echo '[deploy] dependency manifest changed; clearing node_modules contents before non-interactive install'
-                find \"\${APP_DIR}/node_modules\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-              fi
+              test -f '${REMOTE_DIR}/scripts/remote-deploy.sh'
+              sudo install -o root -g root -m 755 \
+                '${REMOTE_DIR}/scripts/remote-deploy.sh' \
+                /opt/service-platform/deploy.sh.next
+              sudo mv \
+                /opt/service-platform/deploy.sh.next \
+                /opt/service-platform/deploy.sh
               sudo /opt/service-platform/deploy.sh '${REMOTE_DIR}'
               cd \"\${APP_DIR}\"
               node scripts/verify-runtime-dependencies.mjs

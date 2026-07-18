@@ -1,0 +1,14 @@
+{
+  "name": "@achord/plugin-universal-embed-connector",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/manifest.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "dependencies": {
+    "@achord/platform-plugin-sdk": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

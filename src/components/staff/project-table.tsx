@@ -56,7 +56,7 @@ export function ProjectTable({
   serviceTypes = [],
   managerCandidates = [],
   currentUserId = "",
-  externalIntegrationAvailable = false,
+  externalConnectors = [],
 }: {
   projects: ProjectListItem[];
   canCreate: boolean;
@@ -64,7 +64,7 @@ export function ProjectTable({
   serviceTypes?: ProjectOption[];
   managerCandidates?: StaffCandidate[];
   currentUserId?: string;
-  externalIntegrationAvailable?: boolean;
+  externalConnectors?: ProjectOption[];
 }) {
   const router = useRouter();
   const [keyword, setKeyword] = useState("");
@@ -124,7 +124,7 @@ export function ProjectTable({
         flex: 0.8,
         renderCell: ({ row }) =>
           row.kind === "EXTERNAL_INTEGRATION"
-            ? "Sub2API 外部用户"
+            ? `${row.externalConnectorLabel ?? "外部接入"} 用户`
             : row.customerSpace.name,
       },
       {
@@ -390,7 +390,7 @@ export function ProjectTable({
                 ) : null}
                 <Typography variant="body2" color="text.secondary">
                   {project.kind === "EXTERNAL_INTEGRATION"
-                    ? "Sub2API 外部用户"
+                    ? `${project.externalConnectorLabel ?? "外部接入"} 用户`
                     : project.customerSpace.name} · {project.serviceType.name}
                 </Typography>
                 {project.showProgress !== false ? (
@@ -442,7 +442,7 @@ export function ProjectTable({
         serviceTypes={serviceTypes}
         managerCandidates={managerCandidates}
         currentUserId={currentUserId}
-        externalIntegrationAvailable={externalIntegrationAvailable}
+        externalConnectors={externalConnectors}
       />
       <DeletionPreflightDialog
         target={

@@ -52,6 +52,8 @@ export type ProjectListItem = {
   serviceType: { id: string; name: string };
   managerNames: string[];
   requestCount: number;
+  externalConnectorKey?: string | null;
+  externalConnectorLabel?: string | null;
 };
 
 export type ProjectOption = {
@@ -117,13 +119,17 @@ export type RequestListItem = {
   updatedAt: string;
   projectId: string;
   projectTitle: string;
+  customerFilterKey?: string;
   customerName: string;
   serviceTypeName: string;
   categoryName: string;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  assignedStaff?: Array<{ id: string; name: string }>;
   createdByName: string;
-  source?: "ACHORD" | "SUB2API";
+  source?: "ACHORD" | "SUB2API" | "UNIVERSAL";
+  sourceKey?: string | null;
+  sourceLabel?: string | null;
 };
 
 export type RequestAttachment = {
@@ -149,6 +155,10 @@ export type RequestDetail = RequestListItem & {
     email: string | null;
     username: string | null;
     status: "ACTIVE" | "BLOCKED";
+    avatarUrl?: string | null;
+    profileAttributes?: Record<string, unknown>;
+    sourceKey: string;
+    sourceLabel: string;
   } | null;
   assignees?: RequestAssignee[];
   attachments: RequestAttachment[];
@@ -162,7 +172,9 @@ export type RequestDetail = RequestListItem & {
     authorName: string;
     authorImage?: string | null;
     authorPlatformRole?: StaffRole | "CUSTOMER" | null;
-    authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
+    authorSource?: "ACHORD" | "SUB2API" | "UNIVERSAL" | "SYSTEM";
+    authorSourceKey?: string;
+    authorSourceLabel?: string;
     createdAt: string;
     replyToMessageId?: string | null;
     replyTo?: {
@@ -171,7 +183,9 @@ export type RequestDetail = RequestListItem & {
       visibility: ContentVisibility;
       authorId: string;
       authorName: string;
-      authorSource?: "ACHORD" | "SUB2API" | "SYSTEM";
+      authorSource?: "ACHORD" | "SUB2API" | "UNIVERSAL" | "SYSTEM";
+      authorSourceKey?: string;
+      authorSourceLabel?: string;
       attachments: Array<{
         id: string;
         originalName: string;

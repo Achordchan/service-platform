@@ -124,8 +124,53 @@ ensure_sub2api_nginx_log_hardening() {
   echo "[deploy] nginx config valid; reload requested"
 }
 
+ensure_universal_request_body_limits() {
+  local source_dir="$1"
+  if [[ ! -d /etc/nginx ]]; then
+    return 0
+  fi
+  local snippet="${source_dir}/scripts/nginx-universal-request-body-limits.conf"
+  if [[ ! -f "${snippet}" ]]; then
+    echo "[deploy] ERROR: release missing Universal request body limit snippet" >&2
+    return 1
+  fi
+  install -d -m 755 /etc/nginx/snippets
+  install -m 644 "${snippet}" /etc/nginx/snippets/universal-request-body-limits.conf
+  if ! grep -Rqs --include='*.conf' "universal-request-body-limits.conf" /etc/nginx/conf.d /etc/nginx/sites-enabled 2>/dev/null; then
+    echo "[deploy] ERROR: Universal public request body limits are not live." >&2
+    echo "[deploy] include snippets/universal-request-body-limits.conf in the support.achord.cn HTTPS server {}." >&2
+    return 1
+  fi
+  local rendered_config
+  if ! rendered_config="$(nginx -T 2>&1)"; then
+    echo "[deploy] ERROR: unable to render active Nginx configuration" >&2
+    return 1
+  fi
+  if [[ "${rendered_config}" != *'location = /api/v1/integrations/universal/launch-tickets'* ]]; then
+    echo "[deploy] ERROR: launch-ticket endpoint is missing client_max_body_size 64k" >&2
+    return 1
+  fi
+  if [[ "${rendered_config}" != *'location = /api/v1/embed/universal/exchange'* ]]; then
+    echo "[deploy] ERROR: universal exchange endpoint is missing client_max_body_size 64k" >&2
+    return 1
+  fi
+  local body_limit_count
+  body_limit_count="$(grep -c 'client_max_body_size 64k;' <<<"${rendered_config}" || true)"
+  if [[ "${body_limit_count}" -lt 2 ]]; then
+    echo "[deploy] ERROR: both Universal public endpoints must enforce client_max_body_size 64k" >&2
+    return 1
+  fi
+  if ! nginx -t; then
+    echo "[deploy] ERROR: nginx -t failed after Universal request limit verification" >&2
+    return 1
+  fi
+  systemctl reload nginx
+  echo "[deploy] Universal public request body limits verified"
+}
+
 # Fail closed on JWT logging before we ever take the app offline.
 ensure_sub2api_nginx_log_hardening "${RELEASE_STAGING}"
+ensure_universal_request_body_limits "${RELEASE_STAGING}"
 
 DEPLOY_SERVICES_STOPPED=0
 restore_services_if_needed() {
@@ -145,6 +190,10 @@ echo "[deploy] stop app processes before swap"
 DEPLOY_SERVICES_STOPPED=1
 stop_service service-platform
 stop_service service-platform-worker
+if [[ "${NEEDS_INSTALL}" == true && -d "${APP_DIR}/node_modules" ]]; then
+  echo "[deploy] dependency manifest changed; clear node_modules before install"
+  find "${APP_DIR}/node_modules" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+fi
 echo "[deploy] sync release -> ${APP_DIR}"
 rsync -a --delete \
   --exclude ".git/" \

@@ -6,6 +6,7 @@ import type { RequestDetail } from "@/components/staff/staff-types";
 import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
 import { getRequest } from "@/modules/requests/request-service";
+import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 
 export default async function StaffRequestDetailPage({
   params,
@@ -33,6 +34,21 @@ export default async function StaffRequestDetailPage({
     canAssign ||
     (actor.platformRole === "TECHNICIAN" && assigneeIds.includes(actor.id)) ||
     claimRequired;
+  const connectorKey = project.pluginBindings[0]?.pluginKey ?? null;
+  const connectorLabel = connectorKey
+    ? getRegisteredPlugin(connectorKey).manifest.name
+    : "外部接入";
+  const connectorSource =
+    connectorKey === "universal-embed-connector"
+      ? ("UNIVERSAL" as const)
+      : ("SUB2API" as const);
+  const headingDescription = [
+    request.number,
+    project.kind === "EXTERNAL_INTEGRATION"
+      ? connectorLabel
+      : project.customerSpace.name,
+    project.title,
+  ].join(" · ");
 
   const requestView: RequestDetail = {
     id: request.id,
@@ -62,14 +78,27 @@ export default async function StaffRequestDetailPage({
       request.createdByExternalContact?.displayName ??
       "原提交人已不可用",
     source: request.createdByExternalContact
-      ? ("SUB2API" as const)
+      ? connectorSource
       : ("ACHORD" as const),
+    sourceKey: request.createdByExternalContact ? connectorKey : null,
+    sourceLabel: request.createdByExternalContact ? connectorLabel : null,
     externalContact: request.createdByExternalContact
       ? {
           externalUserId: request.createdByExternalContact.externalUserId,
           email: request.createdByExternalContact.email,
           username: request.createdByExternalContact.username,
           status: request.createdByExternalContact.status,
+          avatarUrl: request.createdByExternalContact.avatarUrl,
+          profileAttributes:
+            request.createdByExternalContact.profileAttributes as Record<
+              string,
+              unknown
+            >,
+          sourceKey:
+            request.createdByExternalContact.binding.pluginKey,
+          sourceLabel: getRegisteredPlugin(
+            request.createdByExternalContact.binding.pluginKey,
+          ).manifest.name,
         }
       : null,
     attachments: request.attachments.map((attachment) => ({
@@ -91,9 +120,21 @@ export default async function StaffRequestDetailPage({
         message.author?.name ??
         message.externalAuthor?.displayName ??
         "原作者已不可用",
-      authorImage: message.author?.image ?? null,
+      authorImage:
+        message.author?.image ?? message.externalAuthor?.avatarUrl ?? null,
       authorPlatformRole: message.author?.platformRole ?? null,
-      authorSource: message.externalAuthor ? "SUB2API" : message.author ? "ACHORD" : "SYSTEM",
+      authorSource: message.externalAuthor
+        ? message.externalAuthor.binding.pluginKey ===
+          "universal-embed-connector"
+          ? "UNIVERSAL"
+          : "SUB2API"
+        : message.author
+          ? "ACHORD"
+          : "SYSTEM",
+      authorSourceKey: message.externalAuthor?.binding.pluginKey,
+      authorSourceLabel: message.externalAuthor
+        ? getRegisteredPlugin(message.externalAuthor.binding.pluginKey).manifest.name
+        : undefined,
       createdAt: message.createdAt.toISOString(),
       replyToMessageId: message.replyToMessageId,
       replyTo: message.replyTo
@@ -110,10 +151,19 @@ export default async function StaffRequestDetailPage({
               message.replyTo.externalAuthor?.displayName ??
               "原作者已不可用",
             authorSource: message.replyTo.externalAuthor
-              ? "SUB2API"
+              ? message.replyTo.externalAuthor.binding.pluginKey ===
+                "universal-embed-connector"
+                ? "UNIVERSAL"
+                : "SUB2API"
               : message.replyTo.author
                 ? "ACHORD"
                 : "SYSTEM",
+            authorSourceKey: message.replyTo.externalAuthor?.binding.pluginKey,
+            authorSourceLabel: message.replyTo.externalAuthor
+              ? getRegisteredPlugin(
+                  message.replyTo.externalAuthor.binding.pluginKey,
+                ).manifest.name
+              : undefined,
             attachments: message.replyTo.attachments,
           }
         : null,
@@ -142,7 +192,7 @@ export default async function StaffRequestDetailPage({
         backHref="/staff/requests"
         backLabel="服务请求"
         title={request.title}
-        description={`${request.number} · ${project.customerSpace.name} · ${project.title}`}
+        description={headingDescription}
         status={<StaffStatus value={request.status} />}
       />
       <Box sx={{ mt: 3 }}>

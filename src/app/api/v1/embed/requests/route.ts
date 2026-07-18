@@ -1,9 +1,9 @@
-import { embedCreateRequestSchema } from "@/modules/integrations/sub2api/schemas";
+import { embedCreateRequestSchema } from "@/modules/integrations/external/schemas";
 import {
   createExternalRequest,
   listExternalRequests,
-} from "@/modules/integrations/sub2api/external-request-service";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+} from "@/modules/integrations/external/request-service";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { readJson, routeError } from "@/modules/projects/api-utils";
 
 export async function GET(request: Request) {

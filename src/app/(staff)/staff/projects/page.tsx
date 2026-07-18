@@ -9,7 +9,7 @@ import { listProjects } from "@/modules/projects/project-service";
 import { listServiceTypes } from "@/modules/projects/service-type-service";
 import { listUsers } from "@/modules/users/user-service";
 import { listPluginViews } from "@/modules/plugins/plugin-service";
-import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
+import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 
 export const metadata = {
   title: "项目",
@@ -40,11 +40,15 @@ export default async function StaffProjectsPage() {
             | "TECHNICIAN",
         }))
       : [];
-  const externalIntegrationAvailable = Boolean(
-    adminOptions?.[4].find(
-      (plugin) => plugin.key === SUB2API_CONNECTOR_PLUGIN_KEY,
-    )?.enabled,
-  );
+  const externalConnectors =
+    adminOptions?.[4]
+      .filter(
+        (plugin) =>
+          plugin.kind === "EXTERNAL_CONNECTOR" &&
+          plugin.enabled &&
+          plugin.healthStatus === "READY",
+      )
+      .map((plugin) => ({ id: plugin.key, name: plugin.name })) ?? [];
 
   const rows: ProjectListItem[] = projects.map((project) => ({
     id: project.id,
@@ -66,6 +70,10 @@ export default async function StaffProjectsPage() {
     },
     managerNames: project.staff.map((member) => member.user.name),
     requestCount: project._count.requests,
+    externalConnectorKey: project.pluginBindings[0]?.pluginKey ?? null,
+    externalConnectorLabel: project.pluginBindings[0]
+      ? getRegisteredPlugin(project.pluginBindings[0].pluginKey).manifest.name
+      : null,
   }));
 
   return (
@@ -95,7 +103,7 @@ export default async function StaffProjectsPage() {
           }
           managerCandidates={managerCandidates}
           currentUserId={actor.id}
-          externalIntegrationAvailable={externalIntegrationAvailable}
+          externalConnectors={externalConnectors}
         />
       </Stack>
     </Container>

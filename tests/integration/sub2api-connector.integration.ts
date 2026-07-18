@@ -10,7 +10,9 @@ import {
   deleteProject,
 } from "@/modules/projects/project-service";
 import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
-import { createExternalRequest } from "@/modules/integrations/sub2api/external-request-service";
+import { createExternalRequest } from "@/modules/integrations/external/request-service";
+import { updateExternalPresence } from "@/modules/integrations/external/presence-service";
+import { updateRequestPresence } from "@/modules/requests/request-presence-service";
 
 const owner = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -226,6 +228,43 @@ describe("Sub2API 外部联系人 RLS", () => {
     );
     expect(events).toEqual([{ count: "1" }]);
   });
+
+  it("后台心跳能识别 Sub2API 外部客户在线", async () => {
+    const externalSessionId = randomUUID();
+    const staffSessionId = randomUUID();
+    const externalActor = {
+      id: ids.contactA,
+      bindingId: ids.binding,
+      externalUserId: "external-a",
+      name: "外部用户 A",
+      email: null,
+      username: null,
+      projectId: ids.project,
+      customerSpaceId: externalCustomerSpaceId,
+    };
+
+    await expect(
+      updateExternalPresence(externalActor, ids.requestA, {
+        action: "heartbeat",
+        sessionId: externalSessionId,
+      }),
+    ).resolves.toEqual({ counterpartOnline: false });
+    await expect(
+      updateRequestPresence(adminActor, ids.requestA, {
+        action: "heartbeat",
+        sessionId: staffSessionId,
+      }),
+    ).resolves.toEqual({ counterpartOnline: true });
+
+    await updateRequestPresence(adminActor, ids.requestA, {
+      action: "leave",
+      sessionId: staffSessionId,
+    });
+    await updateExternalPresence(externalActor, ids.requestA, {
+      action: "leave",
+      sessionId: externalSessionId,
+    });
+  });
 });
 
 describe("Sub2API 外部项目空间隔离", () => {
@@ -233,6 +272,7 @@ describe("Sub2API 外部项目空间隔离", () => {
     const project = await createProject(adminActor, {
       title: "自动托管空间测试",
       kind: "EXTERNAL_INTEGRATION",
+      connectorPluginKey: SUB2API_CONNECTOR_PLUGIN_KEY,
       status: "DRAFT",
       serviceTypeId,
     });

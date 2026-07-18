@@ -218,7 +218,7 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
   EXTERNAL_REQUEST_PUBLIC_REPLY: {
     key: "EXTERNAL_REQUEST_PUBLIC_REPLY",
     name: "外部工单公开回复",
-    description: "服务人员回复 Sub2API 外部联系人的工单时发送。",
+    description: "服务人员回复外部接入用户的工单时发送。",
     variables: [
       { key: "recipientName", label: "联系人姓名", sample: "张三" },
       { key: "requestNumber", label: "工单编号", sample: "SR-20260717-001" },
@@ -231,8 +231,8 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       subject: "{{requestNumber}} 收到新的服务回复",
       previewText: "{{senderName}}：{{messagePreview}}",
       heading: "你好，{{recipientName}}",
-      body: "{{senderName}} 回复了“{{requestTitle}}”：{{messagePreview}}。请返回 Sub2API 打开 {{projectName}} 查看完整内容。",
-      actionLabel: "返回 Sub2API",
+      body: "{{senderName}} 回复了“{{requestTitle}}”：{{messagePreview}}。请返回原系统打开 {{projectName}} 查看完整内容。",
+      actionLabel: "返回原系统",
     },
   },
   EXTERNAL_REQUEST_WAITING_CUSTOMER: {
@@ -247,10 +247,10 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
     ],
     defaults: {
       subject: "{{requestNumber}} 正在等待你的回复",
-      previewText: "请返回 Sub2API 补充“{{requestTitle}}”所需信息",
+      previewText: "请返回原系统补充“{{requestTitle}}”所需信息",
       heading: "你好，{{recipientName}}",
-      body: "“{{requestTitle}}”正在等待你的回复。请返回 Sub2API 打开 {{projectName}} 补充信息。",
-      actionLabel: "返回 Sub2API",
+      body: "“{{requestTitle}}”正在等待你的回复。请返回原系统打开 {{projectName}} 补充信息。",
+      actionLabel: "返回原系统",
     },
   },
   EXTERNAL_REQUEST_RESOLVED: {
@@ -267,8 +267,8 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       subject: "{{requestNumber}} 已解决",
       previewText: "“{{requestTitle}}”已由服务团队处理完成",
       heading: "工单已解决",
-      body: "“{{requestTitle}}”已处理完成。你可以返回 Sub2API 打开 {{projectName}} 查看处理记录。",
-      actionLabel: "返回 Sub2API",
+      body: "“{{requestTitle}}”已处理完成。你可以返回原系统打开 {{projectName}} 查看处理记录。",
+      actionLabel: "返回原系统",
     },
   },
   EXTERNAL_REQUEST_CLOSED: {
@@ -285,8 +285,8 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       subject: "{{requestNumber}} 已关闭",
       previewText: "“{{requestTitle}}”已关闭",
       heading: "工单已关闭",
-      body: "“{{requestTitle}}”已关闭，历史沟通记录仍可在 Sub2API 的 {{projectName}} 中查看。",
-      actionLabel: "返回 Sub2API",
+      body: "“{{requestTitle}}”已关闭，历史沟通记录仍可在原系统的 {{projectName}} 中查看。",
+      actionLabel: "返回原系统",
     },
   },
   TEST_EMAIL: {

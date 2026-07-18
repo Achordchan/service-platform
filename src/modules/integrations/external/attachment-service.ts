@@ -161,7 +161,7 @@ export async function uploadExternalAttachment(
         serviceRequestId: request.id,
         metadata: {
           actorType: "EXTERNAL_CONTACT",
-          source: "SUB2API",
+          source: actor.sourceKey ?? "sub2api-connector",
           originalName: created.originalName,
           mimeType: created.mimeType,
           size: created.size,
@@ -177,7 +177,7 @@ export async function uploadExternalAttachment(
           change: "REQUEST_ATTACHMENT_UPLOADED",
           actorType: "EXTERNAL_CONTACT",
           actorId: actor.id,
-          source: "SUB2API",
+          source: actor.sourceKey ?? "sub2api-connector",
           requestId: request.id,
           attachmentId: created.id,
           ...(created.requestMessageId

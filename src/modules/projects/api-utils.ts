@@ -3,6 +3,10 @@ import { ZodError } from "zod";
 import type { Actor } from "@/lib/actor";
 import { resolveActor } from "@/lib/actor";
 import { getCurrentSession } from "@/lib/session";
+import {
+  readBoundedRequestBody,
+  RequestBodyTooLargeError,
+} from "@/modules/http/bounded-request-body";
 import { DomainError } from "@/modules/projects/errors";
 
 type ActorResult =
@@ -33,10 +37,24 @@ export async function requireApiActor(): Promise<ActorResult> {
   return { actor };
 }
 
-export async function readJson(request: Request) {
+export async function readJson(
+  request: Request,
+  options: { maxBytes?: number } = {},
+) {
   try {
+    if (options.maxBytes !== undefined) {
+      const body = await readBoundedRequestBody(request, options.maxBytes);
+      return JSON.parse(new TextDecoder().decode(body));
+    }
     return await request.json();
-  } catch {
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      throw new DomainError(
+        "REQUEST_BODY_TOO_LARGE",
+        "请求体超过允许的大小",
+        413,
+      );
+    }
     throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
   }
 }

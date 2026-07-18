@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Sub2ApiEmbedPortal } from "@/components/embed/sub2api-embed-portal";
+import { Sub2ApiEmbedPortal } from "@/components/embed/external-embed-portal";
 
 export const dynamic = "force-dynamic";
 

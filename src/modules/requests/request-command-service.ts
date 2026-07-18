@@ -10,6 +10,7 @@ import {
 } from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { resolveUniversalActionUrl } from "@/modules/integrations/external/action-url";
 import {
   dispatchRequestActivity,
   requestStatusLabel,
@@ -66,15 +67,42 @@ function canSendExternalContactMail(
 ) {
   const contact = request.createdByExternalContact;
   const binding = contact?.binding;
-  const connection = binding?.sub2ApiConnection;
+  const connection = externalConnection(request);
   return Boolean(
     contact?.email &&
       contact.status === "ACTIVE" &&
       binding?.status === "ACTIVE" &&
       binding.plugin.enabled &&
       binding.plugin.healthStatus === "READY" &&
-      connection?.emailNotificationsEnabled,
+      connection?.emailNotificationsEnabled && connection.actionUrl,
   );
+}
+
+function externalConnection(
+  request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
+) {
+  const binding = request.createdByExternalContact?.binding;
+  if (binding?.sub2ApiConnection) {
+    return {
+      actionUrl: binding.sub2ApiConnection.baseUrl,
+      emailNotificationsEnabled:
+        binding.sub2ApiConnection.emailNotificationsEnabled,
+      customerMemberNotificationsEnabled:
+        binding.sub2ApiConnection.customerMemberNotificationsEnabled,
+    };
+  }
+  const universal = binding?.universalConnection;
+  return universal
+    ? {
+        actionUrl: resolveUniversalActionUrl(
+          request.createdByExternalContact?.lastParentOrigin,
+          universal.allowedOrigins,
+        ),
+        emailNotificationsEnabled: universal.emailNotificationsEnabled,
+        customerMemberNotificationsEnabled:
+          universal.customerMemberNotificationsEnabled,
+      }
+    : null;
 }
 
 function statusMail(
@@ -82,7 +110,7 @@ function statusMail(
   status: RequestStatus,
 ): ExternalRequestMail | null {
   const contact = request.createdByExternalContact;
-  const connection = contact?.binding.sub2ApiConnection;
+  const connection = externalConnection(request);
   if (!canSendExternalContactMail(request) || !connection) return null;
   const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
     WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
@@ -95,7 +123,7 @@ function statusMail(
   return {
     to: contact.email,
     templateKey,
-    actionUrl: connection.baseUrl,
+    actionUrl: connection.actionUrl!,
     variables: {
       recipientName: contact.displayName,
       requestNumber: request.number,
@@ -147,10 +175,7 @@ function includeCustomerMembers(
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
 ) {
   if (!request.createdByExternalContact) return true;
-  return (
-    request.createdByExternalContact.binding.sub2ApiConnection
-      ?.customerMemberNotificationsEnabled === true
-  );
+  return externalConnection(request)?.customerMemberNotificationsEnabled === true;
 }
 
 function buildAssignmentSystemMessage(
@@ -695,7 +720,7 @@ export async function addRequestMessage(
     }
 
     const contact = request.createdByExternalContact;
-    const connection = contact?.binding.sub2ApiConnection;
+    const connection = externalConnection(request);
     const externalMail =
       !isCustomer &&
       input.visibility === "CUSTOMER_VISIBLE" &&
@@ -705,7 +730,7 @@ export async function addRequestMessage(
         ? {
             to: contact.email!,
             templateKey: "EXTERNAL_REQUEST_PUBLIC_REPLY" as const,
-            actionUrl: connection.baseUrl,
+            actionUrl: connection.actionUrl!,
             variables: {
               recipientName: contact.displayName,
               requestNumber: request.number,

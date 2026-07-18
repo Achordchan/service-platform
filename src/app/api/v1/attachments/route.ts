@@ -2,6 +2,10 @@ import {
   getAttachmentPolicy,
 } from "@/modules/attachments/attachment-validation";
 import {
+  readBoundedFormData,
+  RequestBodyTooLargeError,
+} from "@/modules/attachments/bounded-form-data";
+import {
   uploadProjectAttachment,
   uploadRequestAttachment,
 } from "@/modules/attachments/attachment-service";
@@ -9,22 +13,23 @@ import {
   apiErrorResponse,
   requireApiActor,
 } from "@/modules/requests/api";
-import { badRequest } from "@/modules/requests/errors";
+import { badRequest, payloadTooLarge } from "@/modules/requests/errors";
 
 export async function POST(request: Request) {
   try {
     const actor = await requireApiActor();
     const policy = await getAttachmentPolicy();
     const maxBytes = Math.max(1, policy.maxSizeMb) * 1024 * 1024;
-    const declaredLength = Number(request.headers.get("content-length") ?? 0);
-    if (declaredLength > maxBytes + 1024 * 1024) {
-      throw badRequest(
+    let formData: FormData;
+    try {
+      formData = await readBoundedFormData(request, maxBytes + 1024 * 1024);
+    } catch (error) {
+      if (!(error instanceof RequestBodyTooLargeError)) throw error;
+      throw payloadTooLarge(
         "ATTACHMENT_TOO_LARGE",
         `附件大小不能超过 ${policy.maxSizeMb}MB`,
       );
     }
-
-    const formData = await request.formData();
     const file = formData.get("file");
     const serviceRequestId = formData.get("serviceRequestId");
     const projectId = formData.get("projectId");
@@ -35,7 +40,7 @@ export async function POST(request: Request) {
       throw badRequest("ATTACHMENT_REQUIRED", "请选择附件");
     }
     if (file.size > maxBytes) {
-      throw badRequest(
+      throw payloadTooLarge(
         "ATTACHMENT_TOO_LARGE",
         `附件大小不能超过 ${policy.maxSizeMb}MB`,
       );

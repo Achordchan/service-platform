@@ -10,18 +10,31 @@ export async function proxy(request: NextRequest) {
           select: {
             status: true,
             sub2ApiConnection: { select: { sourceOrigin: true } },
+            universalConnection: { select: { allowedOrigins: true } },
           },
         }),
       ).catch(() => null)
     : null;
-  const frameAncestor =
-    binding?.status === "ACTIVE" && binding.sub2ApiConnection?.sourceOrigin
-      ? binding.sub2ApiConnection.sourceOrigin
-      : "'none'";
+  const universalOrigins = Array.isArray(
+    binding?.universalConnection?.allowedOrigins,
+  )
+    ? binding.universalConnection.allowedOrigins.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  const frameAncestors =
+    binding?.status === "ACTIVE"
+      ? [
+          ...(binding.sub2ApiConnection?.sourceOrigin
+            ? [binding.sub2ApiConnection.sourceOrigin]
+            : []),
+          ...universalOrigins,
+        ]
+      : [];
   const response = NextResponse.next();
   response.headers.set(
     "Content-Security-Policy",
-    `frame-ancestors ${frameAncestor}`,
+    `frame-ancestors ${frameAncestors.length > 0 ? frameAncestors.join(" ") : "'none'"}`,
   );
   response.headers.set("Cache-Control", "no-store");
   response.headers.set("Referrer-Policy", "no-referrer");
@@ -30,5 +43,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/embed/sub2api/:path*"],
+  matcher: ["/embed/sub2api/:path*", "/embed/connect/:path*"],
 };

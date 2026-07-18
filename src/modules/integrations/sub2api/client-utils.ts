@@ -1,4 +1,11 @@
-import { isIP } from "node:net";
+import {
+  extractExternalClientFingerprint,
+  type ExternalClientFingerprint,
+} from "@/modules/integrations/external/client-fingerprint";
+import {
+  isDevelopmentLocalHostname,
+  isPrivateHostname,
+} from "@/modules/integrations/external/network-security";
 import { DomainError } from "@/modules/projects/errors";
 
 type JsonRecord = Record<string, unknown>;
@@ -15,6 +22,12 @@ export type Sub2ApiPinnedAddress = {
   family: number;
 };
 
+export type Sub2ApiClientFingerprint = ExternalClientFingerprint;
+
+export function extractSub2ApiClientFingerprint(headers: Headers) {
+  return extractExternalClientFingerprint(headers);
+}
+
 export function createSub2ApiRequestIdentity(
   target: URL,
   pinned: Sub2ApiPinnedAddress | null,
@@ -26,55 +39,10 @@ export function createSub2ApiRequestIdentity(
   };
 }
 
-export function isPrivateHostname(hostname: string) {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (
-    normalized === "localhost" ||
-    normalized.endsWith(".localhost") ||
-    normalized.endsWith(".local") ||
-    normalized.endsWith(".internal")
-  ) {
-    return true;
-  }
-  const mapped = normalized.match(/^(?::ffff:|::ffff:)(\d+\.\d+\.\d+\.\d+)$/i);
-  if (mapped) {
-    return isPrivateHostname(mapped[1]);
-  }
-  if (isIP(normalized) === 4) {
-    const parts = normalized.split(".").map(Number);
-    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
-      return true;
-    }
-    return (
-      parts[0] === 0 ||
-      parts[0] === 10 ||
-      parts[0] === 127 ||
-      (parts[0] === 169 && parts[1] === 254) ||
-      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-      (parts[0] === 192 && parts[1] === 168) ||
-      (parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127) ||
-      (parts[0] === 198 && (parts[1] === 18 || parts[1] === 19)) ||
-      parts[0] >= 224
-    );
-  }
-  if (isIP(normalized) === 6) {
-    if (normalized === "::" || normalized === "::1") return true;
-    return (
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      normalized.startsWith("fe8") ||
-      normalized.startsWith("fe9") ||
-      normalized.startsWith("fea") ||
-      normalized.startsWith("feb") ||
-      normalized.startsWith("::ffff:")
-    );
-  }
-  return false;
-}
-
-export function isDevelopmentLocalHostname(hostname: string) {
-  return process.env.NODE_ENV !== "production" && isPrivateHostname(hostname);
-}
+export {
+  isDevelopmentLocalHostname,
+  isPrivateHostname,
+} from "@/modules/integrations/external/network-security";
 
 export function normalizeSub2ApiBaseUrl(value: string) {
   let url: URL;

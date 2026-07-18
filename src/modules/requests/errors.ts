@@ -13,6 +13,10 @@ export function badRequest(code: string, message: string) {
   return new RequestDomainError(code, message, 400);
 }
 
+export function payloadTooLarge(code: string, message: string) {
+  return new RequestDomainError(code, message, 413);
+}
+
 export function forbidden(message = "无权执行此操作") {
   return new RequestDomainError("FORBIDDEN", message, 403);
 }

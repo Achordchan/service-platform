@@ -1,8 +1,9 @@
 import "server-only";
 
+import type { Prisma } from "@/generated/prisma/client";
 import type { ExternalActor } from "@/lib/external-actor";
 import { withExternalActorDb } from "@/lib/external-actor";
-import type { embedPresenceSchema } from "@/modules/integrations/sub2api/schemas";
+import type { embedPresenceSchema } from "@/modules/integrations/external/schemas";
 import {
   publishEvent,
   publishTransientEvent,
@@ -13,6 +14,29 @@ import type { z } from "zod";
 const PRESENCE_TTL_MS = 3 * 60 * 1000;
 const TYPING_TTL_MS = 12_000;
 type PresenceInput = z.infer<typeof embedPresenceSchema>;
+
+async function isCustomerGroupOnline(
+  tx: Prisma.TransactionClient,
+  serviceRequestId: string,
+  now: Date,
+) {
+  const customerPresence = await tx.requestPresence.findFirst({
+    where: {
+      serviceRequestId,
+      expiresAt: { gt: now },
+      user: { platformRole: "CUSTOMER" },
+    },
+    select: { id: true },
+  });
+  const externalPresence = await tx.externalRequestPresence.findFirst({
+    where: {
+      serviceRequestId,
+      expiresAt: { gt: now },
+    },
+    select: { id: true },
+  });
+  return Boolean(customerPresence || externalPresence);
+}
 
 export function updateExternalPresence(
   actor: ExternalActor,
@@ -36,16 +60,7 @@ export function updateExternalPresence(
       throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
     }
     const now = new Date();
-    const wasOnline = Boolean(
-      await tx.externalRequestPresence.findFirst({
-        where: {
-          serviceRequestId: request.id,
-          externalContactId: actor.id,
-          expiresAt: { gt: now },
-        },
-        select: { id: true },
-      }),
-    );
+    const wasOnline = await isCustomerGroupOnline(tx, request.id, now);
     // Drop expired presence rows opportunistically to keep the table bounded.
     await tx.externalRequestPresence.deleteMany({
       where: { expiresAt: { lte: now } },
@@ -80,16 +95,7 @@ export function updateExternalPresence(
         },
       });
     }
-    const isOnline = Boolean(
-      await tx.externalRequestPresence.findFirst({
-        where: {
-          serviceRequestId: request.id,
-          externalContactId: actor.id,
-          expiresAt: { gt: now },
-        },
-        select: { id: true },
-      }),
-    );
+    const isOnline = await isCustomerGroupOnline(tx, request.id, now);
     if (wasOnline !== isOnline) {
       await publishEvent(tx, {
         type: "REQUEST_PRESENCE_CHANGED",

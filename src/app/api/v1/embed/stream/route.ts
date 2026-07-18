@@ -1,10 +1,13 @@
-import pg from "pg";
+import { acquireAbortableResource } from "@/lib/abortable-resource";
 import { withExternalActorDb } from "@/lib/external-actor";
-import { env } from "@/lib/runtime-env";
+import {
+  type DatabaseNotification,
+  subscribeDatabaseNotifications,
+} from "@/lib/postgres-event-listener";
 import {
   isExternalSessionActive,
   requireExternalSession,
-} from "@/modules/integrations/sub2api/session-service";
+} from "@/modules/integrations/external/session-service";
 import { routeError } from "@/modules/projects/api-utils";
 
 export const runtime = "nodejs";
@@ -67,20 +70,17 @@ export async function GET(request: Request) {
     const headerId = request.headers.get("last-event-id");
     let cursor: bigint | null =
       headerId && /^\d+$/.test(headerId) ? BigInt(headerId) : null;
-    const client = new pg.Client({ connectionString: env.DATABASE_URL });
-    await client.connect();
-    await client.query("LISTEN service_platform_events");
-    await client.query("LISTEN service_platform_transient_events");
-
     let closed = false;
     let heartbeat: ReturnType<typeof setInterval> | undefined;
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-    const close = async (closeController: boolean) => {
+    let unsubscribe: (() => void) | undefined;
+    let handleNotification: (message: DatabaseNotification) => void = () =>
+      undefined;
+    const close = (closeController: boolean) => {
       if (closed) return;
       closed = true;
       if (heartbeat) clearInterval(heartbeat);
-      client.removeAllListeners();
-      await client.end().catch(() => undefined);
+      unsubscribe?.();
       if (closeController && controller) {
         try {
           controller.close();
@@ -148,7 +148,7 @@ export async function GET(request: Request) {
               checkingSession = false;
             });
         }, 25_000);
-        client.on("notification", (message) => {
+        handleNotification = (message) => {
           if (message.channel === "service_platform_events") {
             void queuePending().catch(() => close(true));
             return;
@@ -164,9 +164,19 @@ export async function GET(request: Request) {
               `event: REQUEST_TYPING_CHANGED\ndata: ${JSON.stringify(payload)}\n\n`,
             ),
           );
+        };
+        unsubscribe = await acquireAbortableResource({
+          signal: request.signal,
+          acquire: () =>
+            subscribeDatabaseNotifications((message) =>
+              handleNotification(message),
+            ),
+          onAbort: () => close(true),
         });
-        client.on("error", () => void close(true));
-        request.signal.addEventListener("abort", () => void close(true));
+        if (closed) {
+          unsubscribe();
+          return;
+        }
         await queuePending();
         if (!closed) {
           const readyCursor = cursor ?? 0n;
@@ -177,8 +187,8 @@ export async function GET(request: Request) {
           );
         }
       },
-      async cancel() {
-        await close(false);
+      cancel() {
+        close(false);
       },
     });
 

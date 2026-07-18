@@ -1,6 +1,6 @@
-import { updateExternalPresence } from "@/modules/integrations/sub2api/external-presence-service";
+import { updateExternalPresence } from "@/modules/integrations/external/presence-service";
 import { embedPresenceSchema } from "@/modules/integrations/sub2api/schemas";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { readJson, routeError } from "@/modules/projects/api-utils";
 
 type RouteContext = { params: Promise<{ requestId: string }> };

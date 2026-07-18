@@ -9,6 +9,11 @@ import {
   parseSub2ApiConnectorConfig,
   sub2ApiConnectorManifest,
 } from "@achord/plugin-sub2api-connector";
+import {
+  UNIVERSAL_EMBED_CONNECTOR_PLUGIN_KEY,
+  parseUniversalEmbedConnectorConfig,
+  universalEmbedConnectorManifest,
+} from "@achord/plugin-universal-embed-connector";
 import { DomainError } from "@/modules/projects/errors";
 
 
@@ -64,12 +69,35 @@ const registeredPlugins: readonly RegisteredPlugin[] = [
       return getSub2ApiConnectorRuntimeHealth();
     },
   },
+  {
+    manifest:
+      universalEmbedConnectorManifest as PlatformPluginManifest<
+        Record<string, unknown>
+      >,
+    parseConfig: (value) => parseUniversalEmbedConnectorConfig(value),
+    healthCheck: async () => {
+      const { getUniversalEmbedConnectorRuntimeHealth } = await import(
+        "@achord/plugin-universal-embed-connector/runtime"
+      );
+      return getUniversalEmbedConnectorRuntimeHealth();
+    },
+  },
 ];
 
-export { IMAGE_WEBP_PLUGIN_KEY, SUB2API_CONNECTOR_PLUGIN_KEY };
+export {
+  IMAGE_WEBP_PLUGIN_KEY,
+  SUB2API_CONNECTOR_PLUGIN_KEY,
+  UNIVERSAL_EMBED_CONNECTOR_PLUGIN_KEY,
+};
 
 export function listRegisteredPlugins() {
   return registeredPlugins.map((plugin) => plugin.manifest);
+}
+
+export function listRegisteredExternalConnectors() {
+  return registeredPlugins
+    .map((plugin) => plugin.manifest)
+    .filter((manifest) => manifest.kind === "EXTERNAL_CONNECTOR");
 }
 
 export type PluginConfigParseResult =

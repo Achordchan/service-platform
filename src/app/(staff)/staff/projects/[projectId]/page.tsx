@@ -12,6 +12,7 @@ import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
 import { listProjectRequests } from "@/modules/requests/request-service";
 import { listUsers } from "@/modules/users/user-service";
+import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 
 export default async function StaffProjectDetailPage({
   params,
@@ -27,6 +28,10 @@ export default async function StaffProjectDetailPage({
   const currentAssignment = project.staff.find(
     (member) => member.user.id === actor.id,
   );
+  const externalConnectorKey = project.pluginBindings[0]?.pluginKey ?? null;
+  const externalConnectorLabel = externalConnectorKey
+    ? getRegisteredPlugin(externalConnectorKey).manifest.name
+    : null;
   const staffCandidates = actor.isPlatformAdmin
     ? (
         await Promise.all([
@@ -69,6 +74,8 @@ export default async function StaffProjectDetailPage({
       .filter((member) => member.role === "PROJECT_MANAGER")
       .map((member) => member.user.name),
     requestCount: requests.length,
+    externalConnectorKey,
+    externalConnectorLabel,
     staff: project.staff.map((member) => ({
       id: member.id,
       userId: member.user.id,
@@ -111,33 +118,50 @@ export default async function StaffProjectDetailPage({
       createdAt: attachment.createdAt.toISOString(),
     })),
   };
-  const requestRows: RequestListItem[] = requests.map((request) => ({
-    id: request.id,
-    number: request.number,
-    title: request.title,
-    description: request.description,
-    priority: request.priority,
-    status: request.status,
-    createdAt: request.createdAt.toISOString(),
-    updatedAt: request.updatedAt.toISOString(),
-    projectId: project.id,
-    projectTitle: project.title,
-    customerName: project.customerSpace.name,
-    serviceTypeName: project.serviceType.name,
-    categoryName: request.category.name,
-    assigneeId: request.assigneeId,
-    assigneeName:
-      (request.assignees.length
-        ? request.assignees.map((item) => item.user.name).join("、")
-        : request.assignee?.name) ?? null,
-    createdByName:
-      request.createdBy?.name ??
-      request.createdByExternalContact?.displayName ??
-      "原提交人已不可用",
-    source: request.createdByExternalContact
-      ? ("SUB2API" as const)
-      : ("ACHORD" as const),
-  }));
+  const requestRows: RequestListItem[] = requests.map((request) => {
+    const assignedStaff = request.assignees.length
+      ? request.assignees.map((item) => ({
+          id: item.user.id,
+          name: item.user.name,
+        }))
+      : request.assignee
+        ? [{ id: request.assignee.id, name: request.assignee.name }]
+        : [];
+    const externalProject = project.kind === "EXTERNAL_INTEGRATION";
+    return {
+      id: request.id,
+      number: request.number,
+      title: request.title,
+      description: request.description,
+      priority: request.priority,
+      status: request.status,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+      projectId: project.id,
+      projectTitle: project.title,
+      customerFilterKey: externalProject
+        ? `${externalConnectorKey ?? "EXTERNAL"}_EXTERNAL`
+        : project.customerSpace.id,
+      customerName: externalProject
+        ? `${externalConnectorLabel ?? "外部接入"} 用户`
+        : project.customerSpace.name,
+      serviceTypeName: project.serviceType.name,
+      categoryName: request.category.name,
+      assigneeId: request.assigneeId,
+      assigneeName:
+        assignedStaff.map((member) => member.name).join("、") || null,
+      assignedStaff,
+      createdByName:
+        request.createdBy?.name ??
+        request.createdByExternalContact?.displayName ??
+        "原提交人已不可用",
+      source: request.createdByExternalContact
+        ? externalConnectorKey === "universal-embed-connector"
+          ? ("UNIVERSAL" as const)
+          : ("SUB2API" as const)
+        : ("ACHORD" as const),
+    };
+  });
 
   const canManage =
     actor.isPlatformAdmin || currentAssignment?.role === "PROJECT_MANAGER";

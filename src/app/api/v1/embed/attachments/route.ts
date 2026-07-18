@@ -1,6 +1,10 @@
 import { getAttachmentPolicy } from "@/modules/attachments/attachment-validation";
-import { uploadExternalAttachment } from "@/modules/integrations/sub2api/external-attachment-service";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+import {
+  readBoundedFormData,
+  RequestBodyTooLargeError,
+} from "@/modules/attachments/bounded-form-data";
+import { uploadExternalAttachment } from "@/modules/integrations/external/attachment-service";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { DomainError } from "@/modules/projects/errors";
 import { routeError } from "@/modules/projects/api-utils";
 
@@ -9,15 +13,17 @@ export async function POST(request: Request) {
     const session = await requireExternalSession(request);
     const policy = await getAttachmentPolicy();
     const maxBytes = Math.max(1, policy.maxSizeMb) * 1024 * 1024;
-    const declaredLength = Number(request.headers.get("content-length") ?? 0);
-    if (declaredLength > maxBytes + 1024 * 1024) {
+    let formData: FormData;
+    try {
+      formData = await readBoundedFormData(request, maxBytes + 1024 * 1024);
+    } catch (error) {
+      if (!(error instanceof RequestBodyTooLargeError)) throw error;
       throw new DomainError(
         "ATTACHMENT_TOO_LARGE",
         `附件大小不能超过 ${policy.maxSizeMb}MB`,
         413,
       );
     }
-    const formData = await request.formData();
     const file = formData.get("file");
     const serviceRequestId = String(formData.get("serviceRequestId") ?? "").trim();
     const requestMessageId = String(formData.get("requestMessageId") ?? "").trim();

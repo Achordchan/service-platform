@@ -163,6 +163,13 @@ enum ExternalContactStatus {
   BLOCKED
 }
 
+enum UniversalWebhookDeliveryStatus {
+  PENDING
+  PROCESSING
+  DELIVERED
+  FAILED
+}
+
 model User {
   id                      String            @id @default(cuid())
   name                    String
@@ -507,15 +514,16 @@ model ServiceRequest {
   createdAt                  DateTime        @default(now())
   updatedAt                  DateTime        @updatedAt
 
-  project                  Project                   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category                 RequestCategory           @relation(fields: [categoryId], references: [id])
-  createdBy                User?                     @relation("RequestCreator", fields: [createdById], references: [id])
-  createdByExternalContact ExternalContact?          @relation("ExternalRequestCreator", fields: [createdByExternalContactId], references: [id])
-  assignee                 User?                     @relation("RequestAssignee", fields: [assigneeId], references: [id])
+  project                  Project                    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category                 RequestCategory            @relation(fields: [categoryId], references: [id])
+  createdBy                User?                      @relation("RequestCreator", fields: [createdById], references: [id])
+  createdByExternalContact ExternalContact?           @relation("ExternalRequestCreator", fields: [createdByExternalContactId], references: [id])
+  assignee                 User?                      @relation("RequestAssignee", fields: [assigneeId], references: [id])
   assignees                RequestAssignee[]
   messages                 RequestMessage[]
   presences                RequestPresence[]
   externalPresences        ExternalRequestPresence[]
+  externalReadStates       ExternalRequestReadState[]
   attachments              Attachment[]
   notifications            Notification[]
   auditLogs                AuditLog[]
@@ -755,23 +763,26 @@ model PluginInstallation {
 }
 
 model ProjectPluginBinding {
-  id         String                     @id @default(cuid())
-  projectId  String
-  pluginKey  String
-  publicId   String                     @unique @default(cuid())
-  status     ProjectPluginBindingStatus @default(DRAFT)
-  config     Json                       @default("{}")
-  archivedAt DateTime?
-  createdAt  DateTime                   @default(now())
-  updatedAt  DateTime                   @updatedAt
+  id                    String                     @id @default(cuid())
+  projectId             String
+  pluginKey             String
+  externalConnectorSlot String?
+  publicId              String                     @unique @default(cuid())
+  status                ProjectPluginBindingStatus @default(DRAFT)
+  config                Json                       @default("{}")
+  archivedAt            DateTime?
+  createdAt             DateTime                   @default(now())
+  updatedAt             DateTime                   @updatedAt
 
-  project           Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  plugin            PluginInstallation     @relation(fields: [pluginKey], references: [key], onDelete: Restrict)
-  sub2ApiConnection Sub2ApiConnection?
-  externalContacts  ExternalContact[]
-  embedSessions     ExternalEmbedSession[]
+  project             Project                       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  plugin              PluginInstallation            @relation(fields: [pluginKey], references: [key], onDelete: Restrict)
+  sub2ApiConnection   Sub2ApiConnection?
+  universalConnection UniversalConnectorConnection?
+  externalContacts    ExternalContact[]
+  embedSessions       ExternalEmbedSession[]
 
   @@unique([projectId, pluginKey])
+  @@unique([projectId, externalConnectorSlot])
   @@index([pluginKey, status])
   @@index([projectId, status])
 }
@@ -792,26 +803,108 @@ model Sub2ApiConnection {
   binding ProjectPluginBinding @relation(fields: [bindingId], references: [id], onDelete: Cascade)
 }
 
-model ExternalContact {
-  id             String                @id @default(cuid())
-  bindingId      String
-  externalUserId String
-  email          String?
-  username       String?
-  displayName    String
-  status         ExternalContactStatus @default(ACTIVE)
-  firstSeenAt    DateTime              @default(now())
-  lastSeenAt     DateTime              @default(now())
-  createdAt      DateTime              @default(now())
-  updatedAt      DateTime              @updatedAt
+model UniversalConnectorConnection {
+  bindingId                          String    @id
+  name                               String
+  allowedOrigins                     Json      @default("[]")
+  profileFields                      Json      @default("[]")
+  emailNotificationsEnabled          Boolean   @default(true)
+  customerMemberNotificationsEnabled Boolean   @default(false)
+  webhookUrl                         String?
+  webhookSecretEncrypted             String?
+  webhookEvents                      Json      @default("[]")
+  webhookStatus                      String    @default("DISABLED")
+  healthStatus                       String    @default("UNKNOWN")
+  lastCheckedAt                      DateTime?
+  lastError                          String?
+  createdAt                          DateTime  @default(now())
+  updatedAt                          DateTime  @updatedAt
 
-  binding          ProjectPluginBinding      @relation(fields: [bindingId], references: [id], onDelete: Cascade)
-  embedSessions    ExternalEmbedSession[]
-  requestsCreated  ServiceRequest[]          @relation("ExternalRequestCreator")
-  requestMessages  RequestMessage[]
-  attachments      Attachment[]
-  requestPresences ExternalRequestPresence[]
-  auditLogs        AuditLog[]
+  binding           ProjectPluginBinding           @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  credentials       UniversalConnectorCredential[]
+  launchTickets     UniversalLaunchTicket[]
+  webhookDeliveries UniversalWebhookDelivery[]
+}
+
+model UniversalConnectorCredential {
+  id           String    @id @default(cuid())
+  bindingId    String
+  clientId     String    @unique
+  secretHash   String
+  secretPrefix String
+  lastUsedAt   DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  connection UniversalConnectorConnection @relation(fields: [bindingId], references: [bindingId], onDelete: Cascade)
+
+  @@index([bindingId, revokedAt, createdAt])
+}
+
+model UniversalLaunchTicket {
+  id             String    @id @default(cuid())
+  bindingId      String
+  ticketHash     String    @unique
+  externalUserId String
+  profile        Json
+  context        Json      @default("{}")
+  expiresAt      DateTime
+  consumedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  connection UniversalConnectorConnection @relation(fields: [bindingId], references: [bindingId], onDelete: Cascade)
+
+  @@index([bindingId, externalUserId, createdAt])
+  @@index([bindingId, createdAt])
+  @@index([expiresAt, consumedAt])
+}
+
+model UniversalWebhookDelivery {
+  id             String                         @id @default(cuid())
+  bindingId      String
+  eventId        String                         @unique
+  eventType      String
+  payload        Json
+  status         UniversalWebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                            @default(0)
+  nextAttemptAt  DateTime?
+  lastAttemptAt  DateTime?
+  responseStatus Int?
+  lastError      String?
+  deliveredAt    DateTime?
+  createdAt      DateTime                       @default(now())
+  updatedAt      DateTime                       @updatedAt
+
+  connection UniversalConnectorConnection @relation(fields: [bindingId], references: [bindingId], onDelete: Cascade)
+
+  @@index([bindingId, status, createdAt])
+  @@index([status, nextAttemptAt])
+}
+
+model ExternalContact {
+  id                String                @id @default(cuid())
+  bindingId         String
+  externalUserId    String
+  email             String?
+  username          String?
+  displayName       String
+  avatarUrl         String?
+  profileAttributes Json                  @default("{}")
+  lastParentOrigin  String?
+  status            ExternalContactStatus @default(ACTIVE)
+  firstSeenAt       DateTime              @default(now())
+  lastSeenAt        DateTime              @default(now())
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  binding           ProjectPluginBinding       @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  embedSessions     ExternalEmbedSession[]
+  requestsCreated   ServiceRequest[]           @relation("ExternalRequestCreator")
+  requestMessages   RequestMessage[]
+  attachments       Attachment[]
+  requestPresences  ExternalRequestPresence[]
+  requestReadStates ExternalRequestReadState[]
+  auditLogs         AuditLog[]
 
   @@unique([bindingId, externalUserId])
   @@index([bindingId, status, lastSeenAt])
@@ -852,6 +945,22 @@ model ExternalRequestPresence {
   @@unique([serviceRequestId, externalContactId, sessionId])
   @@index([serviceRequestId, expiresAt])
   @@index([externalContactId, expiresAt])
+}
+
+model ExternalRequestReadState {
+  id                String    @id @default(cuid())
+  serviceRequestId  String
+  externalContactId String
+  unreadCount       Int       @default(0)
+  lastReadAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  serviceRequest  ServiceRequest  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  externalContact ExternalContact @relation(fields: [externalContactId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceRequestId, externalContactId])
+  @@index([externalContactId, unreadCount, updatedAt])
 }
 
 model PluginRun {

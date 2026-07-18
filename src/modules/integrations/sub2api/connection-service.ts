@@ -11,8 +11,11 @@ import {
   normalizeSub2ApiBaseUrl,
 } from "@/modules/integrations/sub2api/client";
 import { resolveSub2ApiConnectionAddress } from "@/modules/integrations/sub2api/connection-utils";
+import {
+  lockExternalConnectorSlot,
+  PRIMARY_EXTERNAL_CONNECTOR_SLOT,
+} from "@/modules/integrations/external/binding-service";
 import type {
-  externalContactPatchSchema,
   sub2ApiConnectionPatchSchema,
   sub2ApiConnectionSchema,
 } from "@/modules/integrations/sub2api/schemas";
@@ -28,7 +31,6 @@ import type { z } from "zod";
 
 type ConnectionInput = z.infer<typeof sub2ApiConnectionSchema>;
 type ConnectionPatchInput = z.infer<typeof sub2ApiConnectionPatchSchema>;
-type ContactPatchInput = z.infer<typeof externalContactPatchSchema>;
 
 const connectionInclude = {
   binding: {
@@ -225,6 +227,11 @@ export async function saveSub2ApiIntegration(
       ? "DISABLED"
       : requestedStatus;
 
+    await lockExternalConnectorSlot(
+      tx,
+      projectId,
+      SUB2API_CONNECTOR_PLUGIN_KEY,
+    );
     const binding = await tx.projectPluginBinding.upsert({
       where: {
         projectId_pluginKey: {
@@ -235,9 +242,11 @@ export async function saveSub2ApiIntegration(
       create: {
         projectId,
         pluginKey: SUB2API_CONNECTOR_PLUGIN_KEY,
+        externalConnectorSlot: PRIMARY_EXTERNAL_CONNECTOR_SLOT,
         status: input.activate ? "ACTIVE" : "DRAFT",
       },
       update: {
+        externalConnectorSlot: PRIMARY_EXTERNAL_CONNECTOR_SLOT,
         ...(nextBindingStatus
           ? { status: nextBindingStatus }
           : {}),
@@ -443,75 +452,5 @@ export async function archiveProjectSub2ApiConnection(
       projectId,
     });
     return { archived: true };
-  });
-}
-
-export async function listExternalContacts(actor: Actor, projectId: string) {
-  return withActorDb(actor, async (tx) => {
-    await assertCanManageProjectDelivery(tx, actor, projectId);
-    const connection = await loadConnection(tx, projectId);
-    assertFound(connection, "Sub2API 连接不存在");
-    return tx.externalContact.findMany({
-      where: { bindingId: connection.bindingId },
-      select: {
-        id: true,
-        externalUserId: true,
-        email: true,
-        username: true,
-        displayName: true,
-        status: true,
-        firstSeenAt: true,
-        lastSeenAt: true,
-        _count: { select: { requestsCreated: true } },
-      },
-      orderBy: { lastSeenAt: "desc" },
-    });
-  });
-}
-
-export async function updateExternalContact(
-  actor: Actor,
-  projectId: string,
-  contactId: string,
-  input: ContactPatchInput,
-) {
-  return withActorDb(actor, async (tx) => {
-    await assertCanManageProjectDelivery(tx, actor, projectId);
-    const connection = await loadConnection(tx, projectId);
-    assertFound(connection, "Sub2API 连接不存在");
-    const contact = await tx.externalContact.findFirst({
-      where: { id: contactId, bindingId: connection.bindingId },
-    });
-    assertFound(contact, "外部联系人不存在");
-    const updated = await tx.externalContact.update({
-      where: { id: contact.id },
-      data: { status: input.status },
-      select: {
-        id: true,
-        externalUserId: true,
-        email: true,
-        username: true,
-        displayName: true,
-        status: true,
-        firstSeenAt: true,
-        lastSeenAt: true,
-        _count: { select: { requestsCreated: true } },
-      },
-    });
-    if (input.status === "BLOCKED") {
-      await tx.externalEmbedSession.updateMany({
-        where: { externalContactId: contact.id, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
-    }
-    await writeAuditLog(tx, actor, {
-      action: "EXTERNAL_CONTACT_STATUS_UPDATED",
-      resourceType: "ExternalContact",
-      resourceId: contact.id,
-      customerSpaceId: connection.binding.project.customerSpaceId,
-      projectId,
-      metadata: { status: input.status, externalUserId: contact.externalUserId },
-    });
-    return updated;
   });
 }

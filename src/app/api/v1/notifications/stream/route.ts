@@ -1,5 +1,8 @@
-import pg from "pg";
-import { env } from "@/lib/env";
+import { acquireAbortableResource } from "@/lib/abortable-resource";
+import {
+  type DatabaseNotification,
+  subscribeDatabaseNotifications,
+} from "@/lib/postgres-event-listener";
 import { requireUserWithAccess } from "@/lib/session";
 import { listVisibleEvents } from "@/modules/notifications/notification-service";
 
@@ -83,24 +86,20 @@ export async function GET(request: Request) {
   const { actor } = await requireUserWithAccess();
   const headerId = request.headers.get("last-event-id") ?? "0";
   let cursor = /^\d+$/.test(headerId) ? BigInt(headerId) : 0n;
-  const client = new pg.Client({ connectionString: env.DATABASE_URL });
-  await client.connect();
-  await client.query("LISTEN service_platform_events");
-  await client.query("LISTEN service_platform_transient_events");
-
   let closed = false;
   let heartbeat: ReturnType<typeof setInterval> | undefined;
+  let unsubscribe: (() => void) | undefined;
+  let handleNotification: (message: DatabaseNotification) => void = () =>
+    undefined;
   let controller:
     | ReadableStreamDefaultController<Uint8Array>
     | undefined;
 
-  const close = async (closeController: boolean) => {
+  const close = (closeController: boolean) => {
     if (closed) return;
     closed = true;
     if (heartbeat) clearInterval(heartbeat);
-    client.removeAllListeners("notification");
-    client.removeAllListeners("error");
-    await client.end().catch(() => undefined);
+    unsubscribe?.();
     if (!closeController || !controller) return;
     try {
       controller.close();
@@ -136,7 +135,7 @@ export async function GET(request: Request) {
         }
       }, 25_000);
 
-      client.on("notification", (message) => {
+      handleNotification = (message) => {
         if (message.channel === "service_platform_events") {
           void queuePending().catch(() => close(true));
           return;
@@ -149,21 +148,27 @@ export async function GET(request: Request) {
         streamController.enqueue(
           encodeTransientEvent(transient.type, transient.payload),
         );
+      };
+      unsubscribe = await acquireAbortableResource({
+        signal: request.signal,
+        acquire: () =>
+          subscribeDatabaseNotifications((message) =>
+            handleNotification(message),
+          ),
+        onAbort: () => close(true),
       });
-      client.on("error", () => {
-        void close(true);
-      });
-      request.signal.addEventListener("abort", () => {
-        void close(true);
-      });
+      if (closed) {
+        unsubscribe();
+        return;
+      }
 
       await queuePending();
       if (!closed) {
         streamController.enqueue(encodeReady(cursor));
       }
     },
-    async cancel() {
-      await close(false);
+    cancel() {
+      close(false);
     },
   });
 

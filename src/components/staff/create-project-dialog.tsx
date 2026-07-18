@@ -39,7 +39,7 @@ export function CreateProjectDialog({
   serviceTypes,
   managerCandidates,
   currentUserId,
-  externalIntegrationAvailable,
+  externalConnectors,
 }: {
   open: boolean;
   onClose: () => void;
@@ -47,7 +47,7 @@ export function CreateProjectDialog({
   serviceTypes: ProjectOption[];
   managerCandidates: StaffCandidate[];
   currentUserId: string;
-  externalIntegrationAvailable: boolean;
+  externalConnectors: ProjectOption[];
 }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -58,12 +58,16 @@ export function CreateProjectDialog({
   const [kind, setKind] = useState<"STANDARD" | "EXTERNAL_INTEGRATION">(
     "STANDARD",
   );
+  const [connectorPluginKey, setConnectorPluginKey] = useState(
+    externalConnectors[0]?.id ?? "",
+  );
 
   function handleClose() {
     if (submitting) return;
     setError("");
     setManagerUserIds([currentUserId]);
     setKind("STANDARD");
+    setConnectorPluginKey(externalConnectors[0]?.id ?? "");
     onClose();
   }
 
@@ -87,6 +91,10 @@ export function CreateProjectDialog({
             kind === "STANDARD"
               ? String(formData.get("customerSpaceId") ?? "")
               : undefined,
+          connectorPluginKey:
+            kind === "EXTERNAL_INTEGRATION"
+              ? connectorPluginKey
+              : undefined,
           serviceTypeId: String(formData.get("serviceTypeId") ?? ""),
           startDate: formData.get("startDate")
             ? new Date(String(formData.get("startDate"))).toISOString()
@@ -101,6 +109,7 @@ export function CreateProjectDialog({
       setError("");
       setManagerUserIds([currentUserId]);
       setKind("STANDARD");
+      setConnectorPluginKey(externalConnectors[0]?.id ?? "");
       onClose();
       router.push(`/staff/projects/${project.id}`);
       router.refresh();
@@ -126,7 +135,7 @@ export function CreateProjectDialog({
         <DialogContent>
           <Stack spacing={2.25} sx={{ pt: 1 }}>
             {error ? <Alert severity="error">{error}</Alert> : null}
-            {externalIntegrationAvailable ? (
+            {externalConnectors.length > 0 ? (
               <ToggleButtonGroup
                 exclusive
                 fullWidth
@@ -144,8 +153,24 @@ export function CreateProjectDialog({
             ) : null}
             {kind === "EXTERNAL_INTEGRATION" ? (
               <Alert severity="info">
-                无需选择客户。创建后配置 Sub2API 地址，外部用户将自动作为联系人进入该项目。
+                无需选择客户。外部用户将由所选连接器验证，并作为独立联系人进入该项目。
               </Alert>
+            ) : null}
+            {kind === "EXTERNAL_INTEGRATION" ? (
+              <TextField
+                select
+                label="外部连接器"
+                value={connectorPluginKey}
+                onChange={(event) => setConnectorPluginKey(event.target.value)}
+                required
+                fullWidth
+              >
+                {externalConnectors.map((connector) => (
+                  <MenuItem key={connector.id} value={connector.id}>
+                    {connector.name}
+                  </MenuItem>
+                ))}
+              </TextField>
             ) : null}
             <TextField name="title" label="项目名称" required fullWidth />
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>

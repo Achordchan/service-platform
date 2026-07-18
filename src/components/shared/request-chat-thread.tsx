@@ -20,15 +20,6 @@ import type { ChatAttachment } from "@/components/shared/request-chat-types";
 import { RequestQuotedMessage } from "@/components/shared/request-reply-preview";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 
-const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-
 const INITIAL_VISIBLE = 12;
 const LOAD_MORE_STEP = 12;
 
@@ -110,6 +101,7 @@ export function RequestChatThread({
   counterpartTypingLabel,
   attachmentUrl,
   onAttachmentDownload,
+  locale = "zh-CN",
 }: {
   messages: ChatMessage[];
   currentUserId: string;
@@ -118,7 +110,20 @@ export function RequestChatThread({
   counterpartTypingLabel?: string | null;
   attachmentUrl?: (file: ChatAttachment, inline: boolean) => string;
   onAttachmentDownload?: (file: ChatAttachment) => void;
+  locale?: string;
 }) {
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      }),
+    [locale],
+  );
   const sorted = useMemo(
     () =>
       [...messages].sort(
@@ -223,7 +228,8 @@ export function RequestChatThread({
           overscrollBehavior: "contain",
           px: { xs: 1.5, md: 2 },
           py: 2,
-          bgcolor: "#f7f8fa",
+          bgcolor: (theme) =>
+            theme.palette.mode === "dark" ? "#12161c" : "#f7f8fa",
           touchAction: "pan-y",
         }}
         onWheel={(event) => {
@@ -362,8 +368,13 @@ export function RequestChatThread({
                         }}
                       />
                     ) : null}
-                    {message.authorSource === "SUB2API" ? (
-                      <Chip label="Sub2API" size="small" variant="outlined" sx={{ height: 22 }} />
+                    {message.authorSourceKey ? (
+                      <Chip
+                        label={message.authorSourceLabel ?? "外部接入"}
+                        size="small"
+                        variant="outlined"
+                        sx={{ height: 22 }}
+                      />
                     ) : null}
                     {isInternal ? (
                       <Chip

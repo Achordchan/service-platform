@@ -1,6 +1,6 @@
-import { addExternalRequestMessage } from "@/modules/integrations/sub2api/external-request-service";
-import { embedMessageSchema } from "@/modules/integrations/sub2api/schemas";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+import { addExternalRequestMessage } from "@/modules/integrations/external/request-service";
+import { embedMessageSchema } from "@/modules/integrations/external/schemas";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { readJson, routeError } from "@/modules/projects/api-utils";
 
 type RouteContext = { params: Promise<{ requestId: string }> };

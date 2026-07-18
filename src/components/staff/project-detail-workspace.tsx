@@ -31,6 +31,7 @@ import {
   ExternalContactsPanel,
   Sub2ApiIntegrationPanel,
 } from "@/components/staff/sub2api-integration-panel";
+import { UniversalIntegrationPanel } from "@/components/staff/universal-integration-panel";
 import type {
   MilestoneStatus,
   ProjectDetail,
@@ -220,7 +221,7 @@ export function ProjectDetailWorkspace({
                 label={project.kind === "EXTERNAL_INTEGRATION" ? "接入对象" : "客户"}
                 value={
                   project.kind === "EXTERNAL_INTEGRATION"
-                    ? "Sub2API 外部用户"
+                    ? `${project.externalConnectorLabel ?? "外部接入"} 用户`
                     : project.customerSpace.name
                 }
               />
@@ -399,7 +400,11 @@ export function ProjectDetailWorkspace({
         />
       ) : null}
       {activeTab === "integration" && project.kind === "EXTERNAL_INTEGRATION" ? (
-        <Sub2ApiIntegrationPanel projectId={project.id} canEdit={canEditProject} />
+        project.externalConnectorKey === "universal-embed-connector" ? (
+          <UniversalIntegrationPanel projectId={project.id} canEdit={canEditProject} />
+        ) : (
+          <Sub2ApiIntegrationPanel projectId={project.id} canEdit={canEditProject} />
+        )
       ) : null}
       {activeTab === "contacts" && project.kind === "EXTERNAL_INTEGRATION" ? (
         <ExternalContactsPanel projectId={project.id} />

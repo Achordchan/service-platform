@@ -239,6 +239,16 @@ describe("插件安装同步", () => {
           return { count: 1 };
         },
       },
+      universalLaunchTicket: {
+        updateMany: async (args: { where: unknown; data: unknown }) => {
+          calls.push({
+            table: "UniversalLaunchTicket",
+            where: args.where,
+            data: args.data,
+          });
+          return { count: 1 };
+        },
+      },
     };
 
     await applyPluginDisableSideEffects(tx as never, "sub2api-connector");
@@ -259,6 +269,15 @@ describe("插件安装同步", () => {
           revokedAt: null,
         },
         data: { revokedAt: expect.any(Date) },
+      },
+      {
+        table: "UniversalLaunchTicket",
+        where: {
+          connection: { binding: { pluginKey: "sub2api-connector" } },
+          consumedAt: null,
+          expiresAt: { gt: expect.any(Date) },
+        },
+        data: { expiresAt: expect.any(Date) },
       },
     ]);
   });

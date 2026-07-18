@@ -12,6 +12,7 @@ describe("插件注册白名单", () => {
     expect(listRegisteredPlugins().map((plugin) => plugin.key)).toEqual([
       "image-webp",
       "sub2api-connector",
+      "universal-embed-connector",
     ]);
   });
 

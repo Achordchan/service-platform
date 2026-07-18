@@ -10,6 +10,9 @@ export type ExternalActor = {
   name: string;
   email: string | null;
   username: string | null;
+  avatarUrl?: string | null;
+  sourceKey?: string;
+  sourceLabel?: string;
   projectId: string;
   customerSpaceId: string;
 };

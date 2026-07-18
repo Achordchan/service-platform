@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRequestRealtime } from "@/hooks/use-request-realtime";
 import { useRequestNotificationsRead } from "@/hooks/use-request-notifications-read";
 import { useRequestPresence } from "@/hooks/use-request-presence";
@@ -52,10 +52,25 @@ export function RequestDetail({
   created?: boolean;
 }) {
   const priority = priorityMap[request.priority];
+  const [showCreatedNotice, setShowCreatedNotice] = useState(created === true);
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
   const presence = useRequestPresence(request.id, "CUSTOMER");
   useRequestRealtime(request.id, { currentUserId });
   useRequestNotificationsRead(request.id);
+
+  useEffect(() => {
+    if (!created) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("created");
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+    const timer = window.setTimeout(() => setShowCreatedNotice(false), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [created]);
+
   return (
     <Stack spacing={3}>
       <PageHeading
@@ -65,8 +80,10 @@ export function RequestDetail({
         description={`${request.number} · ${request.projectTitle}`}
         status={<StatusIndicator status={request.status} />}
       />
-      {created ? (
-        <Alert severity="success">服务请求已提交。</Alert>
+      {showCreatedNotice ? (
+        <Alert severity="success" onClose={() => setShowCreatedNotice(false)}>
+          服务请求已提交。
+        </Alert>
       ) : null}
 
       <Box

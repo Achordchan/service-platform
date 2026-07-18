@@ -14,6 +14,8 @@ import {
   dispatchExternalRequestActivity,
 } from "@/modules/notifications/notification-service";
 import { DomainError } from "@/modules/projects/errors";
+import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
+import { recordUniversalUnreadWebhook } from "@/modules/integrations/universal/webhook-service";
 import { generateRequestNumber } from "@/modules/requests/request-number";
 import {
   assertRequestTransition,
@@ -22,7 +24,7 @@ import {
 import type {
   embedCreateRequestSchema,
   embedMessageSchema,
-} from "@/modules/integrations/sub2api/schemas";
+} from "@/modules/integrations/external/schemas";
 import type { z } from "zod";
 
 type CreateInput = z.infer<typeof embedCreateRequestSchema>;
@@ -36,21 +38,32 @@ const userBriefSelect = {
   platformRole: true,
 } as const;
 
-const contactBriefSelect = {
-  id: true,
-  externalUserId: true,
-  displayName: true,
-  email: true,
-  username: true,
-  status: true,
-} as const;
+type ExternalAuthorBrief = {
+  id: string;
+  externalUserId: string;
+  displayName: string;
+  email: string | null;
+  username: string | null;
+  avatarUrl: string | null;
+  binding?: { pluginKey: string } | null;
+};
+
+function externalSource(pluginKey: string) {
+  const manifest = getRegisteredPlugin(pluginKey).manifest;
+  return {
+    source:
+      pluginKey === "universal-embed-connector"
+        ? ("UNIVERSAL" as const)
+        : ("SUB2API" as const),
+    sourceKey: pluginKey,
+    sourceLabel: manifest.name,
+  };
+}
 
 function serializeAuthor(input: {
   author: Prisma.UserGetPayload<{ select: typeof userBriefSelect }> | null;
-  externalAuthor: Prisma.ExternalContactGetPayload<{
-    select: typeof contactBriefSelect;
-  }> | null;
-}) {
+  externalAuthor: ExternalAuthorBrief | null;
+}, fallback?: Pick<ExternalActor, "sourceKey" | "sourceLabel">) {
   if (input.author) {
     return {
       id: input.author.id,
@@ -63,13 +76,29 @@ function serializeAuthor(input: {
     };
   }
   if (input.externalAuthor) {
+    const binding = (
+      input.externalAuthor as typeof input.externalAuthor & {
+        binding?: { pluginKey: string } | null;
+      }
+    ).binding;
+    const pluginKey = binding?.pluginKey ?? fallback?.sourceKey ?? "sub2api-connector";
+    const source = binding
+      ? externalSource(pluginKey)
+      : {
+          source:
+            pluginKey === "universal-embed-connector"
+              ? ("UNIVERSAL" as const)
+              : ("SUB2API" as const),
+          sourceKey: pluginKey,
+          sourceLabel: fallback?.sourceLabel ?? "外部接入",
+        };
     return {
       id: input.externalAuthor.id,
       type: "EXTERNAL_CONTACT" as const,
       name: input.externalAuthor.displayName,
       email: input.externalAuthor.email,
-      image: null,
-      source: "SUB2API" as const,
+      image: input.externalAuthor.avatarUrl,
+      ...source,
       externalUserId: input.externalAuthor.externalUserId,
       username: input.externalAuthor.username,
     };
@@ -102,20 +131,17 @@ export function listExternalRequests(actor: ExternalActor) {
         id: true,
         title: true,
         status: true,
-        serviceType: {
-          select: {
-            requestCategories: {
-              where: { active: true },
-              select: { id: true, name: true },
-              orderBy: { name: "asc" },
-            },
-          },
-        },
+        serviceTypeId: true,
       },
     });
     if (!project) {
       throw new DomainError("PROJECT_NOT_FOUND", "项目不存在", 404);
     }
+    const categories = await tx.requestCategory.findMany({
+      where: { serviceTypeId: project.serviceTypeId, active: true },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+    });
     const requests = await tx.serviceRequest.findMany({
       where: {
         projectId: actor.projectId,
@@ -130,14 +156,21 @@ export function listExternalRequests(actor: ExternalActor) {
         status: true,
         createdAt: true,
         updatedAt: true,
-        category: { select: { id: true, name: true } },
-        assignees: {
-          select: { user: { select: { id: true, name: true, image: true } } },
-          orderBy: { assignedAt: "asc" },
-        },
+        categoryId: true,
       },
       orderBy: { updatedAt: "desc" },
     });
+    const readStates = await tx.externalRequestReadState.findMany({
+      where: {
+        externalContactId: actor.id,
+        serviceRequestId: { in: requests.map((request) => request.id) },
+      },
+      select: { serviceRequestId: true, unreadCount: true },
+    });
+    const categoryById = new Map(categories.map((item) => [item.id, item]));
+    const unreadByRequestId = new Map(
+      readStates.map((item) => [item.serviceRequestId, item.unreadCount]),
+    );
     return {
       project: {
         id: project.id,
@@ -145,8 +178,15 @@ export function listExternalRequests(actor: ExternalActor) {
         status: project.status,
         writable: project.status === "ACTIVE",
       },
-      categories: project.serviceType.requestCategories,
-      requests,
+      categories,
+      requests: requests.map((request) => ({
+        ...request,
+        category: categoryById.get(request.categoryId) ?? {
+          id: request.categoryId,
+          name: "分类已停用",
+        },
+        unreadCount: unreadByRequestId.get(request.id) ?? 0,
+      })),
     };
   });
 }
@@ -230,7 +270,7 @@ export function createExternalRequest(
       serviceRequestId: request.id,
       metadata: {
         actorType: "EXTERNAL_CONTACT",
-        source: "SUB2API",
+        source: actor.sourceKey ?? "sub2api-connector",
         categoryId: category.id,
         priority: request.priority,
       },
@@ -239,7 +279,7 @@ export function createExternalRequest(
       eventType: "REQUEST_CREATED",
       eventPayload: {
         actorType: "EXTERNAL_CONTACT",
-        source: "SUB2API",
+        source: actor.sourceKey ?? "sub2api-connector",
         actorId: actor.id,
         projectId: project.id,
         requestId: request.id,
@@ -278,85 +318,226 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         closedAt: true,
         createdAt: true,
         updatedAt: true,
-        category: { select: { id: true, name: true } },
-        project: { select: { id: true, title: true, status: true } },
-        assignees: {
-          select: { user: { select: userBriefSelect } },
-          orderBy: { assignedAt: "asc" },
-        },
-        messages: {
-          where: { visibility: "CUSTOMER_VISIBLE" },
-          select: {
-            id: true,
-            body: true,
-            visibility: true,
-            isSystem: true,
-            isInitial: true,
-            replyToMessageId: true,
-            createdAt: true,
-            updatedAt: true,
-            author: { select: userBriefSelect },
-            externalAuthor: { select: contactBriefSelect },
-            attachments: {
-              where: { visibility: "CUSTOMER_VISIBLE" },
-              select: {
-                id: true,
-                originalName: true,
-                mimeType: true,
-                size: true,
-                createdAt: true,
-              },
-              orderBy: { createdAt: "asc" },
-            },
-            replyTo: {
-              select: {
-                id: true,
-                body: true,
-                visibility: true,
-                isSystem: true,
-                author: { select: userBriefSelect },
-                externalAuthor: { select: contactBriefSelect },
-                attachments: {
-                  select: { id: true, originalName: true },
-                  orderBy: { createdAt: "asc" },
-                },
-              },
-            },
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        },
-        attachments: {
-          where: {
-            visibility: "CUSTOMER_VISIBLE",
-            requestMessageId: null,
-          },
-          select: {
-            id: true,
-            originalName: true,
-            mimeType: true,
-            size: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: "asc" },
-        },
+        categoryId: true,
+        projectId: true,
       },
     });
     if (!request) {
       throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
     }
-    return {
-      ...request,
-      writable: request.project.status === "ACTIVE" && request.status !== "CLOSED",
-      messages: request.messages.map((message) => ({
-        ...message,
-        author: serializeAuthor(message),
-        replyTo: message.replyTo
+    const category = await tx.requestCategory.findUniqueOrThrow({
+      where: { id: request.categoryId },
+      select: { id: true, name: true },
+    });
+    const project = await tx.project.findUniqueOrThrow({
+      where: { id: request.projectId },
+      select: { id: true, title: true, status: true },
+    });
+    const assigneeRows = await tx.requestAssignee.findMany({
+      where: { serviceRequestId: request.id },
+      select: { userId: true },
+      orderBy: { assignedAt: "asc" },
+    });
+    const messages = await tx.requestMessage.findMany({
+      where: {
+        serviceRequestId: request.id,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      select: {
+        id: true,
+        body: true,
+        visibility: true,
+        isSystem: true,
+        isInitial: true,
+        replyToMessageId: true,
+        authorId: true,
+        externalAuthorId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const userIds = Array.from(
+      new Set(
+        [
+          ...assigneeRows.map((item) => item.userId),
+          ...messages.map((message) => message.authorId),
+        ].filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const users = await tx.user.findMany({
+      where: { id: { in: userIds } },
+      select: userBriefSelect,
+    });
+    const contactIds = Array.from(
+      new Set(
+        messages
+          .map((message) => message.externalAuthorId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+    const contacts = await tx.externalContact.findMany({
+      where: { id: { in: contactIds } },
+      select: {
+        id: true,
+        bindingId: true,
+        externalUserId: true,
+        displayName: true,
+        email: true,
+        username: true,
+        avatarUrl: true,
+        status: true,
+      },
+    });
+    const bindings = await tx.projectPluginBinding.findMany({
+      where: { id: { in: contacts.map((contact) => contact.bindingId) } },
+      select: { id: true, pluginKey: true },
+    });
+    const attachments = await tx.attachment.findMany({
+      where: {
+        serviceRequestId: request.id,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      select: {
+        id: true,
+        requestMessageId: true,
+        originalName: true,
+        mimeType: true,
+        size: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const readState = await tx.externalRequestReadState.findUnique({
+      where: {
+        serviceRequestId_externalContactId: {
+          serviceRequestId: request.id,
+          externalContactId: actor.id,
+        },
+      },
+      select: { unreadCount: true },
+    });
+    const previousUnreadCount = readState?.unreadCount ?? 0;
+    if (previousUnreadCount > 0) {
+      await tx.externalRequestReadState.upsert({
+        where: {
+          serviceRequestId_externalContactId: {
+            serviceRequestId: request.id,
+            externalContactId: actor.id,
+          },
+        },
+        create: {
+          serviceRequestId: request.id,
+          externalContactId: actor.id,
+          unreadCount: 0,
+          lastReadAt: new Date(),
+        },
+        update: { unreadCount: 0, lastReadAt: new Date() },
+      });
+      await recordUniversalUnreadWebhook(tx, {
+        serviceRequestId: request.id,
+        externalUserId: actor.externalUserId,
+        unreadCount: 0,
+      });
+    }
+    const userById = new Map(users.map((user) => [user.id, user]));
+    const pluginKeyByBindingId = new Map(
+      bindings.map((binding) => [binding.id, binding.pluginKey]),
+    );
+    const contactById = new Map(
+      contacts.map((contact) => [
+        contact.id,
+        {
+          id: contact.id,
+          externalUserId: contact.externalUserId,
+          displayName: contact.displayName,
+          email: contact.email,
+          username: contact.username,
+          avatarUrl: contact.avatarUrl,
+          status: contact.status,
+          binding: {
+            pluginKey:
+              pluginKeyByBindingId.get(contact.bindingId) ??
+              actor.sourceKey ??
+              "sub2api-connector",
+          },
+        },
+      ]),
+    );
+    const attachmentsByMessageId = new Map<string, typeof attachments>();
+    for (const attachment of attachments) {
+      if (!attachment.requestMessageId) continue;
+      const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
+      current.push(attachment);
+      attachmentsByMessageId.set(attachment.requestMessageId, current);
+    }
+    const messageById = new Map(messages.map((message) => [message.id, message]));
+    const authorFor = (message: (typeof messages)[number]) => ({
+      author: message.authorId ? userById.get(message.authorId) ?? null : null,
+      externalAuthor: message.externalAuthorId
+        ? contactById.get(message.externalAuthorId) ?? null
+        : null,
+    });
+    const serializedMessages = messages.map((message) => {
+      const replyTo = message.replyToMessageId
+        ? messageById.get(message.replyToMessageId)
+        : null;
+      return {
+        id: message.id,
+        body: message.body,
+        visibility: message.visibility,
+        isSystem: message.isSystem,
+        isInitial: message.isInitial,
+        replyToMessageId: message.replyToMessageId,
+        createdAt: message.createdAt,
+        updatedAt: message.updatedAt,
+        author: serializeAuthor(authorFor(message), actor),
+        attachments: (attachmentsByMessageId.get(message.id) ?? []).map(
+          (attachment) => ({
+            id: attachment.id,
+            originalName: attachment.originalName,
+            mimeType: attachment.mimeType,
+            size: attachment.size,
+            createdAt: attachment.createdAt,
+          }),
+        ),
+        replyTo: replyTo
           ? {
-              ...message.replyTo,
-              author: serializeAuthor(message.replyTo),
+              id: replyTo.id,
+              body: replyTo.body,
+              visibility: replyTo.visibility,
+              isSystem: replyTo.isSystem,
+              author: serializeAuthor(authorFor(replyTo), actor),
+              attachments: (attachmentsByMessageId.get(replyTo.id) ?? []).map(
+                (attachment) => ({
+                  id: attachment.id,
+                  originalName: attachment.originalName,
+                }),
+              ),
             }
           : null,
-      })),
+      };
+    });
+    return {
+      ...request,
+      category,
+      project,
+      assignees: assigneeRows
+        .map((item) => userById.get(item.userId))
+        .filter((user): user is NonNullable<typeof user> => Boolean(user))
+        .map((user) => ({ user })),
+      attachments: attachments
+        .filter((attachment) => !attachment.requestMessageId)
+        .map((attachment) => ({
+          id: attachment.id,
+          originalName: attachment.originalName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          createdAt: attachment.createdAt,
+        })),
+      unreadCount: 0,
+      writable: project.status === "ACTIVE" && request.status !== "CLOSED",
+      messages: serializedMessages,
     };
   });
 }
@@ -469,7 +650,7 @@ export function addExternalRequestMessage(
       serviceRequestId: request.id,
       metadata: {
         actorType: "EXTERNAL_CONTACT",
-        source: "SUB2API",
+        source: actor.sourceKey ?? "sub2api-connector",
         replyToMessageId,
       },
     });
@@ -483,7 +664,7 @@ export function addExternalRequestMessage(
       eventType: "REQUEST_MESSAGE_CREATED",
       eventPayload: {
         actorType: "EXTERNAL_CONTACT",
-        source: "SUB2API",
+        source: actor.sourceKey ?? "sub2api-connector",
         actorId: actor.id,
         requestId: request.id,
         requestNumber: request.number,
@@ -600,7 +781,7 @@ export function confirmExternalRequestClosed(
       eventType: "REQUEST_STATUS_CHANGED",
       eventPayload: {
         actorType: "EXTERNAL_CONTACT",
-        source: "SUB2API",
+        source: actor.sourceKey ?? "sub2api-connector",
         actorId: actor.id,
         requestId: request.id,
         requestNumber: request.number,

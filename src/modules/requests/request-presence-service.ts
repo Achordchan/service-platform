@@ -41,6 +41,31 @@ async function isGroupOnline(
     },
     select: { id: true },
   });
+  const externalPresence =
+    group === "CUSTOMER"
+      ? await tx.externalRequestPresence.findFirst({
+          where: {
+            serviceRequestId,
+            expiresAt: { gt: now },
+          },
+          select: { id: true },
+        })
+      : null;
+  return Boolean(presence || externalPresence);
+}
+
+async function isExternalCustomerOnline(
+  tx: Prisma.TransactionClient,
+  serviceRequestId: string,
+  now: Date,
+) {
+  const presence = await tx.externalRequestPresence.findFirst({
+    where: {
+      serviceRequestId,
+      expiresAt: { gt: now },
+    },
+    select: { id: true },
+  });
   return Boolean(presence);
 }
 
@@ -167,6 +192,10 @@ export function updateRequestPresence(
       counterpartGroup,
       now,
     );
+    const externalCounterpartOnline =
+      counterpartGroup === "CUSTOMER"
+        ? await isExternalCustomerOnline(tx, request.id, now)
+        : false;
     if (input.action === "typing") {
       const visibility = input.visibility;
       if (
@@ -203,7 +232,8 @@ export function updateRequestPresence(
     }
 
     return {
-      counterpartOnline: counterpartUserIds.length > 0,
+      counterpartOnline:
+        counterpartUserIds.length > 0 || externalCounterpartOnline,
     };
   });
 }

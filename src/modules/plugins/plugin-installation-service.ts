@@ -13,6 +13,7 @@ export async function applyPluginDisableSideEffects(
   tx: Prisma.TransactionClient,
   pluginKey: string,
 ) {
+  const now = new Date();
   await tx.pluginRun.updateMany({
     where: {
       pluginKey,
@@ -25,7 +26,15 @@ export async function applyPluginDisableSideEffects(
       binding: { pluginKey },
       revokedAt: null,
     },
-    data: { revokedAt: new Date() },
+    data: { revokedAt: now },
+  });
+  await tx.universalLaunchTicket.updateMany({
+    where: {
+      connection: { binding: { pluginKey } },
+      consumedAt: null,
+      expiresAt: { gt: now },
+    },
+    data: { expiresAt: now },
   });
 }
 

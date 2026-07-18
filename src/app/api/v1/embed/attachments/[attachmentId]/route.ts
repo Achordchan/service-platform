@@ -1,5 +1,5 @@
-import { readExternalAttachment } from "@/modules/integrations/sub2api/external-attachment-service";
-import { requireExternalSession } from "@/modules/integrations/sub2api/session-service";
+import { readExternalAttachment } from "@/modules/integrations/external/attachment-service";
+import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { routeError } from "@/modules/projects/api-utils";
 
 type RouteContext = { params: Promise<{ attachmentId: string }> };

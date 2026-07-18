@@ -22,6 +22,15 @@ import {
   PriorityChip,
   StaffStatus,
 } from "@/components/staff/staff-status";
+import {
+  RequestAdvancedFilters,
+} from "@/components/staff/request-advanced-filters";
+import {
+  buildRequestFilterOptions,
+  defaultAdvancedFilters,
+  filterRequestRows,
+  type RequestAdvancedFilterValue,
+} from "@/components/staff/request-table-filters";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
 import {
   countRequestStatusUnread,
@@ -63,32 +72,25 @@ export function RequestTable({
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const { unread } = useUnreadNotifications();
   const [projectId, setProjectId] = useState("ALL");
+  const [customerKey, setCustomerKey] = useState("ALL");
+  const [advancedFilters, setAdvancedFilters] =
+    useState<RequestAdvancedFilterValue>(defaultAdvancedFilters);
   const [keyword, setKeyword] = useState("");
-  const projectOptions = useMemo(
-    () =>
-      Array.from(
-        new Map(
-          requests.map((request) => [
-            request.projectId,
-            { id: request.projectId, title: request.projectTitle },
-          ]),
-        ).values(),
-      ),
+  const filterOptions = useMemo(
+    () => buildRequestFilterOptions(requests),
     [requests],
   );
-  const rows = useMemo(() => {
-    const normalized = keyword.trim().toLowerCase();
-    return requests.filter(
-      (request) =>
-        (status === "ALL" || request.status === status) &&
-        (projectId === "ALL" || request.projectId === projectId) &&
-        (!normalized ||
-          request.number.toLowerCase().includes(normalized) ||
-          request.title.toLowerCase().includes(normalized) ||
-          request.customerName.toLowerCase().includes(normalized) ||
-          request.categoryName.toLowerCase().includes(normalized)),
-    );
-  }, [keyword, projectId, requests, status]);
+  const rows = useMemo(
+    () =>
+      filterRequestRows(requests, {
+        status,
+        projectId,
+        customerKey,
+        advanced: advancedFilters,
+        keyword,
+      }),
+    [advancedFilters, customerKey, keyword, projectId, requests, status],
+  );
 
   const columns = useMemo<GridColDef<RequestListItem>[]>(
     () => [
@@ -101,7 +103,11 @@ export function RequestTable({
         renderCell: ({ row }) => (
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
             <Typography variant="body2" noWrap>{row.title}</Typography>
-            {row.source === "SUB2API" ? <Chip size="small" label="Sub2API" variant="outlined" /> : null}
+            {row.source === "SUB2API" ? (
+              <Chip size="small" label="Sub2API" variant="outlined" />
+            ) : row.source === "UNIVERSAL" ? (
+              <Chip size="small" label="Achord Connect" variant="outlined" />
+            ) : null}
           </Stack>
         ),
       },
@@ -178,12 +184,12 @@ export function RequestTable({
   return (
     <Stack spacing={2}>
       <Stack
-        direction={{ xs: "column", lg: "row" }}
+        direction={{ xs: "column", xl: "row" }}
         spacing={2}
         sx={{
           borderBottom: "1px solid",
           borderColor: "divider",
-          alignItems: { xs: "stretch", lg: "flex-end" },
+          alignItems: { xs: "stretch", xl: "flex-end" },
           justifyContent: "space-between",
         }}
       >
@@ -219,9 +225,9 @@ export function RequestTable({
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}
-          sx={{ pb: 1 }}
+          sx={{ pb: 1, flexWrap: { sm: "wrap" }, rowGap: 1.5 }}
         >
-          {!hideProjectFilter && projectOptions.length > 1 ? (
+          {!hideProjectFilter && filterOptions.projectOptions.length > 1 ? (
             <TextField
               select
               label="所属项目"
@@ -230,9 +236,25 @@ export function RequestTable({
               sx={{ minWidth: { sm: 190 } }}
             >
               <MenuItem value="ALL">全部项目</MenuItem>
-              {projectOptions.map((option) => (
+              {filterOptions.projectOptions.map((option) => (
                 <MenuItem key={option.id} value={option.id}>
                   {option.title}
+                </MenuItem>
+              ))}
+            </TextField>
+          ) : null}
+          {filterOptions.customerOptions.length > 1 ? (
+            <TextField
+              select
+              label="客户"
+              value={customerKey}
+              onChange={(event) => setCustomerKey(event.target.value)}
+              sx={{ minWidth: { sm: 190 } }}
+            >
+              <MenuItem value="ALL">全部客户</MenuItem>
+              {filterOptions.customerOptions.map((option) => (
+                <MenuItem key={option.key} value={option.key}>
+                  {option.name}
                 </MenuItem>
               ))}
             </TextField>
@@ -250,7 +272,14 @@ export function RequestTable({
                 ),
               },
             }}
-            sx={{ width: { xs: "100%", sm: 340 } }}
+            sx={{ width: { xs: "100%", sm: 320 } }}
+          />
+          <RequestAdvancedFilters
+            value={advancedFilters}
+            onChange={setAdvancedFilters}
+            categories={filterOptions.categories}
+            serviceTypes={filterOptions.serviceTypes}
+            assignees={filterOptions.assignees}
           />
         </Stack>
       </Stack>

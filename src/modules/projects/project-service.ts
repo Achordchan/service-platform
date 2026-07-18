@@ -17,9 +17,16 @@ import {
   DomainError,
 } from "@/modules/projects/errors";
 import { assertCanViewProject } from "@/modules/projects/project-access";
-import { calculateProjectProgress } from "@/modules/projects/progress";
+import {
+  hydrateProjectSummaries,
+  projectBaseSelect,
+} from "@/modules/projects/project-summary-query";
+import { loadProjectDetail } from "@/modules/projects/project-detail-query";
 import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
-import { SUB2API_CONNECTOR_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
+import {
+  getRegisteredPlugin,
+  listRegisteredExternalConnectors,
+} from "@/modules/plugins/plugin-registry";
 import type {
   CreateProjectInput,
   UpdateProjectInput,
@@ -27,6 +34,56 @@ import type {
 
 function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function connectorSpaceLabel(pluginKey: string) {
+  return getRegisteredPlugin(pluginKey).manifest.name.replace(
+    /\s*工单连接器$/,
+    "",
+  );
+}
+
+async function resolveReadyExternalConnector(
+  tx: Prisma.TransactionClient,
+  requestedPluginKey?: string,
+) {
+  const registered = listRegisteredExternalConnectors();
+  const allowedKeys = registered.map((manifest) => manifest.key);
+  if (requestedPluginKey && !allowedKeys.includes(requestedPluginKey)) {
+    throw new DomainError(
+      "EXTERNAL_CONNECTOR_INVALID",
+      "所选外部连接器不存在",
+      422,
+    );
+  }
+  const installations = await tx.pluginInstallation.findMany({
+    where: {
+      key: { in: requestedPluginKey ? [requestedPluginKey] : allowedKeys },
+      enabled: true,
+      healthStatus: "READY",
+    },
+    select: { key: true },
+  });
+  if (requestedPluginKey) {
+    if (!installations.some((item) => item.key === requestedPluginKey)) {
+      throw new DomainError(
+        "EXTERNAL_CONNECTOR_NOT_READY",
+        "所选外部连接器尚未完成检测并启用",
+        409,
+      );
+    }
+    return requestedPluginKey;
+  }
+  if (installations.length !== 1) {
+    throw new DomainError(
+      "EXTERNAL_CONNECTOR_REQUIRED",
+      installations.length === 0
+        ? "请先在插件中心检测并启用外部连接器"
+        : "请选择该项目使用的外部连接器",
+      409,
+    );
+  }
+  return installations[0].key;
 }
 
 function projectWhereFor(actor: Actor): Prisma.ProjectWhereInput {
@@ -41,155 +98,23 @@ function projectWhereFor(actor: Actor): Prisma.ProjectWhereInput {
   };
 }
 
-const projectSummaryInclude = {
-  customerSpace: {
-    select: { id: true, name: true, slug: true, status: true },
-  },
-  serviceType: {
-    select: {
-      id: true,
-      key: true,
-      name: true,
-      requestCategories: {
-        where: { active: true },
-        select: { id: true, name: true },
-        orderBy: { name: "asc" },
-      },
-    },
-  },
-  staff: {
-    where: { role: "PROJECT_MANAGER" as const },
-    select: {
-      role: true,
-      user: {
-        select: {
-          id: true,
-          name: true,
-        },
-      },
-    },
-    orderBy: { createdAt: "asc" as const },
-  },
-  milestones: {
-    select: { status: true },
-  },
-  _count: {
-    select: { staff: true, updates: true, requests: true },
-  },
-} as const;
-
 export function listProjects(actor: Actor) {
   return withActorDb(actor, async (tx) => {
     const projects = await tx.project.findMany({
       where: projectWhereFor(actor),
-      include: projectSummaryInclude,
+      select: projectBaseSelect,
       orderBy: { updatedAt: "desc" },
     });
-
-    return projects.map(({ milestones, ...project }) => {
-      const progress = calculateProjectProgress(milestones);
-      return {
-        ...project,
-        progress: progress.percentage,
-        progressDetails: progress.counts,
-      };
-    });
+    return hydrateProjectSummaries(tx, projects);
   });
 }
 
 export function getProject(actor: Actor, projectId: string) {
   return withActorDb(actor, async (tx) => {
     await assertCanViewProject(tx, actor, projectId);
-    const project = await tx.project.findUnique({
-      where: { id: projectId },
-      include: {
-        customerSpace: {
-          select: { id: true, name: true, slug: true, status: true },
-        },
-        serviceType: {
-          select: {
-            id: true,
-            key: true,
-            name: true,
-            requestCategories: {
-              where: { active: true },
-              select: { id: true, name: true },
-              orderBy: { name: "asc" },
-            },
-          },
-        },
-        staff: {
-          include: {
-            user: {
-              select: actor.isStaff
-                ? {
-                    id: true,
-                    name: true,
-                    email: true,
-                    platformRole: true,
-                  }
-                : {
-                    id: true,
-                    name: true,
-                  },
-            },
-          },
-          orderBy: { createdAt: "asc" },
-        },
-        milestones: {
-          orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-        },
-        updates: {
-          where: actor.isStaff
-            ? undefined
-            : { visibility: "CUSTOMER_VISIBLE" },
-          include: {
-            author: {
-              select: { id: true, name: true },
-            },
-            comments: {
-              where: actor.isStaff
-                ? undefined
-                : { visibility: "CUSTOMER_VISIBLE" },
-              include: {
-                author: {
-                  select: { id: true, name: true },
-                },
-              },
-              orderBy: { createdAt: "asc" },
-            },
-          },
-          orderBy: { createdAt: "desc" },
-        },
-        attachments: {
-          where: {
-            projectUpdateId: null,
-            updateCommentId: null,
-            serviceRequestId: null,
-            requestMessageId: null,
-            ...(actor.isStaff
-              ? {}
-              : { visibility: "CUSTOMER_VISIBLE" as const }),
-          },
-          select: {
-            id: true,
-            originalName: true,
-            mimeType: true,
-            size: true,
-            visibility: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: "desc" },
-        },
-      },
-    });
+    const project = await loadProjectDetail(tx, actor, projectId);
     assertFound(project, "项目不存在");
-    const progress = calculateProjectProgress(project.milestones);
-    return {
-      ...project,
-      progress: progress.percentage,
-      progressDetails: progress.counts,
-    };
+    return project;
   });
 }
 
@@ -200,19 +125,10 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
     await ensurePluginInstallations();
   }
   return withActorDb(actor, async (tx) => {
-    if (kind === "EXTERNAL_INTEGRATION") {
-      const plugin = await tx.pluginInstallation.findUnique({
-        where: { key: SUB2API_CONNECTOR_PLUGIN_KEY },
-        select: { enabled: true, healthStatus: true },
-      });
-      if (!plugin?.enabled || plugin.healthStatus !== "READY") {
-        throw new DomainError(
-          "SUB2API_PLUGIN_NOT_READY",
-          "请先在插件中心完成 Sub2API 连接器检测并启用",
-          409,
-        );
-      }
-    }
+    const connectorPluginKey =
+      kind === "EXTERNAL_INTEGRATION"
+        ? await resolveReadyExternalConnector(tx, input.connectorPluginKey)
+        : null;
     const serviceType = await tx.serviceType.findUnique({
       where: { id: input.serviceTypeId },
       select: { id: true, active: true },
@@ -231,11 +147,12 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       customerSpaceId: requestedCustomerSpaceId,
       ...projectInput
     } = input;
+    delete projectInput.connectorPluginKey;
     let customerSpace: { id: string; status: "ACTIVE" | "SUSPENDED" | "ARCHIVED" };
     if (kind === "EXTERNAL_INTEGRATION") {
       customerSpace = await tx.customerSpace.create({
         data: {
-          name: `Sub2API · ${input.title}`,
+          name: `${connectorSpaceLabel(connectorPluginKey!)} · ${input.title}`,
           slug: `external-${randomUUID()}`,
           kind: "EXTERNAL_MANAGED",
           memberLimit: 0,
@@ -267,8 +184,17 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
         customerSpaceId: customerSpace.id,
         createdById: actor.id,
       },
-      include: projectSummaryInclude,
     });
+    if (connectorPluginKey) {
+      await tx.projectPluginBinding.create({
+        data: {
+          projectId: project.id,
+          pluginKey: connectorPluginKey,
+          externalConnectorSlot: "PRIMARY",
+          status: "DRAFT",
+        },
+      });
+    }
 
     const selectedManagerIds = Array.from(
       new Set(
@@ -326,13 +252,8 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       projectId: project.id,
     });
 
-    const { milestones, ...result } = project;
-    const progress = calculateProjectProgress(milestones);
-    return {
-      ...result,
-      progress: progress.percentage,
-      progressDetails: progress.counts,
-    };
+    const [result] = await hydrateProjectSummaries(tx, [project]);
+    return result;
   });
 }
 
@@ -349,10 +270,11 @@ export function updateProject(
         id: true,
         title: true,
         customerSpaceId: true,
-        customerSpace: { select: { kind: true } },
+        customerSpace: { select: { kind: true, name: true } },
         startDate: true,
         endDate: true,
         kind: true,
+        pluginBindings: { select: { pluginKey: true } },
         _count: {
           select: {
             requests: true,
@@ -365,6 +287,22 @@ export function updateProject(
       },
     });
     assertFound(existing, "项目不存在");
+
+    const existingConnectorPluginKey = existing.pluginBindings[0]?.pluginKey;
+    if (
+      input.connectorPluginKey &&
+      existing.kind === "EXTERNAL_INTEGRATION" &&
+      existingConnectorPluginKey &&
+      input.connectorPluginKey !== existingConnectorPluginKey
+    ) {
+      throw new DomainError(
+        "EXTERNAL_CONNECTOR_CHANGE_BLOCKED",
+        "外部接入项目创建后不能更换连接器",
+        409,
+      );
+    }
+
+    let targetConnectorPluginKey: string | null = null;
 
     if (input.kind && input.kind !== existing.kind) {
       const businessDataCount =
@@ -390,17 +328,10 @@ export function updateProject(
         );
       }
       if (input.kind === "EXTERNAL_INTEGRATION") {
-        const plugin = await tx.pluginInstallation.findUnique({
-          where: { key: SUB2API_CONNECTOR_PLUGIN_KEY },
-          select: { enabled: true, healthStatus: true },
-        });
-        if (!plugin?.enabled || plugin.healthStatus !== "READY") {
-          throw new DomainError(
-            "SUB2API_PLUGIN_NOT_READY",
-            "请先在插件中心完成 Sub2API 连接器检测并启用",
-            409,
-          );
-        }
+        targetConnectorPluginKey = await resolveReadyExternalConnector(
+          tx,
+          input.connectorPluginKey,
+        );
       } else if (existing.kind === "EXTERNAL_INTEGRATION") {
         throw new DomainError(
           "PROJECT_KIND_CHANGE_REQUIRES_CUSTOMER",
@@ -437,7 +368,7 @@ export function updateProject(
     ) {
       const managedSpace = await tx.customerSpace.create({
         data: {
-          name: `Sub2API · ${input.title ?? existing.title}`,
+          name: `${connectorSpaceLabel(targetConnectorPluginKey!)} · ${input.title ?? existing.title}`,
           slug: `external-${randomUUID()}`,
           kind: "EXTERNAL_MANAGED",
           memberLimit: 0,
@@ -449,16 +380,27 @@ export function updateProject(
       managedCustomerSpaceId = managedSpace.id;
     }
 
+    const projectUpdateInput = { ...input };
+    delete projectUpdateInput.connectorPluginKey;
     const project = await tx.project.update({
       where: { id: projectId },
       data: {
-        ...input,
+        ...projectUpdateInput,
         ...(managedCustomerSpaceId
           ? { customerSpaceId: managedCustomerSpaceId }
           : {}),
       },
-      include: projectSummaryInclude,
     });
+    if (targetConnectorPluginKey) {
+      await tx.projectPluginBinding.create({
+        data: {
+          projectId,
+          pluginKey: targetConnectorPluginKey,
+          externalConnectorSlot: "PRIMARY",
+          status: "DRAFT",
+        },
+      });
+    }
     if (
       input.title &&
       existing.customerSpace.kind === "EXTERNAL_MANAGED" &&
@@ -466,7 +408,11 @@ export function updateProject(
     ) {
       await tx.customerSpace.update({
         where: { id: existing.customerSpaceId },
-        data: { name: `Sub2API · ${input.title}` },
+        data: {
+          name: `${existingConnectorPluginKey
+            ? connectorSpaceLabel(existingConnectorPluginKey)
+            : existing.customerSpace.name.split(" · ")[0]} · ${input.title}`,
+        },
       });
     }
     await writeAuditLog(tx, actor, {
@@ -483,13 +429,8 @@ export function updateProject(
       projectId: project.id,
     });
 
-    const { milestones, ...result } = project;
-    const progress = calculateProjectProgress(milestones);
-    return {
-      ...result,
-      progress: progress.percentage,
-      progressDetails: progress.counts,
-    };
+    const [result] = await hydrateProjectSummaries(tx, [project]);
+    return result;
   });
 }
 
@@ -533,6 +474,15 @@ export async function deleteProject(actor: Actor, projectId: string) {
       },
     });
     await publishProjectDeleted(tx, actor, projectId);
+    // AuditLog has multiple SET NULL cascade paths (project, request and
+    // external actor). Clear the external actor first so PostgreSQL cannot
+    // re-apply a stale contact id while deleting an external project graph.
+    await tx.auditLog.updateMany({
+      where: {
+        externalActor: { binding: { projectId } },
+      },
+      data: { externalActorId: null },
+    });
     await tx.project.delete({ where: { id: projectId } });
     if (existing.customerSpace.kind === "EXTERNAL_MANAGED") {
       await tx.customerSpace.delete({

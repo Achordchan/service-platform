@@ -19,6 +19,7 @@ import {
   type ActivityAudience,
   type ActivityDelivery,
 } from "@/modules/notifications/activity-delivery";
+import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
 
 type EventInput = {
   type: EventType;
@@ -332,6 +333,13 @@ export async function dispatchRequestActivity(
       }),
     );
   }
+  if (input.eventType !== "REQUEST_ASSIGNED") {
+    await recordUniversalRequestWebhook(tx, {
+      eventType: input.eventType,
+      eventPayload: input.eventPayload,
+      serviceRequestId: input.serviceRequestId,
+    });
+  }
   return delivery;
 }
 
@@ -381,6 +389,11 @@ export async function dispatchExternalRequestActivity(
       serviceRequestId: input.serviceRequestId,
     }),
   );
+  await recordUniversalRequestWebhook(tx, {
+    eventType: input.eventType,
+    eventPayload: input.eventPayload,
+    serviceRequestId: input.serviceRequestId,
+  });
   return delivery;
 }
 
@@ -612,16 +625,14 @@ async function loadProjectAudience(
       },
     },
   });
-  const [memberships, platformAdmins] = await Promise.all([
-    tx.membership.findMany({
-      where: { customerSpaceId: project.customerSpaceId },
-      select: { userId: true },
-    }),
-    tx.user.findMany({
-      where: { platformRole: "PLATFORM_ADMIN" },
-      select: { id: true },
-    }),
-  ]);
+  const memberships = await tx.membership.findMany({
+    where: { customerSpaceId: project.customerSpaceId },
+    select: { userId: true },
+  });
+  const platformAdmins = await tx.user.findMany({
+    where: { platformRole: "PLATFORM_ADMIN" },
+    select: { id: true },
+  });
 
   return {
     customerUserIds: memberships.map((membership) => membership.userId),

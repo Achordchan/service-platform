@@ -6,8 +6,13 @@ export type PluginCapability =
   | "project:bind"
   | "external-identity:verify"
   | "network:sub2api"
+  | "network:webhook"
+  | "launch-ticket:issue"
   | "embed-session:issue"
+  | "webhook:deliver"
   | "mail:enqueue";
+
+export type PlatformPluginKind = "UTILITY" | "EXTERNAL_CONNECTOR";
 
 export type PluginSettingField =
   | {
@@ -28,6 +33,7 @@ export type PluginSettingField =
 
 export type PlatformPluginManifest<TConfig extends Record<string, unknown>> = {
   key: string;
+  kind: PlatformPluginKind;
   name: string;
   description: string;
   version: string;

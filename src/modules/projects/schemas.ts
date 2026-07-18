@@ -49,6 +49,7 @@ const projectFieldsSchema = z.object({
   startDate: optionalDate,
   endDate: optionalDate,
   customerSpaceId: z.cuid().optional(),
+  connectorPluginKey: z.string().trim().min(1).max(100).optional(),
   serviceTypeId: z.cuid(),
 });
 
@@ -77,6 +78,13 @@ export const createProjectSchema = projectFieldsSchema
         code: "custom",
         message: "外部接入项目由系统管理接入空间，不能绑定普通客户",
         path: ["customerSpaceId"],
+      });
+    }
+    if (kind === "STANDARD" && value.connectorPluginKey) {
+      context.addIssue({
+        code: "custom",
+        message: "标准项目不能绑定外部连接器",
+        path: ["connectorPluginKey"],
       });
     }
   });

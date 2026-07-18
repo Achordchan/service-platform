@@ -1,0 +1,7 @@
+{
+  "secret": "whsec_test_achord_connect_v1",
+  "timestamp": "1784361600",
+  "eventId": "evt_test_001",
+  "rawBody": "{\"id\":\"evt_test_001\",\"type\":\"request.created\",\"createdAt\":\"2026-07-18T00:00:00.000Z\",\"data\":{\"externalUserId\":\"user-42\",\"request\":{\"id\":\"req-1\",\"number\":\"SR-20260718-0001\",\"title\":\"测试工单\",\"status\":\"PENDING\"}}}",
+  "signature": "10885c82b443bcc2db85a19f897f94316719612e3b05ee0b428b2d0d3067fe82"
+}

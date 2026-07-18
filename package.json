@@ -25,12 +25,15 @@
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "postinstall": "prisma generate",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "test:integration:prepare": "node scripts/prepare-integration-db.mjs"
+    "test:integration:prepare": "node scripts/prepare-integration-db.mjs",
+    "test:sdk:go": "cd examples/integrations/go && go test ./...",
+    "test:sdk:php": "php examples/integrations/php/verify-sdk.php"
   },
   "dependencies": {
     "@achord/platform-plugin-sdk": "workspace:*",
     "@achord/plugin-image-webp": "workspace:*",
     "@achord/plugin-sub2api-connector": "workspace:*",
+    "@achord/plugin-universal-embed-connector": "workspace:*",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@hookform/resolvers": "^5.4.0",

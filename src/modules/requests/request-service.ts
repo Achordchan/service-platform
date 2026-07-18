@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -22,16 +23,7 @@ const userBriefSelect = {
   platformRole: true,
 } as const;
 
-const externalContactBriefSelect = {
-  id: true,
-  externalUserId: true,
-  email: true,
-  username: true,
-  displayName: true,
-  status: true,
-} as const;
-
-const requestSummarySelect = {
+const requestBaseSelect = {
   id: true,
   number: true,
   title: true,
@@ -47,27 +39,125 @@ const requestSummarySelect = {
   closedAt: true,
   createdAt: true,
   updatedAt: true,
-  category: {
-    select: { id: true, name: true },
-  },
-  assignee: {
-    select: userBriefSelect,
-  },
-  assignees: {
-    select: {
-      userId: true,
-      assignedAt: true,
-      user: { select: userBriefSelect },
-    },
-    orderBy: { assignedAt: "asc" as const },
-  },
-  createdBy: {
-    select: userBriefSelect,
-  },
-  createdByExternalContact: {
-    select: externalContactBriefSelect,
-  },
 } as const;
+
+type RequestBase = Prisma.ServiceRequestGetPayload<{
+  select: typeof requestBaseSelect;
+}>;
+
+async function loadRequestPeople(
+  tx: Prisma.TransactionClient,
+  userIds: string[],
+  contactIds: string[],
+) {
+  const users = await tx.user.findMany({
+    where: { id: { in: Array.from(new Set(userIds)) } },
+    select: userBriefSelect,
+  });
+  const contacts = await tx.externalContact.findMany({
+    where: { id: { in: Array.from(new Set(contactIds)) } },
+    select: {
+      id: true,
+      bindingId: true,
+      externalUserId: true,
+      email: true,
+      username: true,
+      displayName: true,
+      status: true,
+      avatarUrl: true,
+      profileAttributes: true,
+    },
+  });
+  const bindings = await tx.projectPluginBinding.findMany({
+    where: { id: { in: contacts.map((contact) => contact.bindingId) } },
+    select: { id: true, pluginKey: true },
+  });
+  const pluginKeyByBindingId = new Map(
+    bindings.map((binding) => [binding.id, binding.pluginKey]),
+  );
+  return {
+    userById: new Map(users.map((user) => [user.id, user])),
+    contactById: new Map(
+      contacts.map((contact) => [
+        contact.id,
+        {
+          id: contact.id,
+          externalUserId: contact.externalUserId,
+          email: contact.email,
+          username: contact.username,
+          displayName: contact.displayName,
+          status: contact.status,
+          avatarUrl: contact.avatarUrl,
+          profileAttributes: contact.profileAttributes,
+          binding: {
+            pluginKey:
+              pluginKeyByBindingId.get(contact.bindingId) ??
+              "sub2api-connector",
+          },
+        },
+      ]),
+    ),
+  };
+}
+
+async function hydrateRequestSummaries(
+  tx: Prisma.TransactionClient,
+  requests: RequestBase[],
+) {
+  if (requests.length === 0) return [];
+  const requestIds = requests.map((request) => request.id);
+  const categories = await tx.requestCategory.findMany({
+    where: { id: { in: requests.map((request) => request.categoryId) } },
+    select: { id: true, name: true },
+  });
+  const assigneeRows = await tx.requestAssignee.findMany({
+    where: { serviceRequestId: { in: requestIds } },
+    select: { serviceRequestId: true, userId: true, assignedAt: true },
+    orderBy: { assignedAt: "asc" },
+  });
+  const { userById, contactById } = await loadRequestPeople(
+    tx,
+    [
+      ...requests.map((request) => request.createdById),
+      ...requests.map((request) => request.assigneeId),
+      ...assigneeRows.map((item) => item.userId),
+    ].filter((value): value is string => Boolean(value)),
+    requests
+      .map((request) => request.createdByExternalContactId)
+      .filter((value): value is string => Boolean(value)),
+  );
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const assigneesByRequestId = new Map<string, typeof assigneeRows>();
+  for (const row of assigneeRows) {
+    const current = assigneesByRequestId.get(row.serviceRequestId) ?? [];
+    current.push(row);
+    assigneesByRequestId.set(row.serviceRequestId, current);
+  }
+  return requests.map((request) => ({
+    ...request,
+    category: categoryById.get(request.categoryId) ?? {
+      id: request.categoryId,
+      name: "分类已删除",
+    },
+    assignee: request.assigneeId
+      ? userById.get(request.assigneeId) ?? null
+      : null,
+    assignees: (assigneesByRequestId.get(request.id) ?? [])
+      .map((row) => {
+        const user = userById.get(row.userId);
+        return user
+          ? { userId: row.userId, assignedAt: row.assignedAt, user }
+          : null;
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    createdBy: request.createdById
+      ? userById.get(request.createdById) ?? null
+      : null,
+    createdByExternalContact: request.createdByExternalContactId
+      ? contactById.get(request.createdByExternalContactId) ?? null
+      : null,
+  }));
+}
 
 export function createRequest(
   actor: Actor,
@@ -127,7 +217,7 @@ export function createRequest(
         categoryId: category.id,
         createdById: actor.id,
       },
-      select: requestSummarySelect,
+      select: requestBaseSelect,
     });
     const initialMessage = await tx.requestMessage.create({
       data: {
@@ -174,7 +264,8 @@ export function createRequest(
       serviceRequestId: request.id,
     });
 
-    return { ...request, initialMessageId: initialMessage.id };
+    const [summary] = await hydrateRequestSummaries(tx, [request]);
+    return { ...summary, initialMessageId: initialMessage.id };
   });
 }
 
@@ -188,7 +279,7 @@ export function listProjectRequests(actor: Actor, projectId: string) {
       throw notFound("项目不存在或无权访问");
     }
 
-    return tx.serviceRequest.findMany({
+    const requests = await tx.serviceRequest.findMany({
       where: {
         projectId,
         ...(actor.platformRole === "TECHNICIAN"
@@ -204,9 +295,10 @@ export function listProjectRequests(actor: Actor, projectId: string) {
             }
           : {}),
       },
-      select: requestSummarySelect,
+      select: requestBaseSelect,
       orderBy: { createdAt: "desc" },
     });
+    return hydrateRequestSummaries(tx, requests);
   });
 }
 
@@ -217,95 +309,125 @@ export function getRequest(actor: Actor, requestId: string) {
       : { visibility: "CUSTOMER_VISIBLE" as const };
     const request = await tx.serviceRequest.findUnique({
       where: { id: requestId },
-      select: {
-        ...requestSummarySelect,
-        project: {
-          select: {
-            id: true,
-            title: true,
-            customerSpaceId: true,
-          },
-        },
-        messages: {
-          where: visibleContent,
-          select: {
-            id: true,
-            body: true,
-            visibility: true,
-            isSystem: true,
-            isInitial: true,
-            authorId: true,
-            externalAuthorId: true,
-            replyToMessageId: true,
-            createdAt: true,
-            updatedAt: true,
-            author: {
-              select: userBriefSelect,
-            },
-            externalAuthor: {
-              select: externalContactBriefSelect,
-            },
-            attachments: {
-              where: visibleContent,
-              select: {
-                id: true,
-                originalName: true,
-                mimeType: true,
-                size: true,
-                visibility: true,
-                createdAt: true,
-              },
-            },
-            replyTo: {
-              select: {
-                id: true,
-                body: true,
-                visibility: true,
-                isSystem: true,
-                authorId: true,
-                externalAuthorId: true,
-                author: {
-                  select: {
-                    id: true,
-                    name: true,
-                  },
-                },
-                externalAuthor: {
-                  select: externalContactBriefSelect,
-                },
-                attachments: {
-                  select: {
-                    id: true,
-                    originalName: true,
-                  },
-                  orderBy: { createdAt: "asc" },
-                },
-              },
-            },
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-        },
-        attachments: {
-          where: {
-            requestMessageId: null,
-            ...visibleContent,
-          },
-          select: {
-            id: true,
-            originalName: true,
-            mimeType: true,
-            size: true,
-            visibility: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: "asc" },
-        },
-      },
+      select: requestBaseSelect,
     });
 
     if (!request) {
       throw notFound();
     }
-    return request;
+    const [summary] = await hydrateRequestSummaries(tx, [request]);
+    const project = await tx.project.findUniqueOrThrow({
+      where: { id: request.projectId },
+      select: { id: true, title: true, customerSpaceId: true },
+    });
+    const messages = await tx.requestMessage.findMany({
+      where: { serviceRequestId: request.id, ...visibleContent },
+      select: {
+        id: true,
+        body: true,
+        visibility: true,
+        isSystem: true,
+        isInitial: true,
+        authorId: true,
+        externalAuthorId: true,
+        replyToMessageId: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    });
+    const { userById, contactById } = await loadRequestPeople(
+      tx,
+      messages
+        .map((message) => message.authorId)
+        .filter((value): value is string => Boolean(value)),
+      messages
+        .map((message) => message.externalAuthorId)
+        .filter((value): value is string => Boolean(value)),
+    );
+    const attachments = await tx.attachment.findMany({
+      where: { serviceRequestId: request.id, ...visibleContent },
+      select: {
+        id: true,
+        requestMessageId: true,
+        originalName: true,
+        mimeType: true,
+        size: true,
+        visibility: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const attachmentsByMessageId = new Map<string, typeof attachments>();
+    for (const attachment of attachments) {
+      if (!attachment.requestMessageId) continue;
+      const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
+      current.push(attachment);
+      attachmentsByMessageId.set(attachment.requestMessageId, current);
+    }
+    const messageById = new Map(messages.map((message) => [message.id, message]));
+    const authorFor = (message: (typeof messages)[number]) => ({
+      author: message.authorId ? userById.get(message.authorId) ?? null : null,
+      externalAuthor: message.externalAuthorId
+        ? contactById.get(message.externalAuthorId) ?? null
+        : null,
+    });
+    return {
+      ...summary,
+      project,
+      messages: messages.map((message) => {
+        const replyTo = message.replyToMessageId
+          ? messageById.get(message.replyToMessageId)
+          : null;
+        return {
+          ...message,
+          author: authorFor(message).author,
+          externalAuthor: authorFor(message).externalAuthor,
+          attachments: (attachmentsByMessageId.get(message.id) ?? []).map(
+            (attachment) => ({
+              id: attachment.id,
+              originalName: attachment.originalName,
+              mimeType: attachment.mimeType,
+              size: attachment.size,
+              visibility: attachment.visibility,
+              createdAt: attachment.createdAt,
+            }),
+          ),
+          replyTo: replyTo
+            ? {
+                id: replyTo.id,
+                body: replyTo.body,
+                visibility: replyTo.visibility,
+                isSystem: replyTo.isSystem,
+                authorId: replyTo.authorId,
+                externalAuthorId: replyTo.externalAuthorId,
+                author: authorFor(replyTo).author
+                  ? {
+                      id: authorFor(replyTo).author!.id,
+                      name: authorFor(replyTo).author!.name,
+                    }
+                  : null,
+                externalAuthor: authorFor(replyTo).externalAuthor,
+                attachments: (attachmentsByMessageId.get(replyTo.id) ?? []).map(
+                  (attachment) => ({
+                    id: attachment.id,
+                    originalName: attachment.originalName,
+                  }),
+                ),
+              }
+            : null,
+        };
+      }),
+      attachments: attachments
+        .filter((attachment) => !attachment.requestMessageId)
+        .map((attachment) => ({
+          id: attachment.id,
+          originalName: attachment.originalName,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          visibility: attachment.visibility,
+          createdAt: attachment.createdAt,
+        })),
+    };
   });
 }

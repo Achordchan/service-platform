@@ -17,6 +17,7 @@ async function mockEmbedApi(page: Page) {
             email: "sub@example.com",
             username: "sub-user",
           },
+          parentOrigins: ["http://127.0.0.1:3000"],
           project: {
             id: "external-project-1",
             title: "API 中转服务支持",
@@ -59,6 +60,7 @@ async function mockEmbedApi(page: Page) {
               createdAt: "2026-07-17T10:00:00.000Z",
               updatedAt: "2026-07-17T10:10:00.000Z",
               category: { id: "category-1", name: "接口异常" },
+              unreadCount: 0,
             },
           ],
         },

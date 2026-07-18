@@ -20,6 +20,9 @@ importers:
       '@achord/plugin-sub2api-connector':
         specifier: workspace:*
         version: link:plugins/sub2api-connector
+      '@achord/plugin-universal-embed-connector':
+        specifier: workspace:*
+        version: link:plugins/universal-embed-connector
       '@emotion/react':
         specifier: ^11.14.0
         version: 11.14.0(@types/react@19.2.17)(react@19.2.7)
@@ -178,6 +181,15 @@ importers:
         version: 4.4.3
 
   plugins/sub2api-connector:
+    dependencies:
+      '@achord/platform-plugin-sdk':
+        specifier: workspace:*
+        version: link:../../packages/platform-plugin-sdk
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
+  plugins/universal-embed-connector:
     dependencies:
       '@achord/platform-plugin-sdk':
         specifier: workspace:*

@@ -6,6 +6,7 @@ import type { RequestListItem } from "@/components/staff/staff-types";
 import { requireUserWithAccess } from "@/lib/session";
 import { listProjects } from "@/modules/projects/project-service";
 import { listProjectRequests } from "@/modules/requests/request-service";
+import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 
 export const metadata = {
   title: "服务请求",
@@ -31,33 +32,54 @@ export default async function StaffRequestsPage() {
             request.category &&
             (request.createdBy || request.createdByExternalContact),
         )
-        .map((request) => ({
-          id: request.id,
-          number: request.number,
-          title: request.title,
-          description: request.description,
-          priority: request.priority,
-          status: request.status,
-          createdAt: request.createdAt.toISOString(),
-          updatedAt: request.updatedAt.toISOString(),
-          projectId: project.id,
-          projectTitle: project.title,
-          customerName: project.customerSpace.name,
-          serviceTypeName: project.serviceType.name,
-          categoryName: request.category.name,
-          assigneeId: request.assigneeId,
-          assigneeName:
-            (request.assignees.length
-              ? request.assignees.map((item) => item.user.name).join("、")
-              : request.assignee?.name) ?? null,
-          createdByName:
-            request.createdBy?.name ??
-            request.createdByExternalContact?.displayName ??
-            "原提交人已不可用",
-          source: request.createdByExternalContact
-            ? ("SUB2API" as const)
-            : ("ACHORD" as const),
-        }));
+        .map((request) => {
+          const assignedStaff = request.assignees.length
+            ? request.assignees.map((item) => ({
+                id: item.user.id,
+                name: item.user.name,
+              }))
+            : request.assignee
+              ? [{ id: request.assignee.id, name: request.assignee.name }]
+              : [];
+          const externalProject = project.kind === "EXTERNAL_INTEGRATION";
+          const connectorKey = project.pluginBindings[0]?.pluginKey ?? null;
+          const connectorLabel = connectorKey
+            ? getRegisteredPlugin(connectorKey).manifest.name
+            : "外部接入";
+          return {
+            id: request.id,
+            number: request.number,
+            title: request.title,
+            description: request.description,
+            priority: request.priority,
+            status: request.status,
+            createdAt: request.createdAt.toISOString(),
+            updatedAt: request.updatedAt.toISOString(),
+            projectId: project.id,
+            projectTitle: project.title,
+            customerFilterKey: externalProject
+              ? `${connectorKey ?? "EXTERNAL"}_EXTERNAL`
+              : project.customerSpace.id,
+            customerName: externalProject
+              ? `${connectorLabel} 用户`
+              : project.customerSpace.name,
+            serviceTypeName: project.serviceType.name,
+            categoryName: request.category.name,
+            assigneeId: request.assigneeId,
+            assigneeName:
+              assignedStaff.map((member) => member.name).join("、") || null,
+            assignedStaff,
+            createdByName:
+              request.createdBy?.name ??
+              request.createdByExternalContact?.displayName ??
+              "原提交人已不可用",
+            source: request.createdByExternalContact
+              ? connectorKey === "universal-embed-connector"
+                ? ("UNIVERSAL" as const)
+                : ("SUB2API" as const)
+              : ("ACHORD" as const),
+          };
+        });
     })
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
