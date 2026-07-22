@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   describeSmtpError,
   isSmtpProviderFailure,
+  smtpSenderPolicyError,
 } from "@/modules/platform-settings/smtp-error";
 
 describe("SMTP 错误分类", () => {
@@ -15,5 +16,28 @@ describe("SMTP 错误分类", () => {
     );
     expect(isSmtpProviderFailure({ code: "EAUTH" })).toBe(true);
     expect(isSmtpProviderFailure({ code: "EENVELOPE" })).toBe(false);
+    expect(
+      describeSmtpError({ code: "EENVELOPE", command: "MAIL FROM" }),
+    ).toContain("发件人地址");
+    expect(
+      describeSmtpError({ code: "EENVELOPE", command: "RCPT TO" }),
+    ).toContain("收件人地址");
+  });
+
+  it("QQ SMTP 拒绝使用与登录账号不一致的发件邮箱", () => {
+    expect(
+      smtpSenderPolicyError({
+        smtpHost: "smtp.qq.com",
+        smtpUser: "service@qq.com",
+        smtpFrom: "服务支持中心 <info@achord.cn>",
+      }),
+    ).toContain("当前 QQ 邮箱");
+    expect(
+      smtpSenderPolicyError({
+        smtpHost: "smtp.qq.com",
+        smtpUser: "service@qq.com",
+        smtpFrom: "服务支持中心 <service@qq.com>",
+      }),
+    ).toBeNull();
   });
 });

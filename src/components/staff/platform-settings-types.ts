@@ -12,7 +12,6 @@ export type PlatformSettingsView = {
   appUrl: string;
   mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
   mailFrom: string;
-  mailReplyTo: string;
   hasDedicatedEncryptionKey: boolean;
   hasResendApiKey: boolean;
   resendDomain: string;
@@ -35,7 +34,7 @@ export type PlatformSettingsView = {
   attachmentMaxSizeMb: number;
   attachmentAllowedExtensions: string;
   customerReplyAttachmentsEnabled: boolean;
-  standardRequestEmailEnabled: boolean;
+  standardEmailUnreadDelayEnabled: boolean;
   updatedAt?: string;
 };
 

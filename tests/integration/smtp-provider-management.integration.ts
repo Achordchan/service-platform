@@ -195,7 +195,48 @@ describe("SMTP 通道管理", () => {
     });
     expect(changed.mailMode).toBe("LOCAL_OUTBOX");
     expect(changed.smtpHealthStatus).toBe("unchecked");
-    expect(changed.standardRequestEmailEnabled).toBe(false);
+    expect(changed.standardEmailUnreadDelayEnabled).toBe(false);
+  });
+
+  it("QQ SMTP 检测会拒绝与登录账号不一致的发件邮箱", async () => {
+    smtpTransportMock.verify.mockReset();
+    smtpTransportMock.close.mockReset();
+    await pool.query(
+      `UPDATE "PlatformSetting"
+          SET "mailMode" = 'LOCAL_OUTBOX',
+              "smtpHost" = 'smtp.qq.com',
+              "smtpPort" = 465,
+              "smtpUser" = 'service@qq.com',
+              "smtpPassword" = NULL,
+              "smtpPasswordEncrypted" = $1,
+              "smtpFrom" = '服务支持中心 <info@achord.cn>',
+              "smtpSecure" = true,
+              "smtpSecureConfigured" = true,
+              "smtpHealthStatus" = 'unchecked',
+              "smtpLastCheckedAt" = NULL,
+              "smtpLastError" = NULL
+        WHERE id = 1`,
+      [encryptSecret("smtp-test-secret")],
+    );
+
+    await expect(checkSmtpProvider(admin)).rejects.toMatchObject({
+      code: "SMTP_CHECK_FAILED",
+      message: expect.stringContaining("当前 QQ 邮箱"),
+    });
+    expect(smtpTransportMock.verify).not.toHaveBeenCalled();
+
+    const stored = await pool.query<{
+      smtpHealthStatus: string | null;
+      smtpLastError: string | null;
+    }>(
+      `SELECT "smtpHealthStatus", "smtpLastError"
+         FROM "PlatformSetting"
+        WHERE id = 1`,
+    );
+    expect(stored.rows[0]).toMatchObject({
+      smtpHealthStatus: "error",
+      smtpLastError: expect.stringContaining("当前 QQ 邮箱"),
+    });
   });
 
   it("切换真实发信通道时迁移排队邮件，并在存在在途邮件时拒绝切换", async () => {

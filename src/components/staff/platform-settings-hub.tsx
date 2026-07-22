@@ -207,7 +207,7 @@ export function PlatformSettingsHub({
               : resendReady
                 ? "Resend 已连接，等待启用"
                 : settings.mailMode === "SMTP"
-                  ? settings.smtpFrom
+                  ? `${settings.smtpHost ?? "SMTP"} · ${settings.smtpUser ?? "已配置"}`
                   : "邮件发送未启用"
           }
           status={
@@ -317,10 +317,17 @@ export function PlatformSettingsHub({
           {dialog === "notifications" ? (
             <NotificationDeliveryRulesPanel
               initialRules={notificationRules}
-              standardRequestEmailEnabled={
-                settings.standardRequestEmailEnabled
+              standardEmailUnreadDelayEnabled={
+                settings.standardEmailUnreadDelayEnabled
               }
+              mailMode={settings.mailMode}
               onRulesChange={setNotificationRules}
+              onUnreadDelayChange={(enabled) =>
+                setSettings((current) => ({
+                  ...current,
+                  standardEmailUnreadDelayEnabled: enabled,
+                }))
+              }
             />
           ) : null}
           {dialog === "outbox" ? (

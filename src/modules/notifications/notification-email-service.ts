@@ -215,8 +215,7 @@ export async function createDueNotificationMailMessages() {
         : null;
       const customer = user.platformRole === "CUSTOMER";
       const commonValid = Boolean(
-          settings?.standardRequestEmailEnabled &&
-          settings.mailMode !== "LOCAL_OUTBOX" &&
+        Boolean(settings && settings.mailMode !== "LOCAL_OUTBOX") &&
           isNotificationEmailRuleEnabled(
             notification.type,
             deliveryRuleByKey,

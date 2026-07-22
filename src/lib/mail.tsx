@@ -31,6 +31,7 @@ import {
 import { reconcileStoredResendEvents } from "@/modules/platform-settings/resend-webhook-service";
 import {
   isSmtpProviderFailure,
+  smtpSenderPolicyError,
 } from "@/modules/platform-settings/smtp-error";
 import {
   describeMailDeliveryFailure,
@@ -52,8 +53,6 @@ type StoredMailPayload = {
   deliveryMode: MailDeliveryMode;
 };
 
-const SUPPORT_ADDRESS = "support@achord.cn";
-
 function MailDocument({
   previewText,
   heading,
@@ -69,11 +68,13 @@ function MailDocument({
       <body
         style={{
           margin: 0,
-          padding: "24px 12px",
-          background: "#f5f7fa",
+          padding: "32px 12px",
+          background: "#f3f5f7",
           fontFamily:
             '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          color: "#1d1d1f",
+          color: "#111827",
+          fontSize: 16,
+          lineHeight: 1.8,
         }}
       >
         {previewText ? (
@@ -91,34 +92,47 @@ function MailDocument({
         <div
           style={{
             width: "100%",
-            maxWidth: 560,
+            maxWidth: 600,
             margin: "0 auto",
             boxSizing: "border-box",
             background: "#ffffff",
-            border: "1px solid #e5e7eb",
-            borderRadius: 14,
-            padding: "32px 28px",
+            border: "1px solid #e2e7ee",
+            borderRadius: 12,
+            padding: "38px 36px 32px",
           }}
         >
           <div
             style={{
-              marginBottom: 24,
-              color: "#1677ff",
-              fontSize: 16,
+              marginBottom: 28,
+              paddingBottom: 18,
+              borderBottom: "1px solid #edf0f4",
+              color: "#155eef",
+              fontSize: 15,
               fontWeight: 700,
+              lineHeight: 1.4,
             }}
           >
             服务支持中心
           </div>
-          <h1 style={{ margin: "0 0 16px", fontSize: 24, lineHeight: 1.35 }}>
+          <h1
+            style={{
+              margin: "0 0 18px",
+              color: "#111827",
+              fontSize: 26,
+              fontWeight: 700,
+              lineHeight: 1.4,
+            }}
+          >
             {heading}
           </h1>
           <p
             style={{
               margin: 0,
-              color: "#5f6672",
-              lineHeight: 1.75,
+              color: "#374151",
+              fontSize: 16,
+              lineHeight: 1.8,
               whiteSpace: "pre-line",
+              overflowWrap: "anywhere",
             }}
           >
             {body}
@@ -129,11 +143,13 @@ function MailDocument({
                 href={actionUrl}
                 style={{
                   display: "inline-block",
-                  marginTop: 24,
-                  padding: "11px 18px",
-                  borderRadius: 9,
-                  background: "#1677ff",
+                  marginTop: 28,
+                  padding: "13px 22px",
+                  borderRadius: 7,
+                  background: "#155eef",
                   color: "#ffffff",
+                  fontSize: 15,
+                  lineHeight: 1.4,
                   textDecoration: "none",
                   fontWeight: 600,
                 }}
@@ -142,10 +158,10 @@ function MailDocument({
               </a>
               <p
                 style={{
-                  margin: "20px 0 0",
-                  color: "#8a919e",
-                  fontSize: 12,
-                  lineHeight: 1.6,
+                  margin: "22px 0 0",
+                  color: "#77808f",
+                  fontSize: 12.5,
+                  lineHeight: 1.7,
                   wordBreak: "break-all",
                 }}
               >
@@ -157,16 +173,15 @@ function MailDocument({
           ) : null}
           <div
             style={{
-              marginTop: 32,
-              paddingTop: 20,
+              marginTop: 36,
+              paddingTop: 22,
               borderTop: "1px solid #edf0f3",
-              color: "#8a919e",
-              fontSize: 12,
+              color: "#77808f",
+              fontSize: 13,
               lineHeight: 1.7,
             }}
           >
-            此邮件由系统自动发送。如需帮助，请回复此邮件或联系{" "}
-            {SUPPORT_ADDRESS}。
+            此邮件由系统自动发送。如需帮助，请直接回复此邮件。
           </div>
         </div>
       </body>
@@ -191,7 +206,7 @@ function renderMailText(payload: StoredMailPayload) {
   if (payload.actionLabel && payload.actionUrl) {
     lines.push("", `${payload.actionLabel}：${payload.actionUrl}`);
   }
-  lines.push("", `如需帮助，请回复此邮件或联系 ${SUPPORT_ADDRESS}。`);
+  lines.push("", "如需帮助，请直接回复此邮件。");
   return lines.join("\n");
 }
 
@@ -214,6 +229,28 @@ async function deliverViaSmtp(
       message: "SMTP 未配置完整：缺少用户名或密码",
     });
   }
+  const senderPolicyError = smtpSenderPolicyError({
+    smtpHost: settings.smtpHost,
+    smtpUser: settings.smtpUser,
+    smtpFrom: settings.smtpFrom,
+  });
+  if (senderPolicyError) {
+    await withSystemDb((tx) =>
+      tx.platformSetting.update({
+        where: { id: 1 },
+        data: {
+          smtpHealthStatus: "error",
+          smtpLastCheckedAt: new Date(),
+          smtpLastError: senderPolicyError,
+        },
+      }),
+    );
+    throw new MailDeliveryError({
+      category: "SMTP_CONFIGURATION",
+      code: "ESENDER",
+      message: senderPolicyError,
+    });
+  }
   const transporter = createSmtpTransport({
     smtpHost: settings.smtpHost,
     smtpPort: settings.smtpPort,
@@ -225,7 +262,6 @@ async function deliverViaSmtp(
     const result = await transporter.sendMail({
       from: settings.smtpFrom,
       to: payload.toEmail,
-      replyTo: settings.mailReplyTo,
       subject: payload.subject,
       html,
       text,
@@ -281,7 +317,6 @@ async function deliverViaResend(
     {
       from: settings.mailFrom,
       to: payload.toEmail,
-      replyTo: settings.mailReplyTo,
       subject: payload.subject,
       html,
       text,
@@ -502,7 +537,7 @@ async function notificationMailStillSendable(message: {
   return withSystemDb(async (tx) => {
     const settings = await tx.platformSetting.findUnique({
       where: { id: 1 },
-      select: { standardRequestEmailEnabled: true },
+      select: { mailMode: true },
     });
     const currentMessage = await tx.mailMessage.findUnique({
       where: { id: message.id },
@@ -569,7 +604,7 @@ async function notificationMailStillSendable(message: {
       deliveryRules.map((rule) => [rule.key, rule]),
     );
     const commonValid = Boolean(
-      settings?.standardRequestEmailEnabled &&
+      Boolean(settings && settings.mailMode !== "LOCAL_OUTBOX") &&
         currentMessage?.status === "PROCESSING" &&
         notification &&
         isNotificationEmailRuleEnabled(

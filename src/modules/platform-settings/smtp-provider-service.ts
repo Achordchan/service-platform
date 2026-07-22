@@ -15,7 +15,10 @@ import {
 import {
   createSmtpTransport,
 } from "@/modules/platform-settings/smtp-transport";
-import { describeSmtpError } from "@/modules/platform-settings/smtp-error";
+import {
+  describeSmtpError,
+  smtpSenderPolicyError,
+} from "@/modules/platform-settings/smtp-error";
 import { assertAllowed, DomainError } from "@/modules/projects/errors";
 
 export async function checkSmtpProvider(actor: Actor) {
@@ -40,16 +43,27 @@ export async function checkSmtpProvider(actor: Actor) {
     smtpPassword: settings.smtpPassword,
     smtpSecure: settings.smtpSecure,
   });
-  let checkError: unknown = null;
+  let checkError: unknown = smtpSenderPolicyError({
+    smtpHost: settings.smtpHost,
+    smtpUser: settings.smtpUser,
+    smtpFrom: settings.smtpFrom,
+  });
   try {
-    await transporter.verify();
+    if (!checkError) {
+      await transporter.verify();
+    }
   } catch (error) {
     checkError = error;
   } finally {
     transporter.close();
   }
 
-  const message = checkError ? describeSmtpError(checkError) : null;
+  const message =
+    typeof checkError === "string"
+      ? checkError
+      : checkError
+        ? describeSmtpError(checkError)
+        : null;
   await withActorDb(actor, async (tx) => {
     const current = runtimeMailSettingsFromStored(
       await lockPlatformMailSettings(tx),
@@ -115,10 +129,6 @@ export async function disconnectSmtpProvider(actor: Actor) {
       data: {
         mailMode:
           current.mailMode === "SMTP" ? "LOCAL_OUTBOX" : current.mailMode,
-        standardRequestEmailEnabled:
-          current.mailMode === "SMTP"
-            ? false
-            : current.standardRequestEmailEnabled,
         smtpHost: null,
         smtpPort: null,
         smtpUser: null,

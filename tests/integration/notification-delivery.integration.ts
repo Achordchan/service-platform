@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { Pool } from "pg";
+import { Client, Pool } from "pg";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { dispatchQueuedMailMessage } from "@/lib/jobs";
@@ -9,6 +9,7 @@ import { createInvitation } from "@/modules/customer-spaces/customer-member-serv
 import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
 import {
   createNotification,
+  dispatchRequestActivity,
   getNotificationSummary,
   listNotifications,
   markNotificationRead,
@@ -32,6 +33,7 @@ const cleanup = {
   invitationIds: [] as string[],
   notificationIds: [] as string[],
   summaryNotificationIds: [] as string[],
+  eventMarkers: [] as string[],
 };
 
 let admin: Actor;
@@ -44,6 +46,11 @@ let originalMailMode = "LOCAL_OUTBOX";
 let originalStandardMailEnabled = false;
 let originalUserMailEnabled = true;
 let originalProjectUpdateRule: {
+  notificationEnabled: boolean;
+  soundEnabled: boolean;
+  emailEnabled: boolean;
+} | null = null;
+let originalRequestPublicMessageRule: {
   notificationEnabled: boolean;
   soundEnabled: boolean;
   emailEnabled: boolean;
@@ -144,6 +151,25 @@ beforeAll(async () => {
         emailEnabled: projectRule.rows[0].email_enabled,
       }
     : null;
+  const requestPublicMessageRule = await pool.query<{
+    notification_enabled: boolean;
+    sound_enabled: boolean;
+    email_enabled: boolean;
+  }>(
+    `SELECT "notificationEnabled" AS notification_enabled,
+            "soundEnabled" AS sound_enabled,
+            "emailEnabled" AS email_enabled
+       FROM "NotificationDeliveryRule"
+      WHERE key = 'REQUEST_PUBLIC_MESSAGE'`,
+  );
+  originalRequestPublicMessageRule = requestPublicMessageRule.rows[0]
+    ? {
+        notificationEnabled:
+          requestPublicMessageRule.rows[0].notification_enabled,
+        soundEnabled: requestPublicMessageRule.rows[0].sound_enabled,
+        emailEnabled: requestPublicMessageRule.rows[0].email_enabled,
+      }
+    : null;
 });
 
 afterAll(async () => {
@@ -176,6 +202,13 @@ afterAll(async () => {
     await pool.query(
       `DELETE FROM "Invitation" WHERE id = ANY($1::text[])`,
       [cleanup.invitationIds],
+    );
+  }
+  if (cleanup.eventMarkers.length > 0) {
+    await pool.query(
+      `DELETE FROM "EventRecord"
+       WHERE payload->>'integrationMarker' = ANY($1::text[])`,
+      [cleanup.eventMarkers],
     );
   }
   await pool.query(
@@ -218,6 +251,28 @@ afterAll(async () => {
       `DELETE FROM "NotificationDeliveryRule" WHERE key = 'PROJECT_UPDATE'`,
     );
   }
+  if (originalRequestPublicMessageRule) {
+    await pool.query(
+      `INSERT INTO "NotificationDeliveryRule" (
+         key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+       ) VALUES ('REQUEST_PUBLIC_MESSAGE', $1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         "notificationEnabled" = EXCLUDED."notificationEnabled",
+         "soundEnabled" = EXCLUDED."soundEnabled",
+         "emailEnabled" = EXCLUDED."emailEnabled",
+         "updatedAt" = NOW()`,
+      [
+        originalRequestPublicMessageRule.notificationEnabled,
+        originalRequestPublicMessageRule.soundEnabled,
+        originalRequestPublicMessageRule.emailEnabled,
+      ],
+    );
+  } else {
+    await pool.query(
+      `DELETE FROM "NotificationDeliveryRule"
+       WHERE key = 'REQUEST_PUBLIC_MESSAGE'`,
+    );
+  }
   await pool.end();
 });
 
@@ -239,6 +294,7 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
       mail_count: string;
       source_id: string | null;
       status: string;
+      created_at_is_current: boolean;
     }>(
       `
         SELECT
@@ -248,7 +304,12 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
              WHERE "sourceType" = 'CUSTOMER_MEMBER_INVITATION'
                AND "sourceId" = $1)::text AS mail_count,
           mail."sourceId" AS source_id,
-          mail.status::text
+          mail.status::text,
+          mail."createdAt" BETWEEN
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '1 minute'
+            AND
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + INTERVAL '1 minute'
+            AS created_at_is_current
         FROM "MailMessage" mail
         WHERE mail."sourceType" = 'CUSTOMER_MEMBER_INVITATION'
           AND mail."sourceId" = $1
@@ -261,12 +322,13 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
       mail_count: "1",
       source_id: invitation.id,
       status: "QUEUED",
+      created_at_is_current: true,
     });
     expect(dispatchQueuedMailMessage).toHaveBeenCalledOnce();
   });
 
   it("延迟邮件只创建一次，并在用户已读后于发送前取消", async () => {
-    await enableStandardMail(true);
+    await configureStandardMail(true);
     const notificationId = await createDueRequestNotification();
     cleanup.notificationIds.push(notificationId);
 
@@ -292,8 +354,150 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     expect(message.rows[0]?.status).toBe("CANCELLED");
   });
 
+  it("后台公开回复会通过真实活动分发为客户排期延迟邮件", async () => {
+    await configureStandardMail(true);
+    await setRequestPublicMessageMailRule(true);
+    const activePresence = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM "RequestPresence"
+        WHERE "serviceRequestId" = $1
+          AND "userId" = $2
+          AND "expiresAt" > NOW()`,
+      [requestId, customer.id],
+    );
+    expect(activePresence.rows[0]?.count).toBe("0");
+
+    const integrationMarker = `request-email-${randomUUID()}`;
+    cleanup.eventMarkers.push(integrationMarker);
+    const delivery = await withActorDb(admin, (tx) =>
+      dispatchRequestActivity(tx, admin, {
+        eventType: "REQUEST_MESSAGE_CREATED",
+        eventPayload: {
+          requestId,
+          visibility: "CUSTOMER_VISIBLE",
+          integrationMarker,
+        },
+        notificationType: "REQUEST_MESSAGE",
+        notificationTitle: "公开回复邮件排期测试",
+        notificationBody: "真实活动分发必须写入邮件到期时间",
+        includeCustomers: true,
+        relevantWorkerUserIds: [],
+        notifyProjectManagers: false,
+        notifyPlatformAdmins: false,
+        customerSpaceId,
+        projectId,
+        serviceRequestId: requestId,
+      }),
+    );
+    cleanup.notificationIds.push(
+      ...delivery.notifications.map((notification) => notification.id),
+    );
+
+    const customerNotification = await pool.query<{
+      email_due_at: string | null;
+      read_at: string | null;
+      scheduled_after_four_minutes: boolean;
+      scheduled_before_six_minutes: boolean;
+    }>(
+      `SELECT
+          "emailDueAt"::text AS email_due_at,
+          "readAt"::text AS read_at,
+          "emailDueAt" >
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + INTERVAL '4 minutes'
+            AS scheduled_after_four_minutes,
+          "emailDueAt" <
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') + INTERVAL '6 minutes'
+            AS scheduled_before_six_minutes
+         FROM "Notification"
+        WHERE id = ANY($1::text[])
+          AND "userId" = $2
+        LIMIT 1`,
+      [
+        delivery.notifications.map((notification) => notification.id),
+        customer.id,
+      ],
+    );
+    const scheduled = customerNotification.rows[0];
+    expect(scheduled?.read_at).toBeNull();
+    expect(scheduled?.email_due_at).not.toBeNull();
+    expect(scheduled?.scheduled_after_four_minutes).toBe(true);
+    expect(scheduled?.scheduled_before_six_minutes).toBe(true);
+  });
+
+  it("关闭未读延迟后，规则开启的新事件立即进入邮件队列", async () => {
+    await configureStandardMail(true, false);
+    await setRequestPublicMessageMailRule(true);
+    const integrationMarker = `request-email-immediate-${randomUUID()}`;
+    cleanup.eventMarkers.push(integrationMarker);
+    const listener = new Client({
+      connectionString: process.env.DATABASE_MIGRATION_URL,
+    });
+    await listener.connect();
+    await listener.query("LISTEN service_platform_mail_outbox");
+    let wakeTimer: ReturnType<typeof setTimeout> | undefined;
+    const wakePayload = new Promise<string>((resolve, reject) => {
+      wakeTimer = setTimeout(
+        () => reject(new Error("即时邮件 Outbox 未收到事务提交信号")),
+        2_000,
+      );
+      listener.on("notification", (message) => {
+        if (message.channel !== "service_platform_mail_outbox") return;
+        if (wakeTimer) clearTimeout(wakeTimer);
+        resolve(message.payload ?? "");
+      });
+    });
+
+    let delivery: Awaited<ReturnType<typeof dispatchRequestActivity>>;
+    try {
+      delivery = await withActorDb(admin, (tx) =>
+        dispatchRequestActivity(tx, admin, {
+          eventType: "REQUEST_MESSAGE_CREATED",
+          eventPayload: {
+            requestId,
+            visibility: "CUSTOMER_VISIBLE",
+            integrationMarker,
+          },
+          notificationType: "REQUEST_MESSAGE",
+          notificationTitle: "公开回复立即邮件测试",
+          notificationBody: "关闭未读延迟后应立即进入到期队列",
+          includeCustomers: true,
+          relevantWorkerUserIds: [],
+          notifyProjectManagers: false,
+          notifyPlatformAdmins: false,
+          customerSpaceId,
+          projectId,
+          serviceRequestId: requestId,
+        }),
+      );
+      const payload = await wakePayload;
+      expect(
+        delivery.notifications.some((notification) => notification.id === payload),
+      ).toBe(true);
+    } finally {
+      if (wakeTimer) clearTimeout(wakeTimer);
+      await listener.end();
+    }
+    cleanup.notificationIds.push(
+      ...delivery.notifications.map((notification) => notification.id),
+    );
+
+    const customerNotification = delivery.notifications.find(
+      (notification) => notification.userId === customer.id,
+    );
+    expect(customerNotification).toBeTruthy();
+    const created = await createDueNotificationMailMessages();
+    expect(created.length).toBeGreaterThanOrEqual(1);
+    const customerMail = await pool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM "MailMessage"
+        WHERE "notificationId" = $1`,
+      [customerNotification!.id],
+    );
+    expect(customerMail.rows[0]?.count).toBe("1");
+  });
+
   it("个人邮件偏好关闭时，到期通知不会创建业务邮件", async () => {
-    await enableStandardMail(false);
+    await configureStandardMail(false);
     const notificationId = await createDueRequestNotification();
     cleanup.notificationIds.push(notificationId);
 
@@ -316,7 +520,7 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
   });
 
   it("个人邮件偏好关闭会永久取消已经生成的待发邮件", async () => {
-    await enableStandardMail(true);
+    await configureStandardMail(true);
     const notificationId = await createDueRequestNotification();
     cleanup.notificationIds.push(notificationId);
     const [mailMessageId] = await createDueNotificationMailMessages();
@@ -340,7 +544,7 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
   });
 
   it("项目交付邮件只处理规则开启后产生的新通知", async () => {
-    await enableStandardMail(true);
+    await configureStandardMail(true);
     await setProjectUpdateMailRule(false);
     const historicalId = await createProjectNotification();
     cleanup.notificationIds.push(historicalId);
@@ -387,7 +591,7 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
   });
 
   it("35 条以上未读仍能完整统计并通过游标无重复读取", async () => {
-    await enableStandardMail(true);
+    await configureStandardMail(true);
     const baseline = await getNotificationSummary(customer);
     const baselineProjectCount =
       baseline.projectDeliveryCounts[projectId] ?? 0;
@@ -479,13 +683,31 @@ async function setProjectUpdateMailRule(emailEnabled: boolean) {
   );
 }
 
-async function enableStandardMail(userPreference: boolean) {
+async function setRequestPublicMessageMailRule(emailEnabled: boolean) {
+  await pool.query(
+    `INSERT INTO "NotificationDeliveryRule" (
+       key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+     ) VALUES ('REQUEST_PUBLIC_MESSAGE', true, true, $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET
+       "notificationEnabled" = true,
+       "soundEnabled" = true,
+       "emailEnabled" = EXCLUDED."emailEnabled",
+       "updatedAt" = NOW()`,
+    [emailEnabled],
+  );
+}
+
+async function configureStandardMail(
+  userPreference: boolean,
+  unreadDelayEnabled = true,
+) {
   await pool.query(
     `UPDATE "PlatformSetting"
      SET "mailMode" = 'RESEND',
-         "standardRequestEmailEnabled" = true,
+         "standardRequestEmailEnabled" = $1,
          "updatedAt" = NOW()
      WHERE id = 1`,
+    [unreadDelayEnabled],
   );
   await pool.query(
     `UPDATE "User"

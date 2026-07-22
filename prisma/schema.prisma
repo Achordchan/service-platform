@@ -744,7 +744,7 @@ model PlatformSetting {
   id                              Int              @id @default(1)
   appUrl                          String?
   mailFrom                        String           @default("服务支持中心 <no-reply@mail.achord.cn>")
-  mailReplyTo                     String           @default("support@achord.cn")
+  mailReplyTo                     String           @default("")
   resendApiKeyEncrypted           String?
   resendDomain                    String           @default("mail.achord.cn")
   resendDomainId                  String?

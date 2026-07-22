@@ -43,7 +43,6 @@ export default async function StaffSettingsPage() {
     appUrl: settings.appUrl,
     mailMode: settings.mailMode,
     mailFrom: settings.mailFrom,
-    mailReplyTo: settings.mailReplyTo,
     hasDedicatedEncryptionKey: settings.hasDedicatedEncryptionKey,
     hasResendApiKey: settings.hasResendApiKey,
     resendDomain: settings.resendDomain,
@@ -71,7 +70,8 @@ export default async function StaffSettingsPage() {
     attachmentMaxSizeMb: settings.attachmentMaxSizeMb,
     attachmentAllowedExtensions: settings.attachmentAllowedExtensions,
     customerReplyAttachmentsEnabled: settings.customerReplyAttachmentsEnabled,
-    standardRequestEmailEnabled: settings.standardRequestEmailEnabled,
+    standardEmailUnreadDelayEnabled:
+      settings.standardEmailUnreadDelayEnabled,
     updatedAt: settings.updatedAt,
   };
 

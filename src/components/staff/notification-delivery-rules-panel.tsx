@@ -23,16 +23,21 @@ type Channel = "notificationEnabled" | "soundEnabled" | "emailEnabled";
 
 export function NotificationDeliveryRulesPanel({
   initialRules,
-  standardRequestEmailEnabled,
+  standardEmailUnreadDelayEnabled,
+  mailMode,
   onRulesChange,
+  onUnreadDelayChange,
 }: {
   initialRules: NotificationDeliveryRuleView[];
-  standardRequestEmailEnabled: boolean;
+  standardEmailUnreadDelayEnabled: boolean;
+  mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
   onRulesChange?: (rules: NotificationDeliveryRuleView[]) => void;
+  onUnreadDelayChange?: (enabled: boolean) => void;
 }) {
   const [rules, setRules] = useState(initialRules);
   const [savedRules, setSavedRules] = useState(initialRules);
   const [saving, setSaving] = useState(false);
+  const [savingEmailSwitch, setSavingEmailSwitch] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const categories = useMemo(
@@ -120,12 +125,67 @@ export function NotificationDeliveryRulesPanel({
       .filter((rule) => channel !== "emailEnabled" || rule.emailSupported)
       .every((rule) => rule[channel]);
 
+  async function updateUnreadDelay(enabled: boolean) {
+    setSavingEmailSwitch(true);
+    setError("");
+    setSuccess("");
+    try {
+      await staffApi(
+        "/api/v1/admin/settings",
+        jsonRequest("PATCH", { standardEmailUnreadDelayEnabled: enabled }),
+      );
+      onUnreadDelayChange?.(enabled);
+      setSuccess(enabled ? "未读延迟已开启" : "未读延迟已关闭");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "保存失败");
+    } finally {
+      setSavingEmailSwitch(false);
+    }
+  }
+
   return (
     <Stack spacing={2.5}>
-      <Alert severity={standardRequestEmailEnabled ? "info" : "warning"}>
-        实时数据刷新始终开启。此处邮件控制标准项目的五分钟未读提醒，只对保存规则后产生的新事件生效，不补发历史通知。平台总开关当前
-        {standardRequestEmailEnabled ? "已开启" : "未开启"}，并受收件人个人偏好控制；外部接入即时邮件仍由对应项目连接器管理。
-      </Alert>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
+          gap: 1.5,
+          alignItems: "center",
+          border: "1px solid",
+          borderColor: "divider",
+          px: 2,
+          py: 1.75,
+        }}
+      >
+        <Box sx={{ minWidth: 0 }}>
+          <Typography sx={{ fontWeight: 700 }}>未读 5 分钟后发送</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+            开启后，邮件提醒会等待 5 分钟；期间用户已阅读则自动取消。关闭后，新邮件提醒会尽快发送。
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            {standardEmailUnreadDelayEnabled ? "延迟发送" : "尽快发送"}
+          </Typography>
+          <Switch
+            checked={standardEmailUnreadDelayEnabled}
+            disabled={savingEmailSwitch}
+            onChange={(event) =>
+              void updateUnreadDelay(event.target.checked)
+            }
+            slotProps={{ input: { "aria-label": "未读五分钟后发送" } }}
+          />
+        </Stack>
+      </Box>
+      {mailMode === "LOCAL_OUTBOX" ? (
+        <Alert severity="warning">
+          当前没有真实邮件通道；下方邮件规则可以配置，但需启用 SMTP 或 Resend 后才会发送新邮件。
+        </Alert>
+      ) : (
+        <Alert severity="info">
+          下方“邮件提醒”决定各场景是否发信；此开关只控制发送时机。收件人个人偏好仍可单独关闭邮件。
+        </Alert>
+      )}
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
       <Box

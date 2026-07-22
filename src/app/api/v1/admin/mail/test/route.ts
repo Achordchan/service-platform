@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
-import { enqueueMail } from "@/lib/jobs";
+import { createMailMessageInTx } from "@/lib/jobs";
+import { processMailMessage } from "@/lib/mail";
+import { withSystemDb } from "@/lib/system-db";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
-import { DomainError } from "@/modules/projects/errors";
+import {
+  MailDeliveryError,
+  mailFailureReferenceId,
+} from "@/modules/platform-settings/mail-delivery-error";
+import { assertAllowed, DomainError } from "@/modules/projects/errors";
 import {
   sampleVariablesForTemplate,
 } from "@/modules/platform-settings/mail-template-catalog";
@@ -17,39 +23,68 @@ export async function POST(request: Request) {
   if (auth.response) return auth.response;
 
   try {
+    assertAllowed(auth.actor.isPlatformAdmin);
     const input = testMailSchema.parse(await readJson(request));
     const to = input.to || auth.actor.email;
     const appUrl = await getPublicAppUrl();
     const templateKey = input.templateKey ?? "TEST_EMAIL";
-    const queued = await enqueueMail({
-      to,
-      templateKey,
-      variables: sampleVariablesForTemplate(templateKey),
-      actionUrl: appUrl,
-      deliveryMode: input.deliveryMode,
-    });
-    if (!queued.jobId) {
+    const message = await withSystemDb((tx) =>
+      createMailMessageInTx(tx, {
+        to,
+        templateKey,
+        variables: sampleVariablesForTemplate(templateKey),
+        actionUrl: appUrl,
+        sendAfter: new Date(Date.now() + 60_000),
+        deliveryMode: input.deliveryMode,
+        sourceType: "ADMIN_TEST_EMAIL",
+      }),
+    );
+    try {
+      const delivery = await processMailMessage(message.id, {
+        finalAttempt: true,
+        expectedDeliveryMode: message.deliveryMode,
+      });
+      if ("skipped" in delivery) {
+        throw new DomainError(
+          "MAIL_TEST_DELIVERY_BUSY",
+          "测试邮件正在由其他任务处理，请稍后查看发件箱状态",
+          409,
+          { mailMessageId: message.id },
+        );
+      }
+    } catch (error) {
+      if (error instanceof MailDeliveryError) {
+        const referenceId = mailFailureReferenceId(message.id);
+        throw new DomainError(
+          "MAIL_TEST_DELIVERY_FAILED",
+          `${error.message}。错误编号：${referenceId}`,
+          422,
+          { mailMessageId: message.id, referenceId },
+        );
+      }
+      throw error;
+    }
+    if (message.deliveryMode === "LOCAL_OUTBOX") {
       throw new DomainError(
-        "MAIL_QUEUE_UNAVAILABLE",
-        `测试邮件已写入发件箱，但任务队列暂时不可用；系统会自动补投。错误编号：mail_${queued.mailMessageId}`,
-        503,
+        "MAIL_TEST_LOCAL_ONLY",
+        "测试邮件只写入了本地发件箱，没有对外发送",
+        409,
       );
     }
     return NextResponse.json(
       {
         data: {
-          jobId: queued.jobId,
-          mailMessageId: queued.mailMessageId,
+          mailMessageId: message.id,
           to,
-          status: "QUEUED",
+          status: "SENT",
         },
       },
-      { status: 202 },
+      { status: 200 },
     );
   } catch (error) {
     return routeError(error, {
       request,
-      operation: "mail.test.enqueue",
+      operation: "mail.test.deliver",
     });
   }
 }

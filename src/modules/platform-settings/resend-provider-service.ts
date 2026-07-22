@@ -22,7 +22,6 @@ import { DomainError, assertAllowed } from "@/modules/projects/errors";
 export const RESEND_DOMAIN = "mail.achord.cn";
 export const RESEND_FROM =
   "服务支持中心 <no-reply@mail.achord.cn>";
-export const RESEND_REPLY_TO = "support@achord.cn";
 const RESEND_ADMIN_OPERATION_TIMEOUT_MS = 30_000;
 
 const RESEND_WEBHOOK_EVENTS: WebhookEvent[] = [
@@ -232,7 +231,7 @@ export async function setupResendProvider(
 
     const resend = createResend(apiKey);
     const endpoint = webhookEndpoint(
-      current.appUrl?.trim() || "https://support.achord.cn",
+      current.appUrl?.trim() || env.APP_URL,
     );
     const domain = await reconcileDomain(resend);
     const reuseStoredWebhook =
@@ -250,7 +249,6 @@ export async function setupResendProvider(
       where: { id: 1 },
       data: {
         mailFrom: RESEND_FROM,
-        mailReplyTo: RESEND_REPLY_TO,
         resendApiKeyEncrypted: encryptSecret(apiKey),
         resendDomain: RESEND_DOMAIN,
         resendDomainId: domain.id,
@@ -361,10 +359,6 @@ export async function disconnectResendProvider(actor: Actor) {
       data: {
         mailMode:
           current.mailMode === "RESEND" ? "LOCAL_OUTBOX" : current.mailMode,
-        standardRequestEmailEnabled:
-          current.mailMode === "RESEND"
-            ? false
-            : current.standardRequestEmailEnabled,
         resendApiKeyEncrypted: null,
         resendDomainId: null,
         resendDomainStatus: null,

@@ -8,7 +8,6 @@ export const updatePlatformSettingsSchema = z
     mailFrom: z
       .literal("服务支持中心 <no-reply@mail.achord.cn>")
       .optional(),
-    mailReplyTo: z.literal("support@achord.cn").optional(),
     smtpHost: z.string().max(255).optional().or(z.literal("")),
     smtpPort: z.coerce.number().int().min(1).max(65535).optional().nullable(),
     smtpUser: z.string().max(255).optional().or(z.literal("")),
@@ -19,7 +18,7 @@ export const updatePlatformSettingsSchema = z
     attachmentMaxSizeMb: z.coerce.number().int().min(1).max(100).optional(),
     attachmentAllowedExtensions: z.string().max(500).optional(),
     customerReplyAttachmentsEnabled: z.boolean().optional(),
-    standardRequestEmailEnabled: z.boolean().optional(),
+    standardEmailUnreadDelayEnabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.smtpPassword && value.clearSmtpPassword) {

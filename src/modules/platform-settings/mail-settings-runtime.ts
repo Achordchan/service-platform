@@ -1,12 +1,12 @@
 import { env } from "@/lib/runtime-env";
 import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
 import { withSystemDb } from "@/lib/system-db";
+import { formatSmtpSender } from "@/modules/platform-settings/smtp-sender";
 
 export type RuntimeMailSettings = {
   appUrl: string;
   mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
   mailFrom: string;
-  mailReplyTo: string;
   resendApiKeyEncrypted: string | null;
   resendDomain: string;
   resendDomainId: string | null;
@@ -24,7 +24,7 @@ export type RuntimeMailSettings = {
   smtpHealthStatus: string | null;
   smtpLastCheckedAt: Date | null;
   smtpLastError: string | null;
-  standardRequestEmailEnabled: boolean;
+  standardEmailUnreadDelayEnabled: boolean;
 };
 
 type StoredMailSettings = Awaited<ReturnType<typeof ensurePlatformSettings>>;
@@ -52,7 +52,6 @@ export async function ensurePlatformSettings() {
         appUrl: env.APP_URL,
         mailMode: "LOCAL_OUTBOX",
         mailFrom: "服务支持中心 <no-reply@mail.achord.cn>",
-        mailReplyTo: "support@achord.cn",
         resendDomain: "mail.achord.cn",
         smtpHost: env.SMTP_HOST ?? null,
         smtpPort: env.SMTP_PORT ?? null,
@@ -60,7 +59,11 @@ export async function ensurePlatformSettings() {
         smtpPasswordEncrypted: env.SMTP_PASSWORD
           ? encryptSecret(env.SMTP_PASSWORD)
           : null,
-        smtpFrom: env.SMTP_FROM ?? "服务支持中心 <info@achord.cn>",
+        smtpFrom:
+          env.SMTP_FROM ??
+          (env.SMTP_USER
+            ? formatSmtpSender("服务支持中心", env.SMTP_USER)
+            : null),
         smtpSecure: env.SMTP_SECURE ?? false,
         smtpSecureConfigured: env.SMTP_SECURE !== undefined,
       },
@@ -76,13 +79,13 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
 export function runtimeMailSettingsFromStored(
   settings: StoredMailSettings,
 ): RuntimeMailSettings {
+  const smtpUser = settings.smtpUser ?? env.SMTP_USER ?? null;
   return {
     appUrl: settings.appUrl?.trim() || env.APP_URL,
     mailMode: settings.mailMode,
     mailFrom:
       settings.mailFrom?.trim() ||
       "服务支持中心 <no-reply@mail.achord.cn>",
-    mailReplyTo: settings.mailReplyTo?.trim() || "support@achord.cn",
     resendApiKeyEncrypted: settings.resendApiKeyEncrypted,
     resendDomain: settings.resendDomain || "mail.achord.cn",
     resendDomainId: settings.resendDomainId,
@@ -94,14 +97,14 @@ export function runtimeMailSettingsFromStored(
     ),
     smtpHost: settings.smtpHost ?? env.SMTP_HOST ?? null,
     smtpPort: settings.smtpPort ?? env.SMTP_PORT ?? null,
-    smtpUser: settings.smtpUser ?? env.SMTP_USER ?? null,
+    smtpUser,
     smtpPassword: settings.smtpPasswordEncrypted
       ? decryptSecret(settings.smtpPasswordEncrypted)
       : settings.smtpPassword ?? env.SMTP_PASSWORD ?? null,
     smtpFrom:
       settings.smtpFrom?.trim() ||
       env.SMTP_FROM ||
-      "服务支持中心 <info@achord.cn>",
+      (smtpUser ? formatSmtpSender("服务支持中心", smtpUser) : ""),
     smtpSecure: settings.smtpSecureConfigured
       ? settings.smtpSecure
       : env.SMTP_SECURE ?? settings.smtpSecure,
@@ -113,7 +116,7 @@ export function runtimeMailSettingsFromStored(
     smtpHealthStatus: settings.smtpHealthStatus,
     smtpLastCheckedAt: settings.smtpLastCheckedAt,
     smtpLastError: settings.smtpLastError,
-    standardRequestEmailEnabled:
+    standardEmailUnreadDelayEnabled:
       settings.standardRequestEmailEnabled ?? false,
   };
 }

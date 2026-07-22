@@ -22,6 +22,7 @@ import {
   DomainError,
 } from "@/modules/projects/errors";
 import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
+import { mailboxFromSender } from "@/modules/platform-settings/smtp-sender";
 
 const emailSchema = z.string().trim().email().max(160);
 
@@ -327,7 +328,13 @@ export async function confirmCustomerEmailChange(rawToken: string) {
     }
     const settings = await tx.platformSetting.findUnique({
       where: { id: 1 },
-      select: { appUrl: true },
+      select: {
+        appUrl: true,
+        mailMode: true,
+        mailFrom: true,
+        smtpFrom: true,
+        smtpUser: true,
+      },
     });
     const change = await tx.userEmailChange.findUnique({
       where: { tokenHash: hashInvitationToken(token) },
@@ -443,6 +450,10 @@ export async function confirmCustomerEmailChange(rawToken: string) {
       newEmail: completed.newEmail,
     };
     const appUrl = (settings?.appUrl?.trim() || env.APP_URL).replace(/\/$/, "");
+    const senderEmail =
+      settings?.mailMode === "SMTP"
+        ? mailboxFromSender(settings.smtpFrom) ?? settings.smtpUser
+        : mailboxFromSender(settings?.mailFrom);
     const mailMessages = [];
     if (deliveryMode) {
       const completedMail = await createMailMessageInTx(tx, {
@@ -460,7 +471,7 @@ export async function confirmCustomerEmailChange(rawToken: string) {
         templateKey: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
         variables: {
           ...variables,
-          supportEmail: "support@achord.cn",
+          supportEmail: senderEmail ?? "此邮件的发件人",
         },
         deliveryMode,
         idempotencyKey: `customer-email-change:${completed.id}:security-notice`,

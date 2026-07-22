@@ -115,7 +115,7 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       {
         key: "inviterEmail",
         label: "邀请人邮箱",
-        sample: "support@achord.cn",
+        sample: "sender@example.com",
       },
       { key: "customerName", label: "客户名称", sample: "示例客户" },
       {
@@ -209,7 +209,7 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       { key: "recipientName", label: "客户姓名", sample: "张三" },
       { key: "oldEmail", label: "原登录邮箱", sample: "old@example.com" },
       { key: "newEmail", label: "新登录邮箱", sample: "new@example.com" },
-      { key: "supportEmail", label: "支持邮箱", sample: "support@achord.cn" },
+      { key: "supportEmail", label: "发件邮箱", sample: "sender@example.com" },
     ],
     defaults: {
       subject: "{{recipientName}}，你的登录邮箱已发生变更",

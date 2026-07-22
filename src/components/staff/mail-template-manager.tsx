@@ -198,11 +198,10 @@ function MailTemplateEditor({
         fullWidth
       />
 
-      <Paper
-        variant="outlined"
+      <Box
         sx={{
-          p: { xs: 2, sm: 2.5 },
-          bgcolor: "grey.50",
+          p: { xs: 2, sm: 3 },
+          bgcolor: "#f3f5f7",
           overflow: "hidden",
         }}
       >
@@ -215,22 +214,69 @@ function MailTemplateEditor({
         <Typography variant="body2" color="text.secondary">
           {renderSample(previewText)}
         </Typography>
-        <Divider sx={{ my: 2 }} />
-        <Typography variant="h3" sx={{ fontSize: 20, fontWeight: 700 }}>
-          {renderSample(heading)}
-        </Typography>
-        <Typography
-          color="text.secondary"
-          sx={{ mt: 1, whiteSpace: "pre-line" }}
+        <Paper
+          variant="outlined"
+          sx={{
+            mt: 2,
+            p: { xs: 2.5, sm: 4 },
+            bgcolor: "common.white",
+            borderColor: "#e2e7ee",
+          }}
         >
-          {renderSample(body)}
-        </Typography>
-        {actionLabel ? (
-          <Button variant="contained" size="small" sx={{ mt: 2 }}>
-            {renderSample(actionLabel)}
-          </Button>
-        ) : null}
-      </Paper>
+          <Typography
+            sx={{
+              pb: 2,
+              mb: 2.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              color: "primary.main",
+              fontSize: 15,
+              fontWeight: 700,
+            }}
+          >
+            服务支持中心
+          </Typography>
+          <Typography
+            variant="h3"
+            sx={{ fontSize: { xs: 23, sm: 26 }, fontWeight: 700, lineHeight: 1.4 }}
+          >
+            {renderSample(heading)}
+          </Typography>
+          <Typography
+            sx={{
+              mt: 1.75,
+              color: "#374151",
+              fontSize: 16,
+              lineHeight: 1.8,
+              whiteSpace: "pre-line",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {renderSample(body)}
+          </Typography>
+          {actionLabel ? (
+            <Button
+              variant="contained"
+              sx={{ mt: 3, minHeight: 42, px: 2.5, borderRadius: 1 }}
+            >
+              {renderSample(actionLabel)}
+            </Button>
+          ) : null}
+          <Typography
+            sx={{
+              mt: 4,
+              pt: 2.5,
+              borderTop: "1px solid",
+              borderColor: "divider",
+              color: "text.secondary",
+              fontSize: 13,
+              lineHeight: 1.7,
+            }}
+          >
+            此邮件由系统自动发送。如需帮助，请直接回复此邮件。
+          </Typography>
+        </Paper>
+      </Box>
 
       <Stack
         direction={{ xs: "column", sm: "row" }}

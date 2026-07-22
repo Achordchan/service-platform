@@ -86,12 +86,14 @@ const globalForBoss = globalThis as unknown as {
   bossPromise?: Promise<PgBoss>;
   bossWorkerStarted?: boolean;
   bossWorkerPromise?: Promise<void>;
-  webhookListenerPromise?: Promise<void>;
-  webhookListenerClient?: pg.Client;
-  webhookListenerReconnectTimer?: ReturnType<typeof setTimeout>;
+  databaseListenerPromise?: Promise<void>;
+  databaseListenerClient?: pg.Client;
+  databaseListenerReconnectTimer?: ReturnType<typeof setTimeout>;
+  mailOutboxWakePromise?: Promise<void>;
+  mailOutboxWakePending?: boolean;
 };
 
-const WEBHOOK_LISTENER_RECONNECT_MS = 5_000;
+const DATABASE_LISTENER_RECONNECT_MS = 5_000;
 
 async function startBoss() {
   const boss = new PgBoss(env.JOB_DATABASE_URL);
@@ -212,6 +214,7 @@ export async function createPreparedMailMessageInTx(
   const id = randomUUID();
   const toEmail = input.to.trim().toLowerCase();
   const sendAfter = input.sendAfter ?? new Date();
+  const createdAt = new Date();
   await tx.$executeRaw`
     INSERT INTO "MailMessage" (
       id,
@@ -252,8 +255,8 @@ export async function createPreparedMailMessageInTx(
       ${input.sourceId ?? null},
       ${deliveryMode}::"MailDeliveryMode",
       'QUEUED',
-      CURRENT_TIMESTAMP,
-      CURRENT_TIMESTAMP
+      ${createdAt},
+      ${createdAt}
     )
   `;
   return {
@@ -391,6 +394,25 @@ async function processMailOutbox() {
   await queuePendingMailMessages();
 }
 
+async function wakeMailOutbox() {
+  globalForBoss.mailOutboxWakePending = true;
+  if (globalForBoss.mailOutboxWakePromise) {
+    return globalForBoss.mailOutboxWakePromise;
+  }
+  const wakePromise = (async () => {
+    while (globalForBoss.mailOutboxWakePending) {
+      globalForBoss.mailOutboxWakePending = false;
+      await processMailOutbox();
+    }
+  })().finally(() => {
+    if (globalForBoss.mailOutboxWakePromise === wakePromise) {
+      globalForBoss.mailOutboxWakePromise = undefined;
+    }
+  });
+  globalForBoss.mailOutboxWakePromise = wakePromise;
+  return wakePromise;
+}
+
 export async function queueImageWebpAttachment(attachmentId: string) {
   if (isInlineMailWorkerEnabled()) {
     await startMailWorker();
@@ -464,54 +486,71 @@ async function queueDueUniversalWebhooks() {
   }
 }
 
-function scheduleUniversalWebhookListenerReconnect() {
+function scheduleDatabaseListenerReconnect() {
   if (
-    globalForBoss.webhookListenerReconnectTimer ||
+    globalForBoss.databaseListenerReconnectTimer ||
     !globalForBoss.bossWorkerStarted
   ) {
     return;
   }
   const timer = setTimeout(() => {
-    globalForBoss.webhookListenerReconnectTimer = undefined;
-    void startUniversalWebhookListener().catch(() => {
-      scheduleUniversalWebhookListenerReconnect();
+    globalForBoss.databaseListenerReconnectTimer = undefined;
+    void startDatabaseListener().catch(() => {
+      scheduleDatabaseListenerReconnect();
     });
-  }, WEBHOOK_LISTENER_RECONNECT_MS);
+  }, DATABASE_LISTENER_RECONNECT_MS);
   timer.unref();
-  globalForBoss.webhookListenerReconnectTimer = timer;
+  globalForBoss.databaseListenerReconnectTimer = timer;
 }
 
-async function startUniversalWebhookListener() {
-  if (globalForBoss.webhookListenerPromise) {
-    return globalForBoss.webhookListenerPromise;
+async function startDatabaseListener() {
+  if (globalForBoss.databaseListenerPromise) {
+    return globalForBoss.databaseListenerPromise;
   }
   const listenerPromise = (async () => {
     const client = new pg.Client({ connectionString: env.DATABASE_URL });
-    await client.connect();
-    await client.query("LISTEN service_platform_webhook_deliveries");
-    globalForBoss.webhookListenerClient = client;
+    try {
+      await client.connect();
+      await client.query("LISTEN service_platform_webhook_deliveries");
+      await client.query("LISTEN service_platform_mail_outbox");
+    } catch (error) {
+      await client.end().catch(() => undefined);
+      throw error;
+    }
+    globalForBoss.databaseListenerClient = client;
     client.on("notification", (message) => {
-      const deliveryId = message.payload?.trim();
-      if (!deliveryId) return;
-      void queueUniversalWebhookDelivery(deliveryId).catch(() => undefined);
+      if (message.channel === "service_platform_webhook_deliveries") {
+        const deliveryId = message.payload?.trim();
+        if (!deliveryId) return;
+        void queueUniversalWebhookDelivery(deliveryId).catch(() => undefined);
+        return;
+      }
+      if (message.channel === "service_platform_mail_outbox") {
+        void wakeMailOutbox().catch((error) => {
+          console.error(
+            "ACHORD_MAIL_OUTBOX_WAKE_FAILED",
+            error instanceof Error ? error.message : String(error),
+          );
+        });
+      }
     });
     const handleDisconnect = () => {
-      if (globalForBoss.webhookListenerClient !== client) return;
-      globalForBoss.webhookListenerClient = undefined;
-      globalForBoss.webhookListenerPromise = undefined;
-      scheduleUniversalWebhookListenerReconnect();
+      if (globalForBoss.databaseListenerClient !== client) return;
+      globalForBoss.databaseListenerClient = undefined;
+      globalForBoss.databaseListenerPromise = undefined;
+      scheduleDatabaseListenerReconnect();
     };
     client.on("error", handleDisconnect);
     client.on("end", handleDisconnect);
   })();
-  globalForBoss.webhookListenerPromise = listenerPromise;
+  globalForBoss.databaseListenerPromise = listenerPromise;
   try {
     await listenerPromise;
   } catch (error) {
-    if (globalForBoss.webhookListenerPromise === listenerPromise) {
-      globalForBoss.webhookListenerPromise = undefined;
+    if (globalForBoss.databaseListenerPromise === listenerPromise) {
+      globalForBoss.databaseListenerPromise = undefined;
     }
-    scheduleUniversalWebhookListenerReconnect();
+    scheduleDatabaseListenerReconnect();
     throw error;
   }
 }
@@ -524,7 +563,7 @@ export async function startMailWorker() {
   globalForBoss.bossWorkerPromise = (async () => {
     await ensurePluginInstallations();
     const boss = await getBoss();
-    await startUniversalWebhookListener().catch(() => undefined);
+    await startDatabaseListener().catch(() => undefined);
     await boss.schedule(UNIVERSAL_WEBHOOK_SWEEP_JOB, "* * * * *");
     await boss.schedule(UNIVERSAL_MAINTENANCE_JOB, "17 3 * * *");
     await boss.schedule(INLINE_ATTACHMENT_MAINTENANCE_JOB, "43 3 * * *");
@@ -617,7 +656,7 @@ export async function startMailWorker() {
       MAIL_OUTBOX_SWEEP_JOB,
       { batchSize: 1, localConcurrency: 1 },
       async () => {
-        await processMailOutbox();
+        await wakeMailOutbox();
       },
     );
     await boss.work(
@@ -628,7 +667,7 @@ export async function startMailWorker() {
       },
     );
     await queueDueUniversalWebhooks();
-    await processMailOutbox();
+    await wakeMailOutbox();
   })().catch((error) => {
     globalForBoss.bossWorkerStarted = false;
     globalForBoss.bossWorkerPromise = undefined;

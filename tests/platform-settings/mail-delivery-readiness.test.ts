@@ -6,7 +6,6 @@ const readySettings: RuntimeMailSettings = {
   appUrl: "https://support.achord.cn",
   mailMode: "RESEND",
   mailFrom: "服务支持中心 <no-reply@mail.achord.cn>",
-  mailReplyTo: "support@achord.cn",
   resendApiKeyEncrypted: "encrypted",
   resendDomain: "mail.achord.cn",
   resendDomainId: "domain-id",
@@ -24,7 +23,7 @@ const readySettings: RuntimeMailSettings = {
   smtpHealthStatus: "healthy",
   smtpLastCheckedAt: new Date(),
   smtpLastError: null,
-  standardRequestEmailEnabled: false,
+  standardEmailUnreadDelayEnabled: false,
 };
 
 describe("mail delivery readiness", () => {

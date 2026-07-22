@@ -206,8 +206,6 @@ function ResendOverview({
           {[
             ["发信域名", settings.resendDomain],
             ["发件人", settings.mailFrom],
-            ["回复地址", settings.mailReplyTo],
-            ["站点地址", settings.appUrl],
           ].map(([label, value]) => (
             <Box key={label} sx={{ minWidth: 0 }}>
               <Typography variant="caption" color="text.secondary">
@@ -255,7 +253,9 @@ function ResendOverview({
           onClick={() => void onEnable()}
           disabled={busy || settings.mailMode === "RESEND"}
         >
-          {settings.mailMode === "RESEND" ? "Resend 已启用" : "启用 Resend"}
+          {settings.mailMode === "RESEND"
+            ? "Resend 已启用"
+            : "启用 Resend"}
         </Button>
       </Stack>
     </Stack>

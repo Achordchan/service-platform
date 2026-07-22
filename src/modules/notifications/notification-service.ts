@@ -40,6 +40,7 @@ import {
   ruleKeyForRequestActivity,
 } from "@/modules/notifications/notification-delivery-rules";
 import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
+import { notificationEmailDueAt } from "@/modules/notifications/notification-email-timing";
 import { listProjectCustomerUserIds } from "@/modules/projects/project-customer-recipient-query";
 
 type EventInput = {
@@ -236,7 +237,10 @@ export async function createNotification(
         ${input.projectId},
         ${input.serviceRequestId},
         ${input.aggregationKey},
-        ${input.emailDueAt ?? null}::timestamp
+        (
+          ${input.emailDueAt?.toISOString() ?? null}::timestamptz
+          AT TIME ZONE 'UTC'
+        )
       )
     `;
     if (!aggregated) {
@@ -1010,15 +1014,25 @@ async function persistActivityDelivery(
       .map((notification) => notification.userId),
   );
   const emailEnabledUserIds = new Set<string>();
+  let delayEmailUntilUnread = false;
   if (emailCandidateUserIds.length > 0) {
-    const [settings] = await tx.$queryRaw<Array<{ enabled: boolean }>>`
-      SELECT app_standard_request_email_enabled() AS enabled
+    const [settings] = await tx.$queryRaw<
+      Array<{
+        mail_mode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
+        delay_enabled: boolean;
+      }>
+    >`
+      SELECT "mailMode"::text AS mail_mode,
+             "standardRequestEmailEnabled" AS delay_enabled
+      FROM "PlatformSetting"
+      WHERE id = 1
     `;
     const users = await tx.user.findMany({
-          where: { id: { in: emailCandidateUserIds } },
-          select: { id: true, requestEmailNotificationsEnabled: true },
-        });
-    if (settings?.enabled) {
+      where: { id: { in: emailCandidateUserIds } },
+      select: { id: true, requestEmailNotificationsEnabled: true },
+    });
+    if (settings && settings.mail_mode !== "LOCAL_OUTBOX") {
+      delayEmailUntilUnread = settings?.delay_enabled ?? false;
       for (const user of users) {
         if (user.requestEmailNotificationsEnabled) {
           emailEnabledUserIds.add(user.id);
@@ -1026,20 +1040,32 @@ async function persistActivityDelivery(
       }
     }
   }
-  const emailDueAt = new Date(Date.now() + 5 * 60 * 1000);
+  const emailDueAt = notificationEmailDueAt(delayEmailUntilUnread);
+  let immediateMailNotificationId: string | null = null;
   for (const notification of delivery.notifications) {
     if (activeUserIds.has(notification.userId)) continue;
-    notifications.push(
-      await createNotification(
-        tx,
-        toNotificationPersistenceInput(
-          notification,
-          emailEnabledUserIds.has(notification.userId)
-            ? emailDueAt
-            : undefined,
-        ),
+    const notificationEmailDueAt = emailEnabledUserIds.has(notification.userId)
+      ? emailDueAt
+      : undefined;
+    const persistedNotification = await createNotification(
+      tx,
+      toNotificationPersistenceInput(
+        notification,
+        notificationEmailDueAt,
       ),
     );
+    notifications.push(persistedNotification);
+    if (notificationEmailDueAt && !delayEmailUntilUnread) {
+      immediateMailNotificationId ??= persistedNotification.id;
+    }
+  }
+  if (immediateMailNotificationId) {
+    await tx.$executeRaw`
+      SELECT pg_notify(
+        'service_platform_mail_outbox',
+        ${immediateMailNotificationId}
+      )
+    `;
   }
 
   return { events, notifications };

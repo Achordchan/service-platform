@@ -3,17 +3,12 @@
 import { useState } from "react";
 import {
   Alert,
-  Box,
-  Button,
   Chip,
   Divider,
-  FormControlLabel,
   Paper,
   Stack,
-  Switch,
   Tab,
   Tabs,
-  TextField,
   Typography,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -101,17 +96,6 @@ export function MailSettingsPanel({
     if (!next) return false;
     onSettingsChange(next);
     return true;
-  }
-
-  async function handleCommonSubmit(
-    event: React.FormEvent<HTMLFormElement>,
-  ) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    await saveSettings(
-      { appUrl: String(form.get("appUrl") ?? "").trim() },
-      "站点地址已保存",
-    );
   }
 
   async function setupResend() {
@@ -203,7 +187,7 @@ export function MailSettingsPanel({
             deliveryMode,
           }),
         ),
-      `${modeLabel[deliveryMode]} 测试邮件已加入队列`,
+      `${modeLabel[deliveryMode]} 测试邮件已成功提交给服务商；业务邮件场景和发送时机请在通知规则中配置`,
     );
   }
 
@@ -241,56 +225,6 @@ export function MailSettingsPanel({
             当前未启用真实邮件通道，邀请、密码重置和业务提醒不会对外发送。
           </Alert>
         ) : null}
-
-        <Box>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={settings.standardRequestEmailEnabled}
-                onChange={(event) =>
-                  void saveSettings(
-                    { standardRequestEmailEnabled: event.target.checked },
-                    event.target.checked
-                      ? "站内未读邮件提醒已启用"
-                      : "站内未读邮件提醒已停用",
-                  )
-                }
-                disabled={busy !== null || settings.mailMode === "LOCAL_OUTBOX"}
-              />
-            }
-            label="站内未读延迟邮件"
-          />
-          <Typography variant="body2" color="text.secondary">
-            工单和已开启规则的项目交付变化持续 5 分钟未读时发送；阅读后自动取消。
-          </Typography>
-        </Box>
-
-        <Stack
-          key={`mail-common-${settings.updatedAt ?? "initial"}`}
-          component="form"
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.5}
-          onSubmit={(event) => void handleCommonSubmit(event)}
-          sx={{ alignItems: { sm: "flex-start" } }}
-        >
-          <TextField
-            name="appUrl"
-            label="站点地址"
-            defaultValue={settings.appUrl}
-            required
-            fullWidth
-            helperText="用于邮件中的项目、工单和账号操作链接"
-          />
-          <Button
-            type="submit"
-            variant="outlined"
-            disabled={busy !== null}
-            sx={{ whiteSpace: "nowrap", mt: { sm: 0.5 } }}
-          >
-            保存站点地址
-          </Button>
-        </Stack>
-
         <Divider />
 
         <Tabs
@@ -333,7 +267,10 @@ export function MailSettingsPanel({
             }}
             onTest={() => sendTestMail("RESEND")}
             onEnable={() =>
-              saveSettings({ mailMode: "RESEND" }, "Resend 已启用")
+              saveSettings(
+                { mailMode: "RESEND" },
+                "Resend 通道已启用",
+              )
             }
           />
         ) : (
@@ -354,7 +291,10 @@ export function MailSettingsPanel({
             onCheck={checkSmtp}
             onTest={() => sendTestMail("SMTP")}
             onEnable={async () => {
-              await saveSettings({ mailMode: "SMTP" }, "SMTP 已启用");
+              await saveSettings(
+                { mailMode: "SMTP" },
+                "SMTP 通道已启用",
+              );
             }}
             onDisconnect={disconnectSmtp}
           />

@@ -13,6 +13,7 @@ import {
   lockPlatformMailSettings,
   migrateQueuedMailForProviderSwitch,
 } from "@/modules/platform-settings/mail-provider-lifecycle";
+import { formatSmtpSender } from "@/modules/platform-settings/smtp-sender";
 import type { UpdatePlatformSettingsInput } from "@/modules/platform-settings/schemas";
 import { DomainError, assertAllowed } from "@/modules/projects/errors";
 
@@ -33,7 +34,6 @@ function publicSettings(settings: {
   appUrl: string | null;
   mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
   mailFrom: string;
-  mailReplyTo: string;
   resendApiKeyEncrypted: string | null;
   resendDomain: string;
   resendDomainId: string | null;
@@ -60,13 +60,13 @@ function publicSettings(settings: {
   standardRequestEmailEnabled?: boolean;
   updatedAt?: Date;
 }) {
+  const smtpUser = settings.smtpUser ?? env.SMTP_USER ?? null;
   return {
     appUrl: settings.appUrl?.trim() || env.APP_URL,
     mailMode: settings.mailMode,
     mailFrom:
       settings.mailFrom?.trim() ||
       "服务支持中心 <no-reply@mail.achord.cn>",
-    mailReplyTo: settings.mailReplyTo?.trim() || "support@achord.cn",
     hasDedicatedEncryptionKey: Boolean(
       env.PLATFORM_SECRET_ENCRYPTION_KEY,
     ),
@@ -91,7 +91,7 @@ function publicSettings(settings: {
     smtpFrom:
       settings.smtpFrom?.trim() ||
       env.SMTP_FROM ||
-      "服务支持中心 <info@achord.cn>",
+      (smtpUser ? formatSmtpSender("服务支持中心", smtpUser) : ""),
     smtpSecure: settings.smtpSecureConfigured
       ? settings.smtpSecure
       : env.SMTP_SECURE ?? settings.smtpSecure,
@@ -114,7 +114,7 @@ function publicSettings(settings: {
       "jpg,jpeg,png,gif,webp,pdf,docx,xlsx,pptx,txt,log,csv,json",
     customerReplyAttachmentsEnabled:
       settings.customerReplyAttachmentsEnabled ?? true,
-    standardRequestEmailEnabled:
+    standardEmailUnreadDelayEnabled:
       settings.standardRequestEmailEnabled ?? false,
     updatedAt: settings.updatedAt?.toISOString(),
   };
@@ -158,9 +158,6 @@ export async function updatePlatformSettings(
     if (input.mailFrom !== undefined) {
       data.mailFrom = input.mailFrom.trim();
     }
-    if (input.mailReplyTo !== undefined) {
-      data.mailReplyTo = input.mailReplyTo.trim().toLowerCase();
-    }
     if (input.smtpHost !== undefined) {
       data.smtpHost = emptyToNull(input.smtpHost);
     }
@@ -198,7 +195,6 @@ export async function updatePlatformSettings(
       data.smtpLastError = null;
       if (current.mailMode === "SMTP" && input.mailMode === undefined) {
         data.mailMode = "LOCAL_OUTBOX";
-        data.standardRequestEmailEnabled = false;
       }
     }
     if (input.attachmentMaxSizeMb !== undefined) {
@@ -213,27 +209,14 @@ export async function updatePlatformSettings(
       data.customerReplyAttachmentsEnabled =
         input.customerReplyAttachmentsEnabled;
     }
-    if (input.standardRequestEmailEnabled !== undefined) {
-      data.standardRequestEmailEnabled = input.standardRequestEmailEnabled;
+    if (input.standardEmailUnreadDelayEnabled !== undefined) {
+      data.standardRequestEmailEnabled =
+        input.standardEmailUnreadDelayEnabled;
     }
 
     const nextMailMode =
       (data.mailMode as "LOCAL_OUTBOX" | "RESEND" | "SMTP" | undefined) ??
       current.mailMode;
-    if (
-      (input.standardRequestEmailEnabled ??
-        current.standardRequestEmailEnabled) &&
-      nextMailMode === "LOCAL_OUTBOX"
-    ) {
-      throw new DomainError(
-        "STANDARD_REQUEST_EMAIL_REQUIRES_DELIVERY",
-        "请先启用 Resend 或 SMTP，再开启站内未读邮件提醒",
-        409,
-      );
-    }
-    if (input.mailMode === "LOCAL_OUTBOX") {
-      data.standardRequestEmailEnabled = false;
-    }
     if (
       input.mailMode === "LOCAL_OUTBOX" &&
       process.env.NODE_ENV === "production"
@@ -319,30 +302,6 @@ export async function updatePlatformSettings(
       data,
     });
     if (
-      current.standardRequestEmailEnabled &&
-      !updated.standardRequestEmailEnabled
-    ) {
-      await tx.notification.updateMany({
-        where: { emailDueAt: { not: null } },
-        data: { emailDueAt: null, emailClaimedAt: null },
-      });
-      await tx.mailMessage.updateMany({
-        where: {
-          sourceType: {
-            in: [
-              "STANDARD_REQUEST_NOTIFICATION",
-              "STANDARD_PROJECT_NOTIFICATION",
-            ],
-          },
-          status: "QUEUED",
-        },
-        data: {
-          status: "CANCELLED",
-          errorMessage: "平台已关闭站内未读邮件提醒",
-        },
-      });
-    }
-    if (
       current.mailMode === "LOCAL_OUTBOX" &&
       updated.mailMode !== "LOCAL_OUTBOX"
     ) {
@@ -367,7 +326,6 @@ export async function updatePlatformSettings(
         mailMode: updated.mailMode,
         appUrl: updated.appUrl,
         mailFrom: updated.mailFrom,
-        mailReplyTo: updated.mailReplyTo,
         smtpHost: updated.smtpHost,
         smtpPort: updated.smtpPort,
         smtpFrom: updated.smtpFrom,
@@ -376,7 +334,8 @@ export async function updatePlatformSettings(
         attachmentMaxSizeMb: updated.attachmentMaxSizeMb,
         attachmentAllowedExtensions: updated.attachmentAllowedExtensions,
         customerReplyAttachmentsEnabled: updated.customerReplyAttachmentsEnabled,
-        standardRequestEmailEnabled: updated.standardRequestEmailEnabled,
+        standardEmailUnreadDelayEnabled:
+          updated.standardRequestEmailEnabled,
       },
     });
 

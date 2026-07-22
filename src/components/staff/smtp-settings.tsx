@@ -4,6 +4,7 @@ import { useState } from "react";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
 import ScienceOutlinedIcon from "@mui/icons-material/ScienceOutlined";
 import {
@@ -20,6 +21,10 @@ import {
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
 import { SmtpProviderGuidesDialog } from "@/components/staff/smtp-provider-guides-dialog";
 import type { SmtpProviderGuide } from "@/components/staff/smtp-provider-guides";
+import {
+  formatSmtpSender,
+  smtpSenderName,
+} from "@/modules/platform-settings/smtp-sender";
 
 export function SmtpSettings({
   settings,
@@ -46,7 +51,7 @@ export function SmtpSettings({
   const [port, setPort] = useState(settings.smtpPort ?? 465);
   const [user, setUser] = useState(settings.smtpUser ?? "");
   const [password, setPassword] = useState("");
-  const [from, setFrom] = useState(settings.smtpFrom);
+  const [fromName, setFromName] = useState(smtpSenderName(settings.smtpFrom));
   const [secure, setSecure] = useState(settings.smtpSecure);
   const [guidesOpen, setGuidesOpen] = useState(false);
   const configured = Boolean(
@@ -58,11 +63,23 @@ export function SmtpSettings({
   );
   const healthy = settings.smtpHealthStatus === "healthy";
   const active = settings.mailMode === "SMTP";
+  const [editing, setEditing] = useState(!configured || !healthy);
+  const showOverview = configured && healthy && !editing;
 
   function applyGuide(guide: SmtpProviderGuide) {
     setHost(guide.host);
     setPort(guide.port);
     setSecure(guide.secure);
+  }
+
+  function cancelEditing() {
+    setHost(settings.smtpHost ?? "");
+    setPort(settings.smtpPort ?? 465);
+    setUser(settings.smtpUser ?? "");
+    setPassword("");
+    setFromName(smtpSenderName(settings.smtpFrom));
+    setSecure(settings.smtpSecure);
+    setEditing(false);
   }
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -71,7 +88,7 @@ export function SmtpSettings({
       smtpHost: host.trim(),
       smtpPort: port,
       smtpUser: user.trim(),
-      smtpFrom: from.trim(),
+      smtpFrom: formatSmtpSender(fromName, user),
       smtpSecure: secure,
     };
     if (password) payload.smtpPassword = password;
@@ -101,16 +118,24 @@ export function SmtpSettings({
                     ? "等待检测"
                     : "尚未配置"
             }
-            color={healthy ? "success" : settings.smtpHealthStatus === "error" ? "error" : "default"}
+            color={
+              healthy
+                ? "success"
+                : settings.smtpHealthStatus === "error"
+                  ? "error"
+                  : "default"
+            }
             variant="outlined"
           />
         </Stack>
-        <Button
-          startIcon={<MenuBookOutlinedIcon />}
-          onClick={() => setGuidesOpen(true)}
-        >
-          常见 SMTP 接入教程
-        </Button>
+        {!showOverview ? (
+          <Button
+            startIcon={<MenuBookOutlinedIcon />}
+            onClick={() => setGuidesOpen(true)}
+          >
+            常见 SMTP 接入教程
+          </Button>
+        ) : null}
       </Stack>
 
       {!settings.hasDedicatedEncryptionKey ? (
@@ -121,118 +146,203 @@ export function SmtpSettings({
       {settings.smtpHealthStatus === "error" && settings.smtpLastError ? (
         <Alert severity="error">{settings.smtpLastError}</Alert>
       ) : null}
-      {active ? (
-        <Alert severity="success">
-          当前邮件由 SMTP 通道投递。启用 Resend 时会自动切换，SMTP 配置仍会保留。
-        </Alert>
-      ) : null}
-
-      <Stack
-        component="form"
-        spacing={2}
-        onSubmit={(event) => void handleSubmit(event)}
-      >
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          <TextField
-            label="SMTP 主机"
-            value={host}
-            onChange={(event) => setHost(event.target.value)}
-            placeholder="smtp.example.com"
-            fullWidth
-            required
-          />
-          <TextField
-            label="SMTP 端口"
-            type="number"
-            value={port}
-            onChange={(event) => setPort(Number(event.target.value))}
-            slotProps={{ htmlInput: { min: 1, max: 65535 } }}
-            fullWidth
-            required
-          />
-        </Stack>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          <TextField
-            label="SMTP 用户名"
-            value={user}
-            onChange={(event) => setUser(event.target.value)}
-            autoComplete="off"
-            fullWidth
-            required
-          />
-          <TextField
-            label="SMTP 密码或授权码"
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="new-password"
-            fullWidth
-            required={!settings.hasStoredPassword}
-            helperText={
-              settings.hasStoredPassword
-                ? "已加密保存；留空表示不修改"
-                : "请填写邮箱授权码、应用专用密码或 SMTP 密码"
-            }
-          />
-        </Stack>
-        <TextField
-          label="SMTP 发件人"
-          value={from}
-          onChange={(event) => setFrom(event.target.value)}
-          placeholder="服务支持中心 <support@example.com>"
-          helperText="发件地址必须是服务商允许使用的邮箱或发信身份"
-          fullWidth
-          required
+      {showOverview ? (
+        <SmtpOverview
+          settings={settings}
+          busy={busy}
+          testEmail={testEmail}
+          onTestEmailChange={onTestEmailChange}
+          onTest={onTest}
+          onEnable={onEnable}
+          onEdit={() => setEditing(true)}
+          onDisconnect={onDisconnect}
+          onOpenGuides={() => setGuidesOpen(true)}
         />
-        <Box>
-          <Typography variant="body2" sx={{ mb: 1, fontWeight: 700 }}>
-            连接加密
-          </Typography>
-          <ToggleButtonGroup
-            exclusive
-            value={secure ? "ssl" : "starttls"}
-            onChange={(_, value: "ssl" | "starttls" | null) => {
-              if (!value) return;
-              const nextSecure = value === "ssl";
-              setSecure(nextSecure);
-              if (port === 465 || port === 587) {
-                setPort(nextSecure ? 465 : 587);
-              }
+      ) : (
+        <Stack
+          component="form"
+          spacing={2}
+          onSubmit={(event) => void handleSubmit(event)}
+        >
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                md: "minmax(0, 1fr) 130px minmax(220px, auto)",
+              },
+              gap: 2,
+              alignItems: "start",
             }}
-            size="small"
           >
-            <ToggleButton value="ssl">SSL/TLS（常用 465）</ToggleButton>
-            <ToggleButton value="starttls">STARTTLS（常用 587）</ToggleButton>
-          </ToggleButtonGroup>
-        </Box>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-          <Button
-            type="submit"
-            variant="outlined"
-            startIcon={<SaveOutlinedIcon />}
-            disabled={busy || !settings.hasDedicatedEncryptionKey}
+            <TextField
+              label="SMTP 主机"
+              value={host}
+              onChange={(event) => setHost(event.target.value)}
+              placeholder="smtp.example.com"
+              fullWidth
+              required
+            />
+            <TextField
+              label="SMTP 端口"
+              type="number"
+              value={port}
+              onChange={(event) => setPort(Number(event.target.value))}
+              slotProps={{ htmlInput: { min: 1, max: 65535 } }}
+              required
+            />
+            <ToggleButtonGroup
+              exclusive
+              value={secure ? "ssl" : "starttls"}
+              onChange={(_, value: "ssl" | "starttls" | null) => {
+                if (!value) return;
+                const nextSecure = value === "ssl";
+                setSecure(nextSecure);
+                if (port === 465 || port === 587) {
+                  setPort(nextSecure ? 465 : 587);
+                }
+              }}
+              size="small"
+              aria-label="连接加密"
+              sx={{ height: 56 }}
+            >
+              <ToggleButton value="ssl" sx={{ px: 1.5 }}>
+                SSL/TLS
+              </ToggleButton>
+              <ToggleButton value="starttls" sx={{ px: 1.5 }}>
+                STARTTLS
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+              gap: 2,
+            }}
           >
-            保存 SMTP 配置
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<CheckCircleOutlineOutlinedIcon />}
-            onClick={() => void onCheck()}
-            disabled={busy || !configured}
-          >
-            检测连接
-          </Button>
-          <Button
-            color="error"
-            startIcon={<DeleteOutlineOutlinedIcon />}
-            onClick={() => void onDisconnect()}
-            disabled={busy || (!configured && !active)}
-            sx={{ ml: { sm: "auto" } }}
-          >
-            清除 SMTP 配置
-          </Button>
+            <TextField
+              label="SMTP 用户名"
+              type="email"
+              value={user}
+              onChange={(event) => setUser(event.target.value)}
+              autoComplete="off"
+              fullWidth
+              required
+            />
+            <TextField
+              label="SMTP 密码或授权码"
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
+              fullWidth
+              required={!settings.hasStoredPassword}
+              helperText={
+                settings.hasStoredPassword
+                  ? "已加密保存；留空表示不修改"
+                  : "请填写邮箱授权码、应用专用密码或 SMTP 密码"
+              }
+            />
+          </Box>
+          <TextField
+            label="发件人名称"
+            value={fromName}
+            onChange={(event) => setFromName(event.target.value)}
+            helperText={`发件邮箱固定使用 ${user.trim() || "SMTP 登录邮箱"}`}
+            fullWidth
+            required
+          />
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            {configured && healthy ? (
+              <Button onClick={cancelEditing} disabled={busy}>
+                取消编辑
+              </Button>
+            ) : null}
+            <Button
+              type="submit"
+              variant="outlined"
+              startIcon={<SaveOutlinedIcon />}
+              disabled={busy || !settings.hasDedicatedEncryptionKey}
+            >
+              保存 SMTP 配置
+            </Button>
+            <Button
+              variant="outlined"
+              startIcon={<CheckCircleOutlineOutlinedIcon />}
+              onClick={() => void onCheck()}
+              disabled={busy || !configured}
+            >
+              检测连接
+            </Button>
+            <Button
+              color="error"
+              startIcon={<DeleteOutlineOutlinedIcon />}
+              onClick={() => void onDisconnect()}
+              disabled={busy || (!configured && !active)}
+              sx={{ ml: { sm: "auto" } }}
+            >
+              清除 SMTP 配置
+            </Button>
+          </Stack>
         </Stack>
-      </Stack>
+      )}
+
+      <SmtpProviderGuidesDialog
+        open={guidesOpen}
+        onClose={() => setGuidesOpen(false)}
+        onApply={applyGuide}
+      />
+    </Stack>
+  );
+}
+
+function SmtpOverview({
+  settings,
+  busy,
+  testEmail,
+  onTestEmailChange,
+  onTest,
+  onEnable,
+  onEdit,
+  onDisconnect,
+  onOpenGuides,
+}: {
+  settings: PlatformSettingsView;
+  busy: boolean;
+  testEmail: string;
+  onTestEmailChange: (value: string) => void;
+  onTest: () => Promise<void>;
+  onEnable: () => Promise<void>;
+  onEdit: () => void;
+  onDisconnect: () => Promise<void>;
+  onOpenGuides: () => void;
+}) {
+  const active = settings.mailMode === "SMTP";
+  return (
+    <Stack spacing={2}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", sm: "repeat(3, minmax(0, 1fr))" },
+          gap: 2,
+        }}
+      >
+        {[
+          ["服务器", `${settings.smtpHost}:${settings.smtpPort}`],
+          ["发件账号", settings.smtpUser],
+          ["连接方式", settings.smtpSecure ? "SSL/TLS" : "STARTTLS"],
+        ].map(([label, value]) => (
+          <Box key={label} sx={{ minWidth: 0 }}>
+            <Typography variant="caption" color="text.secondary">
+              {label}
+            </Typography>
+            <Typography sx={{ mt: 0.35, overflowWrap: "anywhere" }}>
+              {value}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
 
       <Box
         sx={{
@@ -253,18 +363,37 @@ export function SmtpSettings({
           variant="outlined"
           startIcon={<ScienceOutlinedIcon />}
           onClick={() => void onTest()}
-          disabled={busy || !healthy || !testEmail.trim()}
+          disabled={busy || !testEmail.trim()}
           sx={{ whiteSpace: "nowrap" }}
         >
           发送 SMTP 测试邮件
         </Button>
       </Box>
 
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "flex-end" }}>
+      <Stack
+        direction={{ xs: "column", sm: "row" }}
+        spacing={1}
+        useFlexGap
+        sx={{ justifyContent: "flex-end", flexWrap: "wrap" }}
+      >
+        <Button startIcon={<MenuBookOutlinedIcon />} onClick={onOpenGuides}>
+          接入教程
+        </Button>
+        <Button startIcon={<EditOutlinedIcon />} onClick={onEdit}>
+          编辑配置
+        </Button>
+        <Button
+          color="error"
+          startIcon={<DeleteOutlineOutlinedIcon />}
+          onClick={() => void onDisconnect()}
+          disabled={busy}
+        >
+          清除配置
+        </Button>
         <Button
           variant="contained"
           onClick={() => void onEnable()}
-          disabled={busy || !healthy || active}
+          disabled={busy || active}
         >
           {active ? "SMTP 已启用" : "启用 SMTP"}
         </Button>
@@ -275,12 +404,6 @@ export function SmtpSettings({
           最后检测：{new Date(settings.smtpLastCheckedAt).toLocaleString("zh-CN")}
         </Typography>
       ) : null}
-
-      <SmtpProviderGuidesDialog
-        open={guidesOpen}
-        onClose={() => setGuidesOpen(false)}
-        onApply={applyGuide}
-      />
     </Stack>
   );
 }
