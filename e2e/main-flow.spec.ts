@@ -540,35 +540,22 @@ test.describe("主流程冒烟", () => {
 
   test("导航未读红点仅在离开对应栏目时显示", async () => {
     await adminPage.setViewportSize({ width: 1280, height: 720 });
-    await adminPage.route("**/api/v1/notifications", async (route) => {
+    await adminPage.route("**/api/v1/notifications/summary", async (route) => {
       await route.fulfill({
         json: {
-          data: [
-            {
-              id: "e2e-project-notification",
-              type: "PROJECT_UPDATE",
-              title: "项目动态已更新",
-              body: "E2E 项目动态",
-              readAt: null,
-              projectId: "e2e-project",
-              serviceRequestId: null,
-              occurrenceCount: 1,
-              createdAt: "2026-07-18T00:00:00.000Z",
-              updatedAt: "2026-07-18T00:00:00.000Z",
+          data: {
+            totalUnread: 2,
+            navigation: { projects: true, requests: true },
+            projectDeliveryCounts: { "e2e-project": 1 },
+            projectUpdateCounts: { "e2e-project": 1 },
+            projectStageCounts: {},
+            projectMilestoneCounts: {},
+            projectFileCounts: {},
+            projectRequestCounts: { "e2e-project": 1 },
+            requestUnreadCounts: {
+              "e2e-request": { projectId: "e2e-project", count: 1 },
             },
-            {
-              id: "e2e-request-notification",
-              type: "REQUEST_MESSAGE",
-              title: "服务请求有新回复",
-              body: "E2E 服务请求回复",
-              readAt: null,
-              projectId: "e2e-project",
-              serviceRequestId: "e2e-request",
-              occurrenceCount: 1,
-              createdAt: "2026-07-18T00:00:00.000Z",
-              updatedAt: "2026-07-18T00:00:00.000Z",
-            },
-          ],
+          },
         },
       });
     });
@@ -621,7 +608,7 @@ test.describe("主流程冒烟", () => {
         ),
       ).toBe(false);
     } finally {
-      await adminPage.unroute("**/api/v1/notifications");
+      await adminPage.unroute("**/api/v1/notifications/summary");
       await adminPage.setViewportSize({ width: 1280, height: 720 });
       await adminPage.reload();
     }
