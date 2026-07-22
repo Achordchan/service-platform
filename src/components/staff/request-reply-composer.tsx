@@ -50,6 +50,7 @@ export function RequestReplyComposer({
   const [body, setBody] = useState("");
   const [internal, setInternal] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  const [editorVersion, setEditorVersion] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
@@ -133,6 +134,7 @@ export function RequestReplyComposer({
         });
       }
       setBody("");
+      setEditorVersion((version) => version + 1);
       setFiles([]);
       setInternal(false);
       onCancelReply?.();
@@ -203,6 +205,7 @@ export function RequestReplyComposer({
           <Alert severity="warning">内部备注不会发送给客户。</Alert>
         ) : null}
         <RichTextEditor
+          key={editorVersion}
           value={body}
           onChange={(value) => {
             setBody(value);

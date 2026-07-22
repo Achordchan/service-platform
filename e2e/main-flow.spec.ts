@@ -376,26 +376,26 @@ test.describe("主流程冒烟", () => {
     });
     if (!projectId) throw new Error("缺少 E2E 客户项目编号");
 
-    await customerPage.route("**/api/v1/notifications", async (route) => {
-      await route.fulfill({
-        json: {
-          data: [
-            {
-              id: "e2e-customer-project-update",
-              type: "PROJECT_UPDATE",
-              title: "项目动态已更新",
-              body: "E2E 项目动态",
-              readAt: null,
-              projectId,
-              serviceRequestId: null,
-              occurrenceCount: 1,
-              createdAt: "2026-07-18T00:00:00.000Z",
-              updatedAt: "2026-07-18T00:00:00.000Z",
+    await customerPage.route(
+      "**/api/v1/notifications/summary",
+      async (route) => {
+        await route.fulfill({
+          json: {
+            data: {
+              totalUnread: 1,
+              navigation: { projects: true, requests: false },
+              projectDeliveryCounts: { [projectId]: 1 },
+              projectUpdateCounts: { [projectId]: 1 },
+              projectStageCounts: {},
+              projectMilestoneCounts: {},
+              projectFileCounts: {},
+              projectRequestCounts: {},
+              requestUnreadCounts: {},
             },
-          ],
-        },
-      });
-    });
+          },
+        });
+      },
+    );
     try {
       await customerPage.reload();
       await expect(
@@ -404,7 +404,7 @@ test.describe("主流程冒烟", () => {
         ),
       ).toBeVisible();
     } finally {
-      await customerPage.unroute("**/api/v1/notifications");
+      await customerPage.unroute("**/api/v1/notifications/summary");
     }
 
     await customerPage.goto("/customer/requests");
@@ -702,7 +702,7 @@ test.describe("主流程冒烟", () => {
       .locator(".request-rich-editor")
       .fill("E2E 客户引用回复");
     await expect(technicianPage.getByText("客户正在输入")).toBeVisible();
-    await customerPage.locator('input[type="file"]').setInputFiles({
+    await customerPage.getByLabel("添加附件").setInputFiles({
       name: "e2e-chat-image.png",
       mimeType: "image/png",
       buffer: Buffer.from(
@@ -732,18 +732,15 @@ test.describe("主流程冒烟", () => {
 
     const unreadForRequest = await technicianPage.evaluate(
       async (requestId) => {
-        const response = await fetch("/api/v1/notifications", {
+        const response = await fetch("/api/v1/notifications/summary", {
           cache: "no-store",
         });
         const payload = (await response.json()) as {
-          data: Array<{
-            serviceRequestId?: string | null;
-            readAt?: string | null;
-          }>;
+          data: {
+            requestUnreadCounts: Record<string, { count: number }>;
+          };
         };
-        return payload.data.filter(
-          (item) => item.serviceRequestId === requestId && !item.readAt,
-        ).length;
+        return payload.data.requestUnreadCounts[requestId]?.count ?? 0;
       },
       created.id,
     );

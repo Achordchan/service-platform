@@ -52,6 +52,7 @@ export function RequestReplyForm({
   const { policy, validateFiles } = useAttachmentPolicy();
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [editorVersion, setEditorVersion] = useState(0);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
@@ -115,6 +116,7 @@ export function RequestReplyForm({
         }
       }
       setBody("");
+      setEditorVersion((version) => version + 1);
       setFiles([]);
       onCancelReply?.();
       markRequestLocalMutation();
@@ -151,6 +153,7 @@ export function RequestReplyForm({
           />
         ) : null}
         <RichTextEditor
+          key={editorVersion}
           value={body}
           onChange={(value) => {
             setBody(value);

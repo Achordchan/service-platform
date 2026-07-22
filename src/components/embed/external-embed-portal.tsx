@@ -832,6 +832,7 @@ function EmbedReplyComposer({
 }) {
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
+  const [editorVersion, setEditorVersion] = useState(0);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
@@ -889,6 +890,7 @@ function EmbedReplyComposer({
         if (!upload.ok) failedUploads.push(file.name);
       }
       setBody("");
+      setEditorVersion((version) => version + 1);
       setFiles([]);
       onCancelReply();
       await onSent();
@@ -908,6 +910,7 @@ function EmbedReplyComposer({
         {error ? <Alert severity="error">{error}</Alert> : null}
         {replyTarget ? <RequestReplyPreview target={replyTarget} onCancel={onCancelReply} /> : null}
         <RichTextEditor
+          key={editorVersion}
           value={body}
           onChange={(value) => {
             setBody(value);
