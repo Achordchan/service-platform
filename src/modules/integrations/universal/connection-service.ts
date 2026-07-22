@@ -274,6 +274,10 @@ export async function saveUniversalIntegration(
         where: { id: binding.id },
         data: { status: "ACTIVE" },
       });
+      await tx.project.updateMany({
+        where: { id: projectId, status: "DRAFT" },
+        data: { status: "ACTIVE" },
+      });
     }
     const connection = await tx.universalConnectorConnection.upsert({
       where: { bindingId: binding.id },

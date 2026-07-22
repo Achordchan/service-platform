@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { calculateProjectProgress } from "@/modules/projects/progress";
 import { projectBaseSelect } from "@/modules/projects/project-summary-query";
 
@@ -23,11 +24,14 @@ export async function loadProjectDetail(
     where: { id: project.serviceTypeId },
     select: { id: true, key: true, name: true },
   });
-  const requestCategories = await tx.requestCategory.findMany({
-    where: { serviceTypeId: project.serviceTypeId, active: true },
-    select: { id: true, name: true },
-    orderBy: { name: "asc" },
-  });
+  const requestCategories =
+    actor.isStaff || project.customerRequestsEnabled
+      ? await tx.requestCategory.findMany({
+          where: { serviceTypeId: project.serviceTypeId, active: true },
+          select: { id: true, name: true },
+          orderBy: { name: "asc" },
+        })
+      : [];
   const staffRows = await tx.projectStaff.findMany({
     where: { projectId },
     select: {
@@ -48,17 +52,26 @@ export async function loadProjectDetail(
       platformRole: true,
     },
   });
-  const milestones = await tx.milestone.findMany({
-    where: { projectId },
-    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-  });
-  const updates = await tx.projectUpdate.findMany({
-    where: {
-      projectId,
-      ...(actor.isStaff ? {} : { visibility: "CUSTOMER_VISIBLE" as const }),
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const shouldLoadMilestones =
+    actor.isStaff || project.showMilestones || project.showProgress;
+  const milestoneRows = shouldLoadMilestones
+    ? await tx.milestone.findMany({
+        where: { projectId },
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+      })
+    : [];
+  const updates =
+    actor.isStaff || project.customerUpdatesEnabled
+      ? await tx.projectUpdate.findMany({
+          where: {
+            projectId,
+            ...(actor.isStaff
+              ? {}
+              : { visibility: "CUSTOMER_VISIBLE" as const }),
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
   const comments = await tx.updateComment.findMany({
     where: {
       projectUpdateId: { in: updates.map((update) => update.id) },
@@ -79,25 +92,32 @@ export async function loadProjectDetail(
     },
     select: { id: true, name: true },
   });
-  const attachments = await tx.attachment.findMany({
-    where: {
-      projectId,
-      projectUpdateId: null,
-      updateCommentId: null,
-      serviceRequestId: null,
-      requestMessageId: null,
-      ...(actor.isStaff ? {} : { visibility: "CUSTOMER_VISIBLE" as const }),
-    },
-    select: {
-      id: true,
-      originalName: true,
-      mimeType: true,
-      size: true,
-      visibility: true,
-      createdAt: true,
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const attachments =
+    actor.isStaff || project.customerFilesEnabled
+      ? await tx.attachment.findMany({
+          where: {
+            projectId,
+            projectUpdateId: null,
+            updateCommentId: null,
+            milestoneId: null,
+            serviceRequestId: null,
+            requestMessageId: null,
+            inline: false,
+            ...(actor.isStaff
+              ? {}
+              : { visibility: "CUSTOMER_VISIBLE" as const }),
+          },
+          select: {
+            id: true,
+            originalName: true,
+            mimeType: true,
+            size: true,
+            visibility: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+        })
+      : [];
   const pluginBindings = await tx.projectPluginBinding.findMany({
     where: { projectId },
     select: { pluginKey: true, status: true },
@@ -111,7 +131,12 @@ export async function loadProjectDetail(
     current.push(comment);
     commentsByUpdateId.set(comment.projectUpdateId, current);
   }
-  const progress = calculateProjectProgress(milestones);
+  const milestones =
+    actor.isStaff || project.showMilestones ? milestoneRows : [];
+  const progress =
+    actor.isStaff || project.showProgress
+      ? calculateProjectProgress(milestoneRows)
+      : { percentage: 0, counts: { total: 0, completed: 0, inProgress: 0, notStarted: 0 } };
   return {
     ...project,
     customerSpace,
@@ -128,9 +153,15 @@ export async function loadProjectDetail(
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item)),
-    milestones,
+    milestones: milestones.map((milestone) => ({
+      ...milestone,
+      description: milestone.description
+        ? sanitizeMessageHtml(milestone.description)
+        : null,
+    })),
     updates: updates.map((update) => ({
       ...update,
+      body: sanitizeMessageHtml(update.body),
       author: authorById.get(update.authorId)!,
       comments: (commentsByUpdateId.get(update.id) ?? []).map((comment) => ({
         ...comment,

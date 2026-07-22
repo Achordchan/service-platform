@@ -8,6 +8,7 @@ import {
 } from "@mui/material";
 import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
 import type { ProjectUpdate } from "@/components/customer/customer-types";
+import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -111,11 +112,7 @@ export function ProjectUpdates({
                     {dateFormatter.format(new Date(update.createdAt))}
                   </Typography>
                 </Stack>
-                <Typography
-                  sx={{ mt: 2, whiteSpace: "pre-wrap", lineHeight: 1.75 }}
-                >
-                  {update.body}
-                </Typography>
+                <CollapsibleText text={update.body} maxLines={12} />
                 {update.comments.length > 0 ? (
                   <>
                     <Divider sx={{ my: 2 }} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -22,10 +22,12 @@ import {
   subscribeRealtimeReady,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
+import type { NavigationUnreadState } from "@/lib/notification-navigation";
 import {
-  summarizeNavigationUnread,
-  type NavigationUnreadState,
-} from "@/lib/notification-navigation";
+  matchesNotificationLocalUpdate,
+  type NotificationLocalUpdateDetail,
+} from "@/lib/notification-local-update";
+import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
 
 type NotificationItem = {
   id: string;
@@ -40,8 +42,15 @@ type NotificationItem = {
   updatedAt: string;
 };
 
+type NotificationPage = {
+  items: NotificationItem[];
+  totalUnread: number;
+  nextCursor: string | null;
+};
+
 const eventTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
+  "PROJECT_UPDATED",
 ];
 
 const notificationTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -62,64 +71,106 @@ export function NotificationMenu({
   const router = useRouter();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
-  const navigationUnread = useMemo(
-    () => summarizeNavigationUnread(items),
-    [items],
-  );
+  const refreshSequenceRef = useRef(0);
+  const { unread, refresh: refreshSummary } = useUnreadNotifications();
 
   useEffect(() => {
-    onUnreadStateChange?.(navigationUnread);
-  }, [navigationUnread, onUnreadStateChange]);
+    onUnreadStateChange?.(unread.navigation);
+  }, [onUnreadStateChange, unread.navigation]);
 
-  useEffect(() => {
-    let active = true;
-    async function refresh() {
-      const response = await fetch("/api/v1/notifications", {
+  const refreshItems = useCallback(async () => {
+    const sequence = ++refreshSequenceRef.current;
+    try {
+      const response = await fetch("/api/v1/notifications?limit=30", {
         cache: "no-store",
       });
-      if (!response.ok || !active) return;
-      const result = (await response.json()) as {
-        data: NotificationItem[];
-      };
-      if (active) {
-        setItems(result.data);
-      }
+      if (!response.ok || sequence !== refreshSequenceRef.current) return;
+      const result = (await response.json()) as { data: NotificationPage };
+      setItems(result.data.items);
+      setNextCursor(result.data.nextCursor);
+    } catch {
+      // Keep the current list during transient failures.
     }
+  }, []);
 
-    void refresh();
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => void refreshItems(), 0);
     const unsubscribeEvents = subscribeRealtime(eventTypes, (event) => {
-      if (event.live) void refresh();
+      if (event.live) void refreshItems();
     });
-    const unsubscribeReady = subscribeRealtimeReady(() => {
-      void refresh();
-    });
-    const handleLocalUpdate = () => void refresh();
+    const unsubscribeReady = subscribeRealtimeReady(() => void refreshItems());
+    const handleLocalUpdate = (event: Event) => {
+      const detail = (event as CustomEvent<NotificationLocalUpdateDetail>)
+        .detail;
+      if (detail) {
+        const now = new Date().toISOString();
+        setItems((current) =>
+          current.map((item) =>
+            !item.readAt && matchesNotificationLocalUpdate(item, detail)
+              ? { ...item, readAt: now }
+              : item,
+          ),
+        );
+      }
+      void refreshItems();
+    };
     window.addEventListener("notifications-updated", handleLocalUpdate);
     return () => {
-      active = false;
+      window.clearTimeout(initialRefresh);
       unsubscribeEvents();
       unsubscribeReady();
       window.removeEventListener("notifications-updated", handleLocalUpdate);
     };
-  }, []);
+  }, [refreshItems]);
 
-  const unreadCount = items.filter((item) => !item.readAt).length;
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    setLoadingMore(true);
+    try {
+      const response = await fetch(
+        `/api/v1/notifications?limit=30&cursor=${encodeURIComponent(nextCursor)}`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const result = (await response.json()) as { data: NotificationPage };
+      setItems((current) => {
+        const known = new Set(current.map((item) => item.id));
+        return [
+          ...current,
+          ...result.data.items.filter((item) => !known.has(item.id)),
+        ];
+      });
+      setNextCursor(result.data.nextCursor);
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   async function openNotification(item: NotificationItem) {
     if (!item.readAt) {
-      await fetch("/api/v1/notifications", {
+      const response = await fetch("/api/v1/notifications", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: item.id }),
       });
-      setItems((current) =>
-        current.map((notification) =>
-          notification.id === item.id
-            ? { ...notification, readAt: new Date().toISOString() }
-            : notification,
-        ),
-      );
+      if (response.ok) {
+        setItems((current) =>
+          current.map((notification) =>
+            notification.id === item.id
+              ? { ...notification, readAt: new Date().toISOString() }
+              : notification,
+          ),
+        );
+        window.dispatchEvent(
+          new CustomEvent("notifications-updated", {
+            detail: { notificationId: item.id },
+          }),
+        );
+        await refreshSummary();
+      }
     }
     setAnchor(null);
     if (item.serviceRequestId) {
@@ -138,7 +189,7 @@ export function NotificationMenu({
   }
 
   async function markAllRead() {
-    if (unreadCount === 0 || markingAll) return;
+    if (unread.totalUnread === 0 || markingAll) return;
     setMarkingAll(true);
     try {
       const response = await fetch("/api/v1/notifications", {
@@ -153,6 +204,10 @@ export function NotificationMenu({
           item.readAt ? item : { ...item, readAt: now },
         ),
       );
+      window.dispatchEvent(
+        new CustomEvent("notifications-updated", { detail: { all: true } }),
+      );
+      await refreshSummary();
     } finally {
       setMarkingAll(false);
     }
@@ -161,14 +216,14 @@ export function NotificationMenu({
   return (
     <>
       <IconButton
-        aria-label={`通知${unreadCount ? `，${unreadCount} 条未读` : ""}`}
+        aria-label={`通知${unread.totalUnread ? `，${unread.totalUnread} 条未读` : ""}`}
         onClick={(event) => setAnchor(event.currentTarget)}
       >
         <Badge
           color="primary"
-          badgeContent={unreadCount}
+          badgeContent={unread.totalUnread}
           max={99}
-          invisible={unreadCount === 0}
+          invisible={unread.totalUnread === 0}
         >
           <NotificationsNoneOutlinedIcon />
         </Badge>
@@ -193,9 +248,9 @@ export function NotificationMenu({
         >
           <Box>
             <Typography sx={{ fontWeight: 650 }}>通知</Typography>
-            {unreadCount > 0 ? (
+            {unread.totalUnread > 0 ? (
               <Typography variant="caption" color="text.secondary">
-                {unreadCount} 条未读
+                {unread.totalUnread} 条未读
               </Typography>
             ) : null}
           </Box>
@@ -203,7 +258,7 @@ export function NotificationMenu({
             size="small"
             startIcon={<DoneAllOutlinedIcon fontSize="small" />}
             onClick={() => void markAllRead()}
-            disabled={unreadCount === 0 || markingAll}
+            disabled={unread.totalUnread === 0 || markingAll}
           >
             {markingAll ? "处理中" : "全部已读"}
           </Button>
@@ -213,7 +268,7 @@ export function NotificationMenu({
           {items.map((item) => (
             <ListItemButton
               key={item.id}
-              onClick={() => openNotification(item)}
+              onClick={() => void openNotification(item)}
               sx={{
                 alignItems: "flex-start",
                 py: 1.5,
@@ -259,6 +314,17 @@ export function NotificationMenu({
               />
             </ListItemButton>
           ))}
+          {nextCursor ? (
+            <Box sx={{ p: 1.5, textAlign: "center" }}>
+              <Button
+                size="small"
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
+              >
+                {loadingMore ? "加载中" : "加载更早通知"}
+              </Button>
+            </Box>
+          ) : null}
           {items.length === 0 ? (
             <Typography
               color="text.secondary"

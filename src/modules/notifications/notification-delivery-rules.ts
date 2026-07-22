@@ -1,0 +1,194 @@
+import { z } from "zod";
+
+export const NOTIFICATION_DELIVERY_RULES = [
+  { key: "PROJECT_UPDATE", category: "项目交付", label: "进度动态与评论", emailSupported: true, emailDefaultEnabled: false },
+  { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", emailSupported: true, emailDefaultEnabled: false },
+  { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", emailSupported: true, emailDefaultEnabled: false },
+  { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", emailSupported: true, emailDefaultEnabled: false },
+  { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", emailSupported: true, emailDefaultEnabled: true },
+  { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", emailSupported: true, emailDefaultEnabled: true },
+  { key: "REQUEST_PUBLIC_MESSAGE", category: "服务请求", label: "公开回复", emailSupported: true, emailDefaultEnabled: true },
+  { key: "REQUEST_INTERNAL_NOTE", category: "服务请求", label: "内部备注", emailSupported: false, emailDefaultEnabled: false },
+  { key: "REQUEST_STATUS", category: "服务请求", label: "手动状态变化", emailSupported: true, emailDefaultEnabled: true },
+  { key: "REQUEST_ATTACHMENT", category: "服务请求", label: "独立附件上传", emailSupported: false, emailDefaultEnabled: false },
+  { key: "REQUEST_ARCHIVE", category: "服务请求", label: "归档与恢复", emailSupported: false, emailDefaultEnabled: false },
+] as const;
+
+export type NotificationDeliveryRuleKey =
+  (typeof NOTIFICATION_DELIVERY_RULES)[number]["key"];
+
+export type NotificationDeliveryRuleState = {
+  notificationEnabled: boolean;
+  soundEnabled: boolean;
+  emailEnabled: boolean;
+};
+
+export type NotificationDeliveryRuleView =
+  (typeof NOTIFICATION_DELIVERY_RULES)[number] & NotificationDeliveryRuleState;
+
+export const STANDARD_REQUEST_EMAIL_RULE_KEYS = [
+  "REQUEST_CREATED",
+  "REQUEST_ASSIGNED",
+  "REQUEST_PUBLIC_MESSAGE",
+  "REQUEST_STATUS",
+] as const satisfies readonly NotificationDeliveryRuleKey[];
+
+export const STANDARD_PROJECT_EMAIL_RULE_KEYS = [
+  "PROJECT_UPDATE",
+  "PROJECT_STAGE",
+  "PROJECT_MILESTONE",
+  "PROJECT_FILE",
+] as const satisfies readonly NotificationDeliveryRuleKey[];
+
+export const STANDARD_NOTIFICATION_EMAIL_RULE_KEYS = [
+  ...STANDARD_PROJECT_EMAIL_RULE_KEYS,
+  ...STANDARD_REQUEST_EMAIL_RULE_KEYS,
+] as const satisfies readonly NotificationDeliveryRuleKey[];
+
+export const notificationDeliveryRuleKeySchema = z.enum(
+  NOTIFICATION_DELIVERY_RULES.map((rule) => rule.key) as [
+    NotificationDeliveryRuleKey,
+    ...NotificationDeliveryRuleKey[],
+  ],
+);
+
+export const updateNotificationDeliveryRulesSchema = z.object({
+  rules: z
+    .array(
+      z.object({
+        key: notificationDeliveryRuleKeySchema,
+        notificationEnabled: z.boolean(),
+        soundEnabled: z.boolean(),
+        emailEnabled: z.boolean(),
+      }),
+    )
+    .min(1)
+    .max(NOTIFICATION_DELIVERY_RULES.length),
+});
+
+export type NotificationDeliveryRuleUpdate = z.infer<
+  typeof updateNotificationDeliveryRulesSchema
+>["rules"][number];
+
+export function findNotificationDeliveryRuleViolation(
+  rules: NotificationDeliveryRuleUpdate[],
+) {
+  const definitionByKey = new Map(
+    NOTIFICATION_DELIVERY_RULES.map((rule) => [rule.key, rule]),
+  );
+  const seen = new Set<NotificationDeliveryRuleKey>();
+  for (const rule of rules) {
+    if (seen.has(rule.key)) {
+      return {
+        code: "DUPLICATE_NOTIFICATION_RULE",
+        message: "通知场景不能重复",
+      } as const;
+    }
+    seen.add(rule.key);
+
+    if (!definitionByKey.get(rule.key)?.emailSupported && rule.emailEnabled) {
+      return {
+        code: "EMAIL_NOT_SUPPORTED",
+        message: "该场景不支持邮件提醒",
+      } as const;
+    }
+    if (rule.emailEnabled && !rule.notificationEnabled) {
+      return {
+        code: "EMAIL_REQUIRES_NOTIFICATION",
+        message: "邮件提醒依赖通知未读状态，请先开启通知红点",
+      } as const;
+    }
+  }
+  return null;
+}
+
+export function resolveNotificationSoundEnabled(
+  ruleSoundEnabled: boolean,
+  activityAudible?: boolean,
+) {
+  return ruleSoundEnabled && activityAudible !== false;
+}
+
+export function defaultNotificationDeliveryRuleState(
+  key: NotificationDeliveryRuleKey,
+): NotificationDeliveryRuleState {
+  const definition = NOTIFICATION_DELIVERY_RULES.find(
+    (candidate) => candidate.key === key,
+  );
+  return {
+    notificationEnabled: true,
+    soundEnabled: true,
+    emailEnabled: definition?.emailDefaultEnabled ?? false,
+  };
+}
+
+export function ruleKeyForNotificationEmail(type: string) {
+  if (type === "PROJECT_UPDATE" || type === "UPDATE_COMMENT") {
+    return "PROJECT_UPDATE" as const;
+  }
+  if (type === "PROJECT_STAGE") return "PROJECT_STAGE" as const;
+  if (type === "PROJECT_MILESTONE") return "PROJECT_MILESTONE" as const;
+  if (type === "PROJECT_FILE") return "PROJECT_FILE" as const;
+  if (type === "REQUEST_CREATED") return "REQUEST_CREATED" as const;
+  if (type === "REQUEST_ASSIGNED") return "REQUEST_ASSIGNED" as const;
+  if (type === "REQUEST_MESSAGE") return "REQUEST_PUBLIC_MESSAGE" as const;
+  if (type === "REQUEST_STATUS") return "REQUEST_STATUS" as const;
+  return null;
+}
+
+export function notificationTypesForEmailRule(
+  key: NotificationDeliveryRuleKey,
+) {
+  if (key === "PROJECT_UPDATE") {
+    return ["PROJECT_UPDATE", "UPDATE_COMMENT"] as const;
+  }
+  if (key === "PROJECT_STAGE") return ["PROJECT_STAGE"] as const;
+  if (key === "PROJECT_MILESTONE") return ["PROJECT_MILESTONE"] as const;
+  if (key === "PROJECT_FILE") return ["PROJECT_FILE"] as const;
+  if (key === "REQUEST_CREATED") return ["REQUEST_CREATED"] as const;
+  if (key === "REQUEST_ASSIGNED") return ["REQUEST_ASSIGNED"] as const;
+  if (key === "REQUEST_PUBLIC_MESSAGE") return ["REQUEST_MESSAGE"] as const;
+  if (key === "REQUEST_STATUS") return ["REQUEST_STATUS"] as const;
+  return [] as const;
+}
+
+export function isNotificationEmailRuleEnabled(
+  notificationType: string,
+  stateByKey: ReadonlyMap<string, NotificationDeliveryRuleState>,
+) {
+  const key = ruleKeyForNotificationEmail(notificationType);
+  if (!key) return false;
+  const state = stateByKey.get(key) ?? defaultNotificationDeliveryRuleState(key);
+  return state.notificationEnabled && state.emailEnabled;
+}
+
+export function ruleKeyForProjectNotification(type: string) {
+  if (type === "PROJECT_STAGE") return "PROJECT_STAGE" as const;
+  if (type === "PROJECT_MILESTONE") return "PROJECT_MILESTONE" as const;
+  if (type === "PROJECT_FILE") return "PROJECT_FILE" as const;
+  return "PROJECT_UPDATE" as const;
+}
+
+export function ruleKeyForRequestActivity(input: {
+  notificationType: string;
+  visibility?: string;
+}) {
+  if (input.notificationType === "REQUEST_CREATED") {
+    return "REQUEST_CREATED" as const;
+  }
+  if (input.notificationType === "REQUEST_ASSIGNED") {
+    return "REQUEST_ASSIGNED" as const;
+  }
+  if (input.notificationType === "REQUEST_STATUS") {
+    return "REQUEST_STATUS" as const;
+  }
+  if (input.notificationType === "REQUEST_ATTACHMENT") {
+    return "REQUEST_ATTACHMENT" as const;
+  }
+  if (input.notificationType === "REQUEST_ARCHIVE") {
+    return "REQUEST_ARCHIVE" as const;
+  }
+  return input.visibility === "INTERNAL"
+    ? ("REQUEST_INTERNAL_NOTE" as const)
+    : ("REQUEST_PUBLIC_MESSAGE" as const);
+}

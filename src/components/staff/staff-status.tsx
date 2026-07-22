@@ -9,7 +9,7 @@ import type {
 type StatusValue = ProjectStatus | MilestoneStatus | RequestStatus;
 
 const labels: Record<StatusValue, string> = {
-  DRAFT: "草稿",
+  DRAFT: "待接入",
   ACTIVE: "进行中",
   PAUSED: "已暂停",
   COMPLETED: "已完成",

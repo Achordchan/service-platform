@@ -32,12 +32,17 @@ export const changeRequestStatusSchema = z.object({
   ]),
 });
 
+export const changeRequestArchiveSchema = z.object({
+  archived: z.boolean(),
+});
+
 export const createRequestMessageSchema = z.object({
-  body: z.string().min(1).max(50_000),
+  body: z.string().max(50_000).default(""),
   visibility: z
     .enum(["CUSTOMER_VISIBLE", "INTERNAL"])
     .default("CUSTOMER_VISIBLE"),
   replyToMessageId: z.string().trim().min(1).nullable().optional(),
+  supportPlaybookKey: z.string().trim().min(1).max(100).optional(),
 });
 
 const requestPresenceSessionSchema = z.object({

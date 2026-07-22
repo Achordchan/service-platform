@@ -25,9 +25,7 @@ export async function POST(request: Request) {
       templateKey,
       variables: sampleVariablesForTemplate(templateKey),
       actionUrl: appUrl,
-      deliveryMode:
-        input.deliveryMode ??
-        (input.templateKey ? undefined : "RESEND"),
+      deliveryMode: input.deliveryMode,
     });
     return NextResponse.json(
       {

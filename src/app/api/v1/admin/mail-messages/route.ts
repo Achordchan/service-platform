@@ -24,6 +24,7 @@ export async function GET(request: Request) {
         sentAt: message.sentAt?.toISOString() ?? null,
         lastAttemptAt: message.lastAttemptAt?.toISOString() ?? null,
         lastEventAt: message.lastEventAt?.toISOString() ?? null,
+        sendAfter: message.sendAfter.toISOString(),
       })),
     });
   } catch (error) {

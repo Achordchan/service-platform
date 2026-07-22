@@ -29,9 +29,13 @@ export type PlatformSettingsView = {
   smtpFrom: string;
   smtpSecure: boolean;
   hasStoredPassword: boolean;
+  smtpHealthStatus: "unchecked" | "healthy" | "error" | null;
+  smtpLastCheckedAt: string | null;
+  smtpLastError: string | null;
   attachmentMaxSizeMb: number;
   attachmentAllowedExtensions: string;
   customerReplyAttachmentsEnabled: boolean;
+  standardRequestEmailEnabled: boolean;
   updatedAt?: string;
 };
 
@@ -63,7 +67,16 @@ export type MailMessageView = {
   providerId: string | null;
   sentAt: string | null;
   lastEventAt: string | null;
+  sendAfter: string;
   createdAt: string;
+};
+
+export type MailOutboxSummary = {
+  queued: number;
+  overdue: number;
+  failed: number;
+  cancelled: number;
+  asOf: string;
 };
 
 export type MailTemplateView = {
@@ -75,6 +88,10 @@ export type MailTemplateView = {
     | "CUSTOMER_EMAIL_CHANGE_VERIFY"
     | "CUSTOMER_EMAIL_CHANGE_COMPLETED"
     | "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE"
+    | "STANDARD_REQUEST_CUSTOMER_UPDATE"
+    | "STANDARD_REQUEST_STAFF_UPDATE"
+    | "STANDARD_REQUEST_ASSIGNMENT"
+    | "STANDARD_PROJECT_CUSTOMER_UPDATE"
     | "EXTERNAL_REQUEST_PUBLIC_REPLY"
     | "EXTERNAL_REQUEST_WAITING_CUSTOMER"
     | "EXTERNAL_REQUEST_RESOLVED"

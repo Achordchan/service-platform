@@ -23,6 +23,7 @@ const eventSets: Record<
     "REQUEST_CREATED",
   ],
   "request-list": [
+    "PROJECT_UPDATED",
     "REQUEST_CREATED",
     "REQUEST_ASSIGNED",
     "REQUEST_MESSAGE_CREATED",

@@ -13,13 +13,22 @@ export const updatePlatformSettingsSchema = z
     smtpPort: z.coerce.number().int().min(1).max(65535).optional().nullable(),
     smtpUser: z.string().max(255).optional().or(z.literal("")),
     smtpPassword: z.string().max(255).optional().or(z.literal("")),
+    clearSmtpPassword: z.boolean().optional(),
     smtpFrom: z.string().max(255).optional().or(z.literal("")),
     smtpSecure: z.boolean().optional(),
     attachmentMaxSizeMb: z.coerce.number().int().min(1).max(100).optional(),
     attachmentAllowedExtensions: z.string().max(500).optional(),
     customerReplyAttachmentsEnabled: z.boolean().optional(),
+    standardRequestEmailEnabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
+    if (value.smtpPassword && value.clearSmtpPassword) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["smtpPassword"],
+        message: "设置新密码和清除密码不能同时执行",
+      });
+    }
     const configuringSmtp =
       value.mailMode === "SMTP" ||
       value.smtpHost !== undefined ||

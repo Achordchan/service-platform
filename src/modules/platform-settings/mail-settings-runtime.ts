@@ -1,4 +1,5 @@
 import { env } from "@/lib/runtime-env";
+import { decryptSecret, encryptSecret } from "@/lib/secret-crypto";
 import { withSystemDb } from "@/lib/system-db";
 
 export type RuntimeMailSettings = {
@@ -20,12 +21,31 @@ export type RuntimeMailSettings = {
   smtpFrom: string;
   smtpSecure: boolean;
   hasStoredPassword: boolean;
+  smtpHealthStatus: string | null;
+  smtpLastCheckedAt: Date | null;
+  smtpLastError: string | null;
+  standardRequestEmailEnabled: boolean;
 };
+
+type StoredMailSettings = Awaited<ReturnType<typeof ensurePlatformSettings>>;
 
 export async function ensurePlatformSettings() {
   return withSystemDb(async (tx) => {
     const existing = await tx.platformSetting.findUnique({ where: { id: 1 } });
-    if (existing) return existing;
+    if (existing) {
+      if (existing.smtpPassword) {
+        return tx.platformSetting.update({
+          where: { id: 1 },
+          data: {
+            smtpPasswordEncrypted:
+              existing.smtpPasswordEncrypted ??
+              encryptSecret(existing.smtpPassword),
+            smtpPassword: null,
+          },
+        });
+      }
+      return existing;
+    }
     return tx.platformSetting.create({
       data: {
         id: 1,
@@ -37,7 +57,9 @@ export async function ensurePlatformSettings() {
         smtpHost: env.SMTP_HOST ?? null,
         smtpPort: env.SMTP_PORT ?? null,
         smtpUser: env.SMTP_USER ?? null,
-        smtpPassword: env.SMTP_PASSWORD ?? null,
+        smtpPasswordEncrypted: env.SMTP_PASSWORD
+          ? encryptSecret(env.SMTP_PASSWORD)
+          : null,
         smtpFrom: env.SMTP_FROM ?? "服务支持中心 <info@achord.cn>",
         smtpSecure: env.SMTP_SECURE ?? false,
         smtpSecureConfigured: env.SMTP_SECURE !== undefined,
@@ -48,6 +70,12 @@ export async function ensurePlatformSettings() {
 
 export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
   const settings = await ensurePlatformSettings();
+  return runtimeMailSettingsFromStored(settings);
+}
+
+export function runtimeMailSettingsFromStored(
+  settings: StoredMailSettings,
+): RuntimeMailSettings {
   return {
     appUrl: settings.appUrl?.trim() || env.APP_URL,
     mailMode: settings.mailMode,
@@ -67,7 +95,9 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
     smtpHost: settings.smtpHost ?? env.SMTP_HOST ?? null,
     smtpPort: settings.smtpPort ?? env.SMTP_PORT ?? null,
     smtpUser: settings.smtpUser ?? env.SMTP_USER ?? null,
-    smtpPassword: settings.smtpPassword ?? env.SMTP_PASSWORD ?? null,
+    smtpPassword: settings.smtpPasswordEncrypted
+      ? decryptSecret(settings.smtpPasswordEncrypted)
+      : settings.smtpPassword ?? env.SMTP_PASSWORD ?? null,
     smtpFrom:
       settings.smtpFrom?.trim() ||
       env.SMTP_FROM ||
@@ -75,7 +105,16 @@ export async function getRuntimeMailSettings(): Promise<RuntimeMailSettings> {
     smtpSecure: settings.smtpSecureConfigured
       ? settings.smtpSecure
       : env.SMTP_SECURE ?? settings.smtpSecure,
-    hasStoredPassword: Boolean(settings.smtpPassword ?? env.SMTP_PASSWORD),
+    hasStoredPassword: Boolean(
+      settings.smtpPasswordEncrypted ??
+        settings.smtpPassword ??
+        env.SMTP_PASSWORD,
+    ),
+    smtpHealthStatus: settings.smtpHealthStatus,
+    smtpLastCheckedAt: settings.smtpLastCheckedAt,
+    smtpLastError: settings.smtpLastError,
+    standardRequestEmailEnabled:
+      settings.standardRequestEmailEnabled ?? false,
   };
 }
 

@@ -2,11 +2,9 @@ import "server-only";
 
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
-import {
-  assertMailDeliveryReady,
-  queueMailMessage,
-} from "@/lib/jobs";
+import { queueMailMessage } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
 import {
   assertAllowed,
   assertFound,
@@ -20,20 +18,19 @@ export async function retryMailMessage(
   mailMessageId: string,
 ) {
   assertAllowed(actor.isPlatformAdmin);
-  const deliveryMode = await assertMailDeliveryReady();
-  const existing = await withActorDb(actor, (tx) =>
-    tx.mailMessage.findUnique({ where: { id: mailMessageId } }),
-  );
-  assertFound(existing, "邮件记录不存在");
-  if (!retryableStatuses.has(existing.status)) {
-    throw new DomainError(
-      "MAIL_MESSAGE_NOT_RETRYABLE",
-      "当前邮件状态不允许重试",
-      409,
-    );
-  }
-
-  const queued = await withActorDb(actor, async (tx) => {
+  const result = await withActorDb(actor, async (tx) => {
+    const deliveryMode = await resolveLockedMailDeliveryMode(tx);
+    const existing = await tx.mailMessage.findUnique({
+      where: { id: mailMessageId },
+    });
+    assertFound(existing, "邮件记录不存在");
+    if (!retryableStatuses.has(existing.status)) {
+      throw new DomainError(
+        "MAIL_MESSAGE_NOT_RETRYABLE",
+        "当前邮件状态不允许重试",
+        409,
+      );
+    }
     const updated = await tx.mailMessage.updateMany({
       where: {
         id: mailMessageId,
@@ -57,19 +54,25 @@ export async function retryMailMessage(
         409,
       );
     }
-    return tx.mailMessage.findUniqueOrThrow({
+    const queued = await tx.mailMessage.findUniqueOrThrow({
       where: { id: mailMessageId },
     });
+    return {
+      queued,
+      deliveryMode,
+      previousStatus: existing.status,
+      previousDeliveryMode: existing.deliveryMode,
+    };
   });
 
   try {
-    await queueMailMessage(queued.id, deliveryMode);
+    await queueMailMessage(result.queued.id, result.deliveryMode);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "邮件任务入队失败";
     await withActorDb(actor, (tx) =>
       tx.mailMessage.update({
-        where: { id: queued.id },
+        where: { id: result.queued.id },
         data: {
           status: "FAILED",
           errorMessage,
@@ -83,16 +86,16 @@ export async function retryMailMessage(
     writeAuditLog(tx, actor, {
       action: "MAIL_MESSAGE_REQUEUED",
       resourceType: "MailMessage",
-      resourceId: queued.id,
+      resourceId: result.queued.id,
       metadata: {
-        previousStatus: existing.status,
-        previousDeliveryMode: existing.deliveryMode,
-        deliveryMode,
-        toEmail: queued.toEmail,
+        previousStatus: result.previousStatus,
+        previousDeliveryMode: result.previousDeliveryMode,
+        deliveryMode: result.deliveryMode,
+        toEmail: result.queued.toEmail,
       },
     }),
   );
-  return queued;
+  return result.queued;
 }
 
 export async function cancelMailMessage(

@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
+import type { Actor } from "@/lib/actor";
 import { calculateProjectProgress } from "@/modules/projects/progress";
 
 export const projectBaseSelect = {
@@ -12,6 +13,9 @@ export const projectBaseSelect = {
   currentStage: true,
   showMilestones: true,
   showProgress: true,
+  customerUpdatesEnabled: true,
+  customerRequestsEnabled: true,
+  customerFilesEnabled: true,
   startDate: true,
   endDate: true,
   customerSpaceId: true,
@@ -28,6 +32,7 @@ export type ProjectBase = Prisma.ProjectGetPayload<{
 export async function hydrateProjectSummaries(
   tx: Prisma.TransactionClient,
   projects: ProjectBase[],
+  actor: Actor,
 ) {
   if (projects.length === 0) return [];
   const projectIds = projects.map((project) => project.id);
@@ -56,10 +61,34 @@ export async function hydrateProjectSummaries(
     where: { id: { in: managerRows.map((row) => row.userId) } },
     select: { id: true, name: true },
   });
-  const milestones = await tx.milestone.findMany({
-    where: { projectId: { in: projectIds } },
-    select: { projectId: true, status: true },
-  });
+  const milestones = actor.isStaff
+    ? await tx.milestone.findMany({
+        where: { projectId: { in: projectIds } },
+        select: { projectId: true, status: true },
+      })
+    : [];
+  const customerProgressProjectIds = actor.isStaff
+    ? []
+    : projects
+        .filter((project) => project.showProgress)
+        .map((project) => project.id);
+  const customerProgressRows =
+    customerProgressProjectIds.length > 0
+      ? await tx.$queryRaw<
+          Array<{
+            project_id: string;
+            total: number;
+            not_started: number;
+            in_progress: number;
+            completed: number;
+            percentage: number;
+          }>
+        >`
+          SELECT project_id, progress.*
+          FROM unnest(${customerProgressProjectIds}::text[]) AS input(project_id)
+          CROSS JOIN LATERAL app_project_milestone_progress(input.project_id) progress
+        `
+      : [];
   const pluginBindings = await tx.projectPluginBinding.findMany({
     where: { projectId: { in: projectIds } },
     select: { projectId: true, pluginKey: true, status: true },
@@ -123,6 +152,9 @@ export async function hydrateProjectSummaries(
     current.push({ status: milestone.status });
     milestonesByProjectId.set(milestone.projectId, current);
   }
+  const customerProgressByProjectId = new Map(
+    customerProgressRows.map((row) => [row.project_id, row]),
+  );
   const bindingsByProjectId = new Map<
     string,
     Array<{ pluginKey: string; status: (typeof pluginBindings)[number]["status"] }>
@@ -144,7 +176,18 @@ export async function hydrateProjectSummaries(
 
   return projects.map((project) => {
     const projectMilestones = milestonesByProjectId.get(project.id) ?? [];
-    const progress = calculateProjectProgress(projectMilestones);
+    const customerProgress = customerProgressByProjectId.get(project.id);
+    const progress = actor.isStaff
+      ? calculateProjectProgress(projectMilestones)
+      : {
+          percentage: customerProgress?.percentage ?? 0,
+          counts: {
+            total: customerProgress?.total ?? 0,
+            notStarted: customerProgress?.not_started ?? 0,
+            inProgress: customerProgress?.in_progress ?? 0,
+            completed: customerProgress?.completed ?? 0,
+          },
+        };
     return {
       ...project,
       customerSpace: customerSpaceById.get(project.customerSpaceId)!,

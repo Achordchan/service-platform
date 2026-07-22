@@ -1,0 +1,132 @@
+import "server-only";
+
+import type { Actor } from "@/lib/actor";
+import { withActorDb } from "@/lib/actor";
+import { writeAuditLog } from "@/modules/audit/audit-service";
+import {
+  defaultNotificationDeliveryRuleState,
+  findNotificationDeliveryRuleViolation,
+  notificationTypesForEmailRule,
+  NOTIFICATION_DELIVERY_RULES,
+  type NotificationDeliveryRuleKey,
+  type NotificationDeliveryRuleState,
+  type NotificationDeliveryRuleView,
+  updateNotificationDeliveryRulesSchema,
+} from "@/modules/notifications/notification-delivery-rules";
+import { assertAllowed, DomainError } from "@/modules/projects/errors";
+
+const defaults = new Map<
+  NotificationDeliveryRuleKey,
+  NotificationDeliveryRuleState
+>(
+  NOTIFICATION_DELIVERY_RULES.map((rule) => [
+    rule.key,
+    defaultNotificationDeliveryRuleState(rule.key),
+  ]),
+);
+
+export async function listNotificationDeliveryRules(actor: Actor) {
+  assertAllowed(actor.isPlatformAdmin);
+  return withActorDb(actor, async (tx) => {
+    const stored = await tx.notificationDeliveryRule.findMany();
+    const byKey = new Map<string, NotificationDeliveryRuleState>(
+      stored.map((rule) => [rule.key, rule]),
+    );
+    return mergeDefinitions(byKey);
+  });
+}
+
+export async function updateNotificationDeliveryRules(
+  actor: Actor,
+  raw: unknown,
+) {
+  assertAllowed(actor.isPlatformAdmin);
+  const input = updateNotificationDeliveryRulesSchema.parse(raw);
+  const violation = findNotificationDeliveryRuleViolation(input.rules);
+  if (violation) {
+    throw new DomainError(violation.code, violation.message, 422);
+  }
+  const uniqueKeys = new Set(input.rules.map((rule) => rule.key));
+
+  return withActorDb(actor, async (tx) => {
+    for (const rule of input.rules) {
+      await tx.notificationDeliveryRule.upsert({
+        where: { key: rule.key },
+        create: { ...rule, updatedById: actor.id },
+        update: {
+          notificationEnabled: rule.notificationEnabled,
+          soundEnabled: rule.soundEnabled,
+          emailEnabled: rule.emailEnabled,
+          updatedById: actor.id,
+        },
+      });
+    }
+    const disabledEmailNotificationTypes = input.rules
+      .filter((rule) => !rule.notificationEnabled || !rule.emailEnabled)
+      .flatMap((rule) => [...notificationTypesForEmailRule(rule.key)]);
+    if (disabledEmailNotificationTypes.length > 0) {
+      await tx.notification.updateMany({
+        where: {
+          type: { in: disabledEmailNotificationTypes },
+          emailDueAt: { not: null },
+        },
+        data: { emailDueAt: null, emailClaimedAt: null },
+      });
+      await tx.mailMessage.updateMany({
+        where: {
+          sourceType: {
+            in: [
+              "STANDARD_REQUEST_NOTIFICATION",
+              "STANDARD_PROJECT_NOTIFICATION",
+            ],
+          },
+          status: "QUEUED",
+          notification: {
+            is: { type: { in: disabledEmailNotificationTypes } },
+          },
+        },
+        data: {
+          status: "CANCELLED",
+          errorMessage: "通知规则已关闭",
+        },
+      });
+    }
+    await writeAuditLog(tx, actor, {
+      action: "NOTIFICATION_DELIVERY_RULES_UPDATED",
+      resourceType: "NotificationDeliveryRule",
+      resourceId: "platform",
+      metadata: { keys: [...uniqueKeys] },
+    });
+    const stored = await listRulesInTx(tx);
+    return mergeDefinitions(
+      new Map<string, NotificationDeliveryRuleState>(
+        stored.map((rule) => [rule.key, rule]),
+      ),
+    );
+  });
+}
+
+export async function loadNotificationDeliveryRule(
+  tx: Parameters<typeof listRulesInTx>[0],
+  key: NotificationDeliveryRuleKey,
+) {
+  const stored = await tx.notificationDeliveryRule.findUnique({
+    where: { key },
+  });
+  return stored ?? { key, ...defaults.get(key)! };
+}
+
+function listRulesInTx(
+  tx: import("@/generated/prisma/client").Prisma.TransactionClient,
+) {
+  return tx.notificationDeliveryRule.findMany({ orderBy: { key: "asc" } });
+}
+
+function mergeDefinitions(
+  byKey: Map<string, NotificationDeliveryRuleState>,
+): NotificationDeliveryRuleView[] {
+  return NOTIFICATION_DELIVERY_RULES.map((definition) => {
+    const state = byKey.get(definition.key) ?? defaults.get(definition.key)!;
+    return { ...definition, ...state };
+  });
+}

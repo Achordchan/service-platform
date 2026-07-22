@@ -1,0 +1,4 @@
+ALTER TABLE "Project"
+  ADD COLUMN IF NOT EXISTS "customerUpdatesEnabled" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "customerRequestsEnabled" BOOLEAN NOT NULL DEFAULT true,
+  ADD COLUMN IF NOT EXISTS "customerFilesEnabled" BOOLEAN NOT NULL DEFAULT true;

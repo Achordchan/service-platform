@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
+import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { useRouter } from "next/navigation";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import {
@@ -50,10 +51,11 @@ export function NewRequestForm({
   initialProjectId?: string;
 }) {
   const router = useRouter();
-  const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
+  const { policy, validateFiles } = useAttachmentPolicy();
   const [files, setFiles] = useState<File[]>([]);
   const [submitError, setSubmitError] = useState("");
   const [submitProgress, setSubmitProgress] = useState("");
+  const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const {
     control,
     handleSubmit,
@@ -77,6 +79,10 @@ export function NewRequestForm({
     () => projects.find((project) => project.id === selectedProjectId),
     [projects, selectedProjectId],
   );
+  const uploadInlineImage = useInlineImageUpload({
+    projectId: selectedProjectId,
+    context: "REQUEST_DESCRIPTION",
+  });
 
   function addFiles(nextFiles: File[]) {
     const { accepted, error } = validateFiles(nextFiles, files.length);
@@ -163,12 +169,6 @@ export function NewRequestForm({
       component="form"
       variant="outlined"
       onSubmit={handleSubmit(onSubmit)}
-      onPaste={(event) => {
-        const imageFiles = filesFromClipboard(event.clipboardData);
-        if (imageFiles.length === 0) return;
-        event.preventDefault();
-        addFiles(imageFiles);
-      }}
       sx={{ overflow: "hidden" }}
     >
       {isSubmitting ? <LinearProgress /> : null}
@@ -266,6 +266,8 @@ export function NewRequestForm({
                 value={field.value}
                 onChange={field.onChange}
                 disabled={isSubmitting}
+                uploadImage={uploadInlineImage}
+                onImageUploadingChange={setInlineImageUploading}
                 minHeight={180}
                 placeholder="请说明现象、影响范围、期望结果，以及已尝试的处理方式"
               />
@@ -349,7 +351,9 @@ export function NewRequestForm({
             type="submit"
             variant="contained"
             disabled={
-              isSubmitting || !selectedProject?.categories.length
+              isSubmitting ||
+              inlineImageUploading ||
+              !selectedProject?.categories.length
             }
           >
             {isSubmitting ? "正在提交" : "提交服务请求"}

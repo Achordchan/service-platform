@@ -6,9 +6,12 @@ import { withExternalActorDb } from "@/lib/external-actor";
 import {
   buildMessagePreview,
   escapeHtmlText,
+  extractInlineAttachmentIds,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
+import { claimExternalInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { writeExternalAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchExternalRequestActivity,
@@ -16,6 +19,7 @@ import {
 import { DomainError } from "@/modules/projects/errors";
 import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 import { recordUniversalUnreadWebhook } from "@/modules/integrations/universal/webhook-service";
+import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
 import { generateRequestNumber } from "@/modules/requests/request-number";
 import {
   assertRequestTransition,
@@ -146,6 +150,7 @@ export function listExternalRequests(actor: ExternalActor) {
       where: {
         projectId: actor.projectId,
         createdByExternalContactId: actor.id,
+        archivedAt: null,
       },
       select: {
         id: true,
@@ -316,6 +321,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         status: true,
         resolvedAt: true,
         closedAt: true,
+        archivedAt: true,
         createdAt: true,
         updatedAt: true,
         categoryId: true,
@@ -352,6 +358,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         replyToMessageId: true,
         authorId: true,
         externalAuthorId: true,
+        supportPlaybookKey: true,
+        supportPlaybookSnapshot: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -393,9 +401,28 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       where: { id: { in: contacts.map((contact) => contact.bindingId) } },
       select: { id: true, pluginKey: true },
     });
+    const playbookAssetIdsByMessageId = new Map(
+      messages.map((message) => {
+        const snapshot = parseSupportPlaybookSnapshot(
+          message.supportPlaybookSnapshot,
+        );
+        return [
+          message.id,
+          snapshot?.content
+            ? extractInlineAttachmentIds(snapshot.content)
+            : [],
+        ] as const;
+      }),
+    );
+    const supportPlaybookAssetIds = Array.from(
+      new Set(Array.from(playbookAssetIdsByMessageId.values()).flat()),
+    );
     const attachments = await tx.attachment.findMany({
       where: {
-        serviceRequestId: request.id,
+        OR: [
+          { serviceRequestId: request.id },
+          { id: { in: supportPlaybookAssetIds } },
+        ],
         visibility: "CUSTOMER_VISIBLE",
       },
       select: {
@@ -404,6 +431,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         originalName: true,
         mimeType: true,
         size: true,
+        inline: true,
         createdAt: true,
       },
       orderBy: { createdAt: "asc" },
@@ -465,11 +493,15 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       ]),
     );
     const attachmentsByMessageId = new Map<string, typeof attachments>();
+    const attachmentById = new Map(
+      attachments.map((attachment) => [attachment.id, attachment]),
+    );
     for (const attachment of attachments) {
-      if (!attachment.requestMessageId) continue;
-      const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
-      current.push(attachment);
-      attachmentsByMessageId.set(attachment.requestMessageId, current);
+      if (attachment.requestMessageId) {
+        const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
+        current.push(attachment);
+        attachmentsByMessageId.set(attachment.requestMessageId, current);
+      }
     }
     const messageById = new Map(messages.map((message) => [message.id, message]));
     const authorFor = (message: (typeof messages)[number]) => ({
@@ -488,16 +520,28 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         visibility: message.visibility,
         isSystem: message.isSystem,
         isInitial: message.isInitial,
+        supportPlaybook: parseSupportPlaybookSnapshot(
+          message.supportPlaybookSnapshot,
+        ),
         replyToMessageId: message.replyToMessageId,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
         author: serializeAuthor(authorFor(message), actor),
-        attachments: (attachmentsByMessageId.get(message.id) ?? []).map(
+        attachments: [
+          ...(attachmentsByMessageId.get(message.id) ?? []),
+          ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
+            .map((id) => attachmentById.get(id))
+            .filter(
+              (value): value is (typeof attachments)[number] =>
+                Boolean(value),
+            ),
+        ].map(
           (attachment) => ({
             id: attachment.id,
             originalName: attachment.originalName,
             mimeType: attachment.mimeType,
             size: attachment.size,
+            inline: attachment.inline,
             createdAt: attachment.createdAt,
           }),
         ),
@@ -512,6 +556,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
                 (attachment) => ({
                   id: attachment.id,
                   originalName: attachment.originalName,
+                  inline: attachment.inline,
                 }),
               ),
             }
@@ -527,7 +572,9 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         .filter((user): user is NonNullable<typeof user> => Boolean(user))
         .map((user) => ({ user })),
       attachments: attachments
-        .filter((attachment) => !attachment.requestMessageId)
+        .filter(
+          (attachment) => !attachment.requestMessageId && !attachment.inline,
+        )
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,
@@ -536,7 +583,10 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
           createdAt: attachment.createdAt,
         })),
       unreadCount: 0,
-      writable: project.status === "ACTIVE" && request.status !== "CLOSED",
+      writable:
+        project.status === "ACTIVE" &&
+        request.status !== "CLOSED" &&
+        !request.archivedAt,
       messages: serializedMessages,
     };
   });
@@ -560,6 +610,7 @@ export function addExternalRequestMessage(
         number: true,
         title: true,
         status: true,
+        archivedAt: true,
         assigneeId: true,
         assignees: { select: { userId: true } },
         project: {
@@ -571,6 +622,13 @@ export function addExternalRequestMessage(
       throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
     }
     ensureProjectWritable(request.project.status);
+    if (request.archivedAt) {
+      throw new DomainError(
+        "REQUEST_ARCHIVED",
+        "当前工单已归档，只允许查看历史内容",
+        409,
+      );
+    }
     if (request.status === "CLOSED") {
       throw new DomainError("REQUEST_CLOSED", "已关闭的工单不能回复", 409);
     }
@@ -616,6 +674,16 @@ export function addExternalRequestMessage(
         updatedAt: true,
       },
     });
+    await claimExternalInlineAttachments(
+      tx,
+      actor,
+      extractInlineAttachmentIds(body),
+      {
+        projectId: request.project.id,
+        serviceRequestId: request.id,
+        requestMessageId: message.id,
+      },
+    );
     const nextStatus = statusAfterCustomerReply(request.status);
     if (nextStatus !== request.status) {
       assertRequestTransition(request.status, nextStatus);
@@ -704,6 +772,7 @@ export function addExternalRequestMessage(
         notifyProjectManagers: true,
         notifyPlatformAdmins: true,
         createNotifications: false,
+        audible: false,
         customerSpaceId: request.project.customerSpaceId,
         projectId: request.project.id,
         serviceRequestId: request.id,
@@ -714,11 +783,11 @@ export function addExternalRequestMessage(
 }
 
 
-export function confirmExternalRequestClosed(
+export async function confirmExternalRequestClosed(
   actor: ExternalActor,
   requestId: string,
 ) {
-  return withExternalActorDb(actor, async (tx) => {
+  const result = await withExternalActorDb(actor, async (tx) => {
     const request = await tx.serviceRequest.findFirst({
       where: {
         id: requestId,
@@ -730,6 +799,9 @@ export function confirmExternalRequestClosed(
         number: true,
         title: true,
         status: true,
+        archivedAt: true,
+        assigneeId: true,
+        assignees: { select: { userId: true } },
         project: {
           select: { id: true, status: true, customerSpaceId: true, title: true },
         },
@@ -739,6 +811,13 @@ export function confirmExternalRequestClosed(
       throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
     }
     ensureProjectWritable(request.project.status);
+    if (request.archivedAt) {
+      throw new DomainError(
+        "REQUEST_ARCHIVED",
+        "当前工单已归档，只允许查看历史内容",
+        409,
+      );
+    }
     assertRequestTransition(request.status, "CLOSED");
     const updateResult = await tx.serviceRequest.updateMany({
       where: { id: request.id, status: request.status },
@@ -792,6 +871,13 @@ export function confirmExternalRequestClosed(
       notificationTitle: `外部请求 ${request.number} 已关闭`,
       notificationBody: request.title,
       includeCustomers: false,
+      relevantWorkerUserIds: Array.from(
+        new Set(
+          [request.assigneeId, ...request.assignees.map((item) => item.userId)].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
+      ),
       notifyProjectManagers: true,
       notifyPlatformAdmins: true,
       customerSpaceId: request.project.customerSpaceId,
@@ -800,4 +886,6 @@ export function confirmExternalRequestClosed(
     });
     return updated;
   });
+  await enqueueExternalRequestStatusMail(requestId, "CLOSED");
+  return result;
 }

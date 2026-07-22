@@ -88,10 +88,15 @@ enum NotificationType {
   INVITATION
   PROJECT_UPDATE
   UPDATE_COMMENT
+  PROJECT_STAGE
+  PROJECT_MILESTONE
+  PROJECT_FILE
   REQUEST_CREATED
   REQUEST_ASSIGNED
   REQUEST_MESSAGE
   REQUEST_STATUS
+  REQUEST_ATTACHMENT
+  REQUEST_ARCHIVE
 }
 
 enum EventType {
@@ -170,6 +175,12 @@ enum UniversalWebhookDeliveryStatus {
   FAILED
 }
 
+enum SupportPlaybookCategory {
+  REMOTE
+  DIAGNOSTIC
+  INFORMATION
+}
+
 model User {
   id                      String            @id @default(cuid())
   name                    String
@@ -185,6 +196,8 @@ model User {
   location                String?
   contactNotes            String?
   roleGroupId             String?
+  soundNotificationsEnabled Boolean         @default(true)
+  requestEmailNotificationsEnabled Boolean  @default(true)
   createdAt               DateTime          @default(now())
   platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
   updatedAt               DateTime          @updatedAt
@@ -210,6 +223,8 @@ model User {
   notifications              Notification[]
   auditLogs                  AuditLog[]
   mailTemplatesUpdated       MailTemplateOverride[]
+  supportPlaybooksUpdated    SupportPlaybook[]      @relation("SupportPlaybookUpdater")
+  notificationRulesUpdated  NotificationDeliveryRule[] @relation("NotificationDeliveryRuleUpdater")
   emailChanges               UserEmailChange[]      @relation("EmailChangeUser")
   emailChangesRequested      UserEmailChange[]      @relation("EmailChangeRequester")
   pluginInstallationsUpdated PluginInstallation[]   @relation("PluginInstallationUpdater")
@@ -397,21 +412,24 @@ model RequestCategory {
 }
 
 model Project {
-  id              String        @id @default(cuid())
-  title           String
-  description     String?
-  status          ProjectStatus @default(DRAFT)
-  kind            ProjectKind   @default(STANDARD)
-  currentStage    String?
-  showMilestones  Boolean       @default(true)
-  showProgress    Boolean       @default(true)
-  startDate       DateTime?
-  endDate         DateTime?
-  customerSpaceId String
-  serviceTypeId   String
-  createdById     String
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                      String        @id @default(cuid())
+  title                   String
+  description             String?
+  status                  ProjectStatus @default(ACTIVE)
+  kind                    ProjectKind   @default(STANDARD)
+  currentStage            String?
+  showMilestones          Boolean       @default(true)
+  showProgress            Boolean       @default(true)
+  customerUpdatesEnabled  Boolean       @default(true)
+  customerRequestsEnabled Boolean       @default(true)
+  customerFilesEnabled    Boolean       @default(true)
+  startDate               DateTime?
+  endDate                 DateTime?
+  customerSpaceId         String
+  serviceTypeId           String
+  createdById             String
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
 
   customerSpace  CustomerSpace          @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
   serviceType    ServiceType            @relation(fields: [serviceTypeId], references: [id])
@@ -457,8 +475,9 @@ model Milestone {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy User    @relation("MilestoneCreator", fields: [createdById], references: [id])
+  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User         @relation("MilestoneCreator", fields: [createdById], references: [id])
+  attachments Attachment[]
 
   @@index([projectId, sortOrder])
 }
@@ -511,6 +530,7 @@ model ServiceRequest {
   assigneeId                 String?
   resolvedAt                 DateTime?
   closedAt                   DateTime?
+  archivedAt                 DateTime?
   createdAt                  DateTime        @default(now())
   updatedAt                  DateTime        @updatedAt
 
@@ -530,6 +550,7 @@ model ServiceRequest {
   events                   EventRecord[]
 
   @@index([projectId, status])
+  @@index([projectId, archivedAt, status])
   @@index([assigneeId, status])
   @@index([createdByExternalContactId, createdAt])
 }
@@ -550,17 +571,19 @@ model RequestAssignee {
 }
 
 model RequestMessage {
-  id               String            @id @default(cuid())
-  body             String
-  visibility       ContentVisibility @default(CUSTOMER_VISIBLE)
-  isSystem         Boolean           @default(false)
-  isInitial        Boolean           @default(false)
-  serviceRequestId String
-  authorId         String?
-  externalAuthorId String?
-  replyToMessageId String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
+  id                      String            @id @default(cuid())
+  body                    String
+  visibility              ContentVisibility @default(CUSTOMER_VISIBLE)
+  isSystem                Boolean           @default(false)
+  isInitial               Boolean           @default(false)
+  serviceRequestId        String
+  authorId                String?
+  externalAuthorId        String?
+  replyToMessageId        String?
+  supportPlaybookKey      String?
+  supportPlaybookSnapshot Json?
+  createdAt               DateTime          @default(now())
+  updatedAt               DateTime          @updatedAt
 
   serviceRequest ServiceRequest   @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
   author         User?            @relation(fields: [authorId], references: [id])
@@ -581,20 +604,25 @@ model Attachment {
   mimeType                    String
   size                        Int
   visibility                  ContentVisibility @default(CUSTOMER_VISIBLE)
-  customerSpaceId             String
+  inline                      Boolean           @default(false)
+  customerSpaceId             String?
   projectId                   String?
   projectUpdateId             String?
   updateCommentId             String?
+  milestoneId                 String?
+  supportPlaybookKey          String?
   serviceRequestId            String?
   requestMessageId            String?
   uploadedById                String?
   uploadedByExternalContactId String?
   createdAt                   DateTime          @default(now())
 
-  customerSpace             CustomerSpace    @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  customerSpace             CustomerSpace?   @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
   project                   Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   projectUpdate             ProjectUpdate?   @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
   updateComment             UpdateComment?   @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
+  milestone                 Milestone?       @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  supportPlaybook           SupportPlaybook? @relation(fields: [supportPlaybookKey], references: [key], onDelete: SetNull)
   serviceRequest            ServiceRequest?  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
   requestMessage            RequestMessage?  @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
   uploadedBy                User?            @relation(fields: [uploadedById], references: [id])
@@ -602,6 +630,9 @@ model Attachment {
 
   @@index([customerSpaceId, projectId])
   @@index([serviceRequestId])
+  @@index([milestoneId])
+  @@index([supportPlaybookKey])
+  @@index([inline, createdAt])
   @@index([uploadedByExternalContactId, createdAt])
 }
 
@@ -613,6 +644,9 @@ model Notification {
   readAt           DateTime?
   aggregationKey   String?
   occurrenceCount  Int              @default(1)
+  emailDueAt       DateTime?
+  emailClaimedAt   DateTime?
+  emailLastSentOccurrenceCount Int   @default(0)
   userId           String
   customerSpaceId  String?
   projectId        String?
@@ -624,9 +658,23 @@ model Notification {
   customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
   project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  mailMessages    MailMessage[]
 
   @@unique([userId, aggregationKey])
   @@index([userId, readAt, createdAt])
+  @@index([emailDueAt, readAt])
+}
+
+model NotificationDeliveryRule {
+  key                 String   @id
+  notificationEnabled Boolean @default(true)
+  soundEnabled         Boolean @default(true)
+  emailEnabled         Boolean @default(false)
+  updatedAt            DateTime @updatedAt
+  updatedById          String?
+  updatedBy            User?   @relation("NotificationDeliveryRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([updatedAt])
 }
 
 model RequestPresence {
@@ -710,13 +758,18 @@ model PlatformSetting {
   smtpPort                        Int?
   smtpUser                        String?
   smtpPassword                    String?
+  smtpPasswordEncrypted           String?
   smtpFrom                        String?
   smtpSecure                      Boolean          @default(false)
   smtpSecureConfigured            Boolean          @default(false)
+  smtpHealthStatus                String?
+  smtpLastCheckedAt               DateTime?
+  smtpLastError                   String?
   mailMode                        MailDeliveryMode @default(LOCAL_OUTBOX)
   attachmentMaxSizeMb             Int              @default(20)
   attachmentAllowedExtensions     String           @default("jpg,jpeg,png,gif,webp,pdf,docx,xlsx,pptx,txt,log,csv,json")
   customerReplyAttachmentsEnabled Boolean          @default(true)
+  standardRequestEmailEnabled     Boolean          @default(false)
   updatedAt                       DateTime         @updatedAt
   updatedById                     String?
   updatedBy                       User?            @relation("PlatformSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -1019,6 +1072,12 @@ model MailMessage {
   body           String
   actionLabel    String?
   actionUrl      String?
+  sendAfter      DateTime            @default(now())
+  idempotencyKey String?             @unique
+  notificationId String?
+  notificationOccurrenceCount Int?
+  sourceType     String?
+  sourceId       String?
   deliveryMode   MailDeliveryMode    @default(LOCAL_OUTBOX)
   status         MailMessageStatus   @default(QUEUED)
   attemptCount   Int                 @default(0)
@@ -1030,10 +1089,14 @@ model MailMessage {
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
   providerEvents MailProviderEvent[]
+  notification   Notification?       @relation(fields: [notificationId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
+  @@index([status, sendAfter])
   @@index([toEmail, createdAt])
   @@index([providerId])
+  @@index([notificationId, notificationOccurrenceCount])
+  @@index([sourceType, sourceId, createdAt])
 }
 
 model MailTemplateOverride {
@@ -1047,6 +1110,29 @@ model MailTemplateOverride {
   updatedById String?
   updatedBy   User?    @relation(fields: [updatedById], references: [id], onDelete: SetNull)
 
+  @@index([updatedAt])
+}
+
+model SupportPlaybook {
+  key          String                  @id @default(cuid())
+  category     SupportPlaybookCategory
+  title        String
+  summary      String
+  introduction String
+  content      String?
+  steps        Json
+  safetyNotes  Json
+  active       Boolean                 @default(true)
+  sortOrder    Int                     @default(0)
+  isBuiltin    Boolean                 @default(false)
+  deletedAt    DateTime?
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @updatedAt
+  updatedById  String?
+  updatedBy    User?                   @relation("SupportPlaybookUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  attachments  Attachment[]
+
+  @@index([deletedAt, active, sortOrder, title])
   @@index([updatedAt])
 }
 

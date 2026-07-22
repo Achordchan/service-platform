@@ -101,6 +101,7 @@ type RequestDetailView = RequestSummary & {
     visibility: "CUSTOMER_VISIBLE";
     isSystem: boolean;
     isInitial: boolean;
+    supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
     replyToMessageId: string | null;
     createdAt: string;
     author: ApiAuthor;
@@ -613,6 +614,7 @@ function ExternalEmbedPortal({
     createdAt: message.createdAt,
     isSystem: message.isSystem,
     isInitial: message.isInitial,
+    supportPlaybook: message.supportPlaybook,
     visibility: message.visibility,
     replyToMessageId: message.replyToMessageId,
     replyTo: message.replyTo ? {
@@ -832,7 +834,30 @@ function EmbedReplyComposer({
   const [files, setFiles] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const typingTimer = useRef<number | null>(null);
+  const uploadInlineImage = useCallback(
+    async (file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("serviceRequestId", requestId);
+      form.append("inline", "true");
+      const response = await fetch("/api/v1/embed/attachments", {
+        method: "POST",
+        headers: { Authorization: `Embed ${token}` },
+        body: form,
+      });
+      const payload = (await response.json()) as {
+        data?: { id?: string };
+        error?: { message?: string };
+      };
+      if (!response.ok || !payload.data?.id) {
+        throw new Error(payload.error?.message || "图片上传失败");
+      }
+      return { attachmentId: payload.data.id };
+    },
+    [requestId, token],
+  );
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (!hasMeaningfulHtml(body) && files.length === 0) return;
@@ -891,6 +916,8 @@ function EmbedReplyComposer({
             typingTimer.current = window.setTimeout(() => onTyping(false), 2200);
           }}
           disabled={sending}
+          uploadImage={uploadInlineImage}
+          onImageUploadingChange={setInlineImageUploading}
           placeholder="回复服务人员"
         />
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between" }}>
@@ -898,7 +925,7 @@ function EmbedReplyComposer({
             添加附件
             <input hidden type="file" multiple onChange={(event) => { setFiles((current) => [...current, ...Array.from(event.target.files ?? [])]); event.target.value = ""; }} />
           </Button>
-          <Button type="submit" variant="contained" endIcon={<SendOutlinedIcon />} disabled={sending || (!hasMeaningfulHtml(body) && files.length === 0)}>
+          <Button type="submit" variant="contained" endIcon={<SendOutlinedIcon />} disabled={sending || inlineImageUploading || (!hasMeaningfulHtml(body) && files.length === 0)}>
             发送
           </Button>
         </Stack>

@@ -26,6 +26,7 @@ import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { MailSettingsPanel } from "@/components/staff/mail-settings-panel";
 import type {
   MailMessageView,
+  MailOutboxSummary,
   PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
 
@@ -71,20 +72,27 @@ export type PlatformSettingsSection = "site-mail" | "attachments" | "outbox";
 export function PlatformSettingsManager({
   initialSettings,
   initialMessages,
+  initialMailOutboxSummary,
   currentAdminEmail,
   sections,
   embedded = false,
   onSettingsChange,
+  onMailOutboxSummaryChange,
 }: {
   initialSettings: PlatformSettingsView;
   initialMessages: MailMessageView[];
+  initialMailOutboxSummary: MailOutboxSummary;
   currentAdminEmail: string;
   sections?: PlatformSettingsSection[];
   embedded?: boolean;
   onSettingsChange?: (settings: PlatformSettingsView) => void;
+  onMailOutboxSummaryChange?: (summary: MailOutboxSummary) => void;
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [messages, setMessages] = useState(initialMessages);
+  const [mailOutboxSummary, setMailOutboxSummary] = useState(
+    initialMailOutboxSummary,
+  );
   const [customerReplyAttachmentsEnabled, setCustomerReplyAttachmentsEnabled] =
     useState(initialSettings.customerReplyAttachmentsEnabled);
   const [submitting, setSubmitting] = useState(false);
@@ -145,10 +153,13 @@ export function PlatformSettingsManager({
     setRefreshing(true);
     setError(null);
     try {
-      const next = await staffApi<MailMessageView[]>(
-        "/api/v1/admin/mail-messages?limit=50",
-      );
+      const [next, nextSummary] = await Promise.all([
+        staffApi<MailMessageView[]>("/api/v1/admin/mail-messages?limit=50"),
+        staffApi<MailOutboxSummary>("/api/v1/admin/mail-messages/summary"),
+      ]);
       setMessages(next);
+      setMailOutboxSummary(nextSummary);
+      onMailOutboxSummaryChange?.(nextSummary);
     } catch (refreshError) {
       setError(
         refreshError instanceof Error
@@ -266,6 +277,28 @@ export function PlatformSettingsManager({
         }}
       >
         <Stack
+          direction="row"
+          spacing={1}
+          useFlexGap
+          sx={{ mb: 2, flexWrap: "wrap" }}
+        >
+          <Chip size="small" label={`排队 ${mailOutboxSummary.queued}`} />
+          <Chip
+            size="small"
+            label={`逾期 ${mailOutboxSummary.overdue}`}
+            color={mailOutboxSummary.overdue > 0 ? "error" : "default"}
+          />
+          <Chip
+            size="small"
+            label={`失败 ${mailOutboxSummary.failed}`}
+            color={mailOutboxSummary.failed > 0 ? "error" : "default"}
+          />
+          <Chip
+            size="small"
+            label={`已取消 ${mailOutboxSummary.cancelled}`}
+          />
+        </Stack>
+        <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}
           sx={{
@@ -317,6 +350,18 @@ export function PlatformSettingsManager({
                         label={statusLabel[message.status]}
                         color={statusColor[message.status]}
                       />
+                      {message.status === "QUEUED" &&
+                      new Date(message.sendAfter).getTime() <=
+                        new Date(mailOutboxSummary.asOf).getTime() -
+                          2 * 60 * 1000 ? (
+                        <Typography
+                          color="error"
+                          variant="caption"
+                          sx={{ display: "block", fontWeight: 700 }}
+                        >
+                          已逾期超过 2 分钟
+                        </Typography>
+                      ) : null}
                       {message.errorMessage ? (
                         <Typography color="error" variant="caption" sx={{ display: "block" }}>
                           {message.errorMessage}

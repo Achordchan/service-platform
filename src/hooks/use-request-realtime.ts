@@ -13,6 +13,7 @@ import {
 } from "@/lib/tab-attention";
 
 const REQUEST_LIVE_EVENTS: readonly RealtimeEventType[] = [
+  "PROJECT_UPDATED",
   "REQUEST_MESSAGE_CREATED",
   "REQUEST_STATUS_CHANGED",
   "REQUEST_ASSIGNED",
@@ -35,6 +36,7 @@ export function useRequestRealtime(
   requestId: string,
   options?: {
     currentUserId?: string;
+    projectId?: string;
   },
 ) {
   const router = useRouter();
@@ -42,6 +44,7 @@ export function useRequestRealtime(
   const pendingCatchupRef = useRef(false);
   const refreshTimerRef = useRef<number | null>(null);
   const currentUserId = options?.currentUserId;
+  const projectId = options?.projectId;
 
   useEffect(() => {
     bindTabAttentionReset();
@@ -68,7 +71,11 @@ export function useRequestRealtime(
 
     const unsubscribeEvents = subscribeRealtime(REQUEST_LIVE_EVENTS, (event) => {
       const payload = event.payload;
-      if (!matchesRequest(payload, requestId)) return;
+      const projectChanged =
+        event.type === "PROJECT_UPDATED" &&
+        Boolean(projectId) &&
+        payload.projectId === projectId;
+      if (!projectChanged && !matchesRequest(payload, requestId)) return;
 
       if (!event.live) {
         pendingCatchupRef.current = true;
@@ -82,6 +89,7 @@ export function useRequestRealtime(
         isLocalWindow && (isOwnEvent || !payload.actorId);
 
       if (
+        !projectChanged &&
         event.type === "REQUEST_MESSAGE_CREATED" &&
         !suppressLocalEcho &&
         !isOwnEvent
@@ -107,7 +115,7 @@ export function useRequestRealtime(
         refreshTimerRef.current = null;
       }
     };
-  }, [currentUserId, requestId, router]);
+  }, [currentUserId, projectId, requestId, router]);
 }
 
 /** Call after local send/assign/status so local SSE echoes can be ignored. */

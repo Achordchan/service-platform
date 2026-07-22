@@ -4,7 +4,12 @@ import { z } from "zod";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { withSystemDb } from "@/lib/system-db";
-import { enqueueMail, assertMailDeliveryReady } from "@/lib/jobs";
+import {
+  assertMailDeliveryReady,
+  createMailMessageInTx,
+  dispatchQueuedMailMessage,
+} from "@/lib/jobs";
+import { env } from "@/lib/runtime-env";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   createInvitationToken,
@@ -16,6 +21,7 @@ import {
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
+import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
 
 const emailSchema = z.string().trim().email().max(160);
 
@@ -29,8 +35,11 @@ export async function requestCustomerEmailChange(
   const newEmail = emailSchema.parse(rawEmail).toLowerCase();
   const token = createInvitationToken();
   const now = new Date();
+  const appUrl = await getPublicAppUrl();
+  const actionUrl = `${appUrl}/confirm-email-change?token=${encodeURIComponent(token.token)}`;
 
   const result = await withActorDb(actor, async (tx) => {
+    const deliveryMode = await resolveLockedMailDeliveryMode(tx);
     await tx.userEmailChange.updateMany({
       where: {
         status: "PENDING",
@@ -78,6 +87,10 @@ export async function requestCustomerEmailChange(
       );
     }
 
+    const replacedChanges = await tx.userEmailChange.findMany({
+      where: { userId, status: "PENDING" },
+      select: { id: true },
+    });
     await tx.userEmailChange.updateMany({
       where: { userId, status: "PENDING" },
       data: {
@@ -85,6 +98,19 @@ export async function requestCustomerEmailChange(
         cancelledAt: now,
       },
     });
+    if (replacedChanges.length > 0) {
+      await tx.mailMessage.updateMany({
+        where: {
+          sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+          sourceId: { in: replacedChanges.map((item) => item.id) },
+          status: "QUEUED",
+        },
+        data: {
+          status: "CANCELLED",
+          errorMessage: "邮箱变更已被新的申请替换",
+        },
+      });
+    }
     const change = await tx.userEmailChange.create({
       data: {
         userId,
@@ -106,42 +132,32 @@ export async function requestCustomerEmailChange(
         newEmail: change.newEmail,
       },
     });
-    return { user, change };
+    const mailMessage = await createMailMessageInTx(tx, {
+      to: change.newEmail,
+      templateKey: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+      variables: {
+        recipientName: user.name,
+        oldEmail: change.oldEmail,
+        newEmail: change.newEmail,
+        operatorName: actor.name,
+        expiresIn: "24 小时",
+      },
+      actionUrl,
+      deliveryMode,
+      idempotencyKey: `customer-email-change:${change.id}:verify:${token.tokenHash}`,
+      sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+      sourceId: change.id,
+    });
+    return { change, mailMessage };
   });
 
-  try {
-    await sendVerificationEmail({
-      recipientName: result.user.name,
-      oldEmail: result.change.oldEmail,
-      newEmail: result.change.newEmail,
-      operatorName: actor.name,
-      token: token.token,
-    });
-  } catch (error) {
-    await withActorDb(actor, async (tx) => {
-      await tx.userEmailChange.updateMany({
-        where: { id: result.change.id, status: "PENDING" },
-        data: {
-          status: "CANCELLED",
-          cancelledAt: new Date(),
-        },
-      });
-      await writeAuditLog(tx, actor, {
-        action: "CUSTOMER_EMAIL_CHANGE_EMAIL_FAILED",
-        resourceType: "UserEmailChange",
-        resourceId: result.change.id,
-        result: "FAILED",
-        metadata: {
-          userId,
-          newEmail,
-          error: error instanceof Error ? error.message : "邮件发送失败",
-        },
-      });
-    });
-    throw error;
-  }
+  await dispatchQueuedMailMessage(
+    result.mailMessage.id,
+    result.mailMessage.deliveryMode,
+    result.mailMessage.sendAfter,
+  );
 
-  return publicChange(result.change);
+  return publicChange(result.change, result.mailMessage.status);
 }
 
 export async function resendCustomerEmailChange(
@@ -152,7 +168,10 @@ export async function resendCustomerEmailChange(
   await assertMailDeliveryReady();
   const token = createInvitationToken();
   const now = new Date();
+  const appUrl = await getPublicAppUrl();
+  const actionUrl = `${appUrl}/confirm-email-change?token=${encodeURIComponent(token.token)}`;
   const result = await withActorDb(actor, async (tx) => {
+    const deliveryMode = await resolveLockedMailDeliveryMode(tx);
     const change = await tx.userEmailChange.findFirst({
       where: { userId, status: "PENDING" },
       include: { user: { select: { name: true } } },
@@ -179,45 +198,51 @@ export async function resendCustomerEmailChange(
         lastSentAt: now,
       },
     });
+    await tx.mailMessage.updateMany({
+      where: {
+        sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+        sourceId: change.id,
+        status: "QUEUED",
+      },
+      data: {
+        status: "CANCELLED",
+        errorMessage: "已生成新的邮箱验证链接",
+      },
+    });
     await writeAuditLog(tx, actor, {
       action: "CUSTOMER_EMAIL_CHANGE_RESENT",
       resourceType: "UserEmailChange",
       resourceId: change.id,
       metadata: { userId, newEmail: change.newEmail },
     });
+    const mailMessage = await createMailMessageInTx(tx, {
+      to: updated.newEmail,
+      templateKey: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+      variables: {
+        recipientName: change.user.name,
+        oldEmail: updated.oldEmail,
+        newEmail: updated.newEmail,
+        operatorName: actor.name,
+        expiresIn: "24 小时",
+      },
+      actionUrl,
+      deliveryMode,
+      idempotencyKey: `customer-email-change:${updated.id}:verify:${token.tokenHash}`,
+      sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+      sourceId: updated.id,
+    });
     return {
       change: updated,
-      recipientName: change.user.name,
-      previous: {
-        tokenHash: change.tokenHash,
-        expiresAt: change.expiresAt,
-        lastSentAt: change.lastSentAt,
-      },
+      mailMessage,
     };
   });
 
-  try {
-    await sendVerificationEmail({
-      recipientName: result.recipientName,
-      oldEmail: result.change.oldEmail,
-      newEmail: result.change.newEmail,
-      operatorName: actor.name,
-      token: token.token,
-    });
-  } catch (error) {
-    await withActorDb(actor, (tx) =>
-      tx.userEmailChange.updateMany({
-        where: {
-          id: result.change.id,
-          status: "PENDING",
-          tokenHash: token.tokenHash,
-        },
-        data: result.previous,
-      }),
-    );
-    throw error;
-  }
-  return publicChange(result.change);
+  await dispatchQueuedMailMessage(
+    result.mailMessage.id,
+    result.mailMessage.deliveryMode,
+    result.mailMessage.sendAfter,
+  );
+  return publicChange(result.change, result.mailMessage.status);
 }
 
 export function cancelCustomerEmailChange(actor: Actor, userId: string) {
@@ -233,6 +258,17 @@ export function cancelCustomerEmailChange(actor: Actor, userId: string) {
       data: {
         status: "CANCELLED",
         cancelledAt: new Date(),
+      },
+    });
+    await tx.mailMessage.updateMany({
+      where: {
+        sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+        sourceId: change.id,
+        status: "QUEUED",
+      },
+      data: {
+        status: "CANCELLED",
+        errorMessage: "邮箱变更已取消",
       },
     });
     await writeAuditLog(tx, actor, {
@@ -272,6 +308,27 @@ export async function confirmCustomerEmailChange(rawToken: string) {
   const token = z.string().min(32).max(512).parse(rawToken);
   const now = new Date();
   const result = await withSystemDb(async (tx) => {
+    let deliveryMode: Awaited<
+      ReturnType<typeof resolveLockedMailDeliveryMode>
+    > | null = null;
+    try {
+      deliveryMode = await resolveLockedMailDeliveryMode(tx);
+    } catch (error) {
+      if (
+        !(error instanceof DomainError) ||
+        ![
+          "MAIL_DELIVERY_NOT_CONFIGURED",
+          "RESEND_NOT_READY",
+          "SMTP_NOT_READY",
+        ].includes(error.code)
+      ) {
+        throw error;
+      }
+    }
+    const settings = await tx.platformSetting.findUnique({
+      where: { id: 1 },
+      select: { appUrl: true },
+    });
     const change = await tx.userEmailChange.findUnique({
       where: { tokenHash: hashInvitationToken(token) },
       include: {
@@ -380,36 +437,54 @@ export async function confirmCustomerEmailChange(rawToken: string) {
         },
       },
     );
-    return {
-      change: completed,
+    const variables = {
       recipientName: change.user.name,
+      oldEmail: completed.oldEmail,
+      newEmail: completed.newEmail,
     };
-  });
-
-  const variables = {
-    recipientName: result.recipientName,
-    oldEmail: result.change.oldEmail,
-    newEmail: result.change.newEmail,
-  };
-  const notifications = await Promise.allSettled([
-    (async () => {
-      const appUrl = await getPublicAppUrl();
-      return enqueueMail({
-        to: result.change.newEmail,
+    const appUrl = (settings?.appUrl?.trim() || env.APP_URL).replace(/\/$/, "");
+    const mailMessages = [];
+    if (deliveryMode) {
+      const completedMail = await createMailMessageInTx(tx, {
+        to: completed.newEmail,
         templateKey: "CUSTOMER_EMAIL_CHANGE_COMPLETED",
         variables,
         actionUrl: `${appUrl}/login`,
+        deliveryMode,
+        idempotencyKey: `customer-email-change:${completed.id}:completed`,
+        sourceType: "CUSTOMER_EMAIL_CHANGE_COMPLETED",
+        sourceId: completed.id,
       });
-    })(),
-    enqueueMail({
-      to: result.change.oldEmail,
-      templateKey: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
-      variables: {
-        ...variables,
-        supportEmail: "support@achord.cn",
-      },
-    }),
-  ]);
+      const securityMail = await createMailMessageInTx(tx, {
+        to: completed.oldEmail,
+        templateKey: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
+        variables: {
+          ...variables,
+          supportEmail: "support@achord.cn",
+        },
+        deliveryMode,
+        idempotencyKey: `customer-email-change:${completed.id}:security-notice`,
+        sourceType: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
+        sourceId: completed.id,
+      });
+      mailMessages.push(completedMail, securityMail);
+    }
+    return {
+      change: completed,
+      recipientName: change.user.name,
+      mailMessages,
+    };
+  });
+
+  const notifications = await Promise.allSettled(
+    result.mailMessages.map((message) =>
+      dispatchQueuedMailMessage(
+        message.id,
+        message.deliveryMode,
+        message.sendAfter,
+      ),
+    ),
+  );
   if (notifications.some((item) => item.status === "rejected")) {
     console.error("CUSTOMER_EMAIL_CHANGE_NOTICE_FAILED", {
       emailChangeId: result.change.id,
@@ -420,28 +495,6 @@ export async function confirmCustomerEmailChange(rawToken: string) {
     recipientName: result.recipientName,
     newEmail: result.change.newEmail,
   };
-}
-
-async function sendVerificationEmail(input: {
-  recipientName: string;
-  oldEmail: string;
-  newEmail: string;
-  operatorName: string;
-  token: string;
-}) {
-  const appUrl = await getPublicAppUrl();
-  await enqueueMail({
-    to: input.newEmail,
-    templateKey: "CUSTOMER_EMAIL_CHANGE_VERIFY",
-    variables: {
-      recipientName: input.recipientName,
-      oldEmail: input.oldEmail,
-      newEmail: input.newEmail,
-      operatorName: input.operatorName,
-      expiresIn: "24 小时",
-    },
-    actionUrl: `${appUrl}/confirm-email-change?token=${encodeURIComponent(input.token)}`,
-  });
 }
 
 async function assertEmailAvailable(
@@ -521,7 +574,7 @@ function publicChange(change: {
   status: string;
   expiresAt: Date;
   lastSentAt: Date;
-}) {
+}, mailStatus?: string) {
   return {
     id: change.id,
     oldEmail: change.oldEmail,
@@ -529,5 +582,6 @@ function publicChange(change: {
     status: change.status,
     expiresAt: change.expiresAt.toISOString(),
     lastSentAt: change.lastSentAt.toISOString(),
+    mailStatus: mailStatus ?? null,
   };
 }

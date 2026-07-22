@@ -21,6 +21,10 @@ const readySettings: RuntimeMailSettings = {
   smtpFrom: "服务支持中心 <mailer@example.com>",
   smtpSecure: true,
   hasStoredPassword: true,
+  smtpHealthStatus: "healthy",
+  smtpLastCheckedAt: new Date(),
+  smtpLastError: null,
+  standardRequestEmailEnabled: false,
 };
 
 describe("mail delivery readiness", () => {
@@ -54,5 +58,15 @@ describe("mail delivery readiness", () => {
         true,
       ),
     ).toThrow("SMTP 配置不完整");
+  });
+
+  it("requires SMTP connection check before delivery", () => {
+    expect(() =>
+      assertDeliveryModeReady(
+        { ...readySettings, smtpHealthStatus: "unchecked" },
+        "SMTP",
+        true,
+      ),
+    ).toThrow("尚未通过连接检测");
   });
 });

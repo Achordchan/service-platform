@@ -3,6 +3,13 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
+import {
+  extractInlineAttachmentIds,
+  hasMeaningfulHtml,
+} from "@/lib/message-content";
+import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
+import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchProjectActivity,
@@ -10,9 +17,13 @@ import {
 } from "@/modules/notifications/notification-service";
 import {
   assertCanManageProjectDelivery,
-  assertCanViewProject,
+  assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
-import { assertAllowed, assertFound } from "@/modules/projects/errors";
+import {
+  assertAllowed,
+  assertFound,
+  DomainError,
+} from "@/modules/projects/errors";
 import { canViewContent } from "@/modules/projects/permissions";
 import type {
   CreateProjectUpdateInput,
@@ -25,10 +36,26 @@ function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+function sanitizeProjectUpdateBody(body: string) {
+  const sanitized = sanitizeMessageHtml(body);
+  if (!hasMeaningfulHtml(sanitized)) {
+    throw new DomainError("EMPTY_PROJECT_UPDATE", "请填写进度说明", 422);
+  }
+  if (sanitized.length > 20_000) {
+    throw new DomainError("PROJECT_UPDATE_TOO_LONG", "进度说明过长", 422);
+  }
+  return sanitized;
+}
+
 export function listProjectUpdates(actor: Actor, projectId: string) {
   return withActorDb(actor, async (tx) => {
-    await assertCanViewProject(tx, actor, projectId);
-    return tx.projectUpdate.findMany({
+    await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
+    const updates = await tx.projectUpdate.findMany({
       where: {
         projectId,
         visibility: actor.isStaff ? undefined : "CUSTOMER_VISIBLE",
@@ -51,6 +78,10 @@ export function listProjectUpdates(actor: Actor, projectId: string) {
       },
       orderBy: { createdAt: "desc" },
     });
+    return updates.map((update) => ({
+      ...update,
+      body: sanitizeMessageHtml(update.body),
+    }));
   });
 }
 
@@ -61,10 +92,11 @@ export function createProjectUpdate(
 ) {
   return withActorDb(actor, async (tx) => {
     const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const body = sanitizeProjectUpdateBody(input.body);
     const update = await tx.projectUpdate.create({
       data: {
         title: input.title,
-        body: input.body,
+        body,
         visibility: input.visibility ?? "CUSTOMER_VISIBLE",
         projectId,
         authorId: actor.id,
@@ -75,6 +107,16 @@ export function createProjectUpdate(
         },
       },
     });
+    await claimUserInlineAttachments(
+      tx,
+      actor,
+      extractInlineAttachmentIds(body),
+      {
+        projectId,
+        projectUpdateId: update.id,
+        visibility: update.visibility,
+      },
+    );
     await writeAuditLog(tx, actor, {
       action: "PROJECT_UPDATE_CREATED",
       resourceType: "ProjectUpdate",
@@ -114,26 +156,72 @@ export function updateProjectUpdate(
     const context = await assertCanManageProjectDelivery(tx, actor, projectId);
     const existing = await tx.projectUpdate.findFirst({
       where: { id: projectUpdateId, projectId },
-      select: { id: true },
+      select: {
+        id: true,
+        body: true,
+        visibility: true,
+        attachments: {
+          select: { id: true, storageKey: true, inline: true },
+        },
+      },
     });
     assertFound(existing, "进度动态不存在");
 
+    const updateInput = {
+      ...input,
+      ...(input.body === undefined
+        ? {}
+        : { body: sanitizeProjectUpdateBody(input.body) }),
+    };
     const update = await tx.projectUpdate.update({
       where: { id: projectUpdateId },
-      data: input,
+      data: updateInput,
       include: {
         author: {
           select: { id: true, name: true },
         },
       },
     });
+    const removedStorageKeys: string[] = [];
+    const finalBody = update.body;
+    const finalVisibility = update.visibility;
+    const nextAttachmentIds = new Set(extractInlineAttachmentIds(finalBody));
+    const existingInlineAttachments = existing.attachments.filter(
+      (attachment) => attachment.inline,
+    );
+    const existingAttachmentIds = new Set(
+      existingInlineAttachments.map((attachment) => attachment.id),
+    );
+    const newAttachmentIds = Array.from(nextAttachmentIds).filter(
+      (id) => !existingAttachmentIds.has(id),
+    );
+    await claimUserInlineAttachments(tx, actor, newAttachmentIds, {
+      projectId,
+      projectUpdateId: update.id,
+      visibility: finalVisibility,
+    });
+    await tx.attachment.updateMany({
+      where: { projectUpdateId: update.id },
+      data: { visibility: finalVisibility },
+    });
+    const removedAttachments = existingInlineAttachments.filter(
+      (attachment) => !nextAttachmentIds.has(attachment.id),
+    );
+    if (removedAttachments.length > 0) {
+      await tx.attachment.deleteMany({
+        where: { id: { in: removedAttachments.map((item) => item.id) } },
+      });
+      removedStorageKeys.push(
+        ...removedAttachments.map((attachment) => attachment.storageKey),
+      );
+    }
     await writeAuditLog(tx, actor, {
       action: "PROJECT_UPDATE_UPDATED",
       resourceType: "ProjectUpdate",
       resourceId: update.id,
       customerSpaceId: context.customerSpaceId,
       projectId,
-      metadata: auditMetadata(input),
+      metadata: auditMetadata(updateInput),
     });
     await publishProjectChange(tx, actor, {
       change: "PROJECT_UPDATE_UPDATED",
@@ -142,8 +230,31 @@ export function updateProjectUpdate(
       visibility: update.visibility,
       payload: { projectUpdateId: update.id },
     });
+    return { update, removedStorageKeys };
+  }).then(async ({ update, removedStorageKeys }) => {
+    await removeProjectUpdateFiles(update.id, removedStorageKeys);
     return update;
   });
+}
+
+async function removeProjectUpdateFiles(
+  projectUpdateId: string,
+  storageKeys: string[],
+) {
+  let failedCount = 0;
+  for (const storageKey of storageKeys) {
+    try {
+      await removePrivateFile(storageKey);
+    } catch {
+      failedCount += 1;
+    }
+  }
+  if (failedCount > 0) {
+    console.error("PROJECT_UPDATE_ATTACHMENT_FILE_DELETE_FAILED", {
+      projectUpdateId,
+      failedCount,
+    });
+  }
 }
 
 export function listUpdateComments(
@@ -152,7 +263,12 @@ export function listUpdateComments(
   projectUpdateId: string,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanViewProject(tx, actor, projectId);
+    const context = await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
     const update = await tx.projectUpdate.findFirst({
       where: { id: projectUpdateId, projectId },
       select: { id: true, visibility: true },
@@ -185,7 +301,12 @@ export function createUpdateComment(
   input: CreateUpdateCommentInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanViewProject(tx, actor, projectId);
+    const context = await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
     const update = await tx.projectUpdate.findFirst({
       where: { id: projectUpdateId, projectId },
       select: { id: true, visibility: true },
@@ -254,7 +375,12 @@ export function updateUpdateComment(
   input: UpdateUpdateCommentInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanViewProject(tx, actor, projectId);
+    const context = await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
     const comment = await tx.updateComment.findFirst({
       where: {
         id: updateCommentId,

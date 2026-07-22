@@ -17,6 +17,7 @@ import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
+import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
 import {
   buildAttachmentOnlyMessage,
@@ -48,13 +49,15 @@ export function RequestReplyForm({
   onTypingStopped?: () => void;
 }) {
   const router = useRouter();
-  const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
+  const { policy, validateFiles } = useAttachmentPolicy();
   const [body, setBody] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [inlineImageUploading, setInlineImageUploading] = useState(false);
 
   const attachmentsEnabled = policy.customerReplyAttachmentsEnabled !== false;
+  const uploadInlineImage = useInlineImageUpload({ requestId });
 
   function addFiles(next: File[]) {
     const { accepted, error: validateError } = validateFiles(next, files.length);
@@ -136,14 +139,6 @@ export function RequestReplyForm({
       component="form"
       variant="outlined"
       onSubmit={submitReply}
-      onPaste={(event) => {
-        if (!attachmentsEnabled) return;
-        const imageFiles = filesFromClipboard(event.clipboardData);
-        if (imageFiles.length > 0) {
-          event.preventDefault();
-          addFiles(imageFiles);
-        }
-      }}
       sx={{ overflow: "hidden" }}
     >
       {submitting ? <LinearProgress /> : null}
@@ -166,6 +161,8 @@ export function RequestReplyForm({
             }
           }}
           disabled={submitting}
+          uploadImage={uploadInlineImage}
+          onImageUploadingChange={setInlineImageUploading}
           placeholder="补充信息或回复处理人员"
         />
         <Stack
@@ -203,6 +200,7 @@ export function RequestReplyForm({
             endIcon={<SendOutlinedIcon />}
             disabled={
               submitting ||
+              inlineImageUploading ||
               (!hasMeaningfulHtml(body) && files.length === 0)
             }
             sx={{ alignSelf: { xs: "stretch", sm: "auto" } }}

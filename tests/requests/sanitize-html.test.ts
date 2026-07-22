@@ -16,5 +16,23 @@ describe("消息富文本消毒", () => {
   it("识别空内容", () => {
     expect(hasMeaningfulHtml("<p><br></p>")).toBe(false);
     expect(hasMeaningfulHtml("<p>内容</p>")).toBe(true);
+    expect(
+      hasMeaningfulHtml(
+        '<img src="attachment://cmriy2wf0000hdn5ughz329jp" data-attachment-id="cmriy2wf0000hdn5ughz329jp">',
+      ),
+    ).toBe(true);
+  });
+
+  it("只保留受控附件图片并移除外部图片地址", () => {
+    const html = sanitizeMessageHtml(
+      '<p>截图</p><img src="attachment://cmriy2wf0000hdn5ughz329jp" data-attachment-id="cmriy2wf0000hdn5ughz329jp" alt="测试截图"><img src="https://tracker.example/pixel.png">',
+    );
+    expect(html).toContain(
+      'src="attachment://cmriy2wf0000hdn5ughz329jp"',
+    );
+    expect(html).toContain(
+      'data-attachment-id="cmriy2wf0000hdn5ughz329jp"',
+    );
+    expect(html).not.toContain("tracker.example");
   });
 });

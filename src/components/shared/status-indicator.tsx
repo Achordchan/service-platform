@@ -6,7 +6,7 @@ import type {
 } from "@/components/customer/customer-types";
 
 const statusMap = {
-  DRAFT: { label: "待开始", color: "#98a2b3" },
+  DRAFT: { label: "待接入", color: "#98a2b3" },
   ACTIVE: { label: "进行中", color: "#1677ff" },
   PAUSED: { label: "已暂停", color: "#d98b16" },
   COMPLETED: { label: "已完成", color: "#16a466" },

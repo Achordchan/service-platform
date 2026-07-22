@@ -1,11 +1,19 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Avatar,
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
   Paper,
   Stack,
@@ -18,7 +26,9 @@ import { RequestMessageAttachments } from "@/components/shared/request-chat-atta
 import type { ChatMessage } from "@/components/shared/request-chat-types";
 import type { ChatAttachment } from "@/components/shared/request-chat-types";
 import { RequestQuotedMessage } from "@/components/shared/request-reply-preview";
+import { SupportPlaybookMessageCard } from "@/components/shared/support-playbook-message-card";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
+import { resolveInlineAttachmentHtml } from "@/lib/message-content";
 
 const INITIAL_VISIBLE = 12;
 const LOAD_MORE_STEP = 12;
@@ -133,7 +143,10 @@ export function RequestChatThread({
     [messages],
   );
   const [extraVisible, setExtraVisible] = useState(0);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const loadingEarlierRef = useRef(false);
+  const loadEarlierTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const stickToBottomRef = useRef(true);
   const previousLatestIdRef = useRef<string | null>(null);
   const previousScrollHeightRef = useRef(0);
@@ -166,14 +179,31 @@ export function RequestChatThread({
     previousScrollHeightRef.current = node.scrollHeight;
   }, [counterpartTypingLabel, sorted, visibleMessages.length]);
 
-  function loadEarlier() {
+  const loadEarlier = useCallback(() => {
+    if (loadingEarlierRef.current || hiddenCount === 0) return;
     const node = scrollerRef.current;
     if (node) {
       previousScrollHeightRef.current = node.scrollHeight;
       stickToBottomRef.current = false;
     }
-    setExtraVisible((current) => current + LOAD_MORE_STEP);
-  }
+    loadingEarlierRef.current = true;
+    setLoadingEarlier(true);
+    loadEarlierTimerRef.current = setTimeout(() => {
+      setExtraVisible((current) => current + LOAD_MORE_STEP);
+      loadingEarlierRef.current = false;
+      setLoadingEarlier(false);
+      loadEarlierTimerRef.current = null;
+    }, 160);
+  }, [hiddenCount]);
+
+  useEffect(
+    () => () => {
+      if (loadEarlierTimerRef.current) {
+        clearTimeout(loadEarlierTimerRef.current);
+      }
+    },
+    [],
+  );
 
   if (sorted.length === 0) {
     return (
@@ -206,8 +236,18 @@ export function RequestChatThread({
             bgcolor: "background.paper",
           }}
         >
-          <Button size="small" onClick={loadEarlier} fullWidth>
-            加载更早的消息（还有 {hiddenCount} 条）
+          <Button
+            size="small"
+            onClick={loadEarlier}
+            disabled={loadingEarlier}
+            startIcon={
+              loadingEarlier ? <CircularProgress size={15} /> : undefined
+            }
+            fullWidth
+          >
+            {loadingEarlier
+              ? "正在加载更早的消息"
+              : `加载更早的消息（还有 ${hiddenCount} 条）`}
           </Button>
         </Box>
       ) : null}
@@ -219,6 +259,9 @@ export function RequestChatThread({
           const distance =
             node.scrollHeight - node.scrollTop - node.clientHeight;
           stickToBottomRef.current = distance < 48;
+          if (node.scrollTop <= 16 && hiddenCount > 0) {
+            loadEarlier();
+          }
         }}
         sx={{
           flex: 1,
@@ -326,7 +369,8 @@ export function RequestChatThread({
                 </Avatar>
                 <Box
                   sx={{
-                    maxWidth: { xs: "82%", md: "72%" },
+                    width: "fit-content",
+                    maxWidth: { xs: "86%", sm: "74%", md: "64%" },
                     minWidth: 0,
                     position: "relative",
                     "& .request-message-reply": {
@@ -407,6 +451,12 @@ export function RequestChatThread({
                   </Stack>
                   <Box
                     sx={{
+                      display: "block",
+                      width: "fit-content",
+                      minWidth: 52,
+                      maxWidth: "100%",
+                      ml: isSelf ? "auto" : 0,
+                      mr: isSelf ? 0 : "auto",
                       px: 1.75,
                       py: 1.35,
                       borderRadius: isSelf
@@ -436,6 +486,7 @@ export function RequestChatThread({
                         : isAdmin
                           ? "0 8px 20px rgba(17, 24, 39, 0.18)"
                           : "0 4px 14px rgba(15, 23, 42, 0.04)",
+                      overflowWrap: "anywhere",
                       "& a": {
                         color:
                           (isSelf || isAdmin) && !isInternal
@@ -453,6 +504,14 @@ export function RequestChatThread({
                         fontWeight: 750,
                       },
                       "& ul, & ol": { my: 0.5, pl: 2.25 },
+                      "& img": {
+                        display: "block",
+                        maxWidth: "100%",
+                        maxHeight: 420,
+                        my: 1,
+                        borderRadius: 1.5,
+                        objectFit: "contain",
+                      },
                     }}
                   >
                     <RequestQuotedMessage
@@ -462,13 +521,41 @@ export function RequestChatThread({
                       )}
                       inverted={(isSelf || isAdmin) && !isInternal}
                     />
-                    {looksLikeHtml(message.body) ? (
+                    {message.supportPlaybook ? (
+                      <SupportPlaybookMessageCard
+                        playbook={message.supportPlaybook}
+                        inverted={(isSelf || isAdmin) && !isInternal}
+                        resolveImageUrl={(attachmentId) => {
+                          const file = message.attachments.find(
+                            (item) => item.id === attachmentId && item.inline,
+                          );
+                          if (!file) return "about:blank";
+                          return attachmentUrl
+                            ? attachmentUrl(file, true)
+                            : `/api/v1/attachments/${file.id}?disposition=inline`;
+                        }}
+                      />
+                    ) : looksLikeHtml(message.body) ? (
                       <Box
                         sx={{
                           lineHeight: 1.7,
                           wordBreak: "break-word",
                         }}
-                        dangerouslySetInnerHTML={{ __html: message.body }}
+                        dangerouslySetInnerHTML={{
+                          __html: resolveInlineAttachmentHtml(
+                            message.body,
+                            (attachmentId) => {
+                              const file = message.attachments.find(
+                                (item) =>
+                                  item.id === attachmentId && item.inline,
+                              );
+                              if (!file) return "about:blank";
+                              return attachmentUrl
+                                ? attachmentUrl(file, true)
+                                : `/api/v1/attachments/${file.id}?disposition=inline`;
+                            },
+                          ),
+                        }}
                       />
                     ) : (
                       <Typography
@@ -482,7 +569,7 @@ export function RequestChatThread({
                       </Typography>
                     )}
                     <RequestMessageAttachments
-                      files={message.attachments}
+                      files={message.attachments.filter((file) => !file.inline)}
                       tone={tone}
                       resolveUrl={attachmentUrl}
                       onDownload={onAttachmentDownload}

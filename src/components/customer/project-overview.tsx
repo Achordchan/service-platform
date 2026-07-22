@@ -39,6 +39,9 @@ export function ProjectOverview({
 }) {
   const showMilestones = project.showMilestones !== false;
   const showProgress = project.showProgress !== false;
+  const updatesEnabled = project.customerUpdatesEnabled !== false;
+  const requestsEnabled = project.customerRequestsEnabled !== false;
+  const activeRequests = requests.filter((request) => !request.archivedAt);
 
   return (
     <Stack spacing={3.5} sx={{ pt: 2.5 }}>
@@ -77,7 +80,7 @@ export function ProjectOverview({
               当前阶段
             </Typography>
             <Typography sx={{ mt: 0.75, fontWeight: 650 }}>
-              {project.currentStage || "待确认"}
+              {project.currentStage || "待启动"}
             </Typography>
           </Box>
           <Box>
@@ -109,82 +112,94 @@ export function ProjectOverview({
         ) : null}
       </Paper>
 
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", lg: "minmax(0, 1.45fr) minmax(320px, 0.95fr)" },
-          gap: 4,
-        }}
-      >
-        {showMilestones ? (
-          <Box>
-            <Typography variant="h3" sx={{ mb: 2.5 }}>
-              里程碑
-            </Typography>
-            {project.milestones.length > 0 ? (
-              <MilestoneTimeline milestones={project.milestones} />
-            ) : (
-              <EmptyState
-                title="暂无里程碑"
-                description="项目计划确认后将在此显示。"
-              />
-            )}
-          </Box>
-        ) : null}
+      {showMilestones || updatesEnabled ? (
         <Box
           sx={{
-            pl: { lg: showMilestones ? 4 : 0 },
-            borderLeft: { lg: showMilestones ? "1px solid" : 0 },
-            borderColor: "divider",
-            gridColumn: showMilestones ? undefined : "1 / -1",
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              lg:
+                showMilestones && updatesEnabled
+                  ? "minmax(0, 1.45fr) minmax(320px, 0.95fr)"
+                  : "1fr",
+            },
+            gap: 4,
           }}
         >
-          <Stack
-            direction="row"
-            sx={{
-              mb: 0.5,
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <Typography variant="h3">最新进度</Typography>
-            {project.updates.length > 3 ? (
+          {showMilestones ? (
+            <Box>
+              <Typography variant="h3" sx={{ mb: 2.5 }}>
+                里程碑
+              </Typography>
+              {project.milestones.length > 0 ? (
+                <MilestoneTimeline milestones={project.milestones} />
+              ) : (
+                <EmptyState
+                  title="暂无里程碑"
+                  description="项目计划确认后将在此显示。"
+                />
+              )}
+            </Box>
+          ) : null}
+          {updatesEnabled ? (
+            <Box
+              sx={{
+                pl: { lg: showMilestones ? 4 : 0 },
+                borderLeft: { lg: showMilestones ? "1px solid" : 0 },
+                borderColor: "divider",
+              }}
+            >
+              <Stack
+                direction="row"
+                sx={{
+                  mb: 0.5,
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <Typography variant="h3">最新进度</Typography>
+                {project.updates.length > 3 ? (
+                  <Button
+                    component={Link}
+                    href={`/customer/projects/${project.id}?tab=updates`}
+                    size="small"
+                  >
+                    查看全部
+                  </Button>
+                ) : null}
+              </Stack>
+              <ProjectUpdates updates={project.updates} compact />
+            </Box>
+          ) : null}
+        </Box>
+      ) : null}
+
+      {requestsEnabled ? (
+        <>
+          <Divider />
+          <Box>
+            <Stack
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1.5}
+              sx={{
+                mb: 1.5,
+                alignItems: { xs: "stretch", sm: "center" },
+                justifyContent: "space-between",
+              }}
+            >
+              <Typography variant="h3">最近服务请求</Typography>
               <Button
                 component={Link}
-                href={`/customer/projects/${project.id}?tab=updates`}
+                href={`/customer/projects/${project.id}?tab=requests`}
                 size="small"
               >
                 查看全部
               </Button>
-            ) : null}
-          </Stack>
-          <ProjectUpdates updates={project.updates} compact />
-        </Box>
-      </Box>
-
-      <Divider />
-
-      <Box>
-        <Stack
-          direction={{ xs: "column", sm: "row" }}
-          spacing={1.5}
-          sx={{
-            mb: 1.5,
-            alignItems: { xs: "stretch", sm: "center" },
-            justifyContent: "space-between",
-          }}
-        >
-          <Typography variant="h3">最近服务请求</Typography>
-          <Button
-            component={Link}
-            href={`/customer/projects/${project.id}?tab=requests`}
-            size="small"
-          >
-            查看全部
-          </Button>
-        </Stack>
-        <ServiceRequestTable requests={requests.slice(0, 4)} compact />
-      </Box>
+            </Stack>
+            <ServiceRequestTable requests={activeRequests.slice(0, 4)} compact />
+          </Box>
+        </>
+      ) : null}
     </Stack>
   );
 }

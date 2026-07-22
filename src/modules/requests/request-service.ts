@@ -11,9 +11,12 @@ import type { CreateRequestInput } from "@/modules/requests/request-schemas";
 import {
   buildMessagePreview,
   escapeHtmlText,
+  extractInlineAttachmentIds,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
+import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 
 const userBriefSelect = {
   id: true,
@@ -37,6 +40,7 @@ const requestBaseSelect = {
   assigneeId: true,
   resolvedAt: true,
   closedAt: true,
+  archivedAt: true,
   createdAt: true,
   updatedAt: true,
 } as const;
@@ -172,10 +176,14 @@ export function createRequest(
         status: true,
         serviceTypeId: true,
         customerSpaceId: true,
+        customerRequestsEnabled: true,
       },
     });
     if (!project) {
       throw notFound("项目不存在或无权访问");
+    }
+    if (!actor.isStaff && !project.customerRequestsEnabled) {
+      throw badRequest("REQUESTS_DISABLED", "该项目未开放服务请求");
     }
     if (project.status !== "ACTIVE") {
       throw badRequest(
@@ -229,6 +237,17 @@ export function createRequest(
       },
       select: { id: true },
     });
+    await claimUserInlineAttachments(
+      tx,
+      actor,
+      extractInlineAttachmentIds(sanitizedDescription),
+      {
+        projectId,
+        serviceRequestId: request.id,
+        requestMessageId: initialMessage.id,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+    );
 
     await writeAuditLog(tx, actor, {
       action: "REQUEST_CREATED",
@@ -273,10 +292,13 @@ export function listProjectRequests(actor: Actor, projectId: string) {
   return withActorDb(actor, async (tx) => {
     const project = await tx.project.findUnique({
       where: { id: projectId },
-      select: { id: true },
+      select: { id: true, customerRequestsEnabled: true },
     });
     if (!project) {
       throw notFound("项目不存在或无权访问");
+    }
+    if (!actor.isStaff && !project.customerRequestsEnabled) {
+      return [];
     }
 
     const requests = await tx.serviceRequest.findMany({
@@ -315,11 +337,19 @@ export function getRequest(actor: Actor, requestId: string) {
     if (!request) {
       throw notFound();
     }
-    const [summary] = await hydrateRequestSummaries(tx, [request]);
     const project = await tx.project.findUniqueOrThrow({
       where: { id: request.projectId },
-      select: { id: true, title: true, customerSpaceId: true },
+      select: {
+        id: true,
+        title: true,
+        customerSpaceId: true,
+        customerRequestsEnabled: true,
+      },
     });
+    if (!actor.isStaff && !project.customerRequestsEnabled) {
+      throw notFound();
+    }
+    const [summary] = await hydrateRequestSummaries(tx, [request]);
     const messages = await tx.requestMessage.findMany({
       where: { serviceRequestId: request.id, ...visibleContent },
       select: {
@@ -331,6 +361,8 @@ export function getRequest(actor: Actor, requestId: string) {
         authorId: true,
         externalAuthorId: true,
         replyToMessageId: true,
+        supportPlaybookKey: true,
+        supportPlaybookSnapshot: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -345,25 +377,52 @@ export function getRequest(actor: Actor, requestId: string) {
         .map((message) => message.externalAuthorId)
         .filter((value): value is string => Boolean(value)),
     );
+    const playbookAssetIdsByMessageId = new Map(
+      messages.map((message) => {
+        const snapshot = parseSupportPlaybookSnapshot(
+          message.supportPlaybookSnapshot,
+        );
+        return [
+          message.id,
+          snapshot?.content
+            ? extractInlineAttachmentIds(snapshot.content)
+            : [],
+        ] as const;
+      }),
+    );
+    const supportPlaybookAssetIds = Array.from(
+      new Set(Array.from(playbookAssetIdsByMessageId.values()).flat()),
+    );
     const attachments = await tx.attachment.findMany({
-      where: { serviceRequestId: request.id, ...visibleContent },
+      where: {
+        OR: [
+          { serviceRequestId: request.id },
+          { id: { in: supportPlaybookAssetIds } },
+        ],
+        ...visibleContent,
+      },
       select: {
         id: true,
         requestMessageId: true,
         originalName: true,
         mimeType: true,
         size: true,
+        inline: true,
         visibility: true,
         createdAt: true,
       },
       orderBy: { createdAt: "asc" },
     });
     const attachmentsByMessageId = new Map<string, typeof attachments>();
+    const attachmentById = new Map(
+      attachments.map((attachment) => [attachment.id, attachment]),
+    );
     for (const attachment of attachments) {
-      if (!attachment.requestMessageId) continue;
-      const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
-      current.push(attachment);
-      attachmentsByMessageId.set(attachment.requestMessageId, current);
+      if (attachment.requestMessageId) {
+        const current = attachmentsByMessageId.get(attachment.requestMessageId) ?? [];
+        current.push(attachment);
+        attachmentsByMessageId.set(attachment.requestMessageId, current);
+      }
     }
     const messageById = new Map(messages.map((message) => [message.id, message]));
     const authorFor = (message: (typeof messages)[number]) => ({
@@ -381,14 +440,26 @@ export function getRequest(actor: Actor, requestId: string) {
           : null;
         return {
           ...message,
+          supportPlaybook: parseSupportPlaybookSnapshot(
+            message.supportPlaybookSnapshot,
+          ),
           author: authorFor(message).author,
           externalAuthor: authorFor(message).externalAuthor,
-          attachments: (attachmentsByMessageId.get(message.id) ?? []).map(
+          attachments: [
+            ...(attachmentsByMessageId.get(message.id) ?? []),
+            ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
+              .map((id) => attachmentById.get(id))
+              .filter(
+                (value): value is (typeof attachments)[number] =>
+                  Boolean(value),
+              ),
+          ].map(
             (attachment) => ({
               id: attachment.id,
               originalName: attachment.originalName,
               mimeType: attachment.mimeType,
               size: attachment.size,
+              inline: attachment.inline,
               visibility: attachment.visibility,
               createdAt: attachment.createdAt,
             }),
@@ -412,6 +483,7 @@ export function getRequest(actor: Actor, requestId: string) {
                   (attachment) => ({
                     id: attachment.id,
                     originalName: attachment.originalName,
+                    inline: attachment.inline,
                   }),
                 ),
               }
@@ -419,7 +491,9 @@ export function getRequest(actor: Actor, requestId: string) {
         };
       }),
       attachments: attachments
-        .filter((attachment) => !attachment.requestMessageId)
+        .filter(
+          (attachment) => !attachment.requestMessageId && !attachment.inline,
+        )
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,

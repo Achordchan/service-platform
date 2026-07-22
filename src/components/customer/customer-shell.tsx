@@ -84,7 +84,10 @@ export function CustomerShell({
 
   return (
     <Box sx={{ minHeight: "100dvh", bgcolor: "background.default" }}>
-      <GlobalRealtimeSound currentUserId={user.id} />
+      <GlobalRealtimeSound
+        currentUserId={user.id}
+        enabled={user.soundNotificationsEnabled}
+      />
       <AppBar
         position="sticky"
         color="inherit"

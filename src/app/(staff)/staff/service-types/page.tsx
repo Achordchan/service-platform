@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
-import { ServiceTypeManager } from "@/components/staff/service-type-manager";
+import { ServiceConfigurationWorkspace } from "@/components/staff/service-configuration-workspace";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import type { ServiceTypeItem } from "@/components/staff/staff-types";
 import { requireUserWithAccess } from "@/lib/session";
 import { listServiceTypes } from "@/modules/projects/service-type-service";
+import { listSupportPlaybooksForAdmin } from "@/modules/requests/support-playbook-service";
 
 export const metadata = {
   title: "服务配置",
@@ -15,7 +16,10 @@ export default async function StaffServiceTypesPage() {
   if (!actor.isPlatformAdmin) {
     redirect("/staff/projects");
   }
-  const result = await listServiceTypes(actor);
+  const [result, playbooks] = await Promise.all([
+    listServiceTypes(actor),
+    listSupportPlaybooksForAdmin(actor),
+  ]);
   const serviceTypes: ServiceTypeItem[] = result.map((serviceType) => ({
     id: serviceType.id,
     key: serviceType.key,
@@ -38,7 +42,10 @@ export default async function StaffServiceTypesPage() {
     >
       <Stack spacing={3}>
         <StaffPageHeading title="服务配置" />
-        <ServiceTypeManager serviceTypes={serviceTypes} />
+        <ServiceConfigurationWorkspace
+          serviceTypes={serviceTypes}
+          playbooks={playbooks}
+        />
       </Stack>
     </Container>
   );

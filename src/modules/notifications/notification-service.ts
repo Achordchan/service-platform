@@ -1,24 +1,40 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import type {
-  ContentVisibility,
-  EventType,
-  NotificationType,
+import {
   Prisma,
-  RequestStatus,
+  type ContentVisibility,
+  type EventType,
+  type NotificationType,
+  type RequestStatus,
 } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import type { ExternalActor } from "@/lib/external-actor";
 import { withActorDb } from "@/lib/actor";
 import { withSystemDb } from "@/lib/system-db";
 import {
-  planExternalRequestActivity,
   planProjectActivity,
   planRequestActivity,
   type ActivityAudience,
   type ActivityDelivery,
 } from "@/modules/notifications/activity-delivery";
+import {
+  isProjectChangeAudible,
+  isRequestChangeAudible,
+  planStandardRequestEmailRecipientIds,
+  PROJECT_UPDATE_NOTIFICATION_TYPES,
+} from "@/modules/notifications/activity-policy";
+import { summarizeUnreadNotificationGroups } from "@/modules/notifications/notification-summary";
+import {
+  canReceiveProjectRealtimeEvent,
+  canReceiveRequestRealtimeEvent,
+} from "@/modules/notifications/realtime-event-visibility";
+import { loadNotificationDeliveryRule } from "@/modules/notifications/notification-delivery-rule-service";
+import {
+  resolveNotificationSoundEnabled,
+  ruleKeyForProjectNotification,
+  ruleKeyForRequestActivity,
+} from "@/modules/notifications/notification-delivery-rules";
 import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
 
 type EventInput = {
@@ -103,6 +119,7 @@ export function publishProjectChange(
     payload: {
       change: input.change,
       actorId: actor.id,
+      audible: isProjectChangeAudible(input.change),
       projectId: input.projectId,
       ...(input.visibility ? { visibility: input.visibility } : {}),
       ...(input.payload ?? {}),
@@ -130,6 +147,7 @@ export function publishRequestChange(
     payload: {
       change: input.change,
       actorId: actor.id,
+      audible: isRequestChangeAudible(input.change),
       projectId: input.projectId,
       requestId: input.serviceRequestId,
       ...(input.visibility ? { visibility: input.visibility } : {}),
@@ -157,6 +175,7 @@ export async function publishDetachedProjectChange(
         payload: {
           change: input.change,
           actorId: actor.id,
+          audible: isProjectChangeAudible(input.change),
           projectId: input.projectId,
           ...(input.payload ?? {}),
         },
@@ -194,6 +213,7 @@ export async function createNotification(
     projectId?: string;
     serviceRequestId?: string;
     aggregationKey?: string;
+    emailDueAt?: Date;
   },
 ) {
   const notificationId = randomUUID();
@@ -220,7 +240,8 @@ export async function createNotification(
         ${input.customerSpaceId},
         ${input.projectId},
         ${input.serviceRequestId},
-        ${input.aggregationKey}
+        ${input.aggregationKey},
+        ${input.emailDueAt ?? null}::timestamp
       )
     `;
     if (!aggregated) {
@@ -255,12 +276,16 @@ export async function dispatchProjectActivity(
   input: {
     eventType: Extract<
       EventType,
-      "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
+      "PROJECT_UPDATED" | "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
     >;
     eventPayload: Prisma.InputJsonValue;
     notificationType: Extract<
       NotificationType,
-      "PROJECT_UPDATE" | "UPDATE_COMMENT"
+      | "PROJECT_UPDATE"
+      | "UPDATE_COMMENT"
+      | "PROJECT_STAGE"
+      | "PROJECT_MILESTONE"
+      | "PROJECT_FILE"
     >;
     notificationTitle: string;
     notificationBody: string;
@@ -270,14 +295,45 @@ export async function dispatchProjectActivity(
   },
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
-  return persistActivityDelivery(
+  const project = await tx.project.findUniqueOrThrow({
+    where: { id: input.projectId },
+    select: {
+      customerUpdatesEnabled: true,
+      customerFilesEnabled: true,
+      showMilestones: true,
+      showProgress: true,
+    },
+  });
+  const customerFeatureEnabled =
+    input.notificationType === "PROJECT_FILE"
+      ? project.customerFilesEnabled
+      : input.notificationType === "PROJECT_MILESTONE"
+        ? project.showMilestones || project.showProgress
+        : input.notificationType === "PROJECT_STAGE"
+          ? project.showProgress
+          : project.customerUpdatesEnabled;
+  const visibility =
+    input.visibility === "CUSTOMER_VISIBLE" &&
+    !customerFeatureEnabled
+      ? "INTERNAL"
+      : input.visibility;
+  const rule = await loadNotificationDeliveryRule(
     tx,
-    planProjectActivity({
-      actorId: actor.id,
-      audience,
-      ...input,
-    }),
+    ruleKeyForProjectNotification(input.notificationType),
   );
+  const delivery = planProjectActivity({
+    actorId: actor.id,
+    audience,
+    ...input,
+    eventPayload: withAudiblePayload(input.eventPayload, rule.soundEnabled),
+    visibility,
+    emailRecipientUserIds:
+      visibility === "CUSTOMER_VISIBLE" && rule.emailEnabled
+        ? audience.customerUserIds
+        : [],
+  });
+  if (!rule.notificationEnabled) delivery.notifications = [];
+  return persistActivityDelivery(tx, delivery);
 }
 
 export async function dispatchRequestActivity(
@@ -290,6 +346,7 @@ export async function dispatchRequestActivity(
       | "REQUEST_ASSIGNED"
       | "REQUEST_MESSAGE_CREATED"
       | "REQUEST_STATUS_CHANGED"
+      | "REQUEST_UPDATED"
     >;
     eventPayload: Prisma.InputJsonValue;
     notificationType: Extract<
@@ -298,14 +355,18 @@ export async function dispatchRequestActivity(
       | "REQUEST_ASSIGNED"
       | "REQUEST_MESSAGE"
       | "REQUEST_STATUS"
+      | "REQUEST_ATTACHMENT"
+      | "REQUEST_ARCHIVE"
     >;
     notificationTitle: string;
     notificationBody: string;
     includeCustomers: boolean;
     relevantWorkerUserIds?: Array<string | null | undefined>;
+    emailWorkerUserIds?: Array<string | null | undefined>;
     notifyProjectManagers: boolean;
     notifyPlatformAdmins: boolean;
     createNotifications?: boolean;
+    audible?: boolean;
     includeExternalContact?: boolean;
     customerSpaceId: string;
     projectId: string;
@@ -313,11 +374,40 @@ export async function dispatchRequestActivity(
   },
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
+  const project = await tx.project.findUniqueOrThrow({
+    where: { id: input.projectId },
+    select: { customerRequestsEnabled: true, kind: true },
+  });
+  const includeCustomers =
+    input.includeCustomers && project.customerRequestsEnabled;
+  const payload = jsonObject(input.eventPayload);
+  const rule = await loadNotificationDeliveryRule(
+    tx,
+    ruleKeyForRequestActivity({
+      notificationType: input.notificationType,
+      visibility:
+        typeof payload.visibility === "string" ? payload.visibility : undefined,
+    }),
+  );
+  const createNotifications =
+    input.createNotifications !== false && rule.notificationEnabled;
+  const emailRecipientUserIds =
+    project.kind === "STANDARD" && createNotifications && rule.emailEnabled
+      ? standardRequestEmailRecipients(actor, input, audience, includeCustomers)
+      : [];
   const delivery = await persistActivityDelivery(
     tx,
-    planExternalRequestActivity({
+    planRequestActivity({
+      actorId: actor.id,
       audience,
       ...input,
+      eventPayload: withAudiblePayload(
+        input.eventPayload,
+        resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
+      ),
+      includeCustomers,
+      createNotifications,
+      emailRecipientUserIds,
     }),
   );
   if (input.includeExternalContact) {
@@ -326,14 +416,20 @@ export async function dispatchRequestActivity(
     delivery.events.push(
       await publishEvent(tx, {
         type: input.eventType,
-        payload: withExternalEmbedAudience(input.eventPayload),
+        payload: withExternalEmbedAudience(
+          withAudiblePayload(input.eventPayload, input.audible ?? true),
+        ),
         customerSpaceId: input.customerSpaceId,
         projectId: input.projectId,
         serviceRequestId: input.serviceRequestId,
       }),
     );
   }
-  if (input.eventType !== "REQUEST_ASSIGNED") {
+  if (
+    input.eventType === "REQUEST_CREATED" ||
+    input.eventType === "REQUEST_MESSAGE_CREATED" ||
+    input.eventType === "REQUEST_STATUS_CHANGED"
+  ) {
     await recordUniversalRequestWebhook(tx, {
       eventType: input.eventType,
       eventPayload: input.eventPayload,
@@ -349,17 +445,24 @@ export async function dispatchExternalRequestActivity(
   input: {
     eventType: Extract<
       EventType,
-      "REQUEST_CREATED" | "REQUEST_MESSAGE_CREATED" | "REQUEST_STATUS_CHANGED"
+      | "REQUEST_CREATED"
+      | "REQUEST_MESSAGE_CREATED"
+      | "REQUEST_STATUS_CHANGED"
+      | "REQUEST_UPDATED"
     >;
     eventPayload: Prisma.InputJsonValue;
     notificationType: Extract<
       NotificationType,
-      "REQUEST_CREATED" | "REQUEST_MESSAGE" | "REQUEST_STATUS"
+      | "REQUEST_CREATED"
+      | "REQUEST_MESSAGE"
+      | "REQUEST_STATUS"
+      | "REQUEST_ATTACHMENT"
     >;
     notificationTitle: string;
     notificationBody: string;
     includeCustomers: boolean;
     createNotifications?: boolean;
+    audible?: boolean;
     relevantWorkerUserIds?: Array<string | null | undefined>;
     notifyProjectManagers: boolean;
     notifyPlatformAdmins: boolean;
@@ -368,32 +471,62 @@ export async function dispatchExternalRequestActivity(
     serviceRequestId: string;
   },
 ) {
-  const audience = await withSystemDb((systemTx) =>
-    loadProjectAudience(systemTx, input.projectId),
+  const projectContext = await withSystemDb(async (systemTx) => ({
+    audience: await loadProjectAudience(systemTx, input.projectId),
+    project: await systemTx.project.findUniqueOrThrow({
+      where: { id: input.projectId },
+      select: { customerRequestsEnabled: true },
+    }),
+  }));
+  const payload = jsonObject(input.eventPayload);
+  const rule = await loadNotificationDeliveryRule(
+    tx,
+    ruleKeyForRequestActivity({
+      notificationType: input.notificationType,
+      visibility:
+        typeof payload.visibility === "string" ? payload.visibility : undefined,
+    }),
   );
   const delivery = await persistActivityDelivery(
     tx,
     planRequestActivity({
-      actorId: actor.id,
-      audience,
+      actorId: "",
+      audience: projectContext.audience,
       ...input,
+      eventPayload: withAudiblePayload(
+        input.eventPayload,
+        resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
+      ),
+      createNotifications:
+        input.createNotifications !== false && rule.notificationEnabled,
+      includeCustomers:
+        input.includeCustomers &&
+        projectContext.project.customerRequestsEnabled,
     }),
   );
   // Embed multi-tab sync: external contacts only see userId=null request events.
   delivery.events.push(
     await publishEvent(tx, {
       type: input.eventType,
-      payload: withExternalEmbedAudience(input.eventPayload),
+      payload: withExternalEmbedAudience(
+        withAudiblePayload(input.eventPayload, input.audible ?? true),
+      ),
       customerSpaceId: input.customerSpaceId,
       projectId: input.projectId,
       serviceRequestId: input.serviceRequestId,
     }),
   );
-  await recordUniversalRequestWebhook(tx, {
-    eventType: input.eventType,
-    eventPayload: input.eventPayload,
-    serviceRequestId: input.serviceRequestId,
-  });
+  if (
+    input.eventType === "REQUEST_CREATED" ||
+    input.eventType === "REQUEST_MESSAGE_CREATED" ||
+    input.eventType === "REQUEST_STATUS_CHANGED"
+  ) {
+    await recordUniversalRequestWebhook(tx, {
+      eventType: input.eventType,
+      eventPayload: input.eventPayload,
+      serviceRequestId: input.serviceRequestId,
+    });
+  }
   return delivery;
 }
 
@@ -408,72 +541,209 @@ export function requestStatusLabel(status: RequestStatus) {
   return labels[status];
 }
 
-export function listNotifications(actor: Actor, limit = 30) {
-  return withActorDb(actor, (tx) =>
-    tx.notification.findMany({
-      where: { userId: actor.id },
-      orderBy: { updatedAt: "desc" },
-      take: Math.min(limit, 100),
-    }),
+function withAudiblePayload(
+  payload: Prisma.InputJsonValue,
+  audible = true,
+): Prisma.InputJsonValue {
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    return { ...(payload as Prisma.InputJsonObject), audible };
+  }
+  return { value: payload, audible };
+}
+
+function jsonObject(payload: Prisma.InputJsonValue) {
+  return payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Prisma.InputJsonObject)
+    : {};
+}
+
+function standardRequestEmailRecipients(
+  actor: Actor,
+  input: {
+    eventType: EventType;
+    eventPayload: Prisma.InputJsonValue;
+    relevantWorkerUserIds?: Array<string | null | undefined>;
+    emailWorkerUserIds?: Array<string | null | undefined>;
+  },
+  audience: ActivityAudience,
+  includeCustomers: boolean,
+) {
+  const payload =
+    input.eventPayload &&
+    typeof input.eventPayload === "object" &&
+    !Array.isArray(input.eventPayload)
+      ? (input.eventPayload as Prisma.InputJsonObject)
+      : {};
+
+  return planStandardRequestEmailRecipientIds({
+    actorId: actor.id,
+    actorPlatformRole: actor.platformRole,
+    eventType: input.eventType,
+    visibility:
+      typeof payload.visibility === "string" ? payload.visibility : undefined,
+    status: typeof payload.status === "string" ? payload.status : undefined,
+    includeCustomers,
+    customerUserIds: audience.customerUserIds,
+    projectManagerUserIds: audience.projectManagerUserIds,
+    platformAdminUserIds: audience.platformAdminUserIds,
+    relevantWorkerUserIds: input.relevantWorkerUserIds,
+    emailWorkerUserIds: input.emailWorkerUserIds,
+  });
+}
+
+export function listNotifications(
+  actor: Actor,
+  options: { limit?: number; cursor?: string } = {},
+) {
+  const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
+  const cursor = decodeNotificationCursor(options.cursor);
+  return withActorDb(actor, async (tx) => {
+    const items = await tx.notification.findMany({
+      where: {
+        userId: actor.id,
+        ...(cursor
+          ? {
+              OR: [
+                { updatedAt: { lt: cursor.updatedAt } },
+                {
+                  updatedAt: cursor.updatedAt,
+                  id: { lt: cursor.id },
+                },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+    });
+    const totalUnread = await tx.notification.count({
+      where: { userId: actor.id, readAt: null },
+    });
+    const hasMore = items.length > limit;
+    const pageItems = hasMore ? items.slice(0, limit) : items;
+    const last = pageItems.at(-1);
+    return {
+      items: pageItems,
+      totalUnread,
+      nextCursor:
+        hasMore && last
+          ? encodeNotificationCursor(last.updatedAt, last.id)
+          : null,
+    };
+  });
+}
+
+export function getNotificationSummary(actor: Actor) {
+  return withActorDb(actor, async (tx) => {
+    const unread = await tx.notification.groupBy({
+      by: ["type", "projectId", "serviceRequestId"],
+      where: { userId: actor.id, readAt: null },
+      _count: { _all: true },
+    });
+    return summarizeUnreadNotificationGroups(unread);
+  });
+}
+
+function encodeNotificationCursor(updatedAt: Date, id: string) {
+  return Buffer.from(`${updatedAt.toISOString()}\n${id}`, "utf8").toString(
+    "base64url",
   );
+}
+
+function decodeNotificationCursor(value?: string) {
+  if (!value) return null;
+  try {
+    const [updatedAtValue, id] = Buffer.from(value, "base64url")
+      .toString("utf8")
+      .split("\n");
+    const updatedAt = new Date(updatedAtValue);
+    if (!id || Number.isNaN(updatedAt.getTime())) return null;
+    return { updatedAt, id };
+  } catch {
+    return null;
+  }
 }
 
 export function markNotificationRead(actor: Actor, notificationId: string) {
-  return withActorDb(actor, (tx) =>
-    tx.notification.updateMany({
-      where: { id: notificationId, userId: actor.id },
-      data: { readAt: new Date(), aggregationKey: null },
-    }),
-  );
+  return markNotificationsRead(actor, { id: notificationId });
 }
 
 export function markAllNotificationsRead(actor: Actor) {
-  return withActorDb(actor, (tx) =>
-    tx.notification.updateMany({
-      where: { userId: actor.id, readAt: null },
-      data: { readAt: new Date(), aggregationKey: null },
-    }),
-  );
+  return markNotificationsRead(actor, {});
 }
 
 export function markRequestNotificationsRead(
   actor: Actor,
   serviceRequestId: string,
 ) {
-  return withActorDb(actor, (tx) =>
-    tx.notification.updateMany({
-      where: {
-        userId: actor.id,
-        serviceRequestId,
-        readAt: null,
-      },
-      data: { readAt: new Date(), aggregationKey: null },
-    }),
-  );
+  return markNotificationsRead(actor, { serviceRequestId });
 }
 
 export function markProjectNotificationsRead(
   actor: Actor,
   projectId: string,
-  scope: "updates" | "all" = "updates",
+  scope: "overview" | "updates" | "milestones" | "files" | "all" = "updates",
 ) {
-  return withActorDb(actor, (tx) =>
-    tx.notification.updateMany({
-      where: {
-        userId: actor.id,
-        projectId,
-        readAt: null,
-        ...(scope === "updates"
-          ? {
-              type: {
-                in: ["PROJECT_UPDATE", "UPDATE_COMMENT"],
-              },
-            }
-          : {}),
-      },
-      data: { readAt: new Date(), aggregationKey: null },
-    }),
-  );
+  const typesByScope: Record<Exclude<typeof scope, "all">, NotificationType[]> = {
+    overview: ["PROJECT_STAGE"],
+    updates: PROJECT_UPDATE_NOTIFICATION_TYPES,
+    milestones: ["PROJECT_MILESTONE"],
+    files: ["PROJECT_FILE"],
+  };
+  return markNotificationsRead(actor, {
+    projectId,
+    ...(scope === "all" ? {} : { type: { in: typesByScope[scope] } }),
+  });
+}
+
+function markNotificationsRead(
+  actor: Actor,
+  scope: Prisma.NotificationWhereInput,
+) {
+  return withActorDb(actor, async (tx) => {
+    const ownedScope: Prisma.NotificationWhereInput = {
+      userId: actor.id,
+      ...scope,
+      readAt: null,
+    };
+    let count = 0;
+    while (true) {
+      const notifications = await tx.notification.findMany({
+        where: ownedScope,
+        select: { id: true },
+        orderBy: { id: "asc" },
+        take: 500,
+      });
+      if (notifications.length === 0) break;
+      const notificationIds = notifications.map(
+        (notification) => notification.id,
+      );
+      const idValues = notificationIds.map((id) => Prisma.sql`${id}`);
+      await tx.$executeRaw(
+        Prisma.sql`
+          SELECT app_cancel_notification_mail_for_ids(
+            ARRAY[${Prisma.join(idValues)}]::text[],
+            '用户已阅读对应通知'
+          )
+        `,
+      );
+      const updated = await tx.notification.updateMany({
+        where: {
+          id: { in: notificationIds },
+          userId: actor.id,
+          readAt: null,
+        },
+        data: {
+          readAt: new Date(),
+          aggregationKey: null,
+          emailDueAt: null,
+          emailClaimedAt: null,
+        },
+      });
+      count += updated.count;
+    }
+    return { count };
+  });
 }
 
 const EXTERNAL_EMBED_AUDIENCE = "EXTERNAL_EMBED";
@@ -502,7 +772,11 @@ function isExternalEmbedAudienceEvent(payload: Prisma.JsonValue) {
   );
 }
 
-export function listVisibleEvents(actor: Actor, afterId: bigint, limit = 100) {
+export async function listVisibleEventBatch(
+  actor: Actor,
+  afterId: bigint,
+  limit = 100,
+) {
   return withActorDb(actor, async (tx) => {
     const events = await tx.eventRecord.findMany({
       where: {
@@ -516,6 +790,7 @@ export function listVisibleEvents(actor: Actor, afterId: bigint, limit = 100) {
       orderBy: { id: "asc" },
       take: limit,
     });
+    const nextCursor = events.at(-1)?.id ?? afterId;
     // Only drop embed-dedicated copies. Legitimate userId=null request
     // events (and attachments/presence) must still reach the main app.
     const withoutEmbedOnlyCopies = events.filter(
@@ -529,11 +804,23 @@ export function listVisibleEvents(actor: Actor, afterId: bigint, limit = 100) {
       ? withoutEmbedOnlyCopies
       : await filterVisibleEvents(tx, actor, withoutEmbedOnlyCopies);
 
-    return visibleEvents.map((event) => ({
-      ...event,
-      id: event.id.toString(),
-    }));
+    return {
+      events: visibleEvents.map((event) => ({
+        ...event,
+        id: event.id.toString(),
+      })),
+      nextCursor,
+      scannedCount: events.length,
+    };
   });
+}
+
+export async function listVisibleEvents(
+  actor: Actor,
+  afterId: bigint,
+  limit = 100,
+) {
+  return (await listVisibleEventBatch(actor, afterId, limit)).events;
 }
 
 async function filterVisibleEvents(
@@ -555,12 +842,24 @@ async function filterVisibleEvents(
     select: {
       id: true,
       projectId: true,
-      project: { select: { customerSpaceId: true } },
+      project: {
+        select: {
+          customerSpaceId: true,
+          customerRequestsEnabled: true,
+        },
+      },
     },
   });
   const projects = await tx.project.findMany({
     where: { id: { in: projectIds } },
-    select: { id: true, customerSpaceId: true },
+    select: {
+      id: true,
+      customerSpaceId: true,
+      customerUpdatesEnabled: true,
+      customerFilesEnabled: true,
+      showMilestones: true,
+      showProgress: true,
+    },
   });
   const customerSpaces = await tx.customerSpace.findMany({
     where: { id: { in: customerSpaceIds } },
@@ -572,11 +871,22 @@ async function filterVisibleEvents(
       {
         projectId: request.projectId,
         customerSpaceId: request.project.customerSpaceId,
+        customerRequestsEnabled:
+          request.project.customerRequestsEnabled,
       },
     ]),
   );
   const projectScope = new Map(
-    projects.map((project) => [project.id, project.customerSpaceId]),
+    projects.map((project) => [
+      project.id,
+      {
+        customerSpaceId: project.customerSpaceId,
+        customerUpdatesEnabled: project.customerUpdatesEnabled,
+        customerFilesEnabled: project.customerFilesEnabled,
+        showMilestones: project.showMilestones,
+        showProgress: project.showProgress,
+      },
+    ]),
   );
   const visibleCustomerSpaceIds = new Set(
     customerSpaces.map((space) => space.id),
@@ -591,17 +901,32 @@ async function filterVisibleEvents(
       const scope = requestScope.get(event.serviceRequestId);
       return Boolean(
         scope &&
+          canReceiveRequestRealtimeEvent(
+            actor.isStaff,
+            scope.customerRequestsEnabled,
+          ) &&
           (!event.projectId || event.projectId === scope.projectId) &&
           (!event.customerSpaceId ||
             event.customerSpaceId === scope.customerSpaceId),
       );
     }
     if (event.projectId) {
-      const customerSpaceId = projectScope.get(event.projectId);
+      const scope = projectScope.get(event.projectId);
+      if (!scope) return false;
+      if (!canReceiveProjectRealtimeEvent({
+        isStaff: actor.isStaff,
+        type: event.type,
+        payload: event.payload,
+        customerUpdatesEnabled: scope.customerUpdatesEnabled,
+        customerFilesEnabled: scope.customerFilesEnabled,
+        showMilestones: scope.showMilestones,
+        showProgress: scope.showProgress,
+      })) {
+        return false;
+      }
       return Boolean(
-        customerSpaceId &&
-          (!event.customerSpaceId ||
-            event.customerSpaceId === customerSpaceId),
+        !event.customerSpaceId ||
+          event.customerSpaceId === scope.customerSpaceId,
       );
     }
     if (event.customerSpaceId) {
@@ -675,9 +1000,39 @@ async function persistActivityDelivery(
         ).map((presence) => presence.userId)
       : [],
   );
+  const emailCandidateUserIds = uniqueStrings(
+    delivery.notifications
+      .filter((notification) => notification.emailEligible)
+      .map((notification) => notification.userId),
+  );
+  const emailEnabledUserIds = new Set<string>();
+  if (emailCandidateUserIds.length > 0) {
+    const [settings] = await tx.$queryRaw<Array<{ enabled: boolean }>>`
+      SELECT app_standard_request_email_enabled() AS enabled
+    `;
+    const users = await tx.user.findMany({
+          where: { id: { in: emailCandidateUserIds } },
+          select: { id: true, requestEmailNotificationsEnabled: true },
+        });
+    if (settings?.enabled) {
+      for (const user of users) {
+        if (user.requestEmailNotificationsEnabled) {
+          emailEnabledUserIds.add(user.id);
+        }
+      }
+    }
+  }
+  const emailDueAt = new Date(Date.now() + 5 * 60 * 1000);
   for (const notification of delivery.notifications) {
     if (activeUserIds.has(notification.userId)) continue;
-    notifications.push(await createNotification(tx, notification));
+    notifications.push(
+      await createNotification(tx, {
+        ...notification,
+        emailDueAt: emailEnabledUserIds.has(notification.userId)
+          ? emailDueAt
+          : undefined,
+      }),
+    );
   }
 
   return { events, notifications };
@@ -692,6 +1047,6 @@ function hasInternalVisibility(payload: Prisma.JsonValue) {
   );
 }
 
-function uniqueStrings(values: Array<string | null>) {
+function uniqueStrings(values: Array<string | null | undefined>) {
   return [...new Set(values.filter((value): value is string => Boolean(value)))];
 }

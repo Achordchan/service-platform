@@ -53,6 +53,7 @@ export default async function StaffRequestsPage() {
             description: request.description,
             priority: request.priority,
             status: request.status,
+            archivedAt: request.archivedAt?.toISOString() ?? null,
             createdAt: request.createdAt.toISOString(),
             updatedAt: request.updatedAt.toISOString(),
             projectId: project.id,

@@ -14,7 +14,42 @@ export function htmlToPlainText(html: string) {
 }
 
 export function hasMeaningfulHtml(html: string) {
-  return htmlToPlainText(html).length > 0;
+  return (
+    htmlToPlainText(html).length > 0 ||
+    extractInlineAttachmentIds(html).length > 0
+  );
+}
+
+export function extractInlineAttachmentIds(html: string) {
+  const ids = new Set<string>();
+  for (const match of html.matchAll(/attachment:\/\/([a-z0-9_-]+)/gi)) {
+    if (match[1]) ids.add(match[1]);
+    if (ids.size > 20) break;
+  }
+  return Array.from(ids);
+}
+
+export function resolveInlineAttachmentHtml(
+  html: string,
+  resolveUrl: (attachmentId: string) => string = (attachmentId) =>
+    `/api/v1/attachments/${attachmentId}?disposition=inline`,
+) {
+  return html.replace(
+    /<img\b[^>]*\bdata-attachment-id=["']([a-z0-9_-]+)["'][^>]*>/gi,
+    (tag, attachmentId: string) => {
+      const url = resolveUrl(attachmentId);
+      if (!url || url === "about:blank") return "";
+      const escapedUrl = url
+        .replace(/&/g, "&amp;")
+        .replace(/"/g, "&quot;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+      return tag.replace(
+        /\bsrc=["']attachment:\/\/[a-z0-9_-]+["']/i,
+        `src="${escapedUrl}"`,
+      );
+    },
+  );
 }
 
 export function escapeHtmlText(value: string) {

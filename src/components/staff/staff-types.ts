@@ -33,6 +33,7 @@ export type StaffUser = {
   email: string;
   image?: string | null;
   role: StaffRole;
+  soundNotificationsEnabled: boolean;
 };
 
 export type ProjectListItem = {
@@ -44,6 +45,9 @@ export type ProjectListItem = {
   currentStage?: string | null;
   showMilestones?: boolean;
   showProgress?: boolean;
+  customerUpdatesEnabled?: boolean;
+  customerRequestsEnabled?: boolean;
+  customerFilesEnabled?: boolean;
   startDate?: string | null;
   endDate?: string | null;
   updatedAt: string;
@@ -83,6 +87,7 @@ export type ProjectMilestone = {
   status: MilestoneStatus;
   startDate?: string | null;
   endDate?: string | null;
+  createdAt: string;
 };
 
 export type ProjectUpdate = {
@@ -115,6 +120,7 @@ export type RequestListItem = {
   description: string;
   priority: RequestPriority;
   status: RequestStatus;
+  archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   projectId: string;
@@ -168,6 +174,7 @@ export type RequestDetail = RequestListItem & {
     visibility: ContentVisibility;
     isSystem?: boolean;
     isInitial?: boolean;
+    supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
     authorId: string;
     authorName: string;
     authorImage?: string | null;
@@ -209,6 +216,7 @@ export type CustomerSpaceItem = {
     newEmail: string;
     expiresAt: string;
     lastSentAt: string;
+    mailStatus: string | null;
   } | null;
   memberCount: number;
   projectCount: number;

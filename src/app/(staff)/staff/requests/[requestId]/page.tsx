@@ -57,6 +57,7 @@ export default async function StaffRequestDetailPage({
     description: request.description,
     priority: request.priority,
     status: request.status,
+    archivedAt: request.archivedAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
     projectId: request.projectId,
@@ -114,6 +115,7 @@ export default async function StaffRequestDetailPage({
       body: message.body,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
+      supportPlaybook: message.supportPlaybook,
       visibility: message.visibility,
       authorId: message.authorId ?? message.externalAuthorId ?? "unavailable",
       authorName:

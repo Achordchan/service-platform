@@ -12,7 +12,9 @@ export const metadata = {
 
 export default async function CustomerRequestsPage() {
   const { actor } = await requireUserWithAccess();
-  const projects = await listProjects(actor);
+  const projects = (await listProjects(actor)).filter(
+    (project) => project.customerRequestsEnabled !== false,
+  );
   const requestGroups = await Promise.all(
     projects.map(async (project) => ({
       project,
@@ -29,6 +31,7 @@ export default async function CustomerRequestsPage() {
         description: request.description,
         priority: request.priority,
         status: request.status,
+        archivedAt: request.archivedAt?.toISOString() ?? null,
         createdAt: request.createdAt.toISOString(),
         updatedAt: request.updatedAt.toISOString(),
         projectId: project.id,

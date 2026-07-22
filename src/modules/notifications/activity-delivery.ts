@@ -30,6 +30,7 @@ export type ActivityNotification = {
   projectId?: string;
   serviceRequestId?: string;
   aggregationKey?: string;
+  emailEligible?: boolean;
 };
 
 export type ActivityDelivery = {
@@ -43,17 +44,22 @@ type ProjectActivityInput = {
   visibility: ContentVisibility;
   eventType: Extract<
     EventType,
-    "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
+    "PROJECT_UPDATED" | "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
   >;
   eventPayload: Prisma.InputJsonValue;
   notificationType: Extract<
     NotificationType,
-    "PROJECT_UPDATE" | "UPDATE_COMMENT"
+    | "PROJECT_UPDATE"
+    | "UPDATE_COMMENT"
+    | "PROJECT_STAGE"
+    | "PROJECT_MILESTONE"
+    | "PROJECT_FILE"
   >;
   notificationTitle: string;
   notificationBody: string;
   customerSpaceId: string;
   projectId: string;
+  emailRecipientUserIds?: string[];
 };
 
 type RequestActivityInput = {
@@ -70,6 +76,7 @@ type RequestActivityInput = {
     | "REQUEST_ASSIGNED"
     | "REQUEST_MESSAGE_CREATED"
     | "REQUEST_STATUS_CHANGED"
+    | "REQUEST_UPDATED"
   >;
   eventPayload: Prisma.InputJsonValue;
   notificationType: Extract<
@@ -78,12 +85,15 @@ type RequestActivityInput = {
     | "REQUEST_ASSIGNED"
     | "REQUEST_MESSAGE"
     | "REQUEST_STATUS"
+    | "REQUEST_ATTACHMENT"
+    | "REQUEST_ARCHIVE"
   >;
   notificationTitle: string;
   notificationBody: string;
   customerSpaceId: string;
   projectId: string;
   serviceRequestId: string;
+  emailRecipientUserIds?: string[];
 };
 
 export function planProjectActivity(
@@ -99,6 +109,9 @@ export function planProjectActivity(
       : []),
     ...staffUserIds,
   ]);
+  const emailRecipientUserIds = new Set(
+    unique(input.emailRecipientUserIds ?? []),
+  );
 
   const events =
     input.visibility === "CUSTOMER_VISIBLE"
@@ -128,6 +141,7 @@ export function planProjectActivity(
         userId,
         customerSpaceId: input.customerSpaceId,
         projectId: input.projectId,
+        emailEligible: emailRecipientUserIds.has(userId),
       }),
     ),
   };
@@ -146,6 +160,9 @@ export function planRequestActivity(
       : []),
     ...(input.relevantWorkerUserIds ?? []),
   ]);
+  const emailRecipientUserIds = new Set(
+    unique(input.emailRecipientUserIds ?? []),
+  );
 
   const eventUserIds = unique([
     ...(input.includeCustomers ? input.audience.customerUserIds : []),
@@ -175,15 +192,24 @@ export function planRequestActivity(
             customerSpaceId: input.customerSpaceId,
             projectId: input.projectId,
             serviceRequestId: input.serviceRequestId,
-            aggregationKey: `request:${input.serviceRequestId}`,
+            emailEligible: emailRecipientUserIds.has(userId),
+            aggregationKey: requestAggregationKey(
+              input.serviceRequestId,
+              input.notificationType,
+              emailRecipientUserIds.has(userId),
+            ),
           })),
   };
 }
 
-export function planExternalRequestActivity(
-  input: Omit<RequestActivityInput, "actorId">,
-): ActivityDelivery {
-  return planRequestActivity({ ...input, actorId: "" });
+function requestAggregationKey(
+  serviceRequestId: string,
+  notificationType: NotificationType,
+  emailEligible: boolean,
+) {
+  return `request:${serviceRequestId}:${notificationType}:${
+    emailEligible ? "mail" : "ui"
+  }`;
 }
 
 function withoutActor(userIds: string[], actorId: string) {

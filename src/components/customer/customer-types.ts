@@ -30,6 +30,7 @@ export type CustomerUser = {
   name: string;
   email: string;
   image?: string | null;
+  soundNotificationsEnabled: boolean;
 };
 
 export type ProjectSummary = {
@@ -40,6 +41,9 @@ export type ProjectSummary = {
   currentStage?: string | null;
   showMilestones?: boolean;
   showProgress?: boolean;
+  customerUpdatesEnabled?: boolean;
+  customerRequestsEnabled?: boolean;
+  customerFilesEnabled?: boolean;
   startDate?: string | null;
   endDate?: string | null;
   updatedAt: string;
@@ -66,6 +70,7 @@ export type ProjectMilestone = {
   status: MilestoneStatus;
   startDate?: string | null;
   endDate?: string | null;
+  createdAt: string;
 };
 
 export type ProjectUpdate = {
@@ -104,6 +109,7 @@ export type ServiceRequestSummary = {
   description: string;
   priority: RequestPriority;
   status: RequestStatus;
+  archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
   projectId: string;
@@ -129,6 +135,7 @@ export type RequestMessage = {
   body: string;
   isSystem?: boolean;
   isInitial?: boolean;
+  supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
   authorId: string;
   authorName: string;
   authorImage?: string | null;

@@ -17,7 +17,12 @@ import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined
 import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
 import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import type { ProjectSummary } from "@/components/customer/customer-types";
+import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
 import { StatusIndicator } from "@/components/shared/status-indicator";
+import {
+  countProjectDeliveryUnread,
+  useUnreadNotifications,
+} from "@/hooks/use-unread-notifications";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -29,7 +34,17 @@ function formatDate(value?: string | null) {
   return value ? dateFormatter.format(new Date(value)) : "未设置";
 }
 
-function ProjectCard({ project }: { project: ProjectSummary }) {
+function ProjectCard({
+  project,
+  hasUnreadUpdate,
+}: {
+  project: ProjectSummary;
+  hasUnreadUpdate: boolean;
+}) {
+  const updatesEnabled = project.customerUpdatesEnabled !== false;
+  const requestsEnabled = project.customerRequestsEnabled !== false;
+  const showActivitySummary = updatesEnabled || requestsEnabled;
+
   return (
     <Card
       variant="outlined"
@@ -45,6 +60,9 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
       <CardActionArea
         component={Link}
         href={`/customer/projects/${project.id}`}
+        aria-label={
+          hasUnreadUpdate ? `${project.title}，有未读更新` : project.title
+        }
         sx={{ height: "100%", alignItems: "stretch" }}
       >
         <CardContent
@@ -75,9 +93,11 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
                 {project.title}
               </Typography>
             </Box>
-            <ArrowForwardOutlinedIcon
-              sx={{ color: "text.secondary", mt: 0.5 }}
-            />
+            <NavigationUnreadBadge visible={hasUnreadUpdate}>
+              <ArrowForwardOutlinedIcon
+                sx={{ color: "text.secondary", mt: 0.5 }}
+              />
+            </NavigationUnreadBadge>
           </Stack>
 
           <Typography
@@ -98,7 +118,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             <Stack spacing={1.3} sx={{ mt: 3 }}>
               <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                 <Typography variant="body2" color="text.secondary">
-                  {project.currentStage || "项目执行"}
+                  {project.currentStage || "待启动"}
                 </Typography>
                 <Typography variant="body2" sx={{ fontWeight: 650 }}>
                   {project.progress}%
@@ -118,7 +138,7 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
           ) : (
             <Stack spacing={1.3} sx={{ mt: 3 }}>
               <Typography variant="body2" color="text.secondary">
-                {project.currentStage || "项目执行"}
+                {project.currentStage || "待启动"}
               </Typography>
             </Stack>
           )}
@@ -142,33 +162,47 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
             </Stack>
           </Stack>
 
-          <Stack
-            direction="row"
-            spacing={3}
-            sx={{
-              mt: 2.5,
-              pt: 2.25,
-              borderTop: "1px solid",
-              borderColor: "divider",
-            }}
-          >
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <SupportAgentOutlinedIcon
-                sx={{ fontSize: 18, color: "text.secondary" }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                {project.requestCount} 个服务请求
-              </Typography>
+          {showActivitySummary ? (
+            <Stack
+              direction="row"
+              spacing={3}
+              sx={{
+                mt: 2.5,
+                pt: 2.25,
+                borderTop: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              {requestsEnabled ? (
+                <Stack
+                  direction="row"
+                  spacing={0.75}
+                  sx={{ alignItems: "center" }}
+                >
+                  <SupportAgentOutlinedIcon
+                    sx={{ fontSize: 18, color: "text.secondary" }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {project.requestCount} 个服务请求
+                  </Typography>
+                </Stack>
+              ) : null}
+              {updatesEnabled ? (
+                <Stack
+                  direction="row"
+                  spacing={0.75}
+                  sx={{ alignItems: "center" }}
+                >
+                  <UpdateOutlinedIcon
+                    sx={{ fontSize: 18, color: "text.secondary" }}
+                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {project.updateCount} 条进度
+                  </Typography>
+                </Stack>
+              ) : null}
             </Stack>
-            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-              <UpdateOutlinedIcon
-                sx={{ fontSize: 18, color: "text.secondary" }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                {project.updateCount} 条进度
-              </Typography>
-            </Stack>
-          </Stack>
+          ) : null}
         </CardContent>
       </CardActionArea>
     </Card>
@@ -176,11 +210,19 @@ function ProjectCard({ project }: { project: ProjectSummary }) {
 }
 
 export function ProjectList({ projects }: { projects: ProjectSummary[] }) {
+  const { unread } = useUnreadNotifications();
+
   return (
     <Grid container spacing={2.5}>
       {projects.map((project) => (
         <Grid key={project.id} size={{ xs: 12, md: 6, xl: 4 }}>
-          <ProjectCard project={project} />
+          <ProjectCard
+            project={project}
+            hasUnreadUpdate={
+              project.customerUpdatesEnabled !== false &&
+              countProjectDeliveryUnread(unread, project.id) > 0
+            }
+          />
         </Grid>
       ))}
     </Grid>

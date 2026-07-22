@@ -10,7 +10,6 @@ import {
 } from "@/modules/platform-settings/mail-message-service";
 
 vi.mock("@/lib/jobs", () => ({
-  assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
   queueMailMessage: vi.fn().mockResolvedValue("job-id"),
 }));
 
@@ -24,6 +23,8 @@ const fixture = {
   failedId: randomUUID(),
   localDeliveryId: randomUUID(),
   processingId: randomUUID(),
+  modeMismatchId: randomUUID(),
+  resendExhaustedId: randomUUID(),
 };
 
 let admin: Actor;
@@ -60,6 +61,8 @@ beforeAll(async () => {
     "LOCAL_OUTBOX",
   );
   await insertMessage(fixture.processingId, "PROCESSING", "RESEND");
+  await insertMessage(fixture.modeMismatchId, "QUEUED", "RESEND");
+  await insertMessage(fixture.resendExhaustedId, "QUEUED", "RESEND", 6);
 });
 
 afterAll(async () => {
@@ -70,6 +73,8 @@ afterAll(async () => {
       fixture.failedId,
       fixture.localDeliveryId,
       fixture.processingId,
+      fixture.modeMismatchId,
+      fixture.resendExhaustedId,
     ]],
   );
   await ownerPool.query(
@@ -79,6 +84,8 @@ afterAll(async () => {
       fixture.failedId,
       fixture.localDeliveryId,
       fixture.processingId,
+      fixture.modeMismatchId,
+      fixture.resendExhaustedId,
     ]],
   );
   await ownerPool.end();
@@ -102,11 +109,11 @@ describe("mail message controls", () => {
     const queued = await retryMailMessage(admin, fixture.failedId);
 
     expect(queued.status).toBe("QUEUED");
-    expect(queued.deliveryMode).toBe("RESEND");
+    expect(queued.deliveryMode).toBe("LOCAL_OUTBOX");
     expect(queued.attemptCount).toBe(0);
     expect(queueMailMessage).toHaveBeenCalledWith(
       fixture.failedId,
-      "RESEND",
+      "LOCAL_OUTBOX",
     );
   });
 
@@ -117,6 +124,49 @@ describe("mail message controls", () => {
     await expect(
       retryMailMessage(admin, fixture.processingId),
     ).rejects.toThrow("当前邮件状态不允许重试");
+  });
+
+  it("ignores an obsolete provider job after the queued message changes mode", async () => {
+    await expect(
+      processMailMessage(fixture.modeMismatchId, {
+        finalAttempt: true,
+        expectedDeliveryMode: "SMTP",
+      }),
+    ).resolves.toEqual({
+      id: fixture.modeMismatchId,
+      skipped: true,
+    });
+    const result = await ownerPool.query<{ status: string }>(
+      `SELECT status::text FROM "MailMessage" WHERE id = $1`,
+      [fixture.modeMismatchId],
+    );
+    expect(result.rows[0]?.status).toBe("QUEUED");
+  });
+
+  it("does not let replacement jobs exceed the global Resend attempt limit", async () => {
+    await expect(
+      processMailMessage(fixture.resendExhaustedId, {
+        finalAttempt: false,
+        expectedDeliveryMode: "RESEND",
+      }),
+    ).resolves.toEqual({
+      id: fixture.resendExhaustedId,
+      skipped: true,
+    });
+    const result = await ownerPool.query<{
+      status: string;
+      attemptCount: number;
+      errorMessage: string | null;
+    }>(
+      `SELECT status::text, "attemptCount", "errorMessage"
+         FROM "MailMessage" WHERE id = $1`,
+      [fixture.resendExhaustedId],
+    );
+    expect(result.rows[0]).toEqual({
+      status: "FAILED",
+      attemptCount: 6,
+      errorMessage: "邮件发送已达到重试上限",
+    });
   });
 
   it("marks production local-outbox jobs as failed instead of pretending to send", async () => {
@@ -155,6 +205,7 @@ async function insertMessage(
   id: string,
   status: "QUEUED" | "PROCESSING" | "FAILED",
   deliveryMode: "LOCAL_OUTBOX" | "RESEND",
+  attemptCount = 0,
 ) {
   await ownerPool.query(
     `
@@ -166,10 +217,11 @@ async function insertMessage(
         body,
         "deliveryMode",
         status,
+        "attemptCount",
         "updatedAt"
       )
-      VALUES ($1, 'queue-control@local.test', '队列控制测试', '测试', '测试正文', $2, $3, NOW())
+      VALUES ($1, 'queue-control@local.test', '队列控制测试', '测试', '测试正文', $2, $3, $4, NOW())
     `,
-    [id, deliveryMode, status],
+    [id, deliveryMode, status, attemptCount],
   );
 }

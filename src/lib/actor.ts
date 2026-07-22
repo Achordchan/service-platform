@@ -34,13 +34,18 @@ export async function resolveActor(userId: string): Promise<Actor | null> {
 export async function withActorDb<T>(
   actor: Actor,
   callback: (tx: Prisma.TransactionClient) => Promise<T>,
+  options?: {
+    maxWait?: number;
+    timeout?: number;
+    isolationLevel?: Prisma.TransactionIsolationLevel;
+  },
 ) {
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.user_id', ${actor.id}, true)`;
     await tx.$executeRaw`SELECT set_config('app.is_platform_admin', ${String(actor.isPlatformAdmin)}, true)`;
     await tx.$executeRaw`SELECT set_config('app.is_staff', ${String(actor.isStaff)}, true)`;
     return callback(tx);
-  });
+  }, options);
 }
 
 export async function withSystemDb<T>(

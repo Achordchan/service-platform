@@ -20,17 +20,8 @@ import {
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   ProjectOption,
-  ProjectStatus,
   StaffCandidate,
 } from "@/components/staff/staff-types";
-
-const statusOptions: Array<{ value: ProjectStatus; label: string }> = [
-  { value: "DRAFT", label: "草稿" },
-  { value: "ACTIVE", label: "进行中" },
-  { value: "PAUSED", label: "已暂停" },
-  { value: "COMPLETED", label: "已完成" },
-  { value: "EXPIRED", label: "已到期" },
-];
 
 export function CreateProjectDialog({
   open,
@@ -84,9 +75,6 @@ export function CreateProjectDialog({
           kind,
           description:
             String(formData.get("description") ?? "").trim() || null,
-          status: String(formData.get("status") ?? "DRAFT"),
-          currentStage:
-            String(formData.get("currentStage") ?? "").trim() || null,
           customerSpaceId:
             kind === "STANDARD"
               ? String(formData.get("customerSpaceId") ?? "")
@@ -243,22 +231,6 @@ export function CreateProjectDialog({
                 </MenuItem>
               ))}
             </TextField>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-              <TextField
-                name="status"
-                label="初始状态"
-                select
-                fullWidth
-                defaultValue="DRAFT"
-              >
-                {statusOptions.map((option) => (
-                  <MenuItem key={option.value} value={option.value}>
-                    {option.label}
-                  </MenuItem>
-                ))}
-              </TextField>
-              <TextField name="currentStage" label="当前阶段" fullWidth />
-            </Stack>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
               <TextField
                 name="startDate"

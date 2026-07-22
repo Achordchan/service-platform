@@ -20,7 +20,9 @@ export default async function NewCustomerRequestPage({
     ? query.projectId[0]
     : query.projectId;
   const projects = (await listProjects(actor)).filter(
-    (project) => project.status === "ACTIVE",
+    (project) =>
+      project.status === "ACTIVE" &&
+      project.customerRequestsEnabled !== false,
   );
   const projectOptions: RequestProjectOption[] = projects.map(
     (project) => ({

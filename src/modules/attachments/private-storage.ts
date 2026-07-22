@@ -20,6 +20,13 @@ export function createProjectStorageKey(
   return path.posix.join("projects", projectId, `${randomUUID()}.${extension}`);
 }
 
+export function createSupportPlaybookStorageKey(extension: string) {
+  return path.posix.join(
+    "support-playbooks",
+    `${randomUUID()}.${extension}`,
+  );
+}
+
 export function createReplacementStorageKey(
   currentStorageKey: string,
   extension: string,

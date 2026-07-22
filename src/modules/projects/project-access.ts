@@ -8,7 +8,18 @@ import {
   canViewProject,
   type ProjectAccess,
 } from "@/modules/projects/permissions";
-import { assertAllowed, assertFound } from "@/modules/projects/errors";
+import {
+  assertAllowed,
+  assertFound,
+  DomainError,
+} from "@/modules/projects/errors";
+
+export type CustomerProjectFeature =
+  | "milestones"
+  | "progress"
+  | "updates"
+  | "requests"
+  | "files";
 
 export async function loadProjectAccess(
   tx: Prisma.TransactionClient,
@@ -20,6 +31,11 @@ export async function loadProjectAccess(
     select: {
       id: true,
       customerSpaceId: true,
+      customerUpdatesEnabled: true,
+      customerRequestsEnabled: true,
+      customerFilesEnabled: true,
+      showMilestones: true,
+      showProgress: true,
       customerSpace: {
         select: {
           memberships: {
@@ -46,6 +62,13 @@ export async function loadProjectAccess(
   return {
     projectId: project.id,
     customerSpaceId: project.customerSpaceId,
+    customerFeatures: {
+      milestones: project.showMilestones,
+      progress: project.showProgress,
+      updates: project.customerUpdatesEnabled,
+      requests: project.customerRequestsEnabled,
+      files: project.customerFilesEnabled,
+    },
     access,
   };
 }
@@ -57,6 +80,19 @@ export async function assertCanViewProject(
 ) {
   const context = await loadProjectAccess(tx, actor, projectId);
   assertAllowed(canViewProject(actor, context.access), "无权查看该项目");
+  return context;
+}
+
+export async function assertCanViewCustomerProjectFeature(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+  feature: CustomerProjectFeature,
+) {
+  const context = await assertCanViewProject(tx, actor, projectId);
+  if (!actor.isStaff && !context.customerFeatures[feature]) {
+    throw new DomainError("NOT_FOUND", "项目功能未开放", 404);
+  }
   return context;
 }
 

@@ -2,6 +2,7 @@
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { Box, Button, Typography } from "@mui/material";
+import { resolveInlineAttachmentHtml } from "@/lib/message-content";
 
 function looksLikeHtml(body: string) {
   return /<\/?[a-z][\s\S]*>/i.test(body);
@@ -10,20 +11,29 @@ function looksLikeHtml(body: string) {
 export function CollapsibleText({
   text,
   maxLines = 8,
+  resolveInlineImageUrl,
+  collapsible = true,
 }: {
   text: string;
   maxLines?: number;
+  resolveInlineImageUrl?: (attachmentId: string) => string;
+  collapsible?: boolean;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
   const html = looksLikeHtml(text);
+  const renderedHtml = html
+    ? resolveInlineAttachmentHtml(text, resolveInlineImageUrl)
+    : text;
 
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    setOverflowing(node.scrollHeight > node.clientHeight + 2);
-  }, [text, maxLines, expanded]);
+    setOverflowing(
+      collapsible && node.scrollHeight > node.clientHeight + 2,
+    );
+  }, [text, maxLines, expanded, collapsible]);
 
   return (
     <Box>
@@ -34,15 +44,24 @@ export function CollapsibleText({
             mt: 1.25,
             lineHeight: 1.8,
             wordBreak: "break-word",
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: expanded ? "unset" : maxLines,
-            overflow: "hidden",
+            display: collapsible ? "-webkit-box" : "block",
+            WebkitBoxOrient: collapsible ? "vertical" : undefined,
+            WebkitLineClamp:
+              collapsible && !expanded ? maxLines : "unset",
+            overflow: collapsible ? "hidden" : "visible",
             "& p": { m: 0, mb: 0.75 },
             "& p:last-child": { mb: 0 },
             "& ul, & ol": { my: 0.5, pl: 2.25 },
+            "& img": {
+              display: "block",
+              maxWidth: "100%",
+              maxHeight: 520,
+              my: 1.25,
+              borderRadius: 1.5,
+              objectFit: "contain",
+            },
           }}
-          dangerouslySetInnerHTML={{ __html: text }}
+          dangerouslySetInnerHTML={{ __html: renderedHtml }}
         />
       ) : (
         <Typography
@@ -52,16 +71,17 @@ export function CollapsibleText({
             lineHeight: 1.8,
             whiteSpace: "pre-wrap",
             wordBreak: "break-word",
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: expanded ? "unset" : maxLines,
-            overflow: "hidden",
+            display: collapsible ? "-webkit-box" : "block",
+            WebkitBoxOrient: collapsible ? "vertical" : undefined,
+            WebkitLineClamp:
+              collapsible && !expanded ? maxLines : "unset",
+            overflow: collapsible ? "hidden" : "visible",
           }}
         >
           {text}
         </Typography>
       )}
-      {overflowing || expanded ? (
+      {collapsible && (overflowing || expanded) ? (
         <Button
           size="small"
           onClick={() => setExpanded((value) => !value)}

@@ -40,9 +40,20 @@ export async function buildTemplateMail(input: {
   variables: Record<string, string>;
   actionUrl?: string;
 }) {
-  const override = await withSystemDb((tx) =>
-    tx.mailTemplateOverride.findUnique({ where: { key: input.key } }),
-  );
+  return withSystemDb((tx) => buildTemplateMailInTx(tx, input));
+}
+
+export async function buildTemplateMailInTx(
+  tx: Parameters<Parameters<typeof withSystemDb>[0]>[0],
+  input: {
+    key: MailTemplateKey;
+    variables: Record<string, string>;
+    actionUrl?: string;
+  },
+) {
+  const override = await tx.mailTemplateOverride.findUnique({
+    where: { key: input.key },
+  });
   const content = effectiveContent(input.key, override);
   const rendered = renderTemplateContent(input.key, content, input.variables);
   return {

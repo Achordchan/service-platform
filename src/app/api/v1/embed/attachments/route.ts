@@ -27,6 +27,7 @@ export async function POST(request: Request) {
     const file = formData.get("file");
     const serviceRequestId = String(formData.get("serviceRequestId") ?? "").trim();
     const requestMessageId = String(formData.get("requestMessageId") ?? "").trim();
+    const inline = formData.get("inline") === "true";
     if (!(file instanceof File) || !serviceRequestId) {
       throw new DomainError(
         "ATTACHMENT_INPUT_INVALID",
@@ -47,6 +48,10 @@ export async function POST(request: Request) {
       buffer: new Uint8Array(await file.arrayBuffer()),
       serviceRequestId,
       requestMessageId: requestMessageId || undefined,
+      inline,
+    }, {
+      customerMemberNotificationsEnabled:
+        session.connection.customerMemberNotificationsEnabled,
     });
     return Response.json({ data }, { status: 201 });
   } catch (error) {

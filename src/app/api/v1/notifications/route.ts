@@ -8,9 +8,17 @@ import {
   markRequestNotificationsRead,
 } from "@/modules/notifications/notification-service";
 
-export async function GET() {
+export async function GET(request: Request) {
   const { actor } = await requireUserWithAccess();
-  return NextResponse.json({ data: await listNotifications(actor) });
+  const url = new URL(request.url);
+  const limitValue = Number(url.searchParams.get("limit") ?? "30");
+  const limit = Number.isFinite(limitValue) ? limitValue : 30;
+  return NextResponse.json({
+    data: await listNotifications(actor, {
+      limit,
+      cursor: url.searchParams.get("cursor") ?? undefined,
+    }),
+  });
 }
 
 export async function PATCH(request: Request) {
@@ -20,7 +28,7 @@ export async function PATCH(request: Request) {
     all?: boolean;
     serviceRequestId?: string;
     projectId?: string;
-    projectScope?: "updates" | "all";
+    projectScope?: "overview" | "updates" | "milestones" | "files" | "all";
   };
 
   if (body.all) {

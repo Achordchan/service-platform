@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
-import { enqueueMail } from "@/lib/jobs";
+import { dispatchQueuedMailMessage } from "@/lib/jobs";
 import {
   createInvitationToken,
 } from "@/modules/invitations/invitation-token";
@@ -10,13 +10,16 @@ import {
   getEmailChangePreview,
 } from "@/modules/users/customer-email-change-service";
 
-vi.mock("@/lib/jobs", () => ({
-  assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
-  enqueueMail: vi.fn().mockResolvedValue({
-    jobId: "email-change-test-job",
-    mailMessageId: "email-change-test-message",
-  }),
-}));
+vi.mock("@/lib/jobs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/jobs")>();
+  return {
+    ...actual,
+    assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
+    dispatchQueuedMailMessage: vi
+      .fn()
+      .mockResolvedValue("email-change-test-job"),
+  };
+});
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -142,6 +145,9 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query(`DELETE FROM "MailMessage" WHERE "sourceId" = $1`, [
+    fixture.changeId,
+  ]);
   await pool.query(`DELETE FROM "Invitation" WHERE id = $1`, [
     fixture.invitationId,
   ]);
@@ -177,7 +183,7 @@ describe("客户邮箱变更确认页", () => {
   });
 
   it("POST 确认会原子迁移邮箱、邀请并撤销现有会话", async () => {
-    vi.mocked(enqueueMail).mockClear();
+    vi.mocked(dispatchQueuedMailMessage).mockClear();
 
     await expect(confirmCustomerEmailChange(token.token)).resolves.toEqual({
       recipientName: "邮箱变更测试客户",
@@ -218,9 +224,36 @@ describe("客户邮箱变更确认页", () => {
       session_count: "0",
       invitation_email: fixture.newEmail,
     });
-    expect(enqueueMail).toHaveBeenCalledTimes(2);
-    expect(vi.mocked(enqueueMail).mock.calls.map(([mail]) => mail.to)).toEqual(
-      expect.arrayContaining([fixture.oldEmail, fixture.newEmail]),
+    expect(dispatchQueuedMailMessage).toHaveBeenCalledTimes(2);
+    const outbox = await pool.query<{
+      to_email: string;
+      source_type: string;
+      status: string;
+    }>(
+      `
+        SELECT
+          "toEmail" AS to_email,
+          "sourceType" AS source_type,
+          status::text
+        FROM "MailMessage"
+        WHERE "sourceId" = $1
+        ORDER BY "createdAt" ASC
+      `,
+      [fixture.changeId],
+    );
+    expect(outbox.rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          to_email: fixture.newEmail,
+          source_type: "CUSTOMER_EMAIL_CHANGE_COMPLETED",
+          status: "QUEUED",
+        }),
+        expect.objectContaining({
+          to_email: fixture.oldEmail,
+          source_type: "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE",
+          status: "QUEUED",
+        }),
+      ]),
     );
     await expect(getEmailChangePreview(token.token)).resolves.toBeNull();
     await expect(confirmCustomerEmailChange(token.token)).rejects.toThrow(

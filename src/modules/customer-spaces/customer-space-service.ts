@@ -5,7 +5,8 @@ import { withActorDb } from "@/lib/actor";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
 import {
   assertMailDeliveryReady,
-  enqueueMail,
+  createMailMessageInTx,
+  dispatchQueuedMailMessage,
 } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { createInvitationToken } from "@/modules/invitations/invitation-token";
@@ -69,11 +70,44 @@ export function listCustomerSpaces(actor: Actor) {
       },
       data: { status: "EXPIRED" },
     });
-    return tx.customerSpace.findMany({
+    const spaces = await tx.customerSpace.findMany({
       where: { kind: "STANDARD" },
       select: spaceSelect,
       orderBy: { createdAt: "desc" },
     });
+    const changeIds = spaces.flatMap((space) =>
+      space.owner.emailChanges.map((change) => change.id),
+    );
+    const verificationMessages =
+      changeIds.length > 0
+        ? await tx.mailMessage.findMany({
+            where: {
+              sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+              sourceId: { in: changeIds },
+            },
+            select: { sourceId: true, status: true },
+            orderBy: { createdAt: "desc" },
+          })
+        : [];
+    const latestStatusByChangeId = new Map<string, string>();
+    for (const message of verificationMessages) {
+      if (
+        message.sourceId &&
+        !latestStatusByChangeId.has(message.sourceId)
+      ) {
+        latestStatusByChangeId.set(message.sourceId, message.status);
+      }
+    }
+    return spaces.map((space) => ({
+      ...space,
+      owner: {
+        ...space.owner,
+        emailChanges: space.owner.emailChanges.map((change) => ({
+          ...change,
+          mailStatus: latestStatusByChangeId.get(change.id) ?? null,
+        })),
+      },
+    }));
   });
 }
 
@@ -85,6 +119,12 @@ export async function createCustomerSpace(
   if (!input.ownerId) {
     await assertMailDeliveryReady();
   }
+  const appUrl = input.ownerId ? null : await getPublicAppUrl();
+  const tokenData = input.ownerId ? null : createInvitationToken();
+  const actionUrl =
+    appUrl && tokenData
+      ? `${appUrl}/accept-invitation?token=${encodeURIComponent(tokenData.token)}`
+      : null;
   const result = await withActorDb(actor, async (tx) => {
     const baseSlug = buildSpaceSlug(input.name, input.slug);
     let slug = baseSlug;
@@ -106,8 +146,10 @@ export async function createCustomerSpace(
           id: string;
           email: string;
           expiresAt: Date;
-          token: string;
         }
+      | undefined;
+    let mailMessage:
+      | Awaited<ReturnType<typeof createMailMessageInTx>>
       | undefined;
 
     if (input.ownerId) {
@@ -180,7 +222,9 @@ export async function createCustomerSpace(
     });
 
     if (!input.ownerId) {
-      const tokenData = createInvitationToken();
+      if (!tokenData || !actionUrl) {
+        throw new Error("客户负责人邀请邮件初始化失败");
+      }
       const createdInvitation = await tx.invitation.create({
         data: {
           customerSpaceId: space.id,
@@ -198,8 +242,24 @@ export async function createCustomerSpace(
       });
       invitation = {
         ...createdInvitation,
-        token: tokenData.token,
       };
+      mailMessage = await createMailMessageInTx(tx, {
+        to: invitation.email,
+        templateKey: "CUSTOMER_OWNER_INVITATION",
+        variables: {
+          recipientName: space.owner.name,
+          recipientEmail: space.owner.email,
+          inviterName: actor.name,
+          inviterEmail: actor.email,
+          customerName: space.name,
+          spaceName: space.name,
+          expiresIn: "24 小时",
+        },
+        actionUrl,
+        idempotencyKey: `customer-owner-invitation:${invitation.id}`,
+        sourceType: "CUSTOMER_OWNER_INVITATION",
+        sourceId: invitation.id,
+      });
     }
 
     await writeAuditLog(tx, actor, {
@@ -214,29 +274,21 @@ export async function createCustomerSpace(
         ownerInvitationId: invitation?.id,
       },
     });
-    return { space, invitation };
+    return { space, invitation, mailMessage };
   });
 
   if (!result.invitation) {
     return result.space;
   }
 
-  const appUrl = await getPublicAppUrl();
-  const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(result.invitation.token)}`;
-  await enqueueMail({
-    to: result.invitation.email,
-    templateKey: "CUSTOMER_OWNER_INVITATION",
-    variables: {
-      recipientName: result.space.owner.name,
-      recipientEmail: result.space.owner.email,
-      inviterName: actor.name,
-      inviterEmail: actor.email,
-      customerName: result.space.name,
-      spaceName: result.space.name,
-      expiresIn: "24 小时",
-    },
-    actionUrl,
-  });
+  if (!result.mailMessage || !actionUrl) {
+    throw new Error("客户负责人邀请邮件初始化失败");
+  }
+  await dispatchQueuedMailMessage(
+    result.mailMessage.id,
+    result.mailMessage.deliveryMode,
+    result.mailMessage.sendAfter,
+  );
 
   return {
     ...result.space,

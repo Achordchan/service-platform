@@ -33,8 +33,36 @@ function isSafeHref(href: string) {
   );
 }
 
+function escapeAttribute(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function protectInlineImages(input: string) {
+  const images = new Map<string, string>();
+  let index = 0;
+  const html = input.replace(/<img\b[^>]*>/gi, (tag) => {
+    const id =
+      tag.match(/\bdata-attachment-id\s*=\s*["']([a-z0-9_-]+)["']/i)?.[1] ??
+      tag.match(/\bsrc\s*=\s*["']attachment:\/\/([a-z0-9_-]+)["']/i)?.[1];
+    if (!id) return "";
+    const alt = tag.match(/\balt\s*=\s*["']([^"']*)["']/i)?.[1] ?? "正文图片";
+    const token = `ACHORD_INLINE_IMAGE_${index++}_${id}`;
+    images.set(
+      token,
+      `<img src="attachment://${id}" data-attachment-id="${id}" alt="${escapeAttribute(alt)}">`,
+    );
+    return token;
+  });
+  return { html, images };
+}
+
 export function sanitizeMessageHtml(input: string) {
-  const purified = DOMPurify.sanitize(input, {
+  const protectedContent = protectInlineImages(input);
+  const purified = DOMPurify.sanitize(protectedContent.html, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
@@ -50,7 +78,7 @@ export function sanitizeMessageHtml(input: string) {
     FORBID_ATTR: ["style", "onerror", "onclick", "onload"],
   });
 
-  return purified
+  let result = purified
     .replace(/<a\b([^>]*)>/gi, (_match, attrs: string) => {
       const hrefMatch = attrs.match(
         /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i,
@@ -62,5 +90,8 @@ export function sanitizeMessageHtml(input: string) {
       return `<a href="${href}" target="_blank" rel="noopener noreferrer">`;
     })
     .trim();
+  for (const [token, image] of protectedContent.images) {
+    result = result.replaceAll(token, image);
+  }
+  return result;
 }
-

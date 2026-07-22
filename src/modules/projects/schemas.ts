@@ -46,6 +46,9 @@ const projectFieldsSchema = z.object({
   currentStage: optionalText(120),
   showMilestones: z.boolean().optional(),
   showProgress: z.boolean().optional(),
+  customerUpdatesEnabled: z.boolean().optional(),
+  customerRequestsEnabled: z.boolean().optional(),
+  customerFilesEnabled: z.boolean().optional(),
   startDate: optionalDate,
   endDate: optionalDate,
   customerSpaceId: z.cuid().optional(),
@@ -54,6 +57,7 @@ const projectFieldsSchema = z.object({
 });
 
 export const createProjectSchema = projectFieldsSchema
+  .omit({ status: true, currentStage: true })
   .extend({
     managerUserIds: z.array(z.cuid()).max(20).optional(),
   })
@@ -90,7 +94,7 @@ export const createProjectSchema = projectFieldsSchema
   });
 
 export const updateProjectSchema = projectFieldsSchema
-  .omit({ customerSpaceId: true, serviceTypeId: true })
+  .omit({ currentStage: true, customerSpaceId: true, serviceTypeId: true })
   .partial()
   .refine(
     (value) =>
@@ -101,6 +105,14 @@ export const updateProjectSchema = projectFieldsSchema
   )
   .refine((value) => Object.keys(value).length > 0, {
     message: "至少提交一个修改字段",
+  });
+
+export const updateProjectStageSchema = z
+  .object({
+    currentStage: optionalText(120),
+  })
+  .refine((value) => Object.hasOwn(value, "currentStage"), {
+    message: "请提交当前阶段",
   });
 
 export const addProjectStaffSchema = z.object({
@@ -114,7 +126,7 @@ export const updateProjectStaffSchema = z.object({
 
 const milestoneFieldsSchema = z.object({
   title: z.string().trim().min(1).max(200),
-  description: optionalText(3000),
+  description: optionalText(20_000),
   status: z
     .enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED"])
     .optional(),
@@ -182,6 +194,7 @@ export type UpdateRequestCategoryInput = z.infer<
 >;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
 export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
+export type UpdateProjectStageInput = z.infer<typeof updateProjectStageSchema>;
 export type AddProjectStaffInput = z.infer<typeof addProjectStaffSchema>;
 export type UpdateProjectStaffInput = z.infer<
   typeof updateProjectStaffSchema

@@ -2,18 +2,22 @@ import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
 import {
   type MailMessageView,
+  type MailOutboxSummary,
   type MailTemplateView,
   type PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
 import { PlatformSettingsHub } from "@/components/staff/platform-settings-hub";
+import type { NotificationDeliveryRuleView } from "@/modules/notifications/notification-delivery-rules";
 import type { RoleGroupView } from "@/components/staff/role-group-manager";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { requireUserWithAccess } from "@/lib/session";
 import {
   getPlatformSettings,
+  getMailOutboxSummary,
   listMailMessages,
 } from "@/modules/platform-settings/platform-setting-service";
 import { listMailTemplates } from "@/modules/platform-settings/mail-template-service";
+import { listNotificationDeliveryRules } from "@/modules/notifications/notification-delivery-rule-service";
 import { listRoleGroups } from "@/modules/users/role-group-service";
 
 export const metadata = {
@@ -26,9 +30,11 @@ export default async function StaffSettingsPage() {
     redirect("/staff/projects");
   }
 
-  const [settings, messages, roleGroups, templates] = await Promise.all([
+  const [settings, messages, mailSummary, notificationRules, roleGroups, templates] = await Promise.all([
     getPlatformSettings(actor),
     listMailMessages(actor, 50),
+    getMailOutboxSummary(actor),
+    listNotificationDeliveryRules(actor),
     listRoleGroups(actor),
     listMailTemplates(actor),
   ]);
@@ -54,9 +60,18 @@ export default async function StaffSettingsPage() {
     smtpFrom: settings.smtpFrom,
     smtpSecure: settings.smtpSecure,
     hasStoredPassword: settings.hasStoredPassword,
+    smtpHealthStatus:
+      settings.smtpHealthStatus === "healthy" ||
+      settings.smtpHealthStatus === "error" ||
+      settings.smtpHealthStatus === "unchecked"
+        ? settings.smtpHealthStatus
+        : null,
+    smtpLastCheckedAt: settings.smtpLastCheckedAt,
+    smtpLastError: settings.smtpLastError,
     attachmentMaxSizeMb: settings.attachmentMaxSizeMb,
     attachmentAllowedExtensions: settings.attachmentAllowedExtensions,
     customerReplyAttachmentsEnabled: settings.customerReplyAttachmentsEnabled,
+    standardRequestEmailEnabled: settings.standardRequestEmailEnabled,
     updatedAt: settings.updatedAt,
   };
 
@@ -78,8 +93,11 @@ export default async function StaffSettingsPage() {
     providerId: message.providerId,
     sentAt: message.sentAt?.toISOString() ?? null,
     lastEventAt: message.lastEventAt?.toISOString() ?? null,
+    sendAfter: message.sendAfter.toISOString(),
     createdAt: message.createdAt.toISOString(),
   }));
+  const mailOutboxSummary: MailOutboxSummary = mailSummary;
+  const notificationRuleViews: NotificationDeliveryRuleView[] = notificationRules;
   const templateViews: MailTemplateView[] = templates;
 
   const roleGroupViews: RoleGroupView[] = roleGroups.map((group) => ({
@@ -107,6 +125,8 @@ export default async function StaffSettingsPage() {
         <PlatformSettingsHub
           initialSettings={settingsView}
           initialMessages={messageViews}
+          initialMailOutboxSummary={mailOutboxSummary}
+          initialNotificationRules={notificationRuleViews}
           initialTemplates={templateViews}
           roleGroups={roleGroupViews}
           currentAdminEmail={actor.email}

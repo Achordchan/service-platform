@@ -25,7 +25,9 @@ function replyText(
   if (plainText && plainText !== "（附件）") {
     return truncatePlainText(plainText, 120);
   }
-  const fileName = message.attachments[0]?.originalName;
+  const fileName = message.attachments.find(
+    (attachment) => !attachment.inline,
+  )?.originalName;
   return fileName ? `附件：${fileName}` : "原消息无文字内容";
 }
 
@@ -106,6 +108,8 @@ export function RequestQuotedMessage({
         bgcolor: inverted
           ? "rgba(255,255,255,0.12)"
           : "rgba(15,23,42,0.045)",
+        width: "fit-content",
+        maxWidth: { xs: "100%", sm: 420, md: 520 },
         minWidth: 0,
       }}
     >

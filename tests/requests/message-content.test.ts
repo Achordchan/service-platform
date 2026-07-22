@@ -3,6 +3,8 @@ import {
   buildAttachmentOnlyMessage,
   buildMessagePreview,
   escapeHtmlText,
+  extractInlineAttachmentIds,
+  resolveInlineAttachmentHtml,
   truncatePlainText,
 } from "@/lib/message-content";
 
@@ -29,5 +31,16 @@ describe("请求消息摘要", () => {
     expect(escapeHtmlText('<img src=x onerror="x">')).toBe(
       "&lt;img src=x onerror=&quot;x&quot;&gt;",
     );
+  });
+
+  it("提取正文图片并解析为受控预览地址", () => {
+    const html =
+      '<p>截图</p><img src="attachment://cmriy2wf0000hdn5ughz329jp" data-attachment-id="cmriy2wf0000hdn5ughz329jp" alt="截图">';
+    expect(extractInlineAttachmentIds(html)).toEqual([
+      "cmriy2wf0000hdn5ughz329jp",
+    ]);
+    expect(
+      resolveInlineAttachmentHtml(html, (id) => `/preview/${id}`),
+    ).toContain('src="/preview/cmriy2wf0000hdn5ughz329jp"');
   });
 });

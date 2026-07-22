@@ -40,11 +40,12 @@ export function assertDeliveryModeReady(
     !settings.smtpPort ||
     !settings.smtpUser ||
     !settings.smtpPassword ||
-    !settings.smtpFrom
+    !settings.smtpFrom ||
+    settings.smtpHealthStatus !== "healthy"
   ) {
     throw new DomainError(
       "SMTP_NOT_READY",
-      "SMTP 配置不完整",
+      "SMTP 配置不完整或尚未通过连接检测",
       409,
     );
   }

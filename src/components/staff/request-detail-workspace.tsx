@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
+import { RequestArchivePanel } from "@/components/shared/request-archive-panel";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyComposer } from "@/components/staff/request-reply-composer";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -84,7 +85,10 @@ export function RequestDetailWorkspace({
   const [error, setError] = useState("");
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
   const presence = useRequestPresence(request.id, "STAFF");
-  useRequestRealtime(request.id, { currentUserId });
+  useRequestRealtime(request.id, {
+    currentUserId,
+    projectId: request.projectId,
+  });
   useRequestNotificationsRead(request.id);
 
   const selectedAssignees = useMemo(() => {
@@ -172,7 +176,11 @@ export function RequestDetailWorkspace({
             />
           </Box>
 
-          {canManage && request.status !== "CLOSED" ? (
+          {request.archivedAt ? (
+            <Alert severity="info">
+              该服务请求已归档。恢复到常规列表后才能继续处理或回复。
+            </Alert>
+          ) : canManage && request.status !== "CLOSED" ? (
             <RequestReplyComposer
               requestId={request.id}
               replyTarget={replyTarget}
@@ -189,7 +197,7 @@ export function RequestDetailWorkspace({
         </Stack>
 
         <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: 96 } }}>
-          {canManage && availableStatuses.length > 0 ? (
+          {canManage && !request.archivedAt && availableStatuses.length > 0 ? (
             <Paper variant="outlined" sx={{ p: 2.5 }}>
               <Typography variant="h3">更新状态</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -249,6 +257,12 @@ export function RequestDetailWorkspace({
             </Stack>
           </Paper>
 
+          <RequestArchivePanel
+            requestId={request.id}
+            status={request.status}
+            archivedAt={request.archivedAt}
+          />
+
           {canAssign ? (
             <Paper variant="outlined" sx={{ p: 2.5 }}>
               <Typography variant="h3">分配处理人</Typography>
@@ -266,7 +280,11 @@ export function RequestDetailWorkspace({
                   option.userId === value.userId
                 }
                 onChange={(_event, value) => updateAssignees(value)}
-                disabled={submitting || request.status === "CLOSED"}
+                disabled={
+                  submitting ||
+                  request.status === "CLOSED" ||
+                  Boolean(request.archivedAt)
+                }
                 sx={{ mt: 2 }}
                 renderInput={(params) => (
                   <TextField {...params} label="处理人" placeholder="选择处理人" />

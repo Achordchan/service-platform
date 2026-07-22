@@ -18,8 +18,10 @@ import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attach
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
+import { SupportReplyAssistant } from "@/components/staff/support-reply-assistant";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
+import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
 import {
   buildAttachmentOnlyMessage,
@@ -44,14 +46,19 @@ export function RequestReplyComposer({
   onTypingStopped?: () => void;
 }) {
   const router = useRouter();
-  const { policy, validateFiles, filesFromClipboard } = useAttachmentPolicy();
+  const { policy, validateFiles } = useAttachmentPolicy();
   const [body, setBody] = useState("");
   const [internal, setInternal] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const internalReplyLocked = replyTarget?.visibility === "INTERNAL";
   const effectiveInternal = internalReplyLocked || internal;
+  const uploadInlineImage = useInlineImageUpload({
+    requestId,
+    visibility: effectiveInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+  });
 
   useEffect(() => {
     if (!hasMeaningfulHtml(body)) return;
@@ -66,6 +73,31 @@ export function RequestReplyComposer({
     if (accepted.length > 0) {
       if (!validateError) setError("");
       setFiles((current) => [...current, ...accepted]);
+    }
+  }
+
+  async function sendSupportPlaybook(playbookKey: string) {
+    setSubmitting(true);
+    setError("");
+    try {
+      await staffApi(`/api/v1/requests/${requestId}/messages`,
+        jsonRequest("POST", {
+          body: "",
+          visibility: "CUSTOMER_VISIBLE",
+          replyToMessageId: replyTarget?.id,
+          supportPlaybookKey: playbookKey,
+        }),
+      );
+      onCancelReply?.();
+      markRequestLocalMutation();
+      router.refresh();
+    } catch (sendError) {
+      const message =
+        sendError instanceof Error ? sendError.message : "处理指南发送失败";
+      setError(message);
+      throw new Error(message);
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -120,13 +152,6 @@ export function RequestReplyComposer({
       component="form"
       variant="outlined"
       onSubmit={submit}
-      onPaste={(event) => {
-        const imageFiles = filesFromClipboard(event.clipboardData);
-        if (imageFiles.length > 0) {
-          event.preventDefault();
-          addFiles(imageFiles);
-        }
-      }}
       sx={{ overflow: "hidden" }}
     >
       {submitting ? <LinearProgress /> : null}
@@ -143,13 +168,24 @@ export function RequestReplyComposer({
           spacing={1}
           sx={{ justifyContent: "space-between" }}
         >
-          <Typography sx={{ fontWeight: 650 }}>
-            {effectiveInternal
-              ? "添加内部备注"
-              : claimRequired
-                ? "回复客户并接手"
-                : "回复客户"}
-          </Typography>
+          <Stack
+            direction="row"
+            spacing={1}
+            useFlexGap
+            sx={{ alignItems: "center", flexWrap: "wrap" }}
+          >
+            <Typography sx={{ fontWeight: 650 }}>
+              {effectiveInternal
+                ? "添加内部备注"
+                : claimRequired
+                  ? "回复客户并接手"
+                  : "回复客户"}
+            </Typography>
+            <SupportReplyAssistant
+              disabled={submitting || effectiveInternal}
+              onSend={sendSupportPlaybook}
+            />
+          </Stack>
           <FormControlLabel
             control={
               <Switch
@@ -175,6 +211,8 @@ export function RequestReplyComposer({
             }
           }}
           disabled={submitting}
+          uploadImage={uploadInlineImage}
+          onImageUploadingChange={setInlineImageUploading}
           placeholder={
             effectiveInternal ? "记录内部处理信息" : "输入给客户的回复"
           }
@@ -208,6 +246,7 @@ export function RequestReplyComposer({
             endIcon={<SendOutlinedIcon />}
             disabled={
               submitting ||
+              inlineImageUploading ||
               (!hasMeaningfulHtml(body) && files.length === 0)
             }
           >

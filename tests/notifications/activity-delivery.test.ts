@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  planExternalRequestActivity,
   planProjectActivity,
   planRequestActivity,
   type ActivityAudience,
@@ -29,6 +28,7 @@ describe("项目活动通知规划", () => {
       notificationBody: "项目发布了新的进度动态。",
       customerSpaceId: "space-1",
       projectId: "project-1",
+      emailRecipientUserIds: ["customer-1", "customer-2"],
     });
 
     expect(delivery.notifications.map((item) => item.userId)).toEqual([
@@ -44,6 +44,11 @@ describe("项目活动通知规划", () => {
         projectId: "project-1",
       }),
     ]);
+    expect(
+      delivery.notifications
+        .filter((item) => item.emailEligible)
+        .map((item) => item.userId),
+    ).toEqual(["customer-1", "customer-2"]);
   });
 
   it("内部评论不产生客户通知或客户可见事件", () => {
@@ -85,7 +90,8 @@ describe("项目活动通知规划", () => {
 
 describe("请求活动通知规划", () => {
   it("外部联系人不会被当作正式用户事件接收人", () => {
-    const delivery = planExternalRequestActivity({
+    const delivery = planRequestActivity({
+      actorId: "",
       audience,
       includeCustomers: false,
       notifyProjectManagers: true,
@@ -220,7 +226,7 @@ describe("请求活动通知规划", () => {
       "tech-1",
     ]);
     expect(delivery.notifications[0]?.aggregationKey).toBe(
-      "request:request-1",
+      "request:request-1:REQUEST_MESSAGE:ui",
     );
     expect(delivery.events.map((item) => item.userId)).toEqual([
       "customer-1",
@@ -229,6 +235,83 @@ describe("请求活动通知规划", () => {
       "admin-1",
       "tech-1",
     ]);
+  });
+
+  it("正式用户活动始终排除操作者，并只标记明确的邮件候选人", () => {
+    const delivery = planRequestActivity({
+      actorId: "manager-1",
+      audience,
+      relevantWorkerUserIds: ["manager-1", "tech-1"],
+      includeCustomers: true,
+      notifyProjectManagers: true,
+      notifyPlatformAdmins: true,
+      emailRecipientUserIds: ["customer-1", "tech-1", "manager-1"],
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: { requestId: "request-1" },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "请求有新回复",
+      notificationBody: "回复摘要",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(delivery.notifications.map((item) => item.userId)).not.toContain(
+      "manager-1",
+    );
+    expect(
+      delivery.notifications
+        .filter((item) => item.emailEligible)
+        .map((item) => item.userId),
+    ).toEqual(["customer-1", "tech-1"]);
+    expect(
+      delivery.notifications.find((item) => item.userId === "customer-1")
+        ?.aggregationKey,
+    ).toBe("request:request-1:REQUEST_MESSAGE:mail");
+  });
+
+  it("不同通知类型和邮件策略不会覆盖同一工单的待发邮件", () => {
+    const publicMessage = planRequestActivity({
+      actorId: "manager-1",
+      audience,
+      relevantWorkerUserIds: ["tech-1"],
+      includeCustomers: true,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
+      emailRecipientUserIds: ["customer-1"],
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: { requestId: "request-1", visibility: "CUSTOMER_VISIBLE" },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "请求有新回复",
+      notificationBody: "回复摘要",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+    const attachment = planRequestActivity({
+      actorId: "manager-1",
+      audience,
+      relevantWorkerUserIds: ["tech-1"],
+      includeCustomers: true,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
+      eventType: "REQUEST_UPDATED",
+      eventPayload: { requestId: "request-1", visibility: "CUSTOMER_VISIBLE" },
+      notificationType: "REQUEST_ATTACHMENT",
+      notificationTitle: "请求有新附件",
+      notificationBody: "附件名称",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(
+      publicMessage.notifications.find((item) => item.userId === "customer-1")
+        ?.aggregationKey,
+    ).not.toBe(
+      attachment.notifications.find((item) => item.userId === "customer-1")
+        ?.aggregationKey,
+    );
   });
 
   it("自动状态变化只创建实时事件", () => {

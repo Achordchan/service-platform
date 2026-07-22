@@ -105,7 +105,30 @@ export function listProjects(actor: Actor) {
       select: projectBaseSelect,
       orderBy: { updatedAt: "desc" },
     });
-    return hydrateProjectSummaries(tx, projects);
+    const summaries = await hydrateProjectSummaries(tx, projects, actor);
+    if (actor.isStaff) return summaries;
+    return summaries.map((project) => ({
+      ...project,
+      progress: project.showProgress ? project.progress : 0,
+      progressDetails: project.showProgress
+        ? project.progressDetails
+        : { total: 0, completed: 0, inProgress: 0, notStarted: 0 },
+      serviceType: {
+        ...project.serviceType,
+        requestCategories: project.customerRequestsEnabled
+          ? project.serviceType.requestCategories
+          : [],
+      },
+      _count: {
+        ...project._count,
+        updates: project.customerUpdatesEnabled
+          ? project._count.updates
+          : 0,
+        requests: project.customerRequestsEnabled
+          ? project._count.requests
+          : 0,
+      },
+    }));
   });
 }
 
@@ -181,6 +204,8 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       data: {
         ...projectInput,
         kind,
+        status: kind === "STANDARD" ? "ACTIVE" : "DRAFT",
+        currentStage: null,
         customerSpaceId: customerSpace.id,
         createdById: actor.id,
       },
@@ -252,7 +277,7 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
       projectId: project.id,
     });
 
-    const [result] = await hydrateProjectSummaries(tx, [project]);
+    const [result] = await hydrateProjectSummaries(tx, [project], actor);
     return result;
   });
 }
@@ -274,6 +299,7 @@ export function updateProject(
         startDate: true,
         endDate: true,
         kind: true,
+        status: true,
         pluginBindings: { select: { pluginKey: true } },
         _count: {
           select: {
@@ -287,6 +313,25 @@ export function updateProject(
       },
     });
     assertFound(existing, "项目不存在");
+
+    if (input.status === "DRAFT") {
+      throw new DomainError(
+        "PROJECT_DRAFT_STATUS_MANAGED",
+        "项目不能手动改为草稿状态",
+        409,
+      );
+    }
+    if (
+      existing.kind === "EXTERNAL_INTEGRATION" &&
+      existing.status === "DRAFT" &&
+      input.status !== undefined
+    ) {
+      throw new DomainError(
+        "EXTERNAL_PROJECT_NOT_ACTIVATED",
+        "请先完成外部连接检测并激活连接",
+        409,
+      );
+    }
 
     const existingConnectorPluginKey = existing.pluginBindings[0]?.pluginKey;
     if (
@@ -386,6 +431,10 @@ export function updateProject(
       where: { id: projectId },
       data: {
         ...projectUpdateInput,
+        ...(input.kind === "EXTERNAL_INTEGRATION" &&
+        existing.kind !== "EXTERNAL_INTEGRATION"
+          ? { status: "DRAFT" as const, currentStage: null }
+          : {}),
         ...(managedCustomerSpaceId
           ? { customerSpaceId: managedCustomerSpaceId }
           : {}),
@@ -415,6 +464,95 @@ export function updateProject(
         },
       });
     }
+    if (
+      input.customerUpdatesEnabled === false ||
+      input.customerRequestsEnabled === false ||
+      input.customerFilesEnabled === false ||
+      input.showProgress === false ||
+      input.showMilestones === false
+    ) {
+      const customerUserIds = (
+        await tx.membership.findMany({
+          where: { customerSpaceId: project.customerSpaceId },
+          select: { userId: true },
+        })
+      ).map((membership) => membership.userId);
+      const readAt = new Date();
+      if (input.customerUpdatesEnabled === false) {
+        await tx.notification.updateMany({
+          where: {
+            userId: { in: customerUserIds },
+            projectId,
+            readAt: null,
+            type: { in: ["PROJECT_UPDATE", "UPDATE_COMMENT"] },
+          },
+          data: {
+            readAt,
+            aggregationKey: null,
+            emailDueAt: null,
+            emailClaimedAt: null,
+          },
+        });
+      }
+      if (input.customerRequestsEnabled === false) {
+        await tx.notification.updateMany({
+          where: {
+            userId: { in: customerUserIds },
+            projectId,
+            readAt: null,
+            type: {
+              in: [
+                "REQUEST_CREATED",
+                "REQUEST_ASSIGNED",
+                "REQUEST_MESSAGE",
+                "REQUEST_STATUS",
+                "REQUEST_ATTACHMENT",
+                "REQUEST_ARCHIVE",
+              ],
+            },
+          },
+          data: {
+            readAt,
+            aggregationKey: null,
+            emailDueAt: null,
+            emailClaimedAt: null,
+          },
+        });
+      }
+      if (input.customerFilesEnabled === false) {
+        await tx.notification.updateMany({
+          where: {
+            userId: { in: customerUserIds },
+            projectId,
+            readAt: null,
+            type: "PROJECT_FILE",
+          },
+          data: { readAt, emailDueAt: null, emailClaimedAt: null },
+        });
+      }
+      if (input.showProgress === false) {
+        await tx.notification.updateMany({
+          where: {
+            userId: { in: customerUserIds },
+            projectId,
+            readAt: null,
+            type: "PROJECT_STAGE",
+          },
+          data: { readAt, emailDueAt: null, emailClaimedAt: null },
+        });
+      }
+      if (!project.showMilestones && !project.showProgress) {
+        await tx.notification.updateMany({
+          where: {
+            userId: { in: customerUserIds },
+            projectId,
+            readAt: null,
+            type: "PROJECT_MILESTONE",
+          },
+          data: { readAt, emailDueAt: null, emailClaimedAt: null },
+        });
+      }
+    }
     await writeAuditLog(tx, actor, {
       action: "PROJECT_UPDATED",
       resourceType: "Project",
@@ -429,7 +567,7 @@ export function updateProject(
       projectId: project.id,
     });
 
-    const [result] = await hydrateProjectSummaries(tx, [project]);
+    const [result] = await hydrateProjectSummaries(tx, [project], actor);
     return result;
   });
 }

@@ -18,6 +18,30 @@ import type { CustomerSpaceItem } from "@/components/staff/staff-types";
 
 type PendingChange = NonNullable<CustomerSpaceItem["pendingEmailChange"]>;
 
+function mailStatusMessage(status: string | null) {
+  if (status === "QUEUED") {
+    return { severity: "info" as const, text: "验证邮件正在排队，队列恢复后会自动补发。" };
+  }
+  if (status === "PROCESSING") {
+    return { severity: "info" as const, text: "验证邮件正在发送。" };
+  }
+  if (
+    status === "FAILED" ||
+    status === "BOUNCED" ||
+    status === "COMPLAINED" ||
+    status === "SUPPRESSED"
+  ) {
+    return { severity: "error" as const, text: "验证邮件发送失败，可重新发送生成新的验证链接。" };
+  }
+  if (status === "CANCELLED") {
+    return { severity: "warning" as const, text: "验证邮件已取消，可重新发送生成新的验证链接。" };
+  }
+  if (status) {
+    return { severity: "success" as const, text: "验证邮件已发送，正在等待新邮箱确认。" };
+  }
+  return { severity: "warning" as const, text: "尚未找到验证邮件记录，请重新发送。" };
+}
+
 export function CustomerEmailChangeDialog({
   customer,
   onClose,
@@ -47,7 +71,7 @@ export function CustomerEmailChangeDialog({
       );
       setPending(result);
       setNewEmail("");
-      setSuccess(`验证邮件已发送到 ${result.newEmail}`);
+      setSuccess(`验证邮件已加入发件箱：${result.newEmail}`);
       onChanged();
     } catch (requestError) {
       setError(
@@ -69,7 +93,7 @@ export function CustomerEmailChangeDialog({
         jsonRequest("POST"),
       );
       setPending(result);
-      setSuccess(`验证邮件已重新发送到 ${result.newEmail}`);
+      setSuccess(`新的验证邮件已加入发件箱：${result.newEmail}`);
       onChanged();
     } catch (resendError) {
       setError(
@@ -146,6 +170,9 @@ export function CustomerEmailChangeDialog({
                   timeStyle: "short",
                 }).format(new Date(pending.expiresAt))}
               </Typography>
+              <Alert severity={mailStatusMessage(pending.mailStatus).severity}>
+                {mailStatusMessage(pending.mailStatus).text}
+              </Alert>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                 <Button
                   variant="outlined"

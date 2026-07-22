@@ -5,7 +5,9 @@ import { withActorDb } from "@/lib/actor";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
 import {
   assertMailDeliveryReady,
-  enqueueMail,
+  createPreparedMailMessageInTx,
+  dispatchQueuedMailMessage,
+  prepareMailMessageTemplate,
 } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import type { CreateInvitationInput } from "@/modules/customer-spaces/schemas";
@@ -218,6 +220,41 @@ export async function createInvitation(
   input: CreateInvitationInput,
 ) {
   await assertMailDeliveryReady();
+  const appUrl = await getPublicAppUrl();
+  const tokenData = createInvitationToken();
+  const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(tokenData.token)}`;
+  const templateSpace = await withActorDb(actor, (tx) =>
+    tx.customerSpace.findUnique({
+      where: { id: customerSpaceId },
+      select: {
+        name: true,
+        kind: true,
+        memberships: {
+          where: { userId: actor.id },
+          select: { role: true },
+        },
+      },
+    }),
+  );
+  assertStandardCustomerSpace(templateSpace);
+  assertAllowed(
+    actor.isPlatformAdmin || templateSpace.memberships[0]?.role === "OWNER",
+    "仅管理员或空间所有者可以邀请成员",
+  );
+  const mailInput = {
+    to: input.email,
+    templateKey: "CUSTOMER_MEMBER_INVITATION" as const,
+    variables: {
+      recipientEmail: input.email,
+      inviterName: actor.name,
+      inviterEmail: actor.email,
+      customerName: templateSpace.name,
+      spaceName: templateSpace.name,
+      expiresIn: "24 小时",
+    },
+    actionUrl,
+  };
+  const preparedTemplate = await prepareMailMessageTemplate(mailInput);
   const result = await withActorDb(actor, async (tx) => {
     const space = await tx.customerSpace.findUnique({
       where: { id: customerSpaceId },
@@ -287,15 +324,14 @@ export async function createInvitation(
       );
     }
 
-    const { token, tokenHash, expiresAt } = createInvitationToken();
     const invitation = await tx.invitation.create({
       data: {
         customerSpaceId,
         email: input.email,
         role: "MEMBER",
-        expiresAt,
+        expiresAt: tokenData.expiresAt,
         invitedById: actor.id,
-        tokenHash,
+        tokenHash: tokenData.tokenHash,
       },
       select: {
         id: true,
@@ -316,24 +352,27 @@ export async function createInvitation(
         expiresAt: invitation.expiresAt.toISOString(),
       },
     });
-    return { invitation, token, spaceName: space.name };
+    const mailMessage = await createPreparedMailMessageInTx(tx, {
+      ...mailInput,
+      to: invitation.email,
+      variables: {
+        ...mailInput.variables,
+        recipientEmail: invitation.email,
+        customerName: space.name,
+        spaceName: space.name,
+      },
+      idempotencyKey: `customer-member-invitation:${invitation.id}`,
+      sourceType: "CUSTOMER_MEMBER_INVITATION",
+      sourceId: invitation.id,
+    }, preparedTemplate);
+    return { invitation, mailMessage };
   });
 
-  const appUrl = await getPublicAppUrl();
-  const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(result.token)}`;
-  await enqueueMail({
-    to: result.invitation.email,
-    templateKey: "CUSTOMER_MEMBER_INVITATION",
-    variables: {
-      recipientEmail: result.invitation.email,
-      inviterName: actor.name,
-      inviterEmail: actor.email,
-      customerName: result.spaceName,
-      spaceName: result.spaceName,
-      expiresIn: "24 小时",
-    },
-    actionUrl,
-  });
+  await dispatchQueuedMailMessage(
+    result.mailMessage.id,
+    result.mailMessage.deliveryMode,
+    result.mailMessage.sendAfter,
+  );
   return {
     ...result.invitation,
     previewUrl:

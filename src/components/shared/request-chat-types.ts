@@ -3,6 +3,7 @@ export type ChatAttachment = {
   originalName: string;
   mimeType: string;
   size: number;
+  inline?: boolean;
   createdAt: string;
   visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
 };
@@ -16,6 +17,7 @@ export type ChatReplyReference = {
   attachments: Array<{
     id: string;
     originalName: string;
+    inline?: boolean;
   }>;
 };
 
@@ -33,6 +35,7 @@ export type ChatMessage = {
   visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
   isSystem?: boolean;
   isInitial?: boolean;
+  supportPlaybook?: SupportReplyPlaybook | null;
   replyToMessageId?: string | null;
   replyTo?: ChatReplyReference | null;
   attachments: ChatAttachment[];
@@ -42,3 +45,4 @@ export type ChatReplyTarget = Pick<
   ChatMessage,
   "id" | "body" | "authorName" | "visibility" | "attachments"
 >;
+import type { SupportReplyPlaybook } from "@/lib/support-reply-playbooks";

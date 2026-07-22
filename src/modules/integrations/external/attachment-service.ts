@@ -2,6 +2,8 @@ import "server-only";
 
 import type { ExternalActor } from "@/lib/external-actor";
 import { withExternalActorDb } from "@/lib/external-actor";
+import { extractInlineAttachmentIds } from "@/lib/message-content";
+import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import { writeExternalAuditLog } from "@/modules/audit/audit-service";
 import {
   createStorageKey,
@@ -10,7 +12,7 @@ import {
   writePrivateFile,
 } from "@/modules/attachments/private-storage";
 import { validateAttachmentFile } from "@/modules/attachments/attachment-validation";
-import { publishEvent } from "@/modules/notifications/notification-service";
+import { dispatchExternalRequestActivity } from "@/modules/notifications/notification-service";
 import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
 import { DomainError } from "@/modules/projects/errors";
 
@@ -20,6 +22,7 @@ type UploadInput = {
   buffer: Uint8Array;
   serviceRequestId: string;
   requestMessageId?: string;
+  inline?: boolean;
 };
 
 function normalizeFileName(fileName: string) {
@@ -33,6 +36,7 @@ function normalizeFileName(fileName: string) {
 export async function uploadExternalAttachment(
   actor: ExternalActor,
   input: UploadInput,
+  options: { customerMemberNotificationsEnabled: boolean },
 ) {
   // Authorize first so untrusted callers cannot force disk IO / CPU validation
   // against arbitrary request IDs.
@@ -46,6 +50,9 @@ export async function uploadExternalAttachment(
       select: {
         id: true,
         status: true,
+        archivedAt: true,
+        assigneeId: true,
+        assignees: { select: { userId: true } },
         projectId: true,
         project: { select: { status: true, customerSpaceId: true } },
       },
@@ -53,7 +60,11 @@ export async function uploadExternalAttachment(
     if (!request) {
       throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
     }
-    if (request.project.status !== "ACTIVE" || request.status === "CLOSED") {
+    if (
+      request.project.status !== "ACTIVE" ||
+      request.status === "CLOSED" ||
+      request.archivedAt
+    ) {
       throw new DomainError(
         "EXTERNAL_REQUEST_READ_ONLY",
         "当前工单只允许查看历史内容",
@@ -97,6 +108,13 @@ export async function uploadExternalAttachment(
     input.claimedMimeType,
     input.fileName,
   );
+  if (input.inline && !validated.mimeType.startsWith("image/")) {
+    throw new DomainError(
+      "INLINE_IMAGE_REQUIRED",
+      "正文中只能插入图片文件",
+      422,
+    );
+  }
   const storageKey = createStorageKey(
     input.serviceRequestId,
     validated.extension,
@@ -116,6 +134,9 @@ export async function uploadExternalAttachment(
         select: {
           id: true,
           status: true,
+          archivedAt: true,
+          assigneeId: true,
+          assignees: { select: { userId: true } },
           projectId: true,
           project: { select: { status: true, customerSpaceId: true } },
         },
@@ -123,7 +144,11 @@ export async function uploadExternalAttachment(
       if (!request) {
         throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
       }
-      if (request.project.status !== "ACTIVE" || request.status === "CLOSED") {
+      if (
+        request.project.status !== "ACTIVE" ||
+        request.status === "CLOSED" ||
+        request.archivedAt
+      ) {
         throw new DomainError(
           "EXTERNAL_REQUEST_READ_ONLY",
           "当前工单只允许查看历史内容",
@@ -137,6 +162,7 @@ export async function uploadExternalAttachment(
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
           visibility: "CUSTOMER_VISIBLE",
+          inline: input.inline === true,
           customerSpaceId: request.project.customerSpaceId,
           projectId: request.projectId,
           serviceRequestId: request.id,
@@ -155,7 +181,7 @@ export async function uploadExternalAttachment(
         },
       });
       await writeExternalAuditLog(tx, actor, {
-        action: "ATTACHMENT_UPLOADED",
+        action: input.inline ? "INLINE_IMAGE_UPLOADED" : "ATTACHMENT_UPLOADED",
         resourceType: "Attachment",
         resourceId: created.id,
         serviceRequestId: request.id,
@@ -168,23 +194,44 @@ export async function uploadExternalAttachment(
           requestMessageId: created.requestMessageId,
         },
       });
-      await publishEvent(tx, {
-        type: "REQUEST_UPDATED",
-        customerSpaceId: request.project.customerSpaceId,
-        projectId: request.projectId,
-        serviceRequestId: request.id,
-        payload: {
-          change: "REQUEST_ATTACHMENT_UPLOADED",
-          actorType: "EXTERNAL_CONTACT",
-          actorId: actor.id,
-          source: actor.sourceKey ?? "sub2api-connector",
-          requestId: request.id,
-          attachmentId: created.id,
-          ...(created.requestMessageId
-            ? { requestMessageId: created.requestMessageId }
-            : {}),
-        },
-      });
+      if (!input.inline) {
+        const workers = Array.from(
+          new Set(
+            [
+              request.assigneeId,
+              ...request.assignees.map((item) => item.userId),
+            ].filter((value): value is string => Boolean(value)),
+          ),
+        );
+        const linkedToMessage = Boolean(created.requestMessageId);
+        await dispatchExternalRequestActivity(tx, actor, {
+          eventType: "REQUEST_UPDATED",
+          eventPayload: {
+            change: "REQUEST_ATTACHMENT_UPLOADED",
+            actorType: "EXTERNAL_CONTACT",
+            actorId: actor.id,
+            source: actor.sourceKey ?? "sub2api-connector",
+            requestId: request.id,
+            attachmentId: created.id,
+            visibility: "CUSTOMER_VISIBLE",
+            ...(created.requestMessageId
+              ? { requestMessageId: created.requestMessageId }
+              : {}),
+          },
+          notificationType: "REQUEST_ATTACHMENT",
+          notificationTitle: `${actor.name} 上传了工单附件`,
+          notificationBody: created.originalName,
+          includeCustomers: options.customerMemberNotificationsEnabled,
+          relevantWorkerUserIds: workers,
+          notifyProjectManagers: true,
+          notifyPlatformAdmins: true,
+          createNotifications: !linkedToMessage,
+          audible: !linkedToMessage,
+          customerSpaceId: request.project.customerSpaceId,
+          projectId: request.projectId,
+          serviceRequestId: request.id,
+        });
+      }
       return created;
     });
   } catch (error) {
@@ -207,10 +254,6 @@ export function readExternalAttachment(
       where: {
         id: attachmentId,
         visibility: "CUSTOMER_VISIBLE",
-        serviceRequest: {
-          projectId: actor.projectId,
-          createdByExternalContactId: actor.id,
-        },
       },
       select: {
         id: true,
@@ -219,9 +262,48 @@ export function readExternalAttachment(
         mimeType: true,
         size: true,
         serviceRequestId: true,
+        supportPlaybookKey: true,
       },
     });
     if (!attachment) {
+      throw new DomainError("ATTACHMENT_NOT_FOUND", "附件不存在", 404);
+    }
+    const normalRequest = attachment.serviceRequestId
+      ? await tx.serviceRequest.findFirst({
+          where: {
+            id: attachment.serviceRequestId,
+            projectId: actor.projectId,
+            createdByExternalContactId: actor.id,
+          },
+          select: { id: true },
+        })
+      : null;
+    const playbookMessages = attachment.supportPlaybookKey
+      ? await tx.requestMessage.findMany({
+          where: {
+            supportPlaybookKey: attachment.supportPlaybookKey,
+            visibility: "CUSTOMER_VISIBLE",
+            serviceRequest: {
+              projectId: actor.projectId,
+              createdByExternalContactId: actor.id,
+            },
+          },
+          select: {
+            serviceRequestId: true,
+            supportPlaybookSnapshot: true,
+          },
+        })
+      : [];
+    const playbookMessage = playbookMessages.find((message) => {
+      const snapshot = parseSupportPlaybookSnapshot(
+        message.supportPlaybookSnapshot,
+      );
+      return Boolean(
+        snapshot?.content &&
+          extractInlineAttachmentIds(snapshot.content).includes(attachment.id),
+      );
+    });
+    if (!normalRequest && !playbookMessage) {
       throw new DomainError("ATTACHMENT_NOT_FOUND", "附件不存在", 404);
     }
     const buffer = await readPrivateFile(attachment.storageKey);
@@ -230,7 +312,8 @@ export function readExternalAttachment(
         action: "ATTACHMENT_DOWNLOADED",
         resourceType: "Attachment",
         resourceId: attachment.id,
-        serviceRequestId: attachment.serviceRequestId ?? undefined,
+        serviceRequestId:
+          attachment.serviceRequestId ?? playbookMessage?.serviceRequestId,
         metadata: {
           actorType: "EXTERNAL_CONTACT",
           originalName: attachment.originalName,

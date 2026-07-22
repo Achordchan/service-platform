@@ -1,39 +1,35 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Alert,
   Box,
   Divider,
   LinearProgress,
-  MenuItem,
   Paper,
   Stack,
   Tab,
   Tabs,
-  TextField,
   Typography,
 } from "@mui/material";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { ProjectStaffManager } from "@/components/staff/project-staff-manager";
 import { ProjectFileManager } from "@/components/staff/project-file-manager";
+import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
 import {
   countProjectRequestUnread,
+  countProjectScopeUnread,
   countProjectUpdateUnread,
   useUnreadNotifications,
 } from "@/hooks/use-unread-notifications";
 import { RequestTable } from "@/components/staff/request-table";
-import { StaffStatus } from "@/components/staff/staff-status";
 import {
   ExternalContactsPanel,
   Sub2ApiIntegrationPanel,
 } from "@/components/staff/sub2api-integration-panel";
 import { UniversalIntegrationPanel } from "@/components/staff/universal-integration-panel";
 import type {
-  MilestoneStatus,
   ProjectDetail,
   RequestListItem,
   StaffCandidate,
@@ -88,14 +84,8 @@ export function ProjectDetailWorkspace({
   canEditProject: boolean;
   staffCandidates: StaffCandidate[];
 }) {
-  const router = useRouter();
-  const showMilestones = project.showMilestones !== false;
-  const showProgress = project.showProgress !== false;
   const [tab, setTab] = useState<ProjectTab>("overview");
-  const [updatingId, setUpdatingId] = useState("");
-  const [error, setError] = useState("");
-  const activeTab =
-    tab === "milestones" && !showMilestones ? "overview" : tab;
+  const activeTab = tab;
   const { unread, refresh } = useUnreadNotifications();
   const requestIdSet = new Set(requests.map((item) => item.id));
   const updateUnread = countProjectUpdateUnread(unread, project.id);
@@ -104,24 +94,35 @@ export function ProjectDetailWorkspace({
     project.id,
     requestIdSet,
   );
+  const projectScopeCounts = useMemo(
+    () => ({
+      overview: countProjectScopeUnread(unread, project.id, "overview"),
+      milestones: countProjectScopeUnread(unread, project.id, "milestones"),
+      updates: updateUnread,
+      files: countProjectScopeUnread(unread, project.id, "files"),
+    }),
+    [project.id, unread, updateUnread],
+  );
 
   useEffect(() => {
-    if (activeTab !== "updates" || updateUnread === 0) return;
+    if (!(activeTab in projectScopeCounts)) return;
+    const scope = activeTab as keyof typeof projectScopeCounts;
+    if (projectScopeCounts[scope] === 0) return;
     let cancelled = false;
-    async function markUpdates() {
+    async function markProjectScope() {
       try {
         const response = await fetch("/api/v1/notifications", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             projectId: project.id,
-            projectScope: "updates",
+            projectScope: scope,
           }),
         });
         if (!response.ok || cancelled) return;
         window.dispatchEvent(
           new CustomEvent("notifications-updated", {
-            detail: { projectId: project.id, projectScope: "updates" },
+            detail: { projectId: project.id, projectScope: scope },
           }),
         );
         await refresh();
@@ -129,33 +130,11 @@ export function ProjectDetailWorkspace({
         // ignore
       }
     }
-    void markUpdates();
+    void markProjectScope();
     return () => {
       cancelled = true;
     };
-  }, [activeTab, project.id, refresh, updateUnread]);
-
-
-  async function changeMilestoneStatus(
-    milestoneId: string,
-    status: MilestoneStatus,
-  ) {
-    setUpdatingId(milestoneId);
-    setError("");
-    try {
-      await staffApi(
-        `/api/v1/projects/${project.id}/milestones/${milestoneId}`,
-        jsonRequest("PATCH", { status }),
-      );
-      router.refresh();
-    } catch (updateError) {
-      setError(
-        updateError instanceof Error ? updateError.message : "状态更新失败",
-      );
-    } finally {
-      setUpdatingId("");
-    }
-  }
+  }, [activeTab, project.id, projectScopeCounts, refresh]);
 
   return (
     <Stack spacing={3} sx={{ width: "100%" }}>
@@ -167,10 +146,24 @@ export function ProjectDetailWorkspace({
           scrollButtons={false}
           sx={{ px: { xs: 1, sm: 2 } }}
         >
-          <Tab value="overview" label="项目概览" />
-          {showMilestones ? (
-            <Tab value="milestones" label={`里程碑 ${project.milestones.length}`} />
-          ) : null}
+          <Tab
+            value="overview"
+            label={
+              <TabBadgeLabel
+                label="项目概览"
+                count={projectScopeCounts.overview}
+              />
+            }
+          />
+          <Tab
+            value="milestones"
+            label={
+              <TabBadgeLabel
+                label={`里程碑 ${project.milestones.length}`}
+                count={projectScopeCounts.milestones}
+              />
+            }
+          />
           <Tab
             value="updates"
             label={
@@ -189,7 +182,15 @@ export function ProjectDetailWorkspace({
               />
             }
           />
-          <Tab value="files" label={`文件资料 ${project.attachments.length}`} />
+          <Tab
+            value="files"
+            label={
+              <TabBadgeLabel
+                label={`文件资料 ${project.attachments.length}`}
+                count={projectScopeCounts.files}
+              />
+            }
+          />
           {project.kind === "EXTERNAL_INTEGRATION" ? (
             <Tab value="integration" label="外部接入" />
           ) : null}
@@ -198,8 +199,6 @@ export function ProjectDetailWorkspace({
           ) : null}
         </Tabs>
       </Paper>
-
-      {error ? <Alert severity="error">{error}</Alert> : null}
 
       {activeTab === "overview" ? (
         <Stack spacing={3}>
@@ -228,31 +227,27 @@ export function ProjectDetailWorkspace({
               <SummaryField label="服务类型" value={project.serviceType.name} />
               <SummaryField
                 label="当前阶段"
-                value={project.currentStage || "待确认"}
+                value={project.currentStage || "待启动"}
               />
               <SummaryField
                 label="服务周期"
                 value={`${formatDate(project.startDate)} — ${formatDate(project.endDate)}`}
               />
             </Box>
-            {showProgress ? (
-              <>
-                <Divider sx={{ my: 3 }} />
-                <Stack spacing={1.25}>
-                  <Stack direction="row" sx={{ justifyContent: "space-between" }}>
-                    <Typography sx={{ fontWeight: 650 }}>整体进度</Typography>
-                    <Typography color="primary.main" sx={{ fontWeight: 700 }}>
-                      {project.progress}%
-                    </Typography>
-                  </Stack>
-                  <LinearProgress
-                    variant="determinate"
-                    value={project.progress}
-                    sx={{ height: 7, borderRadius: 4 }}
-                  />
-                </Stack>
-              </>
-            ) : null}
+            <Divider sx={{ my: 3 }} />
+            <Stack spacing={1.25}>
+              <Stack direction="row" sx={{ justifyContent: "space-between" }}>
+                <Typography sx={{ fontWeight: 650 }}>整体进度</Typography>
+                <Typography color="primary.main" sx={{ fontWeight: 700 }}>
+                  {project.progress}%
+                </Typography>
+              </Stack>
+              <LinearProgress
+                variant="determinate"
+                value={project.progress}
+                sx={{ height: 7, borderRadius: 4 }}
+              />
+            </Stack>
           </Paper>
           <Box
             sx={{
@@ -282,62 +277,12 @@ export function ProjectDetailWorkspace({
         </Stack>
       ) : null}
 
-      {activeTab === "milestones" && showMilestones ? (
-        <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-          {project.milestones.map((milestone, index) => (
-            <Stack
-              key={milestone.id}
-              direction={{ xs: "column", md: "row" }}
-              spacing={2}
-              sx={{
-                p: { xs: 2, md: 2.5 },
-                borderBottom:
-                  index === project.milestones.length - 1
-                    ? 0
-                    : "1px solid",
-                borderColor: "divider",
-                alignItems: { md: "center" },
-              }}
-            >
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-                  <Typography sx={{ fontWeight: 650 }}>{milestone.title}</Typography>
-                  <StaffStatus value={milestone.status} compact />
-                </Stack>
-                <Typography color="text.secondary" sx={{ mt: 0.75 }}>
-                  {milestone.description || "未填写说明"}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-                  {formatDate(milestone.startDate)} — {formatDate(milestone.endDate)}
-                </Typography>
-              </Box>
-              {canManage ? (
-                <TextField
-                  select
-                  label="里程碑状态"
-                  value={milestone.status}
-                  onChange={(event) =>
-                    changeMilestoneStatus(
-                      milestone.id,
-                      event.target.value as MilestoneStatus,
-                    )
-                  }
-                  disabled={updatingId === milestone.id}
-                  sx={{ width: { xs: "100%", md: 170 } }}
-                >
-                  <MenuItem value="NOT_STARTED">未开始</MenuItem>
-                  <MenuItem value="IN_PROGRESS">进行中</MenuItem>
-                  <MenuItem value="COMPLETED">已完成</MenuItem>
-                </TextField>
-              ) : null}
-            </Stack>
-          ))}
-          {project.milestones.length === 0 ? (
-            <Box sx={{ p: 5, textAlign: "center" }}>
-              <Typography color="text.secondary">尚未设置里程碑</Typography>
-            </Box>
-          ) : null}
-        </Paper>
+      {activeTab === "milestones" ? (
+        <MilestoneManager
+          projectId={project.id}
+          milestones={project.milestones}
+          canManage={canManage}
+        />
       ) : null}
 
       {activeTab === "updates" ? (
@@ -361,9 +306,7 @@ export function ProjectDetailWorkspace({
                   </Typography>
                 </Box>
               </Stack>
-              <Typography sx={{ mt: 2, lineHeight: 1.8, whiteSpace: "pre-wrap" }}>
-                {update.body}
-              </Typography>
+              <CollapsibleText text={update.body} maxLines={16} />
               {update.comments.length > 0 ? (
                 <Stack spacing={1.5} sx={{ mt: 2.5, pl: 2, borderLeft: "2px solid #e5e7eb" }}>
                   {update.comments.map((comment) => (

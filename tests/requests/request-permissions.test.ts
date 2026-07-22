@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { Actor } from "../../src/lib/actor";
+import { canAccessCustomerRequestModule } from "../../src/modules/requests/request-context";
 import {
+  canAttachToRequestMessage,
   canConfirmRequestClosed,
+  canManageRequestArchive,
   canManageRequestAssignment,
   canWorkOnRequest,
   canWriteInternalNote,
@@ -87,6 +90,54 @@ describe("服务请求权限", () => {
     expect(canConfirmRequestClosed(customer)).toBe(true);
     expect(canConfirmRequestClosed(manager)).toBe(false);
     expect(canConfirmRequestClosed(platformAdmin)).toBe(false);
+  });
+
+  it("只有有权处理请求的后台人员可以归档或恢复", () => {
+    const assignedContext = {
+      assigneeId: "technician",
+      projectRole: "TECHNICIAN" as const,
+    };
+    expect(canManageRequestArchive(technician, assignedContext)).toBe(true);
+    expect(canManageRequestArchive(customer, assignedContext)).toBe(false);
+    expect(
+      canManageRequestArchive(manager, {
+        assigneeId: null,
+        projectRole: "PROJECT_MANAGER",
+      }),
+    ).toBe(true);
+    expect(
+      canManageRequestArchive(platformAdmin, {
+        assigneeId: null,
+        projectRole: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("客户受项目服务请求开关限制，工作人员不受影响", () => {
+    const disabledRequestModule = {
+      project: { customerRequestsEnabled: false },
+    };
+    expect(
+      canAccessCustomerRequestModule(customer, disabledRequestModule),
+    ).toBe(false);
+    expect(
+      canAccessCustomerRequestModule(technician, disabledRequestModule),
+    ).toBe(true);
+    expect(
+      canAccessCustomerRequestModule(customer, {
+        project: { customerRequestsEnabled: true },
+      }),
+    ).toBe(true);
+  });
+
+  it("附件只能补充到当前操作者自己发送的消息", () => {
+    expect(
+      canAttachToRequestMessage(customer, { authorId: customer.id }),
+    ).toBe(true);
+    expect(
+      canAttachToRequestMessage(customer, { authorId: technician.id }),
+    ).toBe(false);
+    expect(canAttachToRequestMessage(manager, { authorId: null })).toBe(false);
   });
 });
 

@@ -15,7 +15,6 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
-import { unlockUiSound } from "@/lib/ui-sound";
 
 const schema = z.object({
   email: z.email("请输入有效邮箱"),
@@ -36,7 +35,6 @@ export function LoginForm() {
   });
 
   const onSubmit = handleSubmit(async (data) => {
-    unlockUiSound();
     setError("");
     const result = await authClient.signIn.email({
       email: data.email,
@@ -44,7 +42,11 @@ export function LoginForm() {
       rememberMe: true,
     });
     if (result.error) {
-      setError("邮箱或密码不正确");
+      setError(
+        result.error.code === "INVALID_ORIGIN"
+          ? "当前访问地址不受信任，请使用启动脚本显示的本地地址重新打开"
+          : "邮箱或密码不正确",
+      );
       return;
     }
     router.replace("/dashboard");
@@ -55,8 +57,6 @@ export function LoginForm() {
     <Stack
       component="form"
       onSubmit={onSubmit}
-      onPointerDown={unlockUiSound}
-      onKeyDown={unlockUiSound}
       spacing={2.25}
     >
       {error ? <Alert severity="error">{error}</Alert> : null}

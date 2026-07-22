@@ -55,7 +55,10 @@ export function RequestDetail({
   const [showCreatedNotice, setShowCreatedNotice] = useState(created === true);
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
   const presence = useRequestPresence(request.id, "CUSTOMER");
-  useRequestRealtime(request.id, { currentUserId });
+  useRequestRealtime(request.id, {
+    currentUserId,
+    projectId: request.projectId,
+  });
   useRequestNotificationsRead(request.id);
 
   useEffect(() => {
@@ -110,16 +113,22 @@ export function RequestDetail({
             />
           </Box>
 
-          <RequestReplyForm
-            requestId={request.id}
-            disabled={request.status === "CLOSED"}
-            replyTarget={replyTarget}
-            onCancelReply={() => setReplyTarget(null)}
-            onTypingActivity={() =>
-              presence.reportTypingActivity("CUSTOMER_VISIBLE")
-            }
-            onTypingStopped={presence.stopTyping}
-          />
+          {request.archivedAt ? (
+            <Alert severity="info">
+              该服务请求已由后台归档，仅可查看历史内容。
+            </Alert>
+          ) : (
+            <RequestReplyForm
+              requestId={request.id}
+              disabled={request.status === "CLOSED"}
+              replyTarget={replyTarget}
+              onCancelReply={() => setReplyTarget(null)}
+              onTypingActivity={() =>
+                presence.reportTypingActivity("CUSTOMER_VISIBLE")
+              }
+              onTypingStopped={presence.stopTyping}
+            />
+          )}
         </Stack>
 
         <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: 100 } }}>
@@ -191,6 +200,16 @@ export function RequestDetail({
                   {dateFormatter.format(new Date(request.updatedAt))}
                 </Typography>
               </Box>
+              {request.archivedAt ? (
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    归档时间
+                  </Typography>
+                  <Typography sx={{ mt: 0.65 }}>
+                    {dateFormatter.format(new Date(request.archivedAt))}
+                  </Typography>
+                </Box>
+              ) : null}
             </Stack>
           </Paper>
         </Stack>

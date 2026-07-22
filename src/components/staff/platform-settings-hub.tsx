@@ -21,8 +21,13 @@ import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import { MailSettingsPanel } from "@/components/staff/mail-settings-panel";
 import { MailTemplateManager } from "@/components/staff/mail-template-manager";
 import { PlatformSettingsManager } from "@/components/staff/platform-settings-manager";
+import {
+  NotificationDeliveryRulesPanel,
+  type NotificationDeliveryRuleView,
+} from "@/components/staff/notification-delivery-rules-panel";
 import type {
   MailMessageView,
+  MailOutboxSummary,
   MailTemplateView,
   PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
@@ -31,7 +36,7 @@ import {
   type RoleGroupView,
 } from "@/components/staff/role-group-manager";
 
-type SettingsDialog = "mail" | "attachments" | "outbox" | null;
+type SettingsDialog = "mail" | "notifications" | "attachments" | "outbox" | null;
 type DisclosureSection = "templates" | "roles";
 
 function SettingsRow({
@@ -142,17 +147,27 @@ function SettingsDisclosure({
 export function PlatformSettingsHub({
   initialSettings,
   initialMessages,
+  initialMailOutboxSummary,
+  initialNotificationRules,
   initialTemplates,
   roleGroups,
   currentAdminEmail,
 }: {
   initialSettings: PlatformSettingsView;
   initialMessages: MailMessageView[];
+  initialMailOutboxSummary: MailOutboxSummary;
+  initialNotificationRules: NotificationDeliveryRuleView[];
   initialTemplates: MailTemplateView[];
   roleGroups: RoleGroupView[];
   currentAdminEmail: string;
 }) {
   const [settings, setSettings] = useState(initialSettings);
+  const [mailOutboxSummary, setMailOutboxSummary] = useState(
+    initialMailOutboxSummary,
+  );
+  const [notificationRules, setNotificationRules] = useState(
+    initialNotificationRules,
+  );
   const [dialog, setDialog] = useState<SettingsDialog>(null);
   const [expandedSections, setExpandedSections] = useState<
     Record<DisclosureSection, boolean>
@@ -167,6 +182,7 @@ export function PlatformSettingsHub({
     settings.hasResendWebhookSecret;
   const dialogTitle = {
     mail: "邮件设置",
+    notifications: "通知规则",
     attachments: "附件",
     outbox: "发件箱",
   } as const;
@@ -217,6 +233,12 @@ export function PlatformSettingsHub({
         />
         <Divider />
         <SettingsRow
+          title="通知规则"
+          summary="按业务场景控制通知红点、页面提示音和标准工单邮件"
+          onClick={() => setDialog("notifications")}
+        />
+        <Divider />
+        <SettingsRow
           title="附件"
           summary={`单文件 ${settings.attachmentMaxSizeMb}MB · ${
             settings.customerReplyAttachmentsEnabled
@@ -228,7 +250,12 @@ export function PlatformSettingsHub({
         <Divider />
         <SettingsRow
           title="发件箱"
-          summary={`最近 ${initialMessages.length} 条发送记录`}
+          summary={`排队 ${mailOutboxSummary.queued} · 逾期 ${mailOutboxSummary.overdue} · 失败 ${mailOutboxSummary.failed}`}
+          status={
+            mailOutboxSummary.overdue > 0 ? (
+              <Chip size="small" color="error" label="存在逾期" />
+            ) : undefined
+          }
           actionLabel="查看"
           onClick={() => setDialog("outbox")}
         />
@@ -261,7 +288,7 @@ export function PlatformSettingsHub({
         open={dialog !== null}
         onClose={() => setDialog(null)}
         fullWidth
-        maxWidth={dialog === "outbox" ? "lg" : "md"}
+        maxWidth={dialog === "outbox" || dialog === "notifications" ? "lg" : "md"}
         scroll="paper"
       >
         <DialogTitle>
@@ -280,19 +307,31 @@ export function PlatformSettingsHub({
             <PlatformSettingsManager
               initialSettings={settings}
               initialMessages={initialMessages}
+              initialMailOutboxSummary={mailOutboxSummary}
               currentAdminEmail={currentAdminEmail}
               sections={["attachments"]}
               embedded
               onSettingsChange={setSettings}
             />
           ) : null}
+          {dialog === "notifications" ? (
+            <NotificationDeliveryRulesPanel
+              initialRules={notificationRules}
+              standardRequestEmailEnabled={
+                settings.standardRequestEmailEnabled
+              }
+              onRulesChange={setNotificationRules}
+            />
+          ) : null}
           {dialog === "outbox" ? (
             <PlatformSettingsManager
               initialSettings={settings}
               initialMessages={initialMessages}
+              initialMailOutboxSummary={mailOutboxSummary}
               currentAdminEmail={currentAdminEmail}
               sections={["outbox"]}
               embedded
+              onMailOutboxSummaryChange={setMailOutboxSummary}
             />
           ) : null}
         </DialogContent>

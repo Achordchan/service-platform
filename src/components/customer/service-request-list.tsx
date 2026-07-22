@@ -26,8 +26,9 @@ import {
   countRequestStatusUnread,
   useUnreadNotifications,
 } from "@/hooks/use-unread-notifications";
+import { matchesRequestArchiveFilter } from "@/lib/request-archive";
 
-type StatusFilter = "ALL" | RequestStatus;
+type StatusFilter = "ALL" | "ARCHIVED" | RequestStatus;
 
 const filters: Array<{ value: StatusFilter; label: string }> = [
   { value: "ALL", label: "全部" },
@@ -36,6 +37,7 @@ const filters: Array<{ value: StatusFilter; label: string }> = [
   { value: "WAITING_CUSTOMER", label: "等待客户" },
   { value: "RESOLVED", label: "已解决" },
   { value: "CLOSED", label: "已关闭" },
+  { value: "ARCHIVED", label: "已归档" },
 ];
 
 export function ServiceRequestList({
@@ -72,7 +74,7 @@ export function ServiceRequestList({
   const filtered = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     return requests.filter((request) => {
-      const matchesStatus = status === "ALL" || request.status === status;
+      const matchesStatus = matchesRequestArchiveFilter(request, status);
       const matchesProject =
         scopedToProject ||
         selectedProjectId === "ALL" ||
@@ -128,6 +130,7 @@ export function ServiceRequestList({
                       id: item.id,
                       status: item.status,
                       projectId: item.projectId,
+                      archivedAt: item.archivedAt,
                     })),
                     filter.value,
                     projectId,

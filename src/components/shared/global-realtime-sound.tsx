@@ -1,12 +1,16 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   subscribeRealtime,
   type RealtimeEvent,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
-import { bindUiSoundUnlock, playRealtimeUpdateSound } from "@/lib/ui-sound";
+import {
+  bindUiSoundUnlock,
+  playRealtimeUpdateSound,
+  suspendUiSound,
+} from "@/lib/ui-sound";
 
 export const GLOBAL_SOUND_EVENT_TYPES: readonly RealtimeEventType[] = [
   "PROJECT_UPDATED",
@@ -26,6 +30,7 @@ export function shouldPlayGlobalRealtimeSound(
   now = Date.now(),
 ) {
   if (!event.live) return false;
+  if (event.payload.audible === false) return false;
   if (event.payload.actorId) {
     if (event.payload.actorId === "system") return false;
     return event.payload.actorId !== currentUserId;
@@ -35,13 +40,38 @@ export function shouldPlayGlobalRealtimeSound(
 
 export function GlobalRealtimeSound({
   currentUserId,
+  enabled: initialEnabled,
 }: {
   currentUserId: string;
+  enabled: boolean;
 }) {
   const suppressUntilRef = useRef(0);
+  const [enabled, setEnabled] = useState(initialEnabled);
 
   useEffect(() => {
-    bindUiSoundUnlock();
+    const handlePreference = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{ soundNotificationsEnabled?: boolean }>
+      ).detail;
+      if (typeof detail?.soundNotificationsEnabled === "boolean") {
+        setEnabled(detail.soundNotificationsEnabled);
+      }
+    };
+    window.addEventListener("notification-preferences-updated", handlePreference);
+    return () => {
+      window.removeEventListener(
+        "notification-preferences-updated",
+        handlePreference,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!enabled) {
+      suspendUiSound();
+      return;
+    }
+    const unbindSoundUnlock = bindUiSoundUnlock();
     const markLocalMutation = () => {
       suppressUntilRef.current = Date.now() + 2_000;
     };
@@ -60,8 +90,9 @@ export function GlobalRealtimeSound({
     return () => {
       window.removeEventListener("request-local-mutation", markLocalMutation);
       unsubscribe();
+      unbindSoundUnlock();
     };
-  }, [currentUserId]);
+  }, [currentUserId, enabled]);
 
   return null;
 }

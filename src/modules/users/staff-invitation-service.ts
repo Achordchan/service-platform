@@ -6,7 +6,8 @@ import type { Actor } from "@/lib/actor";
 import { withActorDb, withSystemDb } from "@/lib/actor";
 import {
   assertMailDeliveryReady,
-  enqueueMail,
+  createMailMessageInTx,
+  dispatchQueuedMailMessage,
 } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
@@ -159,6 +160,8 @@ export async function inviteStaff(actor: Actor, raw: InviteStaffInput) {
   const email = input.email.toLowerCase();
   const tokenData = createInvitationToken();
   const profile = profileData(input);
+  const appUrl = await getPublicAppUrl();
+  const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(tokenData.token)}`;
 
   const result = await withActorDb(actor, async (tx) => {
     const roleGroup = await tx.roleGroup.findUnique({
@@ -238,36 +241,39 @@ export async function inviteStaff(actor: Actor, raw: InviteStaffInput) {
       },
     });
 
+    const mailMessage = await createMailMessageInTx(tx, {
+      to: email,
+      templateKey: "STAFF_INVITATION",
+      variables: {
+        recipientName: invitation.name ?? input.name,
+        recipientEmail: invitation.email,
+        inviterName: invitation.invitedBy.name,
+        inviterEmail: invitation.invitedBy.email,
+        roleGroupName: roleGroup.name,
+        phone: invitation.phone ?? "",
+        company: invitation.company ?? "",
+        jobTitle: invitation.jobTitle ?? "",
+        wechat: invitation.wechat ?? "",
+        website: invitation.website ?? "",
+        location: invitation.location ?? "",
+        contactNotes: invitation.contactNotes ?? "",
+        expiresIn: "24 小时",
+      },
+      actionUrl,
+      idempotencyKey: `staff-invitation:${invitation.id}`,
+      sourceType: "STAFF_INVITATION",
+      sourceId: invitation.id,
+    });
     return {
       invitation,
-      token: tokenData.token,
-      roleGroupName: roleGroup.name,
+      mailMessage,
     };
   });
-
-  const appUrl = await getPublicAppUrl();
-  const actionUrl = `${appUrl}/accept-invitation?token=${encodeURIComponent(result.token)}`;
-
-  await enqueueMail({
-    to: email,
-    templateKey: "STAFF_INVITATION",
-    variables: {
-      recipientName: result.invitation.name ?? input.name,
-      recipientEmail: result.invitation.email,
-      inviterName: result.invitation.invitedBy.name,
-      inviterEmail: result.invitation.invitedBy.email,
-      roleGroupName: result.roleGroupName,
-      phone: result.invitation.phone ?? "",
-      company: result.invitation.company ?? "",
-      jobTitle: result.invitation.jobTitle ?? "",
-      wechat: result.invitation.wechat ?? "",
-      website: result.invitation.website ?? "",
-      location: result.invitation.location ?? "",
-      contactNotes: result.invitation.contactNotes ?? "",
-      expiresIn: "24 小时",
-    },
-    actionUrl,
-  });
+  await dispatchQueuedMailMessage(
+    result.mailMessage.id,
+    result.mailMessage.deliveryMode,
+    result.mailMessage.sendAfter,
+  );
 
   return {
     ...result.invitation,

@@ -1,16 +1,24 @@
 import "server-only";
 
-import type { RequestStatus } from "@/generated/prisma/client";
+import type { Prisma, RequestStatus } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { enqueueMail } from "@/lib/jobs";
 import {
   buildMessagePreview,
+  extractInlineAttachmentIds,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { canArchiveRequestStatus } from "@/lib/request-archive";
+import {
+  buildSupportPlaybookMessageBody,
+  snapshotSupportReplyPlaybook,
+} from "@/lib/support-reply-playbooks";
+import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { resolveUniversalActionUrl } from "@/modules/integrations/external/action-url";
+import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
 import {
   dispatchRequestActivity,
   requestStatusLabel,
@@ -22,11 +30,13 @@ import {
   notFound,
 } from "@/modules/requests/errors";
 import {
+  canAccessCustomerRequestModule,
   findRequestContext,
   getProjectRole,
 } from "@/modules/requests/request-context";
 import {
   canConfirmRequestClosed,
+  canManageRequestArchive,
   canManageRequestAssignment,
   canWorkOnRequest,
   canWriteInternalNote,
@@ -35,6 +45,7 @@ import type {
   AssignRequestInput,
   CreateRequestMessageInput,
 } from "@/modules/requests/request-schemas";
+import { findActiveSupportPlaybook } from "@/modules/requests/support-playbook-service";
 import {
   assertRequestTransition,
   statusAfterCustomerReply,
@@ -142,6 +153,15 @@ function accessContext(
     assigneeIds,
     projectRole: getProjectRole(request),
   };
+}
+
+function assertRequestNotArchived(request: { archivedAt: Date | null }) {
+  if (request.archivedAt) {
+    throw conflict(
+      "REQUEST_ARCHIVED",
+      "已归档的服务请求只能查看，请先恢复到常规列表",
+    );
+  }
 }
 
 function normalizeAssigneeIds(input: AssignRequestInput) {
@@ -344,6 +364,7 @@ async function claimRequestOnFirstPublicReply(
     notifyProjectManagers: false,
     notifyPlatformAdmins: false,
     createNotifications: false,
+    audible: false,
     customerSpaceId: current.project.customerSpaceId,
     projectId: current.projectId,
     serviceRequestId: current.id,
@@ -396,6 +417,7 @@ export function assignRequest(
   return withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    assertRequestNotArchived(request);
     if (!canManageRequestAssignment(actor, accessContext(request))) {
       throw forbidden("只有平台管理员或项目经理可以分配服务请求");
     }
@@ -510,6 +532,9 @@ export function assignRequest(
       includeCustomers: includeCustomerMembers(request),
       includeExternalContact: Boolean(request.createdByExternalContactId),
       relevantWorkerUserIds: workerIdsFromRequest(request, assigneeIds),
+      emailWorkerUserIds: assigneeIds.filter(
+        (userId) => !previousAssigneeIds.includes(userId),
+      ),
       notifyProjectManagers: false,
       notifyPlatformAdmins: false,
       customerSpaceId: request.project.customerSpaceId,
@@ -529,6 +554,7 @@ export async function changeRequestStatus(
   const result = await withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    assertRequestNotArchived(request);
     if (!canWorkOnRequest(actor, accessContext(request))) {
       throw forbidden("只有请求处理人、项目经理或平台管理员可以变更状态");
     }
@@ -581,6 +607,91 @@ export async function changeRequestStatus(
   return result.updated;
 }
 
+export async function changeRequestArchive(
+  actor: Actor,
+  requestId: string,
+  archived: boolean,
+) {
+  return withActorDb(actor, async (tx) => {
+    const request = await findRequestContext(tx, requestId, actor.id);
+    if (!request || !canAccessCustomerRequestModule(actor, request)) {
+      throw notFound();
+    }
+    if (!canManageRequestArchive(actor, accessContext(request))) {
+      throw forbidden("只有后台请求处理人员可以归档或恢复服务请求");
+    }
+    if (archived && !canArchiveRequestStatus(request.status)) {
+      throw conflict(
+        "REQUEST_NOT_ARCHIVABLE",
+        "只有已解决或已关闭的服务请求可以归档",
+      );
+    }
+    if (Boolean(request.archivedAt) === archived) {
+      return tx.serviceRequest.findUniqueOrThrow({
+        where: { id: requestId },
+        select: {
+          id: true,
+          number: true,
+          status: true,
+          archivedAt: true,
+          updatedAt: true,
+        },
+      });
+    }
+
+    const archivedAt = archived ? new Date() : null;
+    const result = await tx.serviceRequest.updateMany({
+      where: { id: requestId, archivedAt: request.archivedAt },
+      data: { archivedAt },
+    });
+    assertRequestWasNotChanged(result.count);
+    const updated = await tx.serviceRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      select: {
+        id: true,
+        number: true,
+        status: true,
+        archivedAt: true,
+        updatedAt: true,
+      },
+    });
+
+    await writeAuditLog(tx, actor, {
+      action: archived ? "REQUEST_ARCHIVED" : "REQUEST_RESTORED",
+      resourceType: "ServiceRequest",
+      resourceId: request.id,
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.projectId,
+      serviceRequestId: request.id,
+      metadata: { number: request.number, status: request.status },
+    });
+    await dispatchRequestActivity(tx, actor, {
+      eventType: "REQUEST_UPDATED",
+      eventPayload: {
+        change: archived ? "REQUEST_ARCHIVED" : "REQUEST_RESTORED",
+        actorId: actor.id,
+        requestId: request.id,
+        archived,
+        archivedAt: archivedAt?.toISOString() ?? null,
+      },
+      notificationType: "REQUEST_ARCHIVE",
+      notificationTitle: archived
+        ? `请求 ${request.number} 已归档`
+        : `请求 ${request.number} 已恢复`,
+      notificationBody: request.title,
+      includeCustomers: includeCustomerMembers(request),
+      includeExternalContact: Boolean(request.createdByExternalContactId),
+      relevantWorkerUserIds: workerIdsFromRequest(request),
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: false,
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.projectId,
+      serviceRequestId: request.id,
+    });
+    return updated;
+  });
+}
+
 export async function addRequestMessage(
   actor: Actor,
   requestId: string,
@@ -589,6 +700,8 @@ export async function addRequestMessage(
   const result = await withActorDb(actor, async (tx) => {
     let request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    if (!canAccessCustomerRequestModule(actor, request)) throw notFound();
+    assertRequestNotArchived(request);
     if (request.status === "CLOSED") {
       throw conflict("REQUEST_CLOSED", "已关闭的请求不能继续回复");
     }
@@ -608,7 +721,18 @@ export async function addRequestMessage(
       throw forbidden("只有请求处理人员或客户可以回复");
     }
 
-    const sanitizedBody = sanitizeMessageHtml(input.body);
+    const supportPlaybook = input.supportPlaybookKey
+      ? await findActiveSupportPlaybook(tx, input.supportPlaybookKey)
+      : null;
+    if (input.supportPlaybookKey && !supportPlaybook) {
+      throw badRequest("SUPPORT_PLAYBOOK_NOT_FOUND", "处理指南不存在或已停用");
+    }
+    if (supportPlaybook && (!actor.isStaff || input.visibility === "INTERNAL")) {
+      throw forbidden("处理指南只能由后台人员作为客户可见消息发送");
+    }
+    const sanitizedBody = supportPlaybook
+      ? buildSupportPlaybookMessageBody(supportPlaybook)
+      : sanitizeMessageHtml(input.body);
     if (!hasMeaningfulHtml(sanitizedBody)) {
       throw badRequest("EMPTY_MESSAGE", "回复内容不能为空");
     }
@@ -629,6 +753,12 @@ export async function addRequestMessage(
         serviceRequestId: request.id,
         authorId: actor.id,
         replyToMessageId,
+        supportPlaybookKey: supportPlaybook?.key,
+        supportPlaybookSnapshot: supportPlaybook
+          ? (snapshotSupportReplyPlaybook(
+              supportPlaybook,
+            ) as Prisma.InputJsonValue)
+          : undefined,
       },
       select: {
         id: true,
@@ -636,10 +766,23 @@ export async function addRequestMessage(
         visibility: true,
         authorId: true,
         replyToMessageId: true,
+        supportPlaybookKey: true,
+        supportPlaybookSnapshot: true,
         createdAt: true,
         updatedAt: true,
       },
     });
+    await claimUserInlineAttachments(
+      tx,
+      actor,
+      extractInlineAttachmentIds(sanitizedBody),
+      {
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+        requestMessageId: message.id,
+        visibility: input.visibility,
+      },
+    );
 
     await writeAuditLog(tx, actor, {
       action:
@@ -654,6 +797,7 @@ export async function addRequestMessage(
       metadata: {
         visibility: input.visibility,
         replyToMessageId,
+        supportPlaybookKey: supportPlaybook?.key ?? null,
       },
     });
     const assignedWorkers = workerIdsFromRequest(request);
@@ -747,10 +891,12 @@ export async function addRequestMessage(
   return { message: result.message, requestStatus: result.requestStatus };
 }
 
-export function confirmRequestClosed(actor: Actor, requestId: string) {
-  return withActorDb(actor, async (tx) => {
+export async function confirmRequestClosed(actor: Actor, requestId: string) {
+  const result = await withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    if (!canAccessCustomerRequestModule(actor, request)) throw notFound();
+    assertRequestNotArchived(request);
     if (!canConfirmRequestClosed(actor)) {
       throw forbidden("只有客户可以确认关闭服务请求");
     }
@@ -792,8 +938,15 @@ export function confirmRequestClosed(actor: Actor, requestId: string) {
       "CLOSED",
       true,
     );
-    return updated;
+    return {
+      updated,
+      notifyExternalContact: Boolean(request.createdByExternalContactId),
+    };
   });
+  if (result.notifyExternalContact) {
+    await enqueueExternalRequestStatusMail(requestId, "CLOSED");
+  }
+  return result.updated;
 }
 
 async function writeStatusAudit(
@@ -841,6 +994,7 @@ async function dispatchStatusActivity(
     notifyProjectManagers: false,
     notifyPlatformAdmins: false,
     createNotifications,
+    audible: createNotifications,
     customerSpaceId: request.project.customerSpaceId,
     projectId: request.projectId,
     serviceRequestId: request.id,

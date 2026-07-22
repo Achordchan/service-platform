@@ -1,0 +1,281 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
+  Alert,
+  Box,
+  Button,
+  Divider,
+  Drawer,
+  CircularProgress,
+  IconButton,
+  InputAdornment,
+  Stack,
+  Tab,
+  Tabs,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
+import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
+import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
+import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
+import { staffApi } from "@/components/staff/staff-api";
+import type { SupportReplyPlaybook } from "@/lib/support-reply-playbooks";
+import { resolveInlineAttachmentHtml } from "@/lib/message-content";
+
+type CategoryFilter = "ALL" | SupportReplyPlaybook["category"];
+
+const categories: Array<{ value: CategoryFilter; label: string }> = [
+  { value: "ALL", label: "全部" },
+  { value: "REMOTE", label: "远程协助" },
+  { value: "DIAGNOSTIC", label: "故障诊断" },
+  { value: "INFORMATION", label: "信息收集" },
+];
+
+export function SupportReplyAssistant({
+  disabled = false,
+  onSend,
+}: {
+  disabled?: boolean;
+  onSend: (playbookKey: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [category, setCategory] = useState<CategoryFilter>("ALL");
+  const [keyword, setKeyword] = useState("");
+  const [sendingKey, setSendingKey] = useState("");
+  const [error, setError] = useState("");
+  const [playbooks, setPlaybooks] = useState<SupportReplyPlaybook[]>([]);
+  const [loading, setLoading] = useState(false);
+  async function loadPlaybooks() {
+    setLoading(true);
+    setError("");
+    try {
+      setPlaybooks(
+        await staffApi<SupportReplyPlaybook[]>("/api/v1/support-playbooks"),
+      );
+    } catch (loadError) {
+      setError(
+        loadError instanceof Error ? loadError.message : "处理指南加载失败",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const filtered = useMemo(() => {
+    const normalized = keyword.trim().toLowerCase();
+    return playbooks.filter((playbook) => {
+      const matchesCategory =
+        category === "ALL" || playbook.category === category;
+      const matchesKeyword =
+        !normalized ||
+        playbook.title.toLowerCase().includes(normalized) ||
+        playbook.summary.toLowerCase().includes(normalized) ||
+        playbook.steps.some((step) => step.toLowerCase().includes(normalized));
+      return matchesCategory && matchesKeyword;
+    });
+  }, [category, keyword, playbooks]);
+
+  async function send(playbook: SupportReplyPlaybook) {
+    setSendingKey(playbook.key);
+    setError("");
+    try {
+      await onSend(playbook.key);
+      setOpen(false);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "处理指南发送失败");
+    } finally {
+      setSendingKey("");
+    }
+  }
+
+  return (
+    <>
+      <Tooltip
+        title={disabled ? "客户回复模式下才能使用回复助手" : "打开回复助手"}
+      >
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<MenuBookOutlinedIcon />}
+            onClick={() => {
+              setOpen(true);
+              void loadPlaybooks();
+            }}
+            disabled={disabled}
+          >
+            回复助手
+          </Button>
+        </span>
+      </Tooltip>
+      <Drawer
+        anchor="right"
+        open={open}
+        onClose={() => setOpen(false)}
+        slotProps={{
+          paper: {
+            sx: {
+              width: { xs: "100%", sm: 480 },
+              maxWidth: "100vw",
+            },
+          },
+        }}
+      >
+        <Stack sx={{ height: "100%", minHeight: 0 }}>
+          <Stack
+            direction="row"
+            spacing={1.5}
+            sx={{
+              px: 2.5,
+              py: 2,
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <Box>
+              <Typography variant="h3">回复助手</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                选择处理指南，并作为独立消息发送给客户。
+              </Typography>
+            </Box>
+            <IconButton onClick={() => setOpen(false)} aria-label="关闭回复助手">
+              <CloseOutlinedIcon />
+            </IconButton>
+          </Stack>
+          <Divider />
+          <Stack spacing={1.5} sx={{ px: 2.5, pt: 2 }}>
+            <TextField
+              value={keyword}
+              onChange={(event) => setKeyword(event.target.value)}
+              placeholder="搜索处理方案"
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchOutlinedIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                },
+              }}
+            />
+            <Tabs
+              value={category}
+              onChange={(_, value: CategoryFilter) => setCategory(value)}
+              variant="scrollable"
+              scrollButtons={false}
+              sx={{ minHeight: 42, "& .MuiTab-root": { minHeight: 42 } }}
+            >
+              {categories.map((item) => (
+                <Tab key={item.value} value={item.value} label={item.label} />
+              ))}
+            </Tabs>
+          </Stack>
+          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 2.5, pb: 3 }}>
+            {loading ? (
+              <Stack sx={{ py: 8, alignItems: "center" }}>
+                <CircularProgress size={28} />
+              </Stack>
+            ) : null}
+            {error ? (
+              <Alert
+                severity="error"
+                sx={{ mt: 2 }}
+                action={<Button onClick={() => void loadPlaybooks()}>重试</Button>}
+              >
+                {error}
+              </Alert>
+            ) : null}
+            {!loading && !error ? filtered.map((playbook) => (
+              <Accordion
+                key={playbook.key}
+                disableGutters
+                elevation={0}
+                sx={{
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&::before": { display: "none" },
+                }}
+              >
+                <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
+                  <Box sx={{ minWidth: 0, pr: 1 }}>
+                    <Typography sx={{ fontWeight: 650 }}>
+                      {playbook.title}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+                      {playbook.summary}
+                    </Typography>
+                  </Box>
+                </AccordionSummary>
+                <AccordionDetails sx={{ pt: 0, pb: 2.5 }}>
+                  <Stack spacing={2}>
+                    {playbook.content ? (
+                      <Box
+                        sx={{
+                          lineHeight: 1.75,
+                          overflowWrap: "anywhere",
+                          "& p": { mt: 0, mb: 1 },
+                          "& ul, & ol": { my: 1, pl: 2.5 },
+                          "& img": {
+                            display: "block",
+                            maxWidth: "100%",
+                            maxHeight: 360,
+                            my: 1,
+                            borderRadius: 1.5,
+                            objectFit: "contain",
+                          },
+                        }}
+                        dangerouslySetInnerHTML={{
+                          __html: resolveInlineAttachmentHtml(playbook.content),
+                        }}
+                      />
+                    ) : (
+                      <>
+                        <Typography sx={{ lineHeight: 1.75 }}>{playbook.introduction}</Typography>
+                        <Box>
+                          <Typography variant="subtitle2">操作步骤</Typography>
+                          <Box component="ol" sx={{ mt: 1, mb: 0, pl: 2.5, "& li": { mb: 0.75 } }}>
+                            {playbook.steps.map((step) => (
+                              <li key={step}><Typography component="span" variant="body2">{step}</Typography></li>
+                            ))}
+                          </Box>
+                        </Box>
+                      </>
+                    )}
+                    {playbook.safetyNotes.length > 0 ? (
+                      <Alert severity="warning">
+                        <Typography variant="subtitle2">安全边界</Typography>
+                        <Box component="ul" sx={{ mt: 0.75, mb: 0, pl: 2.25 }}>
+                          {playbook.safetyNotes.map((note) => (
+                            <li key={note}>{note}</li>
+                          ))}
+                        </Box>
+                      </Alert>
+                    ) : null}
+                    <Button
+                      variant="contained"
+                      onClick={() => void send(playbook)}
+                      disabled={Boolean(sendingKey)}
+                    >
+                      {sendingKey === playbook.key ? "正在发送" : "发送给客户"}
+                    </Button>
+                  </Stack>
+                </AccordionDetails>
+              </Accordion>
+            )) : null}
+            {!loading && !error && filtered.length === 0 ? (
+              <Typography color="text.secondary" sx={{ py: 6, textAlign: "center" }}>
+                没有匹配的处理方案
+              </Typography>
+            ) : null}
+          </Box>
+        </Stack>
+      </Drawer>
+    </>
+  );
+}

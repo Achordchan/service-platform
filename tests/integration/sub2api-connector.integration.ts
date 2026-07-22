@@ -10,7 +10,10 @@ import {
   deleteProject,
 } from "@/modules/projects/project-service";
 import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
-import { createExternalRequest } from "@/modules/integrations/external/request-service";
+import {
+  confirmExternalRequestClosed,
+  createExternalRequest,
+} from "@/modules/integrations/external/request-service";
 import { updateExternalPresence } from "@/modules/integrations/external/presence-service";
 import { updateRequestPresence } from "@/modules/requests/request-presence-service";
 
@@ -265,6 +268,50 @@ describe("Sub2API 外部联系人 RLS", () => {
       sessionId: externalSessionId,
     });
   });
+
+  it("外部联系人不能关闭已归档工单", async () => {
+    const previous = await owner.query<{
+      status: string;
+      archivedAt: Date | null;
+      resolvedAt: Date | null;
+      closedAt: Date | null;
+    }>(
+      `SELECT status, "archivedAt", "resolvedAt", "closedAt" FROM "ServiceRequest" WHERE id = $1`,
+      [ids.requestA],
+    );
+    const original = previous.rows[0]!;
+    await owner.query(
+      `UPDATE "ServiceRequest" SET status = 'RESOLVED', "archivedAt" = NOW(), "resolvedAt" = NOW(), "closedAt" = NULL, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.requestA],
+    );
+    const externalActor = {
+      id: ids.contactA,
+      bindingId: ids.binding,
+      externalUserId: "external-a",
+      name: "外部用户 A",
+      email: null,
+      username: null,
+      projectId: ids.project,
+      customerSpaceId: externalCustomerSpaceId,
+    };
+
+    try {
+      await expect(
+        confirmExternalRequestClosed(externalActor, ids.requestA),
+      ).rejects.toMatchObject({ code: "REQUEST_ARCHIVED", status: 409 });
+    } finally {
+      await owner.query(
+        `UPDATE "ServiceRequest" SET status = $2, "archivedAt" = $3, "resolvedAt" = $4, "closedAt" = $5, "updatedAt" = NOW() WHERE id = $1`,
+        [
+          ids.requestA,
+          original.status,
+          original.archivedAt,
+          original.resolvedAt,
+          original.closedAt,
+        ],
+      );
+    }
+  });
 });
 
 describe("Sub2API 外部项目空间隔离", () => {
@@ -273,7 +320,6 @@ describe("Sub2API 外部项目空间隔离", () => {
       title: "自动托管空间测试",
       kind: "EXTERNAL_INTEGRATION",
       connectorPluginKey: SUB2API_CONNECTOR_PLUGIN_KEY,
-      status: "DRAFT",
       serviceTypeId,
     });
     managedProjectId = project.id;

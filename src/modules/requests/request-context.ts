@@ -1,4 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client";
+import type { Actor } from "@/lib/actor";
 
 export async function findRequestContext(
   tx: Prisma.TransactionClient,
@@ -12,6 +13,7 @@ export async function findRequestContext(
       number: true,
       title: true,
       status: true,
+      archivedAt: true,
       assigneeId: true,
       projectId: true,
       createdById: true,
@@ -80,7 +82,11 @@ export async function findRequestContext(
   });
   const project = await tx.project.findUniqueOrThrow({
     where: { id: request.projectId },
-    select: { customerSpaceId: true, title: true },
+    select: {
+      customerSpaceId: true,
+      title: true,
+      customerRequestsEnabled: true,
+    },
   });
   const staff = await tx.projectStaff.findMany({
     where: { projectId: request.projectId, userId: actorId },
@@ -93,6 +99,13 @@ export async function findRequestContext(
     assignees,
     project: { ...project, staff },
   };
+}
+
+export function canAccessCustomerRequestModule(
+  actor: Actor,
+  request: { project: { customerRequestsEnabled: boolean } },
+) {
+  return actor.isStaff || request.project.customerRequestsEnabled;
 }
 
 export function getProjectRole(

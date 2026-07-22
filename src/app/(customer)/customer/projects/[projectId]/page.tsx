@@ -4,6 +4,7 @@ import type {
   ServiceRequestSummary,
 } from "@/components/customer/customer-types";
 import { PageHeading } from "@/components/customer/page-heading";
+import { MilestoneTimeline } from "@/components/customer/milestone-timeline";
 import { ProjectFiles } from "@/components/customer/project-files";
 import { ProjectOverview } from "@/components/customer/project-overview";
 import {
@@ -13,6 +14,7 @@ import {
 import { ProjectUpdates } from "@/components/customer/project-updates";
 import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { ServiceRequestList } from "@/components/customer/service-request-list";
+import { EmptyState } from "@/components/shared/content-state";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
@@ -20,6 +22,7 @@ import { listProjectRequests } from "@/modules/requests/request-service";
 
 const validTabs = new Set<TabKey>([
   "overview",
+  "milestones",
   "updates",
   "requests",
   "files",
@@ -36,6 +39,7 @@ function requestSummary(
     description: request.description,
     priority: request.priority,
     status: request.status,
+    archivedAt: request.archivedAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
     projectId: project.id,
@@ -60,15 +64,30 @@ export default async function CustomerProjectPage({
   const { projectId } = await params;
   const query = await searchParams;
   const requestedTab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
+  const project = await getProject(actor, projectId);
+  const milestonesEnabled = project.showMilestones !== false;
+  const updatesEnabled = project.customerUpdatesEnabled !== false;
+  const requestsEnabled = project.customerRequestsEnabled !== false;
+  const filesEnabled = project.customerFilesEnabled !== false;
+  const requestedTabEnabled =
+    requestedTab === "milestones"
+      ? milestonesEnabled
+      : requestedTab === "updates"
+        ? updatesEnabled
+        : requestedTab === "requests"
+          ? requestsEnabled
+          : requestedTab === "files"
+            ? filesEnabled
+            : true;
   const activeTab: TabKey =
-    requestedTab && validTabs.has(requestedTab as TabKey)
+    requestedTab &&
+    validTabs.has(requestedTab as TabKey) &&
+    requestedTabEnabled
       ? (requestedTab as TabKey)
       : "overview";
-
-  const [project, requestResult] = await Promise.all([
-    getProject(actor, projectId),
-    listProjectRequests(actor, projectId),
-  ]);
+  const requestResult = requestsEnabled
+    ? await listProjectRequests(actor, projectId)
+    : [];
 
   const projectView: ProjectDetail = {
     id: project.id,
@@ -78,6 +97,9 @@ export default async function CustomerProjectPage({
     currentStage: project.currentStage,
     showMilestones: project.showMilestones,
     showProgress: project.showProgress,
+    customerUpdatesEnabled: project.customerUpdatesEnabled,
+    customerRequestsEnabled: project.customerRequestsEnabled,
+    customerFilesEnabled: project.customerFilesEnabled,
     startDate: project.startDate?.toISOString() ?? null,
     endDate: project.endDate?.toISOString() ?? null,
     updatedAt: project.updatedAt.toISOString(),
@@ -90,7 +112,7 @@ export default async function CustomerProjectPage({
       id: project.customerSpace.id,
       name: project.customerSpace.name,
     },
-    requestCount: requestResult.length,
+    requestCount: requestResult.filter((request) => !request.archivedAt).length,
     updateCount: project.updates.length,
     staff: project.staff.map((member) => ({
       id: member.user.id,
@@ -104,6 +126,7 @@ export default async function CustomerProjectPage({
       status: milestone.status,
       startDate: milestone.startDate?.toISOString() ?? null,
       endDate: milestone.endDate?.toISOString() ?? null,
+      createdAt: milestone.createdAt.toISOString(),
     })),
     updates: project.updates.map((update) => ({
       id: update.id,
@@ -158,11 +181,15 @@ export default async function CustomerProjectPage({
               )
             : "未设置"
         }`}
-        actionLabel={activeTab === "requests" ? undefined : "提交服务请求"}
+        actionLabel={
+          requestsEnabled && activeTab !== "requests"
+            ? "提交服务请求"
+            : undefined
+        }
         actionHref={
-          activeTab === "requests"
-            ? undefined
-            : `/customer/requests/new?projectId=${project.id}`
+          requestsEnabled && activeTab !== "requests"
+            ? `/customer/requests/new?projectId=${project.id}`
+            : undefined
         }
         status={<StatusIndicator status={project.status} />}
       />
@@ -170,21 +197,37 @@ export default async function CustomerProjectPage({
         projectId={project.id}
         activeTab={activeTab}
         requestIds={requests.map((item) => item.id)}
+        milestonesEnabled={milestonesEnabled}
+        updatesEnabled={updatesEnabled}
+        requestsEnabled={requestsEnabled}
+        filesEnabled={filesEnabled}
       />
       {activeTab === "overview" ? (
         <ProjectOverview project={projectView} requests={requests} />
       ) : null}
-      {activeTab === "updates" ? (
+      {activeTab === "milestones" && milestonesEnabled ? (
+        <Box sx={{ pt: 3 }}>
+          {projectView.milestones.length > 0 ? (
+            <MilestoneTimeline milestones={projectView.milestones} />
+          ) : (
+            <EmptyState
+              title="暂无里程碑"
+              description="项目计划确认后将在此显示。"
+            />
+          )}
+        </Box>
+      ) : null}
+      {activeTab === "updates" && updatesEnabled ? (
         <Box sx={{ pt: 3 }}>
           <ProjectUpdates updates={projectView.updates} />
         </Box>
       ) : null}
-      {activeTab === "requests" ? (
+      {activeTab === "requests" && requestsEnabled ? (
         <Box sx={{ pt: 3 }}>
           <ServiceRequestList requests={requests} projectId={project.id} />
         </Box>
       ) : null}
-      {activeTab === "files" ? (
+      {activeTab === "files" && filesEnabled ? (
         <Box sx={{ pt: 3 }}>
           <ProjectFiles files={projectView.attachments} />
         </Box>

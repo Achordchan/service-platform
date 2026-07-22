@@ -252,6 +252,12 @@ export async function saveSub2ApiIntegration(
           : {}),
       },
     });
+    if (nextBindingStatus === "ACTIVE") {
+      await tx.project.updateMany({
+        where: { id: projectId, status: "DRAFT" },
+        data: { status: "ACTIVE" },
+      });
+    }
 
     const encryptedKey = clearKey
       ? null

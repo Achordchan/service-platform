@@ -56,7 +56,7 @@ export function RequestAdvancedFilters({
         onClick={(event: MouseEvent<HTMLButtonElement>) =>
           setAnchor(event.currentTarget)
         }
-        sx={{ whiteSpace: "nowrap", minHeight: 56 }}
+        sx={{ whiteSpace: "nowrap" }}
       >
         更多筛选{activeCount > 0 ? `（${activeCount}）` : ""}
       </Button>

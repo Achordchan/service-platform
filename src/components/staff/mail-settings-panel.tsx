@@ -6,27 +6,28 @@ import {
   Box,
   Button,
   Chip,
+  Divider,
+  FormControlLabel,
   Paper,
   Stack,
-  Step,
-  StepLabel,
-  Stepper,
+  Switch,
+  Tab,
+  Tabs,
   TextField,
   Typography,
 } from "@mui/material";
-import {
-  jsonRequest,
-  staffApi,
-} from "@/components/staff/staff-api";
+import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
-import { ResendDnsRecords } from "@/components/staff/resend-dns-records";
-import { SmtpFallbackSettings } from "@/components/staff/smtp-fallback-settings";
+import { ResendProviderSettings } from "@/components/staff/resend-provider-settings";
+import { SmtpSettings } from "@/components/staff/smtp-settings";
 
 const modeLabel = {
   LOCAL_OUTBOX: "未启用",
   RESEND: "Resend",
   SMTP: "SMTP",
 } as const;
+
+type ProviderTab = "RESEND" | "SMTP";
 
 export function MailSettingsPanel({
   settings,
@@ -39,6 +40,14 @@ export function MailSettingsPanel({
   onSettingsChange: (settings: PlatformSettingsView) => void;
   embedded?: boolean;
 }) {
+  const [providerTab, setProviderTab] = useState<ProviderTab>(
+    settings.mailMode === "SMTP" ||
+      (settings.mailMode === "LOCAL_OUTBOX" &&
+        Boolean(settings.smtpHost) &&
+        !settings.hasResendApiKey)
+      ? "SMTP"
+      : "RESEND",
+  );
   const [apiKey, setApiKey] = useState("");
   const [testEmail, setTestEmail] = useState(currentAdminEmail);
   const [busy, setBusy] = useState<string | null>(null);
@@ -50,20 +59,7 @@ export function MailSettingsPanel({
     settings.hasResendWebhookSecret;
   const resendReady =
     settings.hasResendApiKey && domainVerified && webhookReady;
-  const [showConnectionSetup, setShowConnectionSetup] = useState(
-    !(
-      settings.hasResendApiKey &&
-      settings.resendDomainStatus === "verified" &&
-      settings.resendWebhookStatus === "enabled" &&
-      settings.hasResendWebhookSecret
-    ),
-  );
-  const completedSteps = [
-    settings.hasResendApiKey,
-    domainVerified,
-    webhookReady,
-    settings.mailMode === "RESEND",
-  ];
+  const [showResendSetup, setShowResendSetup] = useState(!resendReady);
 
   async function run<T>(
     action: string,
@@ -102,9 +98,9 @@ export function MailSettingsPanel({
         ),
       message,
     );
-    if (next) {
-      onSettingsChange(next);
-    }
+    if (!next) return false;
+    onSettingsChange(next);
+    return true;
   }
 
   async function handleCommonSubmit(
@@ -113,24 +109,20 @@ export function MailSettingsPanel({
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     await saveSettings(
-      {
-        appUrl: String(form.get("appUrl") ?? "").trim(),
-        mailFrom: String(form.get("mailFrom") ?? "").trim(),
-        mailReplyTo: String(form.get("mailReplyTo") ?? "").trim(),
-      },
-      "站点与发件信息已保存",
+      { appUrl: String(form.get("appUrl") ?? "").trim() },
+      "站点地址已保存",
     );
   }
 
   async function setupResend() {
     const next = await run(
-      "setup",
+      "resend-setup",
       () =>
         staffApi<PlatformSettingsView>(
           "/api/v1/admin/mail/resend/setup",
           jsonRequest("POST", apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         ),
-      "Resend 已连接，请配置 DNS",
+      "Resend 已连接，请完成域名和 Webhook 检查",
     );
     if (next) {
       onSettingsChange(next);
@@ -139,150 +131,79 @@ export function MailSettingsPanel({
   }
 
   async function disconnectResend() {
-    if (
-      !window.confirm(
-        "确认断开 Resend？如果当前正在使用 Resend，邮件发送将被停用。",
-      )
-    ) {
+    if (!window.confirm("确认清除 Resend 配置？当前使用 Resend 时会同时停止邮件发送。")) {
       return;
     }
     const next = await run(
-      "disconnect",
+      "resend-disconnect",
       () =>
         staffApi<PlatformSettingsView>(
           "/api/v1/admin/mail/resend/setup",
           jsonRequest("DELETE"),
         ),
-      "Resend 已断开",
+      "Resend 配置已清除",
     );
     if (next) {
       onSettingsChange(next);
       setApiKey("");
+      setShowResendSetup(true);
     }
   }
 
   async function verifyDomain() {
     const next = await run(
-      "verify",
+      "resend-verify",
       () =>
         staffApi<PlatformSettingsView>(
           "/api/v1/admin/mail/resend/verify",
           jsonRequest("POST", {}),
         ),
-      "域名状态已刷新",
+      "Resend 状态已刷新",
     );
     if (next) onSettingsChange(next);
   }
 
-  async function sendTestMail() {
+  async function checkSmtp() {
+    const next = await run(
+      "smtp-check",
+      () =>
+        staffApi<PlatformSettingsView>(
+          "/api/v1/admin/mail/smtp/check",
+          jsonRequest("POST", {}),
+        ),
+      "SMTP 连接检测通过",
+    );
+    if (next) onSettingsChange(next);
+  }
+
+  async function disconnectSmtp() {
+    if (!window.confirm("确认清除 SMTP 配置？已保存的密码和连接信息会被删除。")) {
+      return;
+    }
+    const next = await run(
+      "smtp-disconnect",
+      () =>
+        staffApi<PlatformSettingsView>(
+          "/api/v1/admin/mail/smtp",
+          jsonRequest("DELETE"),
+        ),
+      "SMTP 配置已清除",
+    );
+    if (next) onSettingsChange(next);
+  }
+
+  async function sendTestMail(deliveryMode: ProviderTab) {
     await run(
-      "test",
+      `${deliveryMode.toLowerCase()}-test`,
       () =>
         staffApi(
           "/api/v1/admin/mail/test",
-          jsonRequest("POST", { to: testEmail.trim() }),
+          jsonRequest("POST", {
+            to: testEmail.trim(),
+            deliveryMode,
+          }),
         ),
-      "测试邮件已加入队列",
-    );
-  }
-
-  async function copyValue(value: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setSuccess("DNS 记录值已复制");
-    } catch {
-      setError("复制失败，请手动选择记录值");
-    }
-  }
-
-  if (resendReady && !showConnectionSetup) {
-    return (
-      <Paper
-        variant="outlined"
-        sx={{
-          p: embedded ? 0 : { xs: 2.5, md: 3 },
-          border: embedded ? 0 : undefined,
-        }}
-      >
-        <Stack spacing={2.5}>
-          {error ? <Alert severity="error">{error}</Alert> : null}
-          {success ? <Alert severity="success">{success}</Alert> : null}
-          {settings.mailMode === "LOCAL_OUTBOX" ? (
-            <Alert severity="warning">
-              Resend 已连接但尚未启用，系统不会发送邀请或密码重置邮件。
-            </Alert>
-          ) : null}
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-            <Chip label="Resend 已连接" color="success" />
-            <Chip label="域名已验证" variant="outlined" />
-            <Chip label="Webhook 已启用" variant="outlined" />
-          </Stack>
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-              gap: 2,
-            }}
-          >
-            {[
-              ["发信域名", settings.resendDomain],
-              ["发件人", settings.mailFrom],
-              ["回复地址", settings.mailReplyTo],
-              ["站点地址", settings.appUrl],
-            ].map(([label, value]) => (
-              <Box key={label} sx={{ minWidth: 0 }}>
-                <Typography variant="caption" color="text.secondary">
-                  {label}
-                </Typography>
-                <Typography sx={{ mt: 0.4, overflowWrap: "anywhere" }}>
-                  {value}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-            <TextField
-              label="测试收件邮箱"
-              type="email"
-              value={testEmail}
-              onChange={(event) => setTestEmail(event.target.value)}
-              fullWidth
-            />
-            <Button
-              variant="outlined"
-              onClick={sendTestMail}
-              disabled={busy !== null || !testEmail.trim()}
-              sx={{ whiteSpace: "nowrap" }}
-            >
-              {busy === "test" ? "发送中" : "发送测试邮件"}
-            </Button>
-          </Stack>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ justifyContent: "flex-end" }}
-          >
-            {settings.mailMode !== "RESEND" ? (
-              <Button
-                variant="contained"
-                onClick={() =>
-                  saveSettings({ mailMode: "RESEND" }, "Resend 已启用")
-                }
-                disabled={busy !== null}
-              >
-                启用 Resend
-              </Button>
-            ) : null}
-            <Button
-              color="inherit"
-              onClick={() => setShowConnectionSetup(true)}
-              disabled={busy !== null}
-            >
-              修改连接设置
-            </Button>
-          </Stack>
-        </Stack>
-      </Paper>
+      `${modeLabel[deliveryMode]} 测试邮件已加入队列`,
     );
   }
 
@@ -300,34 +221,57 @@ export function MailSettingsPanel({
           spacing={1}
           sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
         >
+          <div>
+            <Typography sx={{ fontWeight: 700 }}>邮件通道</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+              Resend 与 SMTP 为同级通道，同一时间只会启用其中一个；切换不会删除另一方配置。
+            </Typography>
+          </div>
           <Chip
             label={`当前通道：${modeLabel[settings.mailMode]}`}
-            color={settings.mailMode === "RESEND" ? "success" : "default"}
-            sx={{ alignSelf: "flex-start" }}
+            color={settings.mailMode === "LOCAL_OUTBOX" ? "default" : "success"}
+            sx={{ alignSelf: { xs: "flex-start", sm: "center" } }}
           />
-          {resendReady ? (
-            <Button
-              color="inherit"
-              onClick={() => setShowConnectionSetup(false)}
-            >
-              返回概览
-            </Button>
-          ) : null}
         </Stack>
 
         {error ? <Alert severity="error">{error}</Alert> : null}
         {success ? <Alert severity="success">{success}</Alert> : null}
         {settings.mailMode === "LOCAL_OUTBOX" ? (
           <Alert severity="warning">
-            邮件发送未启用。邀请、密码重置等操作将被阻止，不会进入虚假队列。
+            当前未启用真实邮件通道，邀请、密码重置和业务提醒不会对外发送。
           </Alert>
         ) : null}
 
+        <Box>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={settings.standardRequestEmailEnabled}
+                onChange={(event) =>
+                  void saveSettings(
+                    { standardRequestEmailEnabled: event.target.checked },
+                    event.target.checked
+                      ? "站内未读邮件提醒已启用"
+                      : "站内未读邮件提醒已停用",
+                  )
+                }
+                disabled={busy !== null || settings.mailMode === "LOCAL_OUTBOX"}
+              />
+            }
+            label="站内未读延迟邮件"
+          />
+          <Typography variant="body2" color="text.secondary">
+            工单和已开启规则的项目交付变化持续 5 分钟未读时发送；阅读后自动取消。
+          </Typography>
+        </Box>
+
         <Stack
-          key={`common-${settings.updatedAt ?? "initial"}`}
+          key={`mail-common-${settings.updatedAt ?? "initial"}`}
           component="form"
-          spacing={2}
-          onSubmit={handleCommonSubmit}
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1.5}
+          onSubmit={(event) => void handleCommonSubmit(event)}
+          sx={{ alignItems: { sm: "flex-start" } }}
         >
           <TextField
             name="appUrl"
@@ -335,148 +279,86 @@ export function MailSettingsPanel({
             defaultValue={settings.appUrl}
             required
             fullWidth
-            helperText="用于邮件链接和 Webhook"
+            helperText="用于邮件中的项目、工单和账号操作链接"
           />
-          <TextField
-            name="mailFrom"
-            label="Resend 发件人"
-            defaultValue={settings.mailFrom}
-            required
-            fullWidth
-            slotProps={{ input: { readOnly: true } }}
-          />
-          <TextField
-            name="mailReplyTo"
-            label="回复地址"
-            type="email"
-            defaultValue={settings.mailReplyTo}
-            required
-            fullWidth
-            slotProps={{ input: { readOnly: true } }}
-          />
-          <Stack direction="row" sx={{ justifyContent: "flex-end" }}>
-            <Button type="submit" variant="outlined" disabled={busy !== null}>
-              {busy === "save" ? "保存中" : "保存基础设置"}
-            </Button>
-          </Stack>
-        </Stack>
-
-        <Stepper activeStep={-1} alternativeLabel>
-          {["连接", "验证域名", "Webhook", "启用"].map(
-            (label, index) => (
-              <Step key={label} completed={completedSteps[index]}>
-                <StepLabel>{label}</StepLabel>
-              </Step>
-            ),
-          )}
-        </Stepper>
-
-        <Stack spacing={2}>
-          <Typography sx={{ fontWeight: 700 }}>1. 连接 Resend</Typography>
-          {!settings.hasDedicatedEncryptionKey ? (
-            <Alert severity="warning">
-              缺少 PLATFORM_SECRET_ENCRYPTION_KEY，请配置并重启服务。
-            </Alert>
-          ) : null}
-          <TextField
-            label="Resend API Key"
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            required={!settings.hasResendApiKey}
-            helperText={
-              settings.hasResendApiKey
-                ? "已安全保存；留空不修改"
-                : "粘贴 Resend API Key"
-            }
-            fullWidth
-          />
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ justifyContent: "flex-end" }}
+          <Button
+            type="submit"
+            variant="outlined"
+            disabled={busy !== null}
+            sx={{ whiteSpace: "nowrap", mt: { sm: 0.5 } }}
           >
-            {settings.hasResendApiKey ? (
-              <Button
-                color="error"
-                onClick={disconnectResend}
-                disabled={busy !== null}
-              >
-                {busy === "disconnect" ? "断开中" : "断开 Resend"}
-              </Button>
-            ) : null}
-            <Button
-              variant="contained"
-              onClick={setupResend}
-              disabled={
-                busy !== null ||
-                !settings.hasDedicatedEncryptionKey ||
-                (!settings.hasResendApiKey && !apiKey.trim())
-              }
-            >
-              {busy === "setup"
-                ? "连接中"
-                : settings.hasResendApiKey
-                  ? "刷新 Resend 配置"
-                  : "连接 Resend"}
-            </Button>
-          </Stack>
+            保存站点地址
+          </Button>
         </Stack>
 
-        {settings.hasResendApiKey && settings.resendDomainId ? (
-          <ResendDnsRecords
-            settings={settings}
-            busy={busy === "verify"}
-            onVerify={verifyDomain}
-            onCopy={copyValue}
+        <Divider />
+
+        <Tabs
+          value={providerTab}
+          onChange={(_, value: ProviderTab) => setProviderTab(value)}
+          variant="fullWidth"
+          aria-label="邮件通道配置"
+        >
+          <Tab
+            value="RESEND"
+            label={`Resend${settings.mailMode === "RESEND" ? " · 已启用" : ""}`}
           />
-        ) : null}
+          <Tab
+            value="SMTP"
+            label={`SMTP${settings.mailMode === "SMTP" ? " · 已启用" : ""}`}
+          />
+        </Tabs>
 
-        {resendReady ? (
-          <Stack spacing={2}>
-            <Typography sx={{ fontWeight: 700 }}>4. 测试并启用</Typography>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-              <TextField
-                label="测试收件邮箱"
-                type="email"
-                value={testEmail}
-                onChange={(event) => setTestEmail(event.target.value)}
-                fullWidth
-              />
-              <Button
-                variant="outlined"
-                onClick={sendTestMail}
-                disabled={busy !== null || !testEmail.trim()}
-                sx={{ whiteSpace: "nowrap" }}
-              >
-                {busy === "test" ? "发送中" : "发送测试邮件"}
-              </Button>
-            </Stack>
-            <Stack
-              direction={{ xs: "column", sm: "row" }}
-              spacing={1}
-              sx={{ justifyContent: "flex-end" }}
-            >
-              <Button
-                variant="contained"
-                onClick={() =>
-                  saveSettings({ mailMode: "RESEND" }, "Resend 已启用")
-                }
-                disabled={busy !== null || settings.mailMode === "RESEND"}
-              >
-                {settings.mailMode === "RESEND" ? "Resend 已启用" : "启用 Resend"}
-              </Button>
-            </Stack>
-          </Stack>
-        ) : null}
-
-        <SmtpFallbackSettings
-          settings={settings}
-          busy={busy !== null}
-          onSave={(payload) =>
-            saveSettings(payload, "SMTP 已保存并启用")
-          }
-        />
+        {providerTab === "RESEND" ? (
+          <ResendProviderSettings
+            settings={settings}
+            apiKey={apiKey}
+            testEmail={testEmail}
+            busy={busy !== null}
+            busyAction={busy}
+            showSetup={showResendSetup}
+            onApiKeyChange={setApiKey}
+            onTestEmailChange={setTestEmail}
+            onShowSetupChange={setShowResendSetup}
+            onSetup={setupResend}
+            onDisconnect={disconnectResend}
+            onVerify={verifyDomain}
+            onCopy={async (value) => {
+              try {
+                await navigator.clipboard.writeText(value);
+                setSuccess("DNS 记录值已复制");
+              } catch {
+                setError("复制失败，请手动选择记录值");
+              }
+            }}
+            onTest={() => sendTestMail("RESEND")}
+            onEnable={() =>
+              saveSettings({ mailMode: "RESEND" }, "Resend 已启用")
+            }
+          />
+        ) : (
+          <SmtpSettings
+            key={`smtp-${settings.updatedAt ?? "initial"}`}
+            settings={settings}
+            busy={busy !== null}
+            testEmail={testEmail}
+            onTestEmailChange={setTestEmail}
+            onSave={(payload) =>
+              saveSettings(
+                payload,
+                settings.mailMode === "SMTP"
+                  ? "SMTP 配置已保存，邮件已暂停，请重新检测并启用"
+                  : "SMTP 配置已保存，请执行连接检测",
+              )
+            }
+            onCheck={checkSmtp}
+            onTest={() => sendTestMail("SMTP")}
+            onEnable={async () => {
+              await saveSettings({ mailMode: "SMTP" }, "SMTP 已启用");
+            }}
+            onDisconnect={disconnectSmtp}
+          />
+        )}
       </Stack>
     </Paper>
   );

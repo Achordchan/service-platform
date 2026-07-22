@@ -225,6 +225,13 @@ test.describe("主流程冒烟", () => {
     await expect(
       adminPage.getByRole("heading", { name: "服务请求" }),
     ).toBeVisible();
+    const advancedFilterButton = adminPage.getByRole("button", {
+      name: /^更多筛选/,
+    });
+    await expect(advancedFilterButton).toBeVisible();
+    expect((await advancedFilterButton.boundingBox())?.height).toBeLessThanOrEqual(
+      44,
+    );
 
     await adminPage
       .getByRole("link", { name: "插件中心", exact: true })
@@ -359,11 +366,170 @@ test.describe("主流程冒烟", () => {
     ).toBeVisible();
     await expectVisibleText(customerPage, "官网 SEO 优化服务");
 
+    const projectId = await customerPage.evaluate(async () => {
+      const response = await fetch("/api/v1/projects");
+      const payload = (await response.json()) as {
+        data: Array<{ id: string; title: string }>;
+      };
+      return payload.data.find((item) => item.title === "官网 SEO 优化服务")
+        ?.id;
+    });
+    if (!projectId) throw new Error("缺少 E2E 客户项目编号");
+
+    await customerPage.route("**/api/v1/notifications", async (route) => {
+      await route.fulfill({
+        json: {
+          data: [
+            {
+              id: "e2e-customer-project-update",
+              type: "PROJECT_UPDATE",
+              title: "项目动态已更新",
+              body: "E2E 项目动态",
+              readAt: null,
+              projectId,
+              serviceRequestId: null,
+              occurrenceCount: 1,
+              createdAt: "2026-07-18T00:00:00.000Z",
+              updatedAt: "2026-07-18T00:00:00.000Z",
+            },
+          ],
+        },
+      });
+    });
+    try {
+      await customerPage.reload();
+      await expect(
+        customerPage.locator(
+          `a[href="/customer/projects/${projectId}"][aria-label="官网 SEO 优化服务，有未读更新"]`,
+        ),
+      ).toBeVisible();
+    } finally {
+      await customerPage.unroute("**/api/v1/notifications");
+    }
+
     await customerPage.goto("/customer/requests");
     await expect(
       customerPage.getByRole("heading", { name: "服务请求" }),
     ).toBeVisible();
     await expectVisibleText(customerPage, "关于首页标题优化建议");
+  });
+
+  test("项目设置可控制客户中心模块", async () => {
+    const projectResult = await ownerPool.query<{
+      id: string;
+      customerUpdatesEnabled: boolean;
+      customerRequestsEnabled: boolean;
+      customerFilesEnabled: boolean;
+    }>(
+      `
+        SELECT
+          id,
+          "customerUpdatesEnabled",
+          "customerRequestsEnabled",
+          "customerFilesEnabled"
+        FROM "Project"
+        WHERE title = '官网 SEO 优化服务'
+        LIMIT 1
+      `,
+    );
+    const project = projectResult.rows[0];
+    if (!project) throw new Error("缺少 E2E 项目");
+
+    try {
+      await adminPage.setViewportSize({ width: 390, height: 844 });
+      await adminPage.goto(`/staff/projects/${project.id}`);
+      await adminPage.getByRole("button", { name: "项目设置" }).click();
+      const settingsDialog = adminPage.getByRole("dialog", {
+        name: "项目设置",
+      });
+      await expect(
+        settingsDialog.getByRole("switch", { name: "开放进度动态" }),
+      ).toBeVisible();
+      await expect(
+        settingsDialog.getByRole("switch", { name: "开放服务请求" }),
+      ).toBeVisible();
+      await expect(
+        settingsDialog.getByRole("switch", { name: "开放文件资料" }),
+      ).toBeVisible();
+      expect(
+        await adminPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+      await settingsDialog.getByRole("button", { name: "取消" }).click();
+
+      await ownerPool.query(
+        `
+          UPDATE "Project"
+          SET
+            "customerUpdatesEnabled" = false,
+            "customerRequestsEnabled" = false,
+            "customerFilesEnabled" = false,
+            "updatedAt" = NOW()
+          WHERE id = $1
+        `,
+        [project.id],
+      );
+
+      await customerPage.setViewportSize({ width: 390, height: 844 });
+      await customerPage.goto(`/customer/projects/${project.id}?tab=updates`);
+      await expect(customerPage.getByText("交付概况")).toBeVisible();
+      await expect(
+        customerPage.getByRole("tab", { name: /进度动态/ }),
+      ).not.toBeVisible();
+      await expect(
+        customerPage.getByRole("tab", { name: /服务请求/ }),
+      ).not.toBeVisible();
+      await expect(
+        customerPage.getByRole("tab", { name: /文件资料/ }),
+      ).not.toBeVisible();
+      await expect(
+        customerPage.getByRole("link", { name: "提交服务请求" }),
+      ).not.toBeVisible();
+      await expect(customerPage.getByText("最新进度")).not.toBeVisible();
+      await expect(customerPage.getByText("最近服务请求")).not.toBeVisible();
+      expect(
+        await customerPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+
+      await adminPage.setViewportSize({ width: 1280, height: 720 });
+      await adminPage.goto(`/staff/projects/${project.id}`);
+      await expect(
+        adminPage.getByRole("tab", { name: /进度动态/ }),
+      ).toBeVisible();
+      await expect(
+        adminPage.getByRole("tab", { name: /服务请求/ }),
+      ).toBeVisible();
+      await expect(
+        adminPage.getByRole("tab", { name: /文件资料/ }),
+      ).toBeVisible();
+    } finally {
+      await ownerPool.query(
+        `
+          UPDATE "Project"
+          SET
+            "customerUpdatesEnabled" = $2,
+            "customerRequestsEnabled" = $3,
+            "customerFilesEnabled" = $4,
+            "updatedAt" = NOW()
+          WHERE id = $1
+        `,
+        [
+          project.id,
+          project.customerUpdatesEnabled,
+          project.customerRequestsEnabled,
+          project.customerFilesEnabled,
+        ],
+      );
+      if (!adminPage.isClosed()) {
+        await adminPage.setViewportSize({ width: 1280, height: 720 });
+      }
+      if (!customerPage.isClosed()) {
+        await customerPage.setViewportSize({ width: 1280, height: 720 });
+      }
+    }
   });
 
   test("导航未读红点仅在离开对应栏目时显示", async () => {

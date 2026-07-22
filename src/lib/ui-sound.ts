@@ -2,7 +2,7 @@
 
 let audioContext: AudioContext | null = null;
 let lastPlayedAt = 0;
-let unlockBound = false;
+let unbindUnlockListeners: (() => void) | null = null;
 
 function getAudioContext() {
   if (typeof window === "undefined") return null;
@@ -28,14 +28,26 @@ export function unlockUiSound() {
 }
 
 export function bindUiSoundUnlock() {
-  if (typeof window === "undefined" || unlockBound) return;
-  unlockBound = true;
+  if (typeof window === "undefined") return () => undefined;
+  if (unbindUnlockListeners) return unbindUnlockListeners;
   const unlock = () => {
     unlockUiSound();
   };
   window.addEventListener("pointerdown", unlock, { capture: true });
   window.addEventListener("keydown", unlock, { capture: true });
   window.addEventListener("touchstart", unlock, { capture: true });
+  unbindUnlockListeners = () => {
+    window.removeEventListener("pointerdown", unlock, { capture: true });
+    window.removeEventListener("keydown", unlock, { capture: true });
+    window.removeEventListener("touchstart", unlock, { capture: true });
+    unbindUnlockListeners = null;
+  };
+  return unbindUnlockListeners;
+}
+
+export function suspendUiSound() {
+  if (!audioContext || audioContext.state !== "running") return;
+  void audioContext.suspend().catch(() => undefined);
 }
 
 function playViaOscillator(context: AudioContext) {

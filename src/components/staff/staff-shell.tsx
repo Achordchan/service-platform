@@ -225,7 +225,10 @@ export function StaffShell({
         bgcolor: "background.default",
       }}
     >
-      <GlobalRealtimeSound currentUserId={user.id} />
+      <GlobalRealtimeSound
+        currentUserId={user.id}
+        enabled={user.soundNotificationsEnabled}
+      />
       <Drawer
         variant="permanent"
         sx={{

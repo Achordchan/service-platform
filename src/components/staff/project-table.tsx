@@ -32,7 +32,7 @@ import type {
 } from "@/components/staff/staff-types";
 
 const projectStatusOptions: Array<{ value: ProjectStatus; label: string }> = [
-  { value: "DRAFT", label: "草稿" },
+  { value: "DRAFT", label: "待接入" },
   { value: "ACTIVE", label: "进行中" },
   { value: "PAUSED", label: "已暂停" },
   { value: "COMPLETED", label: "已完成" },
@@ -139,7 +139,7 @@ export function ProjectTable({
         headerName: "当前阶段",
         minWidth: 105,
         flex: 0.8,
-        renderCell: ({ row }) => row.currentStage || "待确认",
+        renderCell: ({ row }) => row.currentStage || "待启动",
       },
       {
         field: "progress",
@@ -147,23 +147,18 @@ export function ProjectTable({
         minWidth: 145,
         flex: 1,
         display: "flex",
-        renderCell: ({ row }) =>
-          row.showProgress === false ? (
+        renderCell: ({ row }) => (
+          <Stack direction="row" spacing={1.5} sx={{ width: "100%", alignItems: "center" }}>
+            <LinearProgress
+              variant="determinate"
+              value={row.progress}
+              sx={{ flex: 1, height: 5, borderRadius: 4 }}
+            />
             <Typography variant="body2" color="text.secondary">
-              —
+              {row.progress}%
             </Typography>
-          ) : (
-            <Stack direction="row" spacing={1.5} sx={{ width: "100%", alignItems: "center" }}>
-              <LinearProgress
-                variant="determinate"
-                value={row.progress}
-                sx={{ flex: 1, height: 5, borderRadius: 4 }}
-              />
-              <Typography variant="body2" color="text.secondary">
-                {row.progress}%
-              </Typography>
-            </Stack>
-          ),
+          </Stack>
+        ),
       },
       {
         field: "manager",
@@ -393,16 +388,14 @@ export function ProjectTable({
                     ? `${project.externalConnectorLabel ?? "外部接入"} 用户`
                     : project.customerSpace.name} · {project.serviceType.name}
                 </Typography>
-                {project.showProgress !== false ? (
-                  <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-                    <LinearProgress
-                      variant="determinate"
-                      value={project.progress}
-                      sx={{ flex: 1, height: 5, borderRadius: 4 }}
-                    />
-                    <Typography variant="body2">{project.progress}%</Typography>
-                  </Stack>
-                ) : null}
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <LinearProgress
+                    variant="determinate"
+                    value={project.progress}
+                    sx={{ flex: 1, height: 5, borderRadius: 4 }}
+                  />
+                  <Typography variant="body2">{project.progress}%</Typography>
+                </Stack>
               </Stack>
               {canCreate ? (
                 <Stack direction="row" spacing={1}>

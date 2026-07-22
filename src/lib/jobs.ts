@@ -1,17 +1,25 @@
 import { PgBoss, type JobWithMetadata } from "pg-boss";
+import { randomUUID } from "node:crypto";
 import pg from "pg";
-import type { MailDeliveryMode } from "@/generated/prisma/client";
+import type { MailDeliveryMode, Prisma } from "@/generated/prisma/client";
 import { processMailMessage } from "@/lib/mail";
+import {
+  buildMailOutboxCandidateWhere,
+  MAIL_PROCESSING_CLAIM_STALE_MS,
+  mailAttemptBudgetWhere,
+  parseMailJobDeliveryMode,
+} from "@/lib/mail-outbox-policy";
 import { env } from "@/lib/runtime-env";
 import { withSystemDb } from "@/lib/system-db";
 import {
-  buildTemplateMail,
+  buildTemplateMailInTx,
 } from "@/modules/platform-settings/mail-template-service";
 import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";
 import {
   getRuntimeMailSettings,
 } from "@/modules/platform-settings/mail-settings-runtime";
 import { assertDeliveryModeReady } from "@/modules/platform-settings/mail-delivery-readiness";
+import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
 import {
   optimizeAttachmentWithWebp,
   processImageWebpMigrationBatch,
@@ -21,19 +29,25 @@ import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation
 import {
   cleanupExpiredUniversalLaunchTickets,
 } from "@/modules/integrations/universal/ticket-service";
+import { cleanupAbandonedInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import {
   listDueUniversalWebhookDeliveries,
   processUniversalWebhookDelivery,
 } from "@/modules/integrations/universal/webhook-service";
+import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
 
 export const EMAIL_JOB = "send-email";
 export const IMAGE_WEBP_JOB = "plugin-image-webp";
 export const UNIVERSAL_WEBHOOK_JOB = "universal-webhook-delivery";
 export const UNIVERSAL_WEBHOOK_SWEEP_JOB = "universal-webhook-sweep";
 export const UNIVERSAL_MAINTENANCE_JOB = "universal-maintenance";
+export const INLINE_ATTACHMENT_MAINTENANCE_JOB =
+  "inline-attachment-maintenance";
+export const MAIL_OUTBOX_SWEEP_JOB = "mail-outbox-sweep";
 
 type MailJobData = {
   mailMessageId: string;
+  deliveryMode?: MailDeliveryMode;
 };
 
 type ImageWebpJobData =
@@ -55,6 +69,12 @@ export type EnqueueMailInput = {
   variables?: Record<string, string>;
   actionUrl?: string;
   deliveryMode?: MailDeliveryMode;
+  sendAfter?: Date;
+  idempotencyKey?: string;
+  notificationId?: string;
+  notificationOccurrenceCount?: number;
+  sourceType?: string;
+  sourceId?: string;
 };
 
 const globalForBoss = globalThis as unknown as {
@@ -76,6 +96,8 @@ async function startBoss() {
   await boss.createQueue(UNIVERSAL_WEBHOOK_JOB);
   await boss.createQueue(UNIVERSAL_WEBHOOK_SWEEP_JOB);
   await boss.createQueue(UNIVERSAL_MAINTENANCE_JOB);
+  await boss.createQueue(INLINE_ATTACHMENT_MAINTENANCE_JOB);
+  await boss.createQueue(MAIL_OUTBOX_SWEEP_JOB);
   return boss;
 }
 
@@ -104,20 +126,27 @@ export async function assertMailDeliveryReady(
 export async function queueMailMessage(
   mailMessageId: string,
   deliveryMode: MailDeliveryMode,
+  startAfter?: Date,
 ) {
-  if (isInlineMailWorkerEnabled()) {
+  if (isInlineMailWorkerEnabled() && !globalForBoss.bossWorkerStarted) {
     await startMailWorker();
   }
   const boss = await getBoss();
-  const jobId = await boss.send(
+  const deferredUntil =
+    startAfter && startAfter.getTime() > Date.now() ? startAfter : undefined;
+  const result = await boss.upsert(
     EMAIL_JOB,
-    { mailMessageId },
+    { mailMessageId, deliveryMode },
     {
+      singletonKey: mailMessageId,
+      match: "all",
       retryLimit: deliveryMode === "RESEND" ? 5 : 0,
       retryDelay: 30,
       retryBackoff: true,
+      startAfter: deferredUntil,
     },
   );
+  const jobId = result.jobs[0];
   if (!jobId) {
     throw new Error("邮件任务未能加入队列");
   }
@@ -125,45 +154,216 @@ export async function queueMailMessage(
 }
 
 export async function enqueueMail(input: EnqueueMailInput) {
-  const { deliveryMode } = await resolveDeliveryMode(input.deliveryMode);
-  const template = await buildTemplateMail({
+  const message = await withSystemDb((tx) =>
+    createMailMessageInTx(tx, input),
+  );
+  const jobId = await dispatchQueuedMailMessage(
+    message.id,
+    message.deliveryMode,
+    message.sendAfter,
+  );
+  return { jobId, mailMessageId: message.id };
+}
+
+export async function createMailMessageInTx(
+  tx: Prisma.TransactionClient,
+  input: EnqueueMailInput,
+) {
+  const template = await buildTemplateMailInTx(tx, {
     key: input.templateKey,
     variables: input.variables ?? {},
     actionUrl: input.actionUrl,
   });
-  const message = await withSystemDb((tx) =>
-    tx.mailMessage.create({
-      data: {
-        toEmail: input.to.trim().toLowerCase(),
-        templateKey: template.templateKey,
-        subject: template.subject,
-        previewText: template.previewText,
-        heading: template.heading,
-        body: template.body,
-        actionLabel: template.actionLabel,
-        actionUrl: template.actionUrl,
-        deliveryMode,
-        status: "QUEUED",
-      },
+  return createPreparedMailMessageInTx(tx, input, template);
+}
+
+export function prepareMailMessageTemplate(input: EnqueueMailInput) {
+  return withSystemDb((tx) =>
+    buildTemplateMailInTx(tx, {
+      key: input.templateKey,
+      variables: input.variables ?? {},
+      actionUrl: input.actionUrl,
     }),
   );
+}
 
+export async function createPreparedMailMessageInTx(
+  tx: Prisma.TransactionClient,
+  input: EnqueueMailInput,
+  template: Awaited<ReturnType<typeof prepareMailMessageTemplate>>,
+) {
+  const deliveryMode = await resolveLockedMailDeliveryMode(
+    tx,
+    input.deliveryMode,
+  );
+  const id = randomUUID();
+  const toEmail = input.to.trim().toLowerCase();
+  const sendAfter = input.sendAfter ?? new Date();
+  await tx.$executeRaw`
+    INSERT INTO "MailMessage" (
+      id,
+      "toEmail",
+      "templateKey",
+      subject,
+      "previewText",
+      heading,
+      body,
+      "actionLabel",
+      "actionUrl",
+      "sendAfter",
+      "idempotencyKey",
+      "notificationId",
+      "notificationOccurrenceCount",
+      "sourceType",
+      "sourceId",
+      "deliveryMode",
+      status,
+      "createdAt",
+      "updatedAt"
+    )
+    VALUES (
+      ${id},
+      ${toEmail},
+      ${template.templateKey},
+      ${template.subject},
+      ${template.previewText},
+      ${template.heading},
+      ${template.body},
+      ${template.actionLabel},
+      ${template.actionUrl},
+      ${sendAfter},
+      ${input.idempotencyKey ?? null},
+      ${input.notificationId ?? null},
+      ${input.notificationOccurrenceCount ?? null},
+      ${input.sourceType ?? null},
+      ${input.sourceId ?? null},
+      ${deliveryMode}::"MailDeliveryMode",
+      'QUEUED',
+      CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP
+    )
+  `;
+  return {
+    id,
+    toEmail,
+    templateKey: template.templateKey,
+    subject: template.subject,
+    previewText: template.previewText,
+    heading: template.heading,
+    body: template.body,
+    actionLabel: template.actionLabel,
+    actionUrl: template.actionUrl,
+    sendAfter,
+    idempotencyKey: input.idempotencyKey ?? null,
+    notificationId: input.notificationId ?? null,
+    notificationOccurrenceCount:
+      input.notificationOccurrenceCount ?? null,
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    deliveryMode,
+    status: "QUEUED" as const,
+  };
+}
+
+export async function dispatchQueuedMailMessage(
+  mailMessageId: string,
+  deliveryMode: MailDeliveryMode,
+  sendAfter?: Date,
+) {
   try {
-    const jobId = await queueMailMessage(message.id, deliveryMode);
-    return { jobId, mailMessageId: message.id };
+    return await queueMailMessage(mailMessageId, deliveryMode, sendAfter);
   } catch (error) {
     await withSystemDb((tx) =>
-      tx.mailMessage.update({
-        where: { id: message.id },
+      tx.mailMessage.updateMany({
+        where: { id: mailMessageId, status: "QUEUED" },
         data: {
-          status: "FAILED",
           errorMessage:
             error instanceof Error ? error.message : "邮件任务入队失败",
         },
       }),
     );
-    throw error;
+    return null;
   }
+}
+
+async function queuePendingMailMessages() {
+  const now = new Date();
+  await withSystemDb((tx) =>
+    tx.mailMessage.updateMany({
+      where: {
+        status: "QUEUED",
+        NOT: mailAttemptBudgetWhere(),
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: "邮件发送已达到重试上限",
+      },
+    }),
+  );
+  await withSystemDb((tx) =>
+    tx.mailMessage.updateMany({
+      where: {
+        status: "PROCESSING",
+        deliveryMode: { in: ["RESEND", "LOCAL_OUTBOX"] },
+        lastAttemptAt: {
+          lt: new Date(now.getTime() - MAIL_PROCESSING_CLAIM_STALE_MS),
+        },
+        NOT: mailAttemptBudgetWhere(),
+      },
+      data: {
+        status: "FAILED",
+        errorMessage: "邮件发送已达到重试上限",
+      },
+    }),
+  );
+  await withSystemDb((tx) =>
+    tx.mailMessage.updateMany({
+      where: {
+        status: "PROCESSING",
+        deliveryMode: "SMTP",
+        lastAttemptAt: {
+          lt: new Date(now.getTime() - MAIL_PROCESSING_CLAIM_STALE_MS),
+        },
+      },
+      data: {
+        status: "FAILED",
+        errorMessage:
+          "SMTP 发送结果不确定，系统未自动重试；请核对收件箱后再决定是否手动重发",
+      },
+    }),
+  );
+  const messages = await withSystemDb((tx) =>
+    tx.mailMessage.findMany({
+      where: buildMailOutboxCandidateWhere(now),
+      select: { id: true, deliveryMode: true, sendAfter: true },
+      orderBy: [{ lastAttemptAt: "asc" }, { sendAfter: "asc" }],
+      take: 100,
+    }),
+  );
+  for (const message of messages) {
+    try {
+      await queueMailMessage(
+        message.id,
+        message.deliveryMode,
+        message.sendAfter,
+      );
+    } catch (error) {
+      await withSystemDb((tx) =>
+        tx.mailMessage.updateMany({
+          where: { id: message.id, status: "QUEUED" },
+          data: {
+            errorMessage:
+              error instanceof Error ? error.message : "邮件任务补投失败",
+          },
+        }),
+      );
+    }
+  }
+}
+
+async function processMailOutbox() {
+  await createDueNotificationMailMessages();
+  await queuePendingMailMessages();
 }
 
 export async function queueImageWebpAttachment(attachmentId: string) {
@@ -302,13 +502,20 @@ export async function startMailWorker() {
     await startUniversalWebhookListener().catch(() => undefined);
     await boss.schedule(UNIVERSAL_WEBHOOK_SWEEP_JOB, "* * * * *");
     await boss.schedule(UNIVERSAL_MAINTENANCE_JOB, "17 3 * * *");
+    await boss.schedule(INLINE_ATTACHMENT_MAINTENANCE_JOB, "43 3 * * *");
+    await boss.schedule(MAIL_OUTBOX_SWEEP_JOB, "* * * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
       async (jobs) => {
         for (const job of jobs as JobWithMetadata<MailJobData>[]) {
+          const deliveryMode = parseMailJobDeliveryMode(job.data.deliveryMode);
+          if (!deliveryMode) {
+            continue;
+          }
           await processMailMessage(job.data.mailMessageId, {
             finalAttempt: job.retryCount >= job.retryLimit,
+            expectedDeliveryMode: deliveryMode,
           });
         }
       },
@@ -381,7 +588,22 @@ export async function startMailWorker() {
         await cleanupExpiredUniversalLaunchTickets();
       },
     );
+    await boss.work(
+      MAIL_OUTBOX_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await processMailOutbox();
+      },
+    );
+    await boss.work(
+      INLINE_ATTACHMENT_MAINTENANCE_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await cleanupAbandonedInlineAttachments();
+      },
+    );
     await queueDueUniversalWebhooks();
+    await processMailOutbox();
   })().catch((error) => {
     globalForBoss.bossWorkerStarted = false;
     globalForBoss.bossWorkerPromise = undefined;

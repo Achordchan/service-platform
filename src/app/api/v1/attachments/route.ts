@@ -35,6 +35,8 @@ export async function POST(request: Request) {
     const projectId = formData.get("projectId");
     const requestMessageId = formData.get("requestMessageId");
     const visibility = formData.get("visibility");
+    const inline = formData.get("inline") === "true";
+    const inlineContext = formData.get("inlineContext");
 
     if (!(file instanceof File)) {
       throw badRequest("ATTACHMENT_REQUIRED", "请选择附件");
@@ -49,6 +51,18 @@ export async function POST(request: Request) {
       typeof serviceRequestId === "string" ? serviceRequestId.trim() : "";
     const normalizedProjectId =
       typeof projectId === "string" ? projectId.trim() : "";
+    if (
+      inline &&
+      normalizedProjectId &&
+      inlineContext !== "REQUEST_DESCRIPTION" &&
+      inlineContext !== "PROJECT_UPDATE" &&
+      inlineContext !== "MILESTONE"
+    ) {
+      throw badRequest(
+        "INLINE_IMAGE_CONTEXT_REQUIRED",
+        "正文图片缺少有效的使用场景",
+      );
+    }
     if (Boolean(normalizedRequestId) === Boolean(normalizedProjectId)) {
       throw badRequest(
         "ATTACHMENT_TARGET_REQUIRED",
@@ -75,6 +89,7 @@ export async function POST(request: Request) {
               ? requestMessageId.trim()
               : undefined,
           visibility: visibility ?? undefined,
+          inline,
         })
       : await uploadProjectAttachment(actor, {
           fileName: file.name,
@@ -82,6 +97,14 @@ export async function POST(request: Request) {
           buffer,
           projectId: normalizedProjectId,
           visibility: visibility ?? undefined,
+          inlineContext:
+            inline && inlineContext === "REQUEST_DESCRIPTION"
+              ? "REQUEST_DESCRIPTION"
+              : inline && inlineContext === "PROJECT_UPDATE"
+                ? "PROJECT_UPDATE"
+                : inline && inlineContext === "MILESTONE"
+                  ? "MILESTONE"
+                : undefined,
         });
 
     return Response.json({ data: attachment }, { status: 201 });

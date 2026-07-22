@@ -51,10 +51,13 @@ pnpm db:seed
 ### 4. 启动
 
 ```bash
-pnpm dev
+./start.sh       # 默认使用 3000 端口
+./start.sh 3001  # 指定端口
 ```
 
 访问 [http://localhost:3000](http://localhost:3000)。
+
+启动脚本会保持在前台并显示日志，按 `Ctrl+C` 或关闭当前终端即可停止服务。脚本会固定使用 Node.js 24、检查本地 PostgreSQL、生成 Prisma Client、应用已有迁移，并将运行日志写入 `.data/local-runtime/web.log`；它不会关闭 PostgreSQL 或其他共享服务。
 
 本地默认只需要这一个进程：邮件会进入后台「平台设置 → 发件箱」。  
 `pnpm worker` 用于单独运行邮件和插件后台任务。

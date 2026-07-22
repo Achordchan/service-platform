@@ -1,15 +1,39 @@
 import { render } from "@react-email/render";
-import nodemailer from "nodemailer";
 import React from "react";
 import { Resend } from "resend";
 import type { MailDeliveryMode } from "@/generated/prisma/client";
 import { decryptSecret } from "@/lib/secret-crypto";
+import {
+  MAIL_PROCESSING_CLAIM_STALE_MS,
+  mailAttemptBudgetWhere,
+  maxMailAttempts,
+} from "@/lib/mail-outbox-policy";
 import { withSystemDb } from "@/lib/system-db";
+import { hashInvitationToken } from "@/modules/invitations/invitation-token";
+import {
+  canSendStandardRequestEmailForModule,
+  isCurrentMailRecipient,
+  isStandardRequestRecipientRelevant,
+} from "@/modules/notifications/standard-request-mail-policy";
+import {
+  isNotificationEmailRuleEnabled,
+  STANDARD_NOTIFICATION_EMAIL_RULE_KEYS,
+  type NotificationDeliveryRuleState,
+} from "@/modules/notifications/notification-delivery-rules";
+import {
+  canSendStandardProjectEmailForModule,
+  isStandardProjectRecipientRelevant,
+} from "@/modules/notifications/standard-project-mail-policy";
 import {
   getRuntimeMailSettings,
   type RuntimeMailSettings,
 } from "@/modules/platform-settings/mail-settings-runtime";
 import { reconcileStoredResendEvents } from "@/modules/platform-settings/resend-webhook-service";
+import {
+  describeSmtpError,
+  isSmtpProviderFailure,
+} from "@/modules/platform-settings/smtp-error";
+import { createSmtpTransport } from "@/modules/platform-settings/smtp-transport";
 
 type StoredMailPayload = {
   id: string;
@@ -176,32 +200,48 @@ async function deliverViaSmtp(
     throw new Error("SMTP 未配置完整：缺少主机或端口");
   }
 
-  const transporter = nodemailer.createTransport({
-    host: settings.smtpHost,
-    port: settings.smtpPort,
-    secure: settings.smtpSecure,
-    auth:
-      settings.smtpUser && settings.smtpPassword
-        ? {
-            user: settings.smtpUser,
-            pass: settings.smtpPassword,
-          }
-        : undefined,
+  if (!settings.smtpUser || !settings.smtpPassword) {
+    throw new Error("SMTP 未配置完整：缺少用户名或密码");
+  }
+  const transporter = createSmtpTransport({
+    smtpHost: settings.smtpHost,
+    smtpPort: settings.smtpPort,
+    smtpUser: settings.smtpUser,
+    smtpPassword: settings.smtpPassword,
+    smtpSecure: settings.smtpSecure,
   });
+  try {
+    const result = await transporter.sendMail({
+      from: settings.smtpFrom,
+      to: payload.toEmail,
+      replyTo: settings.mailReplyTo,
+      subject: payload.subject,
+      html,
+      text,
+    });
 
-  const result = await transporter.sendMail({
-    from: settings.smtpFrom,
-    to: payload.toEmail,
-    replyTo: settings.mailReplyTo,
-    subject: payload.subject,
-    html,
-    text,
-  });
-
-  return {
-    providerId:
-      typeof result.messageId === "string" ? result.messageId : undefined,
-  };
+    return {
+      providerId:
+        typeof result.messageId === "string" ? result.messageId : undefined,
+    };
+  } catch (error) {
+    const message = describeSmtpError(error);
+    if (isSmtpProviderFailure(error)) {
+      await withSystemDb((tx) =>
+        tx.platformSetting.update({
+          where: { id: 1 },
+          data: {
+            smtpHealthStatus: "error",
+            smtpLastCheckedAt: new Date(),
+            smtpLastError: message,
+          },
+        }),
+      );
+    }
+    throw new Error(message);
+  } finally {
+    transporter.close();
+  }
 }
 
 async function deliverViaResend(
@@ -239,19 +279,32 @@ async function deliverViaResend(
 
 export async function processMailMessage(
   mailMessageId: string,
-  options: { finalAttempt: boolean },
+  options: {
+    finalAttempt: boolean;
+    expectedDeliveryMode?: MailDeliveryMode;
+  },
 ) {
   const attemptAt = new Date();
-  const staleClaimBefore = new Date(attemptAt.getTime() - 15 * 60 * 1000);
+  const staleClaimBefore = new Date(
+    attemptAt.getTime() - MAIL_PROCESSING_CLAIM_STALE_MS,
+  );
   const claim = await withSystemDb(async (tx) => {
     const claimed = await tx.mailMessage.updateMany({
       where: {
         id: mailMessageId,
-        OR: [
-          { status: "QUEUED" },
+        ...(options.expectedDeliveryMode
+          ? { deliveryMode: options.expectedDeliveryMode }
+          : {}),
+        AND: [
+          mailAttemptBudgetWhere(),
           {
-            status: "PROCESSING",
-            lastAttemptAt: { lt: staleClaimBefore },
+            OR: [
+              { status: "QUEUED" },
+              {
+                status: "PROCESSING",
+                lastAttemptAt: { lt: staleClaimBefore },
+              },
+            ],
           },
         ],
       },
@@ -272,7 +325,42 @@ export async function processMailMessage(
     throw new Error("邮件队列记录不存在");
   }
   if (!claim.claimed) {
+    if (
+      message.status === "QUEUED" &&
+      message.attemptCount >= maxMailAttempts(message.deliveryMode)
+    ) {
+      await withSystemDb((tx) =>
+        tx.mailMessage.updateMany({
+          where: { id: message.id, status: "QUEUED" },
+          data: {
+            status: "FAILED",
+            errorMessage: "邮件发送已达到重试上限",
+          },
+        }),
+      );
+    }
     return { id: message.id, skipped: true };
+  }
+  if (
+    (message.sourceType === "STANDARD_REQUEST_NOTIFICATION" ||
+      message.sourceType === "STANDARD_PROJECT_NOTIFICATION") &&
+    !(await notificationMailStillSendable(message))
+  ) {
+    await cancelMailBeforeDelivery(
+      message.id,
+      "通知已读、已更新或邮件提醒已关闭",
+    );
+    return { id: message.id, cancelled: true };
+  }
+  if (
+    isAccountActionMail(message.sourceType) &&
+    !(await accountActionMailStillSendable(message))
+  ) {
+    await cancelMailBeforeDelivery(
+      message.id,
+      "邀请或验证链接已失效、已使用或已被替换",
+    );
+    return { id: message.id, cancelled: true };
   }
 
   const payload: StoredMailPayload = {
@@ -306,6 +394,7 @@ export async function processMailMessage(
           },
         }),
       );
+      await markNotificationMailSent(message);
       return { id: message.id, mode: "LOCAL_OUTBOX" as const };
     }
 
@@ -330,6 +419,7 @@ export async function processMailMessage(
         },
       }),
     );
+    await markNotificationMailSent(message);
     if (payload.deliveryMode === "RESEND" && delivery.providerId) {
       try {
         await reconcileStoredResendEvents(delivery.providerId, message.id);
@@ -344,15 +434,282 @@ export async function processMailMessage(
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "邮件发送失败";
+    const attemptsExhausted =
+      message.attemptCount >= maxMailAttempts(message.deliveryMode);
     await withSystemDb((tx) =>
       tx.mailMessage.update({
         where: { id: message.id },
         data: {
-          status: options.finalAttempt ? "FAILED" : "QUEUED",
+          status:
+            options.finalAttempt || attemptsExhausted ? "FAILED" : "QUEUED",
           errorMessage,
         },
       }),
     );
     throw error;
   }
+}
+
+async function notificationMailStillSendable(message: {
+  id: string;
+  sourceType: string | null;
+  toEmail: string;
+  notificationId: string | null;
+  notificationOccurrenceCount: number | null;
+}) {
+  if (!message.notificationId || !message.notificationOccurrenceCount) {
+    return false;
+  }
+  return withSystemDb(async (tx) => {
+    const settings = await tx.platformSetting.findUnique({
+      where: { id: 1 },
+      select: { standardRequestEmailEnabled: true },
+    });
+    const currentMessage = await tx.mailMessage.findUnique({
+      where: { id: message.id },
+      select: { status: true },
+    });
+    const notification = await tx.notification.findUnique({
+      where: { id: message.notificationId! },
+      select: {
+        type: true,
+        readAt: true,
+        occurrenceCount: true,
+        user: {
+          select: {
+            id: true,
+            email: true,
+            platformRole: true,
+            requestEmailNotificationsEnabled: true,
+          },
+        },
+        serviceRequest: {
+          select: {
+            archivedAt: true,
+            assignees: { select: { userId: true } },
+            project: {
+              select: {
+                kind: true,
+                customerRequestsEnabled: true,
+                customerSpace: {
+                  select: {
+                    memberships: { select: { userId: true } },
+                  },
+                },
+                staff: { select: { userId: true } },
+              },
+            },
+          },
+        },
+        project: {
+          select: {
+            kind: true,
+            customerUpdatesEnabled: true,
+            customerFilesEnabled: true,
+            showMilestones: true,
+            showProgress: true,
+            customerSpace: {
+              select: {
+                memberships: { select: { userId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const deliveryRules = await tx.notificationDeliveryRule.findMany({
+      where: { key: { in: [...STANDARD_NOTIFICATION_EMAIL_RULE_KEYS] } },
+      select: {
+        key: true,
+        notificationEnabled: true,
+        soundEnabled: true,
+        emailEnabled: true,
+      },
+    });
+    const deliveryRuleByKey = new Map<string, NotificationDeliveryRuleState>(
+      deliveryRules.map((rule) => [rule.key, rule]),
+    );
+    const commonValid = Boolean(
+      settings?.standardRequestEmailEnabled &&
+        currentMessage?.status === "PROCESSING" &&
+        notification &&
+        isNotificationEmailRuleEnabled(
+          notification.type,
+          deliveryRuleByKey,
+        ) &&
+        notification.readAt === null &&
+        notification.occurrenceCount === message.notificationOccurrenceCount &&
+        isCurrentMailRecipient(message.toEmail, notification.user.email) &&
+        notification.user.requestEmailNotificationsEnabled,
+    );
+    if (!commonValid || !notification) return false;
+    if (message.sourceType === "STANDARD_REQUEST_NOTIFICATION") {
+      return Boolean(
+        notification.serviceRequest &&
+        !notification.serviceRequest.archivedAt &&
+        notification.serviceRequest.project.kind === "STANDARD" &&
+        canSendStandardRequestEmailForModule({
+          platformRole: notification.user.platformRole,
+          customerRequestsEnabled:
+            notification.serviceRequest.project.customerRequestsEnabled,
+        }) &&
+        isStandardRequestRecipientRelevant({
+          userId: notification.user.id,
+          platformRole: notification.user.platformRole,
+          membershipUserIds:
+            notification.serviceRequest.project.customerSpace.memberships.map(
+              (item) => item.userId,
+            ),
+          projectStaffUserIds:
+            notification.serviceRequest.project.staff.map(
+              (item) => item.userId,
+            ),
+          assigneeUserIds: notification.serviceRequest.assignees.map(
+            (item) => item.userId,
+          ),
+        }),
+      );
+    }
+    if (message.sourceType !== "STANDARD_PROJECT_NOTIFICATION") return false;
+    return Boolean(
+      notification.project &&
+        notification.project.kind === "STANDARD" &&
+        isStandardProjectRecipientRelevant({
+          userId: notification.user.id,
+          platformRole: notification.user.platformRole,
+          membershipUserIds:
+            notification.project.customerSpace.memberships.map(
+              (item) => item.userId,
+            ),
+        }) &&
+        canSendStandardProjectEmailForModule({
+          notificationType: notification.type,
+          customerUpdatesEnabled:
+            notification.project.customerUpdatesEnabled,
+          customerFilesEnabled: notification.project.customerFilesEnabled,
+          showMilestones: notification.project.showMilestones,
+          showProgress: notification.project.showProgress,
+        }),
+    );
+  });
+}
+
+function isAccountActionMail(sourceType: string | null) {
+  return (
+    sourceType === "STAFF_INVITATION" ||
+    sourceType === "CUSTOMER_OWNER_INVITATION" ||
+    sourceType === "CUSTOMER_MEMBER_INVITATION" ||
+    sourceType === "CUSTOMER_EMAIL_CHANGE_VERIFY"
+  );
+}
+
+async function accountActionMailStillSendable(message: {
+  sourceType: string | null;
+  sourceId: string | null;
+  toEmail: string;
+  actionUrl: string | null;
+}) {
+  if (!message.sourceId || !message.actionUrl) return false;
+  let tokenHash: string;
+  try {
+    const token = new URL(message.actionUrl).searchParams.get("token");
+    if (!token) return false;
+    tokenHash = hashInvitationToken(token);
+  } catch {
+    return false;
+  }
+  const now = new Date();
+  const toEmail = message.toEmail.trim().toLowerCase();
+  return withSystemDb(async (tx) => {
+    if (message.sourceType === "STAFF_INVITATION") {
+      const invitation = await tx.staffInvitation.findUnique({
+        where: { id: message.sourceId! },
+        select: {
+          email: true,
+          tokenHash: true,
+          expiresAt: true,
+          acceptedAt: true,
+          revokedAt: true,
+        },
+      });
+      return Boolean(
+        invitation &&
+          invitation.email.toLowerCase() === toEmail &&
+          invitation.tokenHash === tokenHash &&
+          invitation.expiresAt > now &&
+          !invitation.acceptedAt &&
+          !invitation.revokedAt,
+      );
+    }
+    if (
+      message.sourceType === "CUSTOMER_OWNER_INVITATION" ||
+      message.sourceType === "CUSTOMER_MEMBER_INVITATION"
+    ) {
+      const invitation = await tx.invitation.findUnique({
+        where: { id: message.sourceId! },
+        select: {
+          email: true,
+          tokenHash: true,
+          expiresAt: true,
+          acceptedAt: true,
+          revokedAt: true,
+        },
+      });
+      return Boolean(
+        invitation &&
+          invitation.email.toLowerCase() === toEmail &&
+          invitation.tokenHash === tokenHash &&
+          invitation.expiresAt > now &&
+          !invitation.acceptedAt &&
+          !invitation.revokedAt,
+      );
+    }
+    const change = await tx.userEmailChange.findUnique({
+      where: { id: message.sourceId! },
+      select: {
+        newEmail: true,
+        tokenHash: true,
+        expiresAt: true,
+        status: true,
+      },
+    });
+    return Boolean(
+      change &&
+        change.newEmail.toLowerCase() === toEmail &&
+        change.tokenHash === tokenHash &&
+        change.expiresAt > now &&
+        change.status === "PENDING",
+    );
+  });
+}
+
+function cancelMailBeforeDelivery(mailMessageId: string, reason: string) {
+  return withSystemDb((tx) =>
+    tx.mailMessage.update({
+      where: { id: mailMessageId },
+      data: {
+        status: "CANCELLED",
+        errorMessage: reason,
+      },
+    }),
+  );
+}
+
+async function markNotificationMailSent(message: {
+  notificationId: string | null;
+  notificationOccurrenceCount: number | null;
+}) {
+  if (!message.notificationId || !message.notificationOccurrenceCount) return;
+  await withSystemDb((tx) =>
+    tx.notification.updateMany({
+      where: {
+        id: message.notificationId!,
+        occurrenceCount: message.notificationOccurrenceCount!,
+      },
+      data: {
+        emailLastSentOccurrenceCount: message.notificationOccurrenceCount!,
+        emailClaimedAt: null,
+      },
+    }),
+  );
 }

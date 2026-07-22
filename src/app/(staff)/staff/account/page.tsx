@@ -1,5 +1,6 @@
 import { Container, Stack } from "@mui/material";
 import { ProfileSettingsForm } from "@/components/shared/profile-settings-form";
+import { NotificationPreferencesForm } from "@/components/shared/notification-preferences-form";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { prisma } from "@/lib/db";
 import { requireUserWithAccess } from "@/lib/session";
@@ -12,7 +13,12 @@ export default async function StaffAccountPage() {
   const { session, actor } = await requireUserWithAccess();
   const profile = await prisma.user.findUnique({
     where: { id: actor.id },
-    select: { image: true, name: true },
+    select: {
+      image: true,
+      name: true,
+      soundNotificationsEnabled: true,
+      requestEmailNotificationsEnabled: true,
+    },
   });
   return (
     <Container
@@ -27,6 +33,14 @@ export default async function StaffAccountPage() {
             name: profile?.name ?? actor.name,
             email: actor.email,
             image: profile?.image ?? session.user.image,
+          }}
+        />
+        <NotificationPreferencesForm
+          initialPreferences={{
+            soundNotificationsEnabled:
+              profile?.soundNotificationsEnabled ?? true,
+            requestEmailNotificationsEnabled:
+              profile?.requestEmailNotificationsEnabled ?? true,
           }}
         />
       </Stack>

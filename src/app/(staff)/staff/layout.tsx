@@ -12,7 +12,7 @@ export default async function StaffLayout({
   const { session, actor } = await requireUserWithAccess();
   const profile = await prisma.user.findUnique({
     where: { id: actor.id },
-    select: { image: true, name: true },
+    select: { image: true, name: true, soundNotificationsEnabled: true },
   });
   if (!actor.isStaff) {
     redirect("/customer/projects");
@@ -26,6 +26,8 @@ export default async function StaffLayout({
         email: actor.email,
         image: profile?.image ?? session.user.image,
         role: actor.platformRole as StaffRole,
+        soundNotificationsEnabled:
+          profile?.soundNotificationsEnabled ?? true,
       }}
     >
       {children}

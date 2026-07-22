@@ -4,7 +4,7 @@ import {
   subscribeDatabaseNotifications,
 } from "@/lib/postgres-event-listener";
 import { requireUserWithAccess } from "@/lib/session";
-import { listVisibleEvents } from "@/modules/notifications/notification-service";
+import { listVisibleEventBatch } from "@/modules/notifications/notification-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -114,13 +114,13 @@ export async function GET(request: Request) {
       const sendPending = async () => {
         if (closed) return;
         while (!closed) {
-          const events = await listVisibleEvents(actor, cursor);
-          for (const event of events) {
+          const batch = await listVisibleEventBatch(actor, cursor);
+          for (const event of batch.events) {
             if (closed) return;
             streamController.enqueue(encodeEvent(event));
-            cursor = BigInt(event.id);
           }
-          if (events.length < 100) return;
+          cursor = batch.nextCursor;
+          if (batch.scannedCount < 100) return;
         }
       };
       let pendingSend = Promise.resolve();

@@ -12,7 +12,7 @@ export default async function CustomerLayout({
   const { session, actor } = await requireUserWithAccess();
   const profile = await prisma.user.findUnique({
     where: { id: actor.id },
-    select: { image: true, name: true },
+    select: { image: true, name: true, soundNotificationsEnabled: true },
   });
   if (actor.isStaff) {
     redirect("/staff/projects");
@@ -32,6 +32,8 @@ export default async function CustomerLayout({
         name: profile?.name ?? actor.name,
         email: actor.email,
         image: profile?.image ?? session.user.image,
+        soundNotificationsEnabled:
+          profile?.soundNotificationsEnabled ?? true,
       }}
       spaces={spaces}
     >

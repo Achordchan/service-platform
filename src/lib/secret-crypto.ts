@@ -17,6 +17,17 @@ function defaultEncodedKey() {
   return deriveCompatibilityEncryptionKey(env.BETTER_AUTH_SECRET);
 }
 
+function defaultDecryptionKeys() {
+  const primary = defaultEncodedKey();
+  if (!env.PLATFORM_SECRET_ENCRYPTION_KEY) {
+    return [primary];
+  }
+  const compatibility = deriveCompatibilityEncryptionKey(
+    env.BETTER_AUTH_SECRET,
+  );
+  return primary === compatibility ? [primary] : [primary, compatibility];
+}
+
 export function deriveCompatibilityEncryptionKey(authSecret: string) {
   return Buffer.from(
     hkdfSync(
@@ -56,10 +67,7 @@ export function encryptSecret(
   ].join(":");
 }
 
-export function decryptSecret(
-  value: string,
-  encodedKey = defaultEncodedKey(),
-) {
+function decryptSecretWithKey(value: string, encodedKey: string) {
   const [version, ivValue, tagValue, encryptedValue, extra] = value.split(":");
   if (
     version !== VERSION ||
@@ -82,4 +90,17 @@ export function decryptSecret(
     decipher.final(),
   ]);
   return decrypted.toString("utf8");
+}
+
+export function decryptSecret(value: string, encodedKey?: string) {
+  const keys = encodedKey ? [encodedKey] : defaultDecryptionKeys();
+  let firstError: unknown;
+  for (const key of keys) {
+    try {
+      return decryptSecretWithKey(value, key);
+    } catch (error) {
+      firstError ??= error;
+    }
+  }
+  throw firstError;
 }

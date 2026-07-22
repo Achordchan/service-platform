@@ -37,6 +37,20 @@ export function canWriteInternalNote(
   return actor.isStaff && canWorkOnRequest(actor, context);
 }
 
+export function canManageRequestArchive(
+  actor: Actor,
+  context: RequestAccessContext,
+) {
+  return actor.isStaff && canWorkOnRequest(actor, context);
+}
+
 export function canConfirmRequestClosed(actor: Actor) {
   return actor.platformRole === "CUSTOMER";
+}
+
+export function canAttachToRequestMessage(
+  actor: Actor,
+  message: { authorId: string | null },
+) {
+  return message.authorId === actor.id;
 }

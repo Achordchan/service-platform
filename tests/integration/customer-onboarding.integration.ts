@@ -4,15 +4,19 @@ import { Pool } from "pg";
 import type { Actor } from "@/lib/actor";
 import {
   assertMailDeliveryReady,
-  enqueueMail,
+  dispatchQueuedMailMessage,
 } from "@/lib/jobs";
 import { createCustomerSpace } from "@/modules/customer-spaces/customer-space-service";
 import { acceptInvitation } from "@/modules/invitations/invitation-service";
 
-vi.mock("@/lib/jobs", () => ({
-  assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
-  enqueueMail: vi.fn().mockResolvedValue("test-job"),
-}));
+vi.mock("@/lib/jobs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/jobs")>();
+  return {
+    ...actual,
+    assertMailDeliveryReady: vi.fn().mockResolvedValue("RESEND"),
+    dispatchQueuedMailMessage: vi.fn().mockResolvedValue("test-job"),
+  };
+});
 
 const ownerPool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -23,6 +27,7 @@ const fixture = {
   email: `onboarding-${randomUUID()}@local.test`,
   slug: `onboarding-${randomUUID()}`,
   spaceId: "",
+  mailMessageId: "",
 };
 
 let admin: Actor;
@@ -58,6 +63,11 @@ afterAll(async () => {
       fixture.spaceId,
     ]);
   }
+  if (fixture.mailMessageId) {
+    await ownerPool.query('DELETE FROM "MailMessage" WHERE id = $1', [
+      fixture.mailMessageId,
+    ]);
+  }
   await ownerPool.query('DELETE FROM "User" WHERE email = $1', [
     fixture.email,
   ]);
@@ -78,11 +88,29 @@ describe("客户开户与 Owner 邀请", () => {
 
     expect(space.owner.email).toBe(fixture.email);
     expect(space._count.memberships).toBe(1);
-    expect(enqueueMail).toHaveBeenCalledOnce();
+    expect(dispatchQueuedMailMessage).toHaveBeenCalledOnce();
 
-    const mail = vi.mocked(enqueueMail).mock.calls[0][0];
-    expect(mail.actionUrl).toBeTruthy();
-    const token = new URL(mail.actionUrl!).searchParams.get("token");
+    const outbox = await ownerPool.query<{
+      id: string;
+      action_url: string;
+      source_type: string;
+    }>(
+      `
+        SELECT
+          id,
+          "actionUrl" AS action_url,
+          "sourceType" AS source_type
+        FROM "MailMessage"
+        WHERE "sourceType" = 'CUSTOMER_OWNER_INVITATION'
+          AND "toEmail" = $1
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+      `,
+      [fixture.email],
+    );
+    fixture.mailMessageId = outbox.rows[0]?.id ?? "";
+    expect(outbox.rows[0]?.source_type).toBe("CUSTOMER_OWNER_INVITATION");
+    const token = new URL(outbox.rows[0]!.action_url).searchParams.get("token");
     expect(token).toBeTruthy();
 
     const beforeAcceptance = await ownerPool.query<{

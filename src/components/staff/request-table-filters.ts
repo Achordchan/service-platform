@@ -3,6 +3,7 @@ import type {
   RequestPriority,
   RequestStatus,
 } from "@/components/staff/staff-types";
+import { matchesRequestArchiveFilter } from "@/lib/request-archive";
 
 export type RequestAdvancedFilterValue = {
   priority: "ALL" | RequestPriority;
@@ -13,7 +14,7 @@ export type RequestAdvancedFilterValue = {
 };
 
 export type RequestTableFilterValue = {
-  status: "ALL" | RequestStatus;
+  status: "ALL" | "ARCHIVED" | RequestStatus;
   projectId: string;
   customerKey: string;
   advanced: RequestAdvancedFilterValue;
@@ -76,7 +77,7 @@ export function filterRequestRows(
   return requests.filter((request) => {
     const assignedStaff = request.assignedStaff ?? [];
     return (
-      (filters.status === "ALL" || request.status === filters.status) &&
+      matchesRequestArchiveFilter(request, filters.status) &&
       (filters.projectId === "ALL" || request.projectId === filters.projectId) &&
       (filters.customerKey === "ALL" ||
         (request.customerFilterKey ?? request.customerName) ===

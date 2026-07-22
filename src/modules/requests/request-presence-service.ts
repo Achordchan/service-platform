@@ -8,7 +8,10 @@ import {
   publishTransientEvent,
 } from "@/modules/notifications/notification-service";
 import { badRequest, notFound } from "@/modules/requests/errors";
-import { findRequestContext } from "@/modules/requests/request-context";
+import {
+  canAccessCustomerRequestModule,
+  findRequestContext,
+} from "@/modules/requests/request-context";
 import type { RequestPresenceInput } from "@/modules/requests/request-schemas";
 
 const PRESENCE_TTL_MS = 3 * 60 * 1000;
@@ -115,6 +118,7 @@ export function updateRequestPresence(
   return withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    if (!canAccessCustomerRequestModule(actor, request)) throw notFound();
 
     const now = new Date();
     const ownGroup = actorGroup(actor);

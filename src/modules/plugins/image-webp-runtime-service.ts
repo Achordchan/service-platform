@@ -220,7 +220,11 @@ export async function optimizeAttachmentWithWebp(
         },
       });
       if (options?.source === "UPLOAD") {
-        if (attachment.serviceRequestId && attachment.projectId) {
+        if (
+          attachment.serviceRequestId &&
+          attachment.projectId &&
+          attachment.customerSpaceId
+        ) {
           await publishRequestChange(tx, systemActor, {
             change: "ATTACHMENT_OPTIMIZED",
             customerSpaceId: attachment.customerSpaceId,
@@ -228,7 +232,7 @@ export async function optimizeAttachmentWithWebp(
             serviceRequestId: attachment.serviceRequestId,
             payload: { attachmentId: attachment.id },
           });
-        } else if (attachment.projectId) {
+        } else if (attachment.projectId && attachment.customerSpaceId) {
           await publishProjectChange(tx, systemActor, {
             change: "ATTACHMENT_OPTIMIZED",
             customerSpaceId: attachment.customerSpaceId,

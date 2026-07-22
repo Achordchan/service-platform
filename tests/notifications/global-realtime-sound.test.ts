@@ -85,4 +85,14 @@ describe("全局实时声音", () => {
       ),
     ).toBe(true);
   });
+
+  it("明确标记为静音的派生事件不会播放", () => {
+    expect(
+      shouldPlayGlobalRealtimeSound(
+        event({ payload: { actorId: "other-user", audible: false } }),
+        "current-user",
+        0,
+      ),
+    ).toBe(false);
+  });
 });

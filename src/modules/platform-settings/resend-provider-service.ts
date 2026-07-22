@@ -13,12 +13,17 @@ import {
 import {
   getPlatformSettings,
 } from "@/modules/platform-settings/platform-setting-service";
+import {
+  lockPlatformMailSettings,
+  prepareMailProviderDisconnect,
+} from "@/modules/platform-settings/mail-provider-lifecycle";
 import { DomainError, assertAllowed } from "@/modules/projects/errors";
 
 export const RESEND_DOMAIN = "mail.achord.cn";
 export const RESEND_FROM =
   "服务支持中心 <no-reply@mail.achord.cn>";
 export const RESEND_REPLY_TO = "support@achord.cn";
+const RESEND_ADMIN_OPERATION_TIMEOUT_MS = 30_000;
 
 const RESEND_WEBHOOK_EVENTS: WebhookEvent[] = [
   "email.sent",
@@ -195,52 +200,52 @@ export async function setupResendProvider(
       409,
     );
   }
-  const current = await ensurePlatformSettings();
-  const providedApiKey = input.apiKey?.trim() || null;
-  const storedApiKey =
-    current.resendApiKeyEncrypted &&
-    (!providedApiKey || current.mailMode === "RESEND")
-      ? decryptSecret(current.resendApiKeyEncrypted)
-      : null;
-  const apiKey = providedApiKey || storedApiKey;
-
-  if (!apiKey) {
-    throw new DomainError(
-      "RESEND_API_KEY_REQUIRED",
-      "请填写 Resend API Key",
-      422,
-    );
-  }
-  if (
-    current.mailMode === "RESEND" &&
-    storedApiKey &&
-    storedApiKey !== apiKey
-  ) {
-    throw new DomainError(
-      "RESEND_ACTIVE_KEY_LOCKED",
-      "请先切换到本地发件箱或 SMTP，再更换 Resend API Key",
-      409,
-    );
-  }
-
-  const resend = createResend(apiKey);
-  const endpoint = webhookEndpoint(
-    current.appUrl?.trim() || "https://support.achord.cn",
-  );
-  const domain = await reconcileDomain(resend);
-  const reuseStoredWebhook =
-    !providedApiKey ||
-    (storedApiKey !== null && storedApiKey === providedApiKey);
-  const webhook = await reconcileWebhook(resend, endpoint, {
-    id: reuseStoredWebhook ? current.resendWebhookId : null,
-    signingSecret:
-      reuseStoredWebhook && current.resendWebhookSecretEncrypted
-        ? decryptSecret(current.resendWebhookSecretEncrypted)
-        : null,
-  });
-  const checkedAt = new Date();
-
+  await ensurePlatformSettings();
   await withActorDb(actor, async (tx) => {
+    const current = await lockPlatformMailSettings(tx);
+    const providedApiKey = input.apiKey?.trim() || null;
+    const storedApiKey =
+      current.resendApiKeyEncrypted &&
+      (!providedApiKey || current.mailMode === "RESEND")
+        ? decryptSecret(current.resendApiKeyEncrypted)
+        : null;
+    const apiKey = providedApiKey || storedApiKey;
+
+    if (!apiKey) {
+      throw new DomainError(
+        "RESEND_API_KEY_REQUIRED",
+        "请填写 Resend API Key",
+        422,
+      );
+    }
+    if (
+      current.mailMode === "RESEND" &&
+      storedApiKey &&
+      storedApiKey !== apiKey
+    ) {
+      throw new DomainError(
+        "RESEND_ACTIVE_KEY_LOCKED",
+        "请先切换到本地发件箱或 SMTP，再更换 Resend API Key",
+        409,
+      );
+    }
+
+    const resend = createResend(apiKey);
+    const endpoint = webhookEndpoint(
+      current.appUrl?.trim() || "https://support.achord.cn",
+    );
+    const domain = await reconcileDomain(resend);
+    const reuseStoredWebhook =
+      !providedApiKey ||
+      (storedApiKey !== null && storedApiKey === providedApiKey);
+    const webhook = await reconcileWebhook(resend, endpoint, {
+      id: reuseStoredWebhook ? current.resendWebhookId : null,
+      signingSecret:
+        reuseStoredWebhook && current.resendWebhookSecretEncrypted
+          ? decryptSecret(current.resendWebhookSecretEncrypted)
+          : null,
+    });
+    const checkedAt = new Date();
     await tx.platformSetting.update({
       where: { id: 1 },
       data: {
@@ -271,6 +276,9 @@ export async function setupResendProvider(
         apiKeyChanged: Boolean(input.apiKey?.trim()),
       },
     });
+  }, {
+    maxWait: 5_000,
+    timeout: RESEND_ADMIN_OPERATION_TIMEOUT_MS,
   });
 
   return getPlatformSettings(actor);
@@ -278,40 +286,40 @@ export async function setupResendProvider(
 
 export async function verifyResendDomain(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
-  const current = await ensurePlatformSettings();
-  if (!current.resendApiKeyEncrypted || !current.resendDomainId) {
-    throw new DomainError(
-      "RESEND_NOT_CONFIGURED",
-      "请先连接 Resend",
-      409,
-    );
-  }
-
-  const resend = createResend(decryptSecret(current.resendApiKeyEncrypted));
-  unwrap(
-    await resend.domains.verify(current.resendDomainId),
-    "发起域名验证失败",
-  );
-  const detail = unwrap(
-    await resend.domains.get(current.resendDomainId),
-    "刷新域名状态失败",
-  );
-  const webhookResult = current.resendWebhookId
-    ? await resend.webhooks.get(current.resendWebhookId)
-    : null;
-  if (
-    webhookResult?.error &&
-    webhookResult.error.statusCode !== 404
-  ) {
-    throw new DomainError(
-      "RESEND_API_ERROR",
-      webhookResult.error.message,
-      502,
-    );
-  }
-  const checkedAt = new Date();
-
+  await ensurePlatformSettings();
   await withActorDb(actor, async (tx) => {
+    const current = await lockPlatformMailSettings(tx);
+    if (!current.resendApiKeyEncrypted || !current.resendDomainId) {
+      throw new DomainError(
+        "RESEND_NOT_CONFIGURED",
+        "请先连接 Resend",
+        409,
+      );
+    }
+
+    const resend = createResend(decryptSecret(current.resendApiKeyEncrypted));
+    unwrap(
+      await resend.domains.verify(current.resendDomainId),
+      "发起域名验证失败",
+    );
+    const detail = unwrap(
+      await resend.domains.get(current.resendDomainId),
+      "刷新域名状态失败",
+    );
+    const webhookResult = current.resendWebhookId
+      ? await resend.webhooks.get(current.resendWebhookId)
+      : null;
+    if (
+      webhookResult?.error &&
+      webhookResult.error.statusCode !== 404
+    ) {
+      throw new DomainError(
+        "RESEND_API_ERROR",
+        webhookResult.error.message,
+        502,
+      );
+    }
+    const checkedAt = new Date();
     await tx.platformSetting.update({
       where: { id: 1 },
       data: {
@@ -333,6 +341,9 @@ export async function verifyResendDomain(actor: Actor) {
         domainStatus: detail.status,
       },
     });
+  }, {
+    maxWait: 5_000,
+    timeout: RESEND_ADMIN_OPERATION_TIMEOUT_MS,
   });
 
   return getPlatformSettings(actor);
@@ -340,38 +351,20 @@ export async function verifyResendDomain(actor: Actor) {
 
 export async function disconnectResendProvider(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
-  const current = await ensurePlatformSettings();
+  await ensurePlatformSettings();
 
-  if (
-    current.resendApiKeyEncrypted &&
-    current.resendWebhookId
-  ) {
-    try {
-      const resend = createResend(
-        decryptSecret(current.resendApiKeyEncrypted),
-      );
-      const removed = await resend.webhooks.remove(current.resendWebhookId);
-      if (removed.error && removed.error.statusCode !== 404) {
-        throw new DomainError(
-          "RESEND_WEBHOOK_REMOVE_FAILED",
-          removed.error.message,
-          502,
-        );
-      }
-    } catch (error) {
-      if (error instanceof DomainError) throw error;
-      // 主密钥丢失时仍允许管理员显式清除已经无法使用的服务凭据。
-    }
-  }
-
-  await withActorDb(actor, async (tx) => {
+  const disconnected = await withActorDb(actor, async (tx) => {
+    const current = await lockPlatformMailSettings(tx);
+    await prepareMailProviderDisconnect(tx, "RESEND", "Resend 已停用");
     await tx.platformSetting.update({
       where: { id: 1 },
       data: {
         mailMode:
+          current.mailMode === "RESEND" ? "LOCAL_OUTBOX" : current.mailMode,
+        standardRequestEmailEnabled:
           current.mailMode === "RESEND"
-            ? "LOCAL_OUTBOX"
-            : current.mailMode,
+            ? false
+            : current.standardRequestEmailEnabled,
         resendApiKeyEncrypted: null,
         resendDomainId: null,
         resendDomainStatus: null,
@@ -383,6 +376,12 @@ export async function disconnectResendProvider(actor: Actor) {
         updatedById: actor.id,
       },
     });
+    if (current.mailMode === "RESEND") {
+      await tx.notification.updateMany({
+        where: { emailDueAt: { not: null } },
+        data: { emailDueAt: null, emailClaimedAt: null },
+      });
+    }
     await writeAuditLog(tx, actor, {
       action: "RESEND_PROVIDER_DISCONNECTED",
       resourceType: "PlatformSetting",
@@ -392,7 +391,42 @@ export async function disconnectResendProvider(actor: Actor) {
         switchedToLocalOutbox: current.mailMode === "RESEND",
       },
     });
+    return {
+      apiKeyEncrypted: current.resendApiKeyEncrypted,
+      webhookId: current.resendWebhookId,
+    };
   });
+
+  if (disconnected.apiKeyEncrypted && disconnected.webhookId) {
+    try {
+      const resend = createResend(
+        decryptSecret(disconnected.apiKeyEncrypted),
+      );
+      const removed = await resend.webhooks.remove(disconnected.webhookId);
+      if (removed.error && removed.error.statusCode !== 404) {
+        throw new DomainError(
+          "RESEND_WEBHOOK_REMOVE_FAILED",
+          removed.error.message,
+          502,
+        );
+      }
+    } catch (error) {
+      await withActorDb(actor, (tx) =>
+        writeAuditLog(tx, actor, {
+          action: "RESEND_WEBHOOK_REMOVE_FAILED",
+          resourceType: "PlatformSetting",
+          resourceId: "1",
+          metadata: {
+            webhookId: disconnected.webhookId,
+            error:
+              error instanceof Error
+                ? error.message.slice(0, 500)
+                : "Resend Webhook 删除失败",
+          },
+        }),
+      );
+    }
+  }
 
   return getPlatformSettings(actor);
 }

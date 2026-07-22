@@ -25,6 +25,7 @@ export default async function CustomerRequestDetailPage({
     description: request.description,
     priority: request.priority,
     status: request.status,
+    archivedAt: request.archivedAt?.toISOString() ?? null,
     createdAt: request.createdAt.toISOString(),
     updatedAt: request.updatedAt.toISOString(),
     projectId: request.projectId,
@@ -49,6 +50,7 @@ export default async function CustomerRequestDetailPage({
       body: message.body,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
+      supportPlaybook: message.supportPlaybook,
       authorId: message.authorId ?? message.externalAuthorId ?? "unavailable",
       authorName:
         message.author?.name ??
