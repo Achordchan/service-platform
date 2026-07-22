@@ -2,7 +2,10 @@ import "server-only";
 
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
-import { queueMailMessage } from "@/lib/jobs";
+import {
+  queueMailMessage,
+  recordMailQueueFailure,
+} from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
 import {
@@ -68,18 +71,16 @@ export async function retryMailMessage(
   try {
     await queueMailMessage(result.queued.id, result.deliveryMode);
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "邮件任务入队失败";
-    await withActorDb(actor, (tx) =>
-      tx.mailMessage.update({
-        where: { id: result.queued.id },
-        data: {
-          status: "FAILED",
-          errorMessage,
-        },
-      }),
+    const failure = await recordMailQueueFailure(
+      result.queued.id,
+      error,
+      "manual_retry",
     );
-    throw error;
+    throw new DomainError(
+      "MAIL_QUEUE_UNAVAILABLE",
+      `邮件已重新排队，但任务队列暂时不可用；系统会自动补投。错误编号：${failure.referenceId}`,
+      503,
+    );
   }
 
   await withActorDb(actor, (tx) =>

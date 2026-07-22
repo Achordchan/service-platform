@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { unexpectedApiErrorResponse } from "@/lib/api-error";
 import {
   recordResendWebhook,
   verifyResendWebhook,
@@ -47,10 +48,10 @@ export async function POST(request: Request) {
     const result = await recordResendWebhook(id, event);
     return NextResponse.json({ data: result });
   } catch (error) {
-    console.error("Resend webhook processing failed", error);
-    return NextResponse.json(
-      { error: { code: "WEBHOOK_PROCESSING_FAILED", message: "Webhook 处理失败" } },
-      { status: 500 },
-    );
+    return unexpectedApiErrorResponse(error, {
+      source: "resend-webhook",
+      operation: "resend_webhook.record",
+      request,
+    });
   }
 }

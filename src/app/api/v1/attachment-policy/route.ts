@@ -5,7 +5,7 @@ import {
   requireApiActor,
 } from "@/modules/requests/api";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await requireApiActor();
     const policy = await getRuntimeAttachmentPolicy();
@@ -20,6 +20,9 @@ export async function GET() {
       },
     });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "attachment_policy.get",
+    });
   }
 }

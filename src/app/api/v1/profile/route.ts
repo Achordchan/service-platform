@@ -36,6 +36,9 @@ export async function PATCH(request: Request) {
     const profile = await updateProfile(actor, input);
     return Response.json({ data: profile });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "profile.update",
+    });
   }
 }

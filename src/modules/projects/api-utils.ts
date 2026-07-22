@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import type { Actor } from "@/lib/actor";
 import { resolveActor } from "@/lib/actor";
+import {
+  unexpectedApiErrorResponse,
+  type ApiErrorContext,
+} from "@/lib/api-error";
 import { getCurrentSession } from "@/lib/session";
 import {
   readBoundedRequestBody,
@@ -14,27 +18,36 @@ type ActorResult =
   | { actor?: never; response: NextResponse };
 
 export async function requireApiActor(): Promise<ActorResult> {
-  const session = await getCurrentSession();
-  if (!session) {
+  try {
+    const session = await getCurrentSession();
+    if (!session) {
+      return {
+        response: NextResponse.json(
+          { error: { code: "UNAUTHORIZED", message: "请先登录" } },
+          { status: 401 },
+        ),
+      };
+    }
+
+    const actor = await resolveActor(session.user.id);
+    if (!actor) {
+      return {
+        response: NextResponse.json(
+          { error: { code: "UNAUTHORIZED", message: "当前账号不可用" } },
+          { status: 401 },
+        ),
+      };
+    }
+
+    return { actor };
+  } catch (error) {
     return {
-      response: NextResponse.json(
-        { error: { code: "UNAUTHORIZED", message: "请先登录" } },
-        { status: 401 },
-      ),
+      response: unexpectedApiErrorResponse(error, {
+        source: "project-api",
+        operation: "api_actor.resolve",
+      }),
     };
   }
-
-  const actor = await resolveActor(session.user.id);
-  if (!actor) {
-    return {
-      response: NextResponse.json(
-        { error: { code: "UNAUTHORIZED", message: "当前账号不可用" } },
-        { status: 401 },
-      ),
-    };
-  }
-
-  return { actor };
 }
 
 export async function readJson(
@@ -59,7 +72,7 @@ export async function readJson(
   }
 }
 
-export function routeError(error: unknown) {
+export function routeError(error: unknown, context?: Omit<ApiErrorContext, "source">) {
   if (error instanceof ZodError) {
     return NextResponse.json(
       {
@@ -137,9 +150,8 @@ export function routeError(error: unknown) {
     );
   }
 
-  console.error(error);
-  return NextResponse.json(
-    { error: { code: "INTERNAL_ERROR", message: "服务器处理失败" } },
-    { status: 500 },
-  );
+  return unexpectedApiErrorResponse(error, {
+    source: "project-api",
+    ...context,
+  });
 }

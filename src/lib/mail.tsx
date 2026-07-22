@@ -30,9 +30,14 @@ import {
 } from "@/modules/platform-settings/mail-settings-runtime";
 import { reconcileStoredResendEvents } from "@/modules/platform-settings/resend-webhook-service";
 import {
-  describeSmtpError,
   isSmtpProviderFailure,
 } from "@/modules/platform-settings/smtp-error";
+import {
+  describeMailDeliveryFailure,
+  formatMailFailureMessage,
+  mailFailureReferenceId,
+  MailDeliveryError,
+} from "@/modules/platform-settings/mail-delivery-error";
 import { createSmtpTransport } from "@/modules/platform-settings/smtp-transport";
 
 type StoredMailPayload = {
@@ -197,11 +202,17 @@ async function deliverViaSmtp(
   text: string,
 ) {
   if (!settings.smtpHost || !settings.smtpPort) {
-    throw new Error("SMTP 未配置完整：缺少主机或端口");
+    throw new MailDeliveryError({
+      category: "SMTP_CONFIGURATION",
+      message: "SMTP 未配置完整：缺少主机或端口",
+    });
   }
 
   if (!settings.smtpUser || !settings.smtpPassword) {
-    throw new Error("SMTP 未配置完整：缺少用户名或密码");
+    throw new MailDeliveryError({
+      category: "SMTP_CONFIGURATION",
+      message: "SMTP 未配置完整：缺少用户名或密码",
+    });
   }
   const transporter = createSmtpTransport({
     smtpHost: settings.smtpHost,
@@ -225,7 +236,7 @@ async function deliverViaSmtp(
         typeof result.messageId === "string" ? result.messageId : undefined,
     };
   } catch (error) {
-    const message = describeSmtpError(error);
+    const failure = describeMailDeliveryFailure("SMTP", error);
     if (isSmtpProviderFailure(error)) {
       await withSystemDb((tx) =>
         tx.platformSetting.update({
@@ -233,12 +244,12 @@ async function deliverViaSmtp(
           data: {
             smtpHealthStatus: "error",
             smtpLastCheckedAt: new Date(),
-            smtpLastError: message,
+            smtpLastError: failure.message,
           },
         }),
       );
     }
-    throw new Error(message);
+    throw new MailDeliveryError(failure);
   } finally {
     transporter.close();
   }
@@ -251,10 +262,16 @@ async function deliverViaResend(
   text: string,
 ) {
   if (!settings.resendApiKeyEncrypted) {
-    throw new Error("Resend 未配置：缺少 API Key");
+    throw new MailDeliveryError({
+      category: "RESEND_DELIVERY",
+      message: "Resend 未配置：缺少 API Key",
+    });
   }
   if (settings.resendDomainStatus !== "verified") {
-    throw new Error("Resend 发信域名尚未验证");
+    throw new MailDeliveryError({
+      category: "RESEND_DELIVERY",
+      message: "Resend 发信域名尚未验证",
+    });
   }
 
   const resend = new Resend(
@@ -272,7 +289,9 @@ async function deliverViaResend(
     { idempotencyKey: `mail-${payload.id}` },
   );
   if (result.error || !result.data) {
-    throw new Error(result.error?.message || "Resend 邮件发送失败");
+    throw new MailDeliveryError(
+      describeMailDeliveryFailure("RESEND", result.error),
+    );
   }
   return { providerId: result.data.id };
 }
@@ -425,17 +444,37 @@ export async function processMailMessage(
         await reconcileStoredResendEvents(delivery.providerId, message.id);
       } catch (error) {
         console.error(
-          "Resend 历史事件补偿失败：",
-          error instanceof Error ? error.message : error,
+          "ACHORD_RESEND_EVENT_RECONCILIATION_FAILED",
+          JSON.stringify({
+            event: "mail.resend_event_reconciliation_failed",
+            mailMessageId: message.id,
+            providerId: delivery.providerId,
+            error: describeMailDeliveryFailure("RESEND", error),
+          }),
         );
       }
     }
     return { id: message.id, mode: payload.deliveryMode };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "邮件发送失败";
+    const failure = describeMailDeliveryFailure(message.deliveryMode, error);
+    const referenceId = mailFailureReferenceId(message.id);
+    const errorMessage = formatMailFailureMessage(failure.message, referenceId);
     const attemptsExhausted =
       message.attemptCount >= maxMailAttempts(message.deliveryMode);
+    console.error(
+      "ACHORD_MAIL_DELIVERY_FAILED",
+      JSON.stringify({
+        event: "mail.delivery_failed",
+        referenceId,
+        mailMessageId: message.id,
+        deliveryMode: message.deliveryMode,
+        templateKey: message.templateKey,
+        sourceType: message.sourceType,
+        attempt: message.attemptCount,
+        finalAttempt: options.finalAttempt,
+        error: failure,
+      }),
+    );
     await withSystemDb((tx) =>
       tx.mailMessage.update({
         where: { id: message.id },
@@ -446,7 +485,7 @@ export async function processMailMessage(
         },
       }),
     );
-    throw error;
+    throw new MailDeliveryError(failure);
   }
 }
 

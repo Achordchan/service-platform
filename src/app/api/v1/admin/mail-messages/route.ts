@@ -28,6 +28,9 @@ export async function GET(request: Request) {
       })),
     });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "mail.outbox.list",
+    });
   }
 }

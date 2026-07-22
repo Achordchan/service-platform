@@ -2,6 +2,10 @@ import "server-only";
 
 import { ZodError } from "zod";
 import { resolveActor } from "@/lib/actor";
+import {
+  unexpectedApiErrorResponse,
+  type ApiErrorContext,
+} from "@/lib/api-error";
 import { getCurrentSession } from "@/lib/session";
 import { RequestDomainError } from "@/modules/requests/errors";
 
@@ -17,7 +21,10 @@ export async function requireApiActor() {
   return actor;
 }
 
-export function apiErrorResponse(error: unknown) {
+export function apiErrorResponse(
+  error: unknown,
+  context?: Omit<ApiErrorContext, "source">,
+) {
   if (error instanceof RequestDomainError) {
     return Response.json(
       { error: { code: error.code, message: error.message } },
@@ -48,9 +55,8 @@ export function apiErrorResponse(error: unknown) {
     );
   }
 
-  console.error(error);
-  return Response.json(
-    { error: { code: "INTERNAL_ERROR", message: "服务器处理失败" } },
-    { status: 500 },
-  );
+  return unexpectedApiErrorResponse(error, {
+    source: "request-api",
+    ...context,
+  });
 }

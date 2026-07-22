@@ -23,7 +23,10 @@ export async function GET(_request: Request, context: RouteContext) {
     const updates = await listProjectUpdates(auth.actor, projectId);
     return NextResponse.json({ data: updates });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request: _request,
+      operation: "project_update.list",
+    });
   }
 }
 
@@ -37,6 +40,9 @@ export async function POST(request: Request, context: RouteContext) {
     const update = await createProjectUpdate(auth.actor, projectId, input);
     return NextResponse.json({ data: update }, { status: 201 });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "project_update.create",
+    });
   }
 }

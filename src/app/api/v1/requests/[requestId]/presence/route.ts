@@ -17,6 +17,9 @@ export async function POST(request: Request, context: RouteContext) {
     const result = await updateRequestPresence(actor, requestId, input);
     return Response.json({ data: result });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "request.presence.update",
+    });
   }
 }

@@ -35,7 +35,10 @@ export async function GET(request: Request, context: RouteContext) {
       },
     });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "attachment.download",
+    });
   }
 }
 

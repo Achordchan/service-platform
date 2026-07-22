@@ -35,6 +35,11 @@ import {
   processUniversalWebhookDelivery,
 } from "@/modules/integrations/universal/webhook-service";
 import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
+import {
+  describeMailQueueFailure,
+  formatMailFailureMessage,
+  mailFailureReferenceId,
+} from "@/modules/platform-settings/mail-delivery-error";
 
 export const EMAIL_JOB = "send-email";
 export const IMAGE_WEBP_JOB = "plugin-image-webp";
@@ -102,7 +107,15 @@ async function startBoss() {
 }
 
 export function getBoss() {
-  globalForBoss.bossPromise ??= startBoss();
+  if (!globalForBoss.bossPromise) {
+    const bossPromise = startBoss();
+    globalForBoss.bossPromise = bossPromise;
+    void bossPromise.catch(() => {
+      if (globalForBoss.bossPromise === bossPromise) {
+        globalForBoss.bossPromise = undefined;
+      }
+    });
+  }
   return globalForBoss.bossPromise;
 }
 
@@ -273,17 +286,37 @@ export async function dispatchQueuedMailMessage(
   try {
     return await queueMailMessage(mailMessageId, deliveryMode, sendAfter);
   } catch (error) {
-    await withSystemDb((tx) =>
-      tx.mailMessage.updateMany({
-        where: { id: mailMessageId, status: "QUEUED" },
-        data: {
-          errorMessage:
-            error instanceof Error ? error.message : "邮件任务入队失败",
-        },
-      }),
-    );
+    await recordMailQueueFailure(mailMessageId, error, "initial_enqueue");
     return null;
   }
+}
+
+export async function recordMailQueueFailure(
+  mailMessageId: string,
+  error: unknown,
+  phase: "initial_enqueue" | "outbox_sweep" | "manual_retry",
+) {
+  const failure = describeMailQueueFailure(error);
+  const referenceId = mailFailureReferenceId(mailMessageId);
+  console.error(
+    "ACHORD_MAIL_QUEUE_FAILED",
+    JSON.stringify({
+      event: "mail.queue_failed",
+      referenceId,
+      mailMessageId,
+      phase,
+      error: failure,
+    }),
+  );
+  await withSystemDb((tx) =>
+    tx.mailMessage.updateMany({
+      where: { id: mailMessageId, status: "QUEUED" },
+      data: {
+        errorMessage: formatMailFailureMessage(failure.message, referenceId),
+      },
+    }),
+  );
+  return { ...failure, referenceId };
 }
 
 async function queuePendingMailMessages() {
@@ -348,15 +381,7 @@ async function queuePendingMailMessages() {
         message.sendAfter,
       );
     } catch (error) {
-      await withSystemDb((tx) =>
-        tx.mailMessage.updateMany({
-          where: { id: message.id, status: "QUEUED" },
-          data: {
-            errorMessage:
-              error instanceof Error ? error.message : "邮件任务补投失败",
-          },
-        }),
-      );
+      await recordMailQueueFailure(message.id, error, "outbox_sweep");
     }
   }
 }

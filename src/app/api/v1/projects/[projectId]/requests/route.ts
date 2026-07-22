@@ -12,14 +12,17 @@ type RouteContext = {
   params: Promise<{ projectId: string }>;
 };
 
-export async function GET(_request: Request, context: RouteContext) {
+export async function GET(request: Request, context: RouteContext) {
   try {
     const actor = await requireApiActor();
     const { projectId } = await context.params;
     const requests = await listProjectRequests(actor, projectId);
     return Response.json({ data: requests });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "project_request.list",
+    });
   }
 }
 
@@ -31,6 +34,9 @@ export async function POST(request: Request, context: RouteContext) {
     const created = await createRequest(actor, projectId, input);
     return Response.json({ data: created }, { status: 201 });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "project_request.create",
+    });
   }
 }

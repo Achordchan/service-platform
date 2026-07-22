@@ -193,11 +193,13 @@ describe("mail message controls", () => {
       `,
       [fixture.localDeliveryId],
     );
-    expect(result.rows[0]).toEqual({
+    expect(result.rows[0]).toMatchObject({
       status: "FAILED",
       attemptCount: 1,
-      errorMessage: "邮件创建时未启用真实发信通道，未实际发送",
     });
+    expect(result.rows[0]?.errorMessage).toMatch(
+      /^邮件创建时未启用真实发信通道，未实际发送。错误编号：mail_[0-9a-f-]{36}$/,
+    );
   });
 });
 

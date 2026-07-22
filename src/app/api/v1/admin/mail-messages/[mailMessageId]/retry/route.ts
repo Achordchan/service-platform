@@ -9,7 +9,7 @@ type RouteContext = {
   params: Promise<{ mailMessageId: string }>;
 };
 
-export async function POST(_request: Request, context: RouteContext) {
+export async function POST(request: Request, context: RouteContext) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
@@ -27,6 +27,9 @@ export async function POST(_request: Request, context: RouteContext) {
       { status: 202 },
     );
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "mail.outbox.retry",
+    });
   }
 }

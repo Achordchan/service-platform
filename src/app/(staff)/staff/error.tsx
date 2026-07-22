@@ -1,8 +1,9 @@
 "use client";
 
-import { Alert, Button, Container, Stack } from "@mui/material";
+import { Alert, Button, Container, Stack, Typography } from "@mui/material";
 
 export default function StaffError({
+  error,
   reset,
 }: {
   error: Error & { digest?: string };
@@ -12,6 +13,11 @@ export default function StaffError({
     <Container maxWidth={false} sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}>
       <Stack spacing={2}>
         <Alert severity="error">页面加载失败，请重新尝试。</Alert>
+        {error.digest ? (
+          <Typography variant="body2" color="text.secondary">
+            错误编号：{error.digest}
+          </Typography>
+        ) : null}
         <Button variant="contained" onClick={reset} sx={{ alignSelf: "flex-start" }}>
           重新加载
         </Button>

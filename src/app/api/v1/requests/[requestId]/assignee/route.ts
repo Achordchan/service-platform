@@ -17,6 +17,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     const serviceRequest = await assignRequest(actor, requestId, input);
     return Response.json({ data: serviceRequest });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "request.assignee.update",
+    });
   }
 }

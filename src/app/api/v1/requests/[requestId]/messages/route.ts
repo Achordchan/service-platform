@@ -17,6 +17,9 @@ export async function POST(request: Request, context: RouteContext) {
     const result = await addRequestMessage(actor, requestId, input);
     return Response.json({ data: result }, { status: 201 });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "request_message.create",
+    });
   }
 }

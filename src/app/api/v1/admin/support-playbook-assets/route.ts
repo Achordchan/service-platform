@@ -39,6 +39,9 @@ export async function POST(request: Request) {
     });
     return Response.json({ data: attachment }, { status: 201 });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "support_playbook_asset.upload",
+    });
   }
 }

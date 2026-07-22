@@ -24,6 +24,10 @@ import {
   planStandardRequestEmailRecipientIds,
   PROJECT_UPDATE_NOTIFICATION_TYPES,
 } from "@/modules/notifications/activity-policy";
+import {
+  toNotificationPersistenceInput,
+  type NotificationPersistenceInput,
+} from "@/modules/notifications/notification-persistence";
 import { summarizeUnreadNotificationGroups } from "@/modules/notifications/notification-summary";
 import {
   canReceiveProjectRealtimeEvent,
@@ -36,6 +40,7 @@ import {
   ruleKeyForRequestActivity,
 } from "@/modules/notifications/notification-delivery-rules";
 import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
+import { listProjectCustomerUserIds } from "@/modules/projects/project-customer-recipient-query";
 
 type EventInput = {
   type: EventType;
@@ -204,17 +209,7 @@ export async function publishProjectDeleted(
 
 export async function createNotification(
   tx: Prisma.TransactionClient,
-  input: {
-    type: NotificationType;
-    title: string;
-    body: string;
-    userId: string;
-    customerSpaceId?: string;
-    projectId?: string;
-    serviceRequestId?: string;
-    aggregationKey?: string;
-    emailDueAt?: Date;
-  },
+  input: NotificationPersistenceInput,
 ) {
   const notificationId = randomUUID();
   let notification: {
@@ -253,7 +248,20 @@ export async function createNotification(
     };
   } else {
     await tx.notification.createMany({
-      data: [{ id: notificationId, ...input }],
+      data: [
+        {
+          id: notificationId,
+          type: input.type,
+          title: input.title,
+          body: input.body,
+          userId: input.userId,
+          customerSpaceId: input.customerSpaceId,
+          projectId: input.projectId,
+          serviceRequestId: input.serviceRequestId,
+          aggregationKey: input.aggregationKey,
+          emailDueAt: input.emailDueAt,
+        },
+      ],
     });
     notification = { id: notificationId, occurrenceCount: 1 };
   }
@@ -944,23 +952,19 @@ async function loadProjectAudience(
   const project = await tx.project.findUniqueOrThrow({
     where: { id: projectId },
     select: {
-      customerSpaceId: true,
       staff: {
         select: { userId: true, role: true },
       },
     },
   });
-  const memberships = await tx.membership.findMany({
-    where: { customerSpaceId: project.customerSpaceId },
-    select: { userId: true },
-  });
+  const customerUserIds = await listProjectCustomerUserIds(tx, projectId);
   const platformAdmins = await tx.user.findMany({
     where: { platformRole: "PLATFORM_ADMIN" },
     select: { id: true },
   });
 
   return {
-    customerUserIds: memberships.map((membership) => membership.userId),
+    customerUserIds,
     projectStaffUserIds: project.staff.map((staff) => staff.userId),
     projectManagerUserIds: project.staff
       .filter((staff) => staff.role === "PROJECT_MANAGER")
@@ -1026,12 +1030,15 @@ async function persistActivityDelivery(
   for (const notification of delivery.notifications) {
     if (activeUserIds.has(notification.userId)) continue;
     notifications.push(
-      await createNotification(tx, {
-        ...notification,
-        emailDueAt: emailEnabledUserIds.has(notification.userId)
-          ? emailDueAt
-          : undefined,
-      }),
+      await createNotification(
+        tx,
+        toNotificationPersistenceInput(
+          notification,
+          emailEnabledUserIds.has(notification.userId)
+            ? emailDueAt
+            : undefined,
+        ),
+      ),
     );
   }
 

@@ -23,15 +23,15 @@ import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
+import {
+  apiErrorMessage,
+  readApiJson,
+  type ApiResponsePayload,
+} from "@/lib/api-client-error";
 
-type ApiPayload = {
-  data?: {
-    message?: { id: string };
-  };
-  error?: {
-    message?: string;
-  };
-};
+type ApiPayload = ApiResponsePayload<{
+  message?: { id: string };
+}>;
 
 export function RequestReplyForm({
   requestId,
@@ -88,11 +88,11 @@ export function RequestReplyForm({
           replyToMessageId: replyTarget?.id,
         }),
       });
-      const payload = (await response.json()) as ApiPayload;
-      if (!response.ok) {
-        throw new Error(payload.error?.message || "回复发送失败");
+      const payload = await readApiJson<ApiPayload>(response);
+      if (!response.ok || !payload?.data) {
+        throw new Error(apiErrorMessage(response, payload, "回复发送失败"));
       }
-      const messageId = payload.data?.message?.id;
+      const messageId = payload.data.message?.id;
       if (attachmentsEnabled && files.length > 0) {
         if (!messageId) {
           throw new Error("回复已发送，但附件关联失败");
@@ -108,9 +108,9 @@ export function RequestReplyForm({
             body: formData,
           });
           if (!uploadResponse.ok) {
-            const uploadPayload = (await uploadResponse.json()) as ApiPayload;
+            const uploadPayload = await readApiJson<ApiPayload>(uploadResponse);
             throw new Error(
-              uploadPayload.error?.message || `${file.name} 上传失败`,
+              apiErrorMessage(uploadResponse, uploadPayload, `${file.name} 上传失败`),
             );
           }
         }

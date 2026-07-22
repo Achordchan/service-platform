@@ -5,7 +5,7 @@ import {
   routeError,
 } from "@/modules/projects/api-utils";
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
@@ -14,6 +14,9 @@ export async function GET() {
       data: await getMailOutboxSummary(auth.actor),
     });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "mail.outbox.summary",
+    });
   }
 }

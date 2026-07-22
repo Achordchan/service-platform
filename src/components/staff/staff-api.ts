@@ -1,11 +1,19 @@
 "use client";
 
+import {
+  apiErrorMessage,
+  apiErrorReferenceId,
+  readApiJson,
+  type ApiResponsePayload,
+} from "@/lib/api-client-error";
+
 export class StaffApiError extends Error {
   constructor(
     message: string,
     public readonly code?: string,
     public readonly details?: unknown,
     public readonly status?: number,
+    public readonly referenceId?: string,
   ) {
     super(message);
     this.name = "StaffApiError";
@@ -20,20 +28,15 @@ export async function staffApi<T>(
   if (response.status === 204) {
     return undefined as T;
   }
-  const payload = (await response.json().catch(() => ({}))) as {
-    data?: T;
-    error?: { code?: string; message?: string; details?: unknown } | string;
-  };
-  if (!response.ok || payload.data === undefined) {
-    const message =
-      typeof payload.error === "string"
-        ? payload.error
-        : payload.error?.message;
+  const payload = await readApiJson<ApiResponsePayload<T>>(response);
+  if (!response.ok || payload?.data === undefined) {
+    const error = payload?.error;
     throw new StaffApiError(
-      message || "操作失败，请稍后重试",
-      typeof payload.error === "string" ? undefined : payload.error?.code,
-      typeof payload.error === "string" ? undefined : payload.error?.details,
+      apiErrorMessage(response, payload, "操作失败，请稍后重试"),
+      typeof error === "string" ? undefined : error?.code,
+      typeof error === "string" ? undefined : error?.details,
       response.status,
+      apiErrorReferenceId(response, payload),
     );
   }
   return payload.data;

@@ -22,6 +22,7 @@ import {
   projectBaseSelect,
 } from "@/modules/projects/project-summary-query";
 import { loadProjectDetail } from "@/modules/projects/project-detail-query";
+import { listProjectCustomerUserIds } from "@/modules/projects/project-customer-recipient-query";
 import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 import {
   getRegisteredPlugin,
@@ -471,12 +472,7 @@ export function updateProject(
       input.showProgress === false ||
       input.showMilestones === false
     ) {
-      const customerUserIds = (
-        await tx.membership.findMany({
-          where: { customerSpaceId: project.customerSpaceId },
-          select: { userId: true },
-        })
-      ).map((membership) => membership.userId);
+      const customerUserIds = await listProjectCustomerUserIds(tx, projectId);
       const readAt = new Date();
       if (input.customerUpdatesEnabled === false) {
         await tx.notification.updateMany({

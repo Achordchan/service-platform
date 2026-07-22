@@ -23,6 +23,11 @@ import {
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import {
+  apiErrorMessage,
+  readApiJson,
+  type ApiResponsePayload,
+} from "@/lib/api-client-error";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import type {
   RequestPriority,
@@ -37,11 +42,10 @@ type FormValues = {
   priority: RequestPriority;
 };
 
-type ApiError = {
-  error?: {
-    message?: string;
-  };
-};
+type CreateRequestPayload = ApiResponsePayload<{
+  id: string;
+  initialMessageId: string;
+}>;
 
 export function NewRequestForm({
   projects,
@@ -111,14 +115,10 @@ export function NewRequestForm({
           }),
         },
       );
-      const payload = (await response.json()) as
-        | { data: { id: string; initialMessageId: string } }
-        | ApiError;
-      if (!response.ok || !("data" in payload)) {
+      const payload = await readApiJson<CreateRequestPayload>(response);
+      if (!response.ok || !payload?.data) {
         throw new Error(
-          "error" in payload
-            ? payload.error?.message || "服务请求创建失败"
-            : "服务请求创建失败",
+          apiErrorMessage(response, payload, "服务请求创建失败"),
         );
       }
 
@@ -137,10 +137,15 @@ export function NewRequestForm({
             body: formData,
           });
           if (!uploadResponse.ok) {
-            const uploadPayload = (await uploadResponse.json()) as ApiError;
+            const uploadPayload = await readApiJson<ApiResponsePayload>(
+              uploadResponse,
+            );
             throw new Error(
-              uploadPayload.error?.message ||
+              apiErrorMessage(
+                uploadResponse,
+                uploadPayload,
                 `${file.name} 上传失败，请进入服务请求后重新上传`,
+              ),
             );
           }
         }

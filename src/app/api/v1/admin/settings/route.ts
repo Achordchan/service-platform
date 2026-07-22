@@ -10,7 +10,7 @@ import {
   routeError,
 } from "@/modules/projects/api-utils";
 
-export async function GET() {
+export async function GET(request: Request) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
@@ -18,7 +18,10 @@ export async function GET() {
     const settings = await getPlatformSettings(auth.actor);
     return NextResponse.json({ data: settings });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "platform_settings.get",
+    });
   }
 }
 
@@ -31,6 +34,9 @@ export async function PATCH(request: Request) {
     const settings = await updatePlatformSettings(auth.actor, input);
     return NextResponse.json({ data: settings });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "platform_settings.update",
+    });
   }
 }

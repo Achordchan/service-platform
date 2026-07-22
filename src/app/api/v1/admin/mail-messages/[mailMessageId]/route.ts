@@ -9,7 +9,7 @@ type RouteContext = {
   params: Promise<{ mailMessageId: string }>;
 };
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
@@ -18,6 +18,9 @@ export async function DELETE(_request: Request, context: RouteContext) {
     await cancelMailMessage(auth.actor, mailMessageId);
     return new NextResponse(null, { status: 204 });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "mail.outbox.cancel",
+    });
   }
 }

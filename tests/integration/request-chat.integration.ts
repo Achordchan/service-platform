@@ -188,6 +188,27 @@ describe("请求聊天生产流程", () => {
     });
   });
 
+  it("项目负责人公开回复会为客户创建通知", async () => {
+    const created = await createFixtureRequest("客户回复通知");
+    await addRequestMessage(manager, created.id, {
+      body: "<p>项目负责人正在处理，请客户查看。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+
+    const result = await ownerPool.query<{ notification_count: string }>(
+      `
+        SELECT COUNT(*)::text AS notification_count
+        FROM "Notification"
+        WHERE "serviceRequestId" = $1
+          AND "userId" = $2
+          AND type = 'REQUEST_MESSAGE'
+          AND "readAt" IS NULL
+      `,
+      [created.id, customer.id],
+    );
+    expect(result.rows[0]?.notification_count).toBe("1");
+  });
+
   it("平台管理员公开回复不接手，后续技术员可以接手", async () => {
     const created = await createFixtureRequest("管理员不接手");
     await addRequestMessage(admin, created.id, {

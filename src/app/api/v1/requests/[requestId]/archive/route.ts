@@ -21,6 +21,9 @@ export async function PATCH(request: Request, context: RouteContext) {
     );
     return Response.json({ data: serviceRequest });
   } catch (error) {
-    return apiErrorResponse(error);
+    return apiErrorResponse(error, {
+      request,
+      operation: "request.archive.update",
+    });
   }
 }
