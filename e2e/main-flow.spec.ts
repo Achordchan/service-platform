@@ -443,13 +443,19 @@ test.describe("主流程冒烟", () => {
         name: "项目设置",
       });
       await expect(
-        settingsDialog.getByRole("switch", { name: "开放进度动态" }),
+        settingsDialog.getByRole("switch", { name: "客户显示整体进度条" }),
       ).toBeVisible();
       await expect(
-        settingsDialog.getByRole("switch", { name: "开放服务请求" }),
+        settingsDialog.getByRole("switch", { name: "客户显示里程碑模块" }),
       ).toBeVisible();
       await expect(
-        settingsDialog.getByRole("switch", { name: "开放文件资料" }),
+        settingsDialog.getByRole("switch", { name: "客户显示进度动态" }),
+      ).toBeVisible();
+      await expect(
+        settingsDialog.getByRole("switch", { name: "客户显示服务请求" }),
+      ).toBeVisible();
+      await expect(
+        settingsDialog.getByRole("switch", { name: "客户显示文件资料" }),
       ).toBeVisible();
       expect(
         await adminPage.evaluate(
