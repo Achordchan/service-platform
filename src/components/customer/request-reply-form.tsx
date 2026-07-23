@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import {
   Alert,
@@ -43,6 +43,10 @@ type ApiPayload = ApiResponsePayload<{
   message?: { id: string };
 }>;
 
+function subscribeToClientReady() {
+  return () => undefined;
+}
+
 export function RequestReplyForm({
   requestId,
   status,
@@ -70,6 +74,11 @@ export function RequestReplyForm({
   const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const [continueReply, setContinueReply] = useState(false);
+  const interactive = useSyncExternalStore(
+    subscribeToClientReady,
+    () => true,
+    () => false,
+  );
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closing, setClosing] = useState(false);
 
@@ -250,6 +259,7 @@ export function RequestReplyForm({
                 <Button
                   variant="outlined"
                   startIcon={<ReplayOutlinedIcon />}
+                  disabled={!interactive}
                   onClick={() => setContinueReply(true)}
                 >
                   继续反馈
@@ -257,6 +267,7 @@ export function RequestReplyForm({
                 <Button
                   variant="contained"
                   startIcon={<CheckCircleOutlineOutlinedIcon />}
+                  disabled={!interactive}
                   onClick={() => {
                     setError("");
                     setCloseDialogOpen(true);

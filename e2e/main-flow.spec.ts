@@ -545,7 +545,11 @@ test.describe("主流程冒烟", () => {
         ),
       ).toBe(false);
 
-      await customerPage.getByRole("button", { name: "继续反馈" }).click();
+      const continueFeedbackButton = customerPage.getByRole("button", {
+        name: "继续反馈",
+      });
+      await expect(continueFeedbackButton).toBeEnabled();
+      await continueFeedbackButton.click();
       await expect(
         customerPage.getByRole("button", { name: "发送回复" }),
       ).toBeVisible();
