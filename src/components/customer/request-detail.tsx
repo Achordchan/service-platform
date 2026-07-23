@@ -119,7 +119,9 @@ export function RequestDetail({
             </Alert>
           ) : (
             <RequestReplyForm
+              key={`${request.id}:${request.status}`}
               requestId={request.id}
+              status={request.status}
               disabled={request.status === "CLOSED"}
               replyTarget={replyTarget}
               onCancelReply={() => setReplyTarget(null)}

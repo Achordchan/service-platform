@@ -283,9 +283,13 @@ test.describe("主流程冒烟", () => {
     await adminPage.getByRole("button", { name: "运行环境检测" }).click();
     await expect(adminPage.getByText("运行环境检测通过")).toBeVisible();
     await adminPage.getByRole("button", { name: "启用插件" }).click();
-    await expect(adminPage.getByText("插件已启用")).toBeVisible();
+    await expect(
+      adminPage.getByText("插件已启用", { exact: true }),
+    ).toBeVisible();
     await adminPage.getByRole("button", { name: "停用插件" }).click();
-    await expect(adminPage.getByText("插件已停用")).toBeVisible();
+    await expect(
+      adminPage.getByText("插件已停用", { exact: true }),
+    ).toBeVisible();
     await adminPage.getByRole("button", { name: "关闭" }).click();
     const pluginGuideButton = adminPage.getByRole("button", {
       name: "插件开发规范",
@@ -327,7 +331,15 @@ test.describe("主流程冒烟", () => {
     const roleGroups = adminPage.getByRole("button", {
       name: /角色与权限/,
     });
-    await expect(mailTemplates).toHaveAttribute("aria-expanded", "false");
+    const mailMode = await ownerPool.query<{ mailMode: string }>(
+      `SELECT "mailMode" FROM "PlatformSetting" WHERE id = 1`,
+    );
+    const realMailEnabled = mailMode.rows[0]?.mailMode !== "LOCAL_OUTBOX";
+    if (realMailEnabled) {
+      await expect(mailTemplates).toHaveAttribute("aria-expanded", "false");
+    } else {
+      await expect(mailTemplates).toHaveCount(0);
+    }
     await expect(roleGroups).toHaveAttribute("aria-expanded", "false");
     await expect(
       adminPage.getByRole("button", { name: "编辑" }),
@@ -336,12 +348,14 @@ test.describe("主流程冒烟", () => {
       adminPage.getByRole("button", { name: "新增角色组" }),
     ).not.toBeVisible();
 
-    await mailTemplates.click();
-    await expect(mailTemplates).toHaveAttribute("aria-expanded", "true");
-    await expect(
-      adminPage.getByRole("button", { name: "编辑" }).first(),
-    ).toBeVisible();
-    await mailTemplates.click();
+    if (realMailEnabled) {
+      await mailTemplates.click();
+      await expect(mailTemplates).toHaveAttribute("aria-expanded", "true");
+      await expect(
+        adminPage.getByRole("button", { name: "编辑" }).first(),
+      ).toBeVisible();
+      await mailTemplates.click();
+    }
 
     await roleGroups.click();
     await expect(roleGroups).toHaveAttribute("aria-expanded", "true");
@@ -412,6 +426,83 @@ test.describe("主流程冒烟", () => {
       customerPage.getByRole("heading", { name: "服务请求" }),
     ).toBeVisible();
     await expectVisibleText(customerPage, "关于首页标题优化建议");
+  });
+
+  test("客户已解决回复区在桌面与移动端保持可操作", async () => {
+    const created = await customerPage.evaluate(async () => {
+      const projectsResponse = await fetch("/api/v1/projects");
+      const projectsPayload = (await projectsResponse.json()) as {
+        data: Array<{
+          id: string;
+          title: string;
+          serviceType: { requestCategories: Array<{ id: string }> };
+        }>;
+      };
+      const project = projectsPayload.data.find(
+        (item) => item.title === "官网 SEO 优化服务",
+      );
+      const categoryId = project?.serviceType.requestCategories[0]?.id;
+      if (!project || !categoryId) throw new Error("缺少 E2E 请求项目");
+      const response = await fetch(`/api/v1/projects/${project.id}/requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `E2E 已解决回复区 ${Date.now()}`,
+          description: "<p>验证客户确认关闭与继续反馈布局。</p>",
+          categoryId,
+          priority: "NORMAL",
+        }),
+      });
+      const payload = (await response.json()) as { data: { id: string } };
+      if (!response.ok) throw new Error("创建 E2E 请求失败");
+      return payload.data;
+    });
+    createdRequestIds.push(created.id);
+    await ownerPool.query(
+      `UPDATE "ServiceRequest"
+       SET status = 'RESOLVED', "resolvedAt" = NOW(), "updatedAt" = NOW()
+       WHERE id = $1`,
+      [created.id],
+    );
+
+    try {
+      await customerPage.goto(`/customer/requests/${created.id}`);
+      await expect(customerPage.getByText("服务人员已标记解决")).toBeVisible();
+      await expect(
+        customerPage.getByRole("button", { name: "继续反馈" }),
+      ).toBeVisible();
+      await expect(
+        customerPage.getByRole("button", { name: "确认关闭" }),
+      ).toBeVisible();
+      expect(
+        await customerPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+
+      await customerPage.setViewportSize({ width: 390, height: 844 });
+      await customerPage.reload();
+      await expect(customerPage.getByText("服务人员已标记解决")).toBeVisible();
+      await expect(
+        customerPage.getByRole("button", { name: "继续反馈" }),
+      ).toBeVisible();
+      await expect(
+        customerPage.getByRole("button", { name: "确认关闭" }),
+      ).toBeVisible();
+      expect(
+        await customerPage.evaluate(
+          () => document.documentElement.scrollWidth > window.innerWidth + 1,
+        ),
+      ).toBe(false);
+
+      await customerPage.getByRole("button", { name: "继续反馈" }).click();
+      await expect(
+        customerPage.getByRole("button", { name: "发送回复" }),
+      ).toBeVisible();
+      await expect(customerPage.locator(".request-rich-editor")).toBeEditable();
+    } finally {
+      await customerPage.setViewportSize({ width: 1280, height: 720 });
+    }
   });
 
   test("项目设置可控制客户中心模块", async () => {

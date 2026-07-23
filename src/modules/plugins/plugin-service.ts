@@ -15,12 +15,20 @@ import {
   ensurePluginInstallations,
 } from "@/modules/plugins/plugin-installation-service";
 import {
+  configsMatch,
   getRegisteredPlugin,
   IMAGE_WEBP_PLUGIN_KEY,
   listRegisteredPlugins,
   normalizeRegisteredPluginConfig,
+  registeredPluginHealthConfig,
   tryParseRegisteredPluginConfig,
+  tryParseRegisteredPluginSecretConfig,
 } from "@/modules/plugins/plugin-registry";
+import {
+  decryptPluginSecretConfig,
+  encryptPluginSecretConfig,
+  fingerprintPluginConfiguration,
+} from "@/modules/plugins/plugin-secret-config";
 import {
   assertAllowed,
   assertFound,
@@ -47,6 +55,10 @@ export async function listPluginViews(actor: Actor) {
   return installations.flatMap((installation) => {
     const manifest = manifestByKey.get(installation.key);
     if (!manifest) return [];
+    const secretConfig = inspectSecretConfig(
+      installation.key,
+      installation.secretConfigEncrypted,
+    );
     return [
       {
         ...manifest,
@@ -55,6 +67,8 @@ export async function listPluginViews(actor: Actor) {
           installation.key,
           installation.config,
         ),
+        configuredSecretKeys: secretConfig.keys,
+        secretConfigState: secretConfig.state,
         healthStatus: installation.healthStatus,
         lastCheckedAt: installation.lastCheckedAt?.toISOString() ?? null,
         lastError: installation.lastError,
@@ -71,28 +85,46 @@ export async function updatePluginInstallation(
   input: {
     enabled?: boolean;
     config?: unknown;
+    secrets?: unknown;
   },
 ) {
   assertAllowed(actor.isPlatformAdmin);
   await ensurePluginInstallations();
-  const registered = getRegisteredPlugin(pluginKey);
-  const parsedConfig =
-    input.config === undefined
-      ? undefined
-      : registered.parseConfig(input.config);
-
-  if (input.enabled === true) {
-    const health = await runPluginHealthCheck(actor, pluginKey, {
-      // Use the config that would be saved in this same request.
-      configOverride: parsedConfig,
-    });
-    if (health.healthStatus !== "READY") {
+  getRegisteredPlugin(pluginKey);
+  let parsedConfig: Record<string, unknown> | undefined;
+  if (input.config !== undefined) {
+    const configCheck = tryParseRegisteredPluginConfig(pluginKey, input.config);
+    if (!configCheck.ok) {
       throw new DomainError(
-        "PLUGIN_NOT_READY",
-        health.lastError || "插件环境检测未通过",
-        409,
+        "PLUGIN_CONFIG_INVALID",
+        configCheck.error,
+        400,
       );
     }
+    parsedConfig = configCheck.config;
+  }
+  let parsedSecrets: Record<string, string> | undefined;
+  if (input.secrets !== undefined) {
+    const secretCheck = tryParseRegisteredPluginSecretConfig(
+      pluginKey,
+      input.secrets,
+    );
+    if (!secretCheck.ok) {
+      throw new DomainError(
+        "PLUGIN_SECRET_CONFIG_INVALID",
+        secretCheck.error,
+        400,
+      );
+    }
+    parsedSecrets = secretCheck.config as Record<string, string>;
+  }
+
+  if (input.enabled === true && parsedSecrets !== undefined) {
+    throw new DomainError(
+      "PLUGIN_SECRET_ENABLE_CONFLICT",
+      "请先保存敏感配置并完成运行环境检测，再启用插件",
+      409,
+    );
   }
 
   await withActorDb(actor, async (tx) => {
@@ -100,6 +132,17 @@ export async function updatePluginInstallation(
       where: { key: pluginKey },
     });
     assertFound(current, "插件未安装");
+    const currentConfigCheck = tryParseRegisteredPluginConfig(
+      pluginKey,
+      current.config,
+    );
+    const healthConfigChanged =
+      parsedConfig !== undefined &&
+      (!currentConfigCheck.ok ||
+        !configsMatch(
+          registeredPluginHealthConfig(pluginKey, currentConfigCheck.config),
+          registeredPluginHealthConfig(pluginKey, parsedConfig),
+        ));
     if (input.enabled === true) {
       const configToValidate =
         parsedConfig !== undefined ? parsedConfig : current.config;
@@ -114,6 +157,39 @@ export async function updatePluginInstallation(
           409,
         );
       }
+      let currentSecrets: unknown;
+      try {
+        currentSecrets = decryptPluginSecretConfig(
+          current.secretConfigEncrypted,
+        );
+      } catch {
+        currentSecrets = null;
+      }
+      const secretCheck = tryParseRegisteredPluginSecretConfig(
+        pluginKey,
+        currentSecrets,
+      );
+      if (!secretCheck.ok) {
+        throw new DomainError(
+          "PLUGIN_SECRET_CONFIG_INVALID",
+          `插件敏感配置无效，无法启用：${secretCheck.error}`,
+          409,
+        );
+      }
+      const currentFingerprint = fingerprintPluginConfiguration(
+        registeredPluginHealthConfig(pluginKey, configCheck.config),
+        secretCheck.config,
+      );
+      if (
+        current.healthStatus !== "READY" ||
+        current.healthConfigFingerprint !== currentFingerprint
+      ) {
+        throw new DomainError(
+          "PLUGIN_HEALTH_CHECK_STALE",
+          "插件配置已发生变化，请重新运行环境检测后再启用",
+          409,
+        );
+      }
     }
     await tx.pluginInstallation.update({
       where: { key: pluginKey },
@@ -122,10 +198,33 @@ export async function updatePluginInstallation(
         ...(parsedConfig === undefined
           ? {}
           : { config: parsedConfig as Prisma.InputJsonValue }),
+        ...(parsedSecrets === undefined
+          ? {}
+          : {
+              secretConfigEncrypted: encryptPluginSecretConfig(parsedSecrets),
+              enabled: false,
+              healthConfigFingerprint: null,
+              healthStatus: "UNKNOWN",
+              lastCheckedAt: null,
+              lastError: null,
+            }),
+        ...(healthConfigChanged && parsedSecrets === undefined
+          ? {
+              enabled: false,
+              healthConfigFingerprint: null,
+              healthStatus: "UNKNOWN",
+              lastCheckedAt: null,
+              lastError: null,
+            }
+          : {}),
         updatedById: actor.id,
       },
     });
-    if (input.enabled === false) {
+    if (
+      input.enabled === false ||
+      parsedSecrets !== undefined ||
+      healthConfigChanged
+    ) {
       await applyPluginDisableSideEffects(tx, pluginKey);
     }
     await writeAuditLog(tx, actor, {
@@ -135,6 +234,8 @@ export async function updatePluginInstallation(
       metadata: {
         enabled: input.enabled,
         configChanged: parsedConfig !== undefined,
+        healthConfigChanged,
+        secretConfigChanged: parsedSecrets !== undefined,
       },
     });
     await publishEvent(tx, {
@@ -153,6 +254,7 @@ export async function runPluginHealthCheck(
   pluginKey: string,
   options?: {
     configOverride?: Record<string, unknown>;
+    secretOverride?: Record<string, string>;
   },
 ) {
   assertAllowed(actor.isPlatformAdmin);
@@ -162,11 +264,12 @@ export async function runPluginHealthCheck(
   let healthStatus = "READY";
   let lastError: string | null = null;
   let detail: Record<string, string> = {};
+  let healthConfigFingerprint: string | null = null;
 
   const installation = await withActorDb(actor, (tx) =>
     tx.pluginInstallation.findUnique({
       where: { key: pluginKey },
-      select: { config: true, enabled: true },
+      select: { config: true, secretConfigEncrypted: true, enabled: true },
     }),
   );
   assertFound(installation, "插件未安装");
@@ -176,17 +279,58 @@ export async function runPluginHealthCheck(
       ? options.configOverride
       : installation.config;
   const configCheck = tryParseRegisteredPluginConfig(pluginKey, configCandidate);
+  let secretCandidate: unknown = options?.secretOverride;
+  if (secretCandidate === undefined) {
+    try {
+      secretCandidate = decryptPluginSecretConfig(
+        installation.secretConfigEncrypted,
+      );
+    } catch {
+      secretCandidate = null;
+    }
+  }
+  const secretCheck = tryParseRegisteredPluginSecretConfig(
+    pluginKey,
+    secretCandidate,
+  );
+  const missingRequiredSecretKeys = registered.manifest.settings
+    .filter((field) => field.type === "secret-url" && field.required)
+    .map((field) => field.key)
+    .filter(
+      (key) =>
+        !secretCandidate ||
+        typeof secretCandidate !== "object" ||
+        Array.isArray(secretCandidate) ||
+        typeof Reflect.get(secretCandidate, key) !== "string" ||
+        Reflect.get(secretCandidate, key).trim().length === 0,
+    );
   if (!configCheck.ok) {
     healthStatus = "ERROR";
     lastError = `配置无效：${configCheck.error}`;
     detail = { config: "invalid" };
+  } else if (missingRequiredSecretKeys.length > 0) {
+    healthStatus = "UNKNOWN";
+    lastError = null;
+    detail = { configuration: "required" };
+  } else if (!secretCheck.ok) {
+    healthStatus = "ERROR";
+    lastError = `敏感配置无效：${secretCheck.error}`;
+    detail = { secretConfig: "invalid" };
   } else {
     try {
+      healthConfigFingerprint = fingerprintPluginConfiguration(
+        registeredPluginHealthConfig(pluginKey, configCheck.config),
+        secretCheck.config,
+      );
       detail = registered.healthCheck
-        ? await registered.healthCheck()
+        ? await registered.healthCheck({
+            config: configCheck.config,
+            secrets: secretCheck.config as Record<string, string>,
+          })
         : { runtime: "ready" };
     } catch (error) {
       healthStatus = "ERROR";
+      healthConfigFingerprint = null;
       lastError =
         error instanceof Error ? error.message : "插件运行环境加载失败";
     }
@@ -194,12 +338,14 @@ export async function runPluginHealthCheck(
 
   await withActorDb(actor, async (tx) => {
     const shouldDisableForInvalidConfig =
-      healthStatus === "ERROR" && !configCheck.ok;
+      missingRequiredSecretKeys.length > 0 ||
+      (healthStatus === "ERROR" && (!configCheck.ok || !secretCheck.ok));
     await tx.pluginInstallation.update({
       where: { key: pluginKey },
       data: {
         // Invalid config must never stay enabled after a health check.
         ...(shouldDisableForInvalidConfig ? { enabled: false } : {}),
+        healthConfigFingerprint,
         healthStatus,
         lastCheckedAt: checkedAt,
         lastError,
@@ -218,6 +364,7 @@ export async function runPluginHealthCheck(
         healthStatus,
         detail,
         configValid: configCheck.ok,
+        secretConfigValid: secretCheck.ok,
       },
     });
   });
@@ -227,6 +374,23 @@ export async function runPluginHealthCheck(
     lastError,
     detail,
   };
+}
+
+function inspectSecretConfig(pluginKey: string, encrypted: string | null) {
+  if (!encrypted) {
+    return { keys: [], state: "MISSING" as const };
+  }
+  try {
+    const parsed = tryParseRegisteredPluginSecretConfig(
+      pluginKey,
+      decryptPluginSecretConfig(encrypted),
+    );
+    return parsed.ok
+      ? { keys: Object.keys(parsed.config).sort(), state: "VALID" as const }
+      : { keys: [], state: "INVALID" as const };
+  } catch {
+    return { keys: [], state: "INVALID" as const };
+  }
 }
 
 export async function startPluginHistoryRun(

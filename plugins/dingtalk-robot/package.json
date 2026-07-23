@@ -1,0 +1,19 @@
+{
+  "name": "@achord/plugin-dingtalk-robot",
+  "version": "1.1.0",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/manifest.ts",
+    "./config": "./src/config.ts",
+    "./runtime": "./src/runtime.ts"
+  },
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@achord/platform-plugin-sdk": "workspace:*",
+    "zod": "^4.4.3"
+  }
+}

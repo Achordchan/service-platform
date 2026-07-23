@@ -16,6 +16,7 @@ import {
   snapshotSupportReplyPlaybook,
 } from "@/lib/support-reply-playbooks";
 import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
+import { getAttachmentPolicy } from "@/modules/attachments/attachment-validation";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { resolveUniversalActionUrl } from "@/modules/integrations/external/action-url";
 import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
@@ -541,7 +542,6 @@ export function assignRequest(
       projectId: request.projectId,
       serviceRequestId: request.id,
     });
-
     return updated;
   });
 }
@@ -739,6 +739,13 @@ export async function addRequestMessage(
     if (sanitizedBody.length > 20_000) {
       throw badRequest("MESSAGE_TOO_LONG", "回复内容过长");
     }
+    const inlineAttachmentIds = extractInlineAttachmentIds(sanitizedBody);
+    if (isCustomer && inlineAttachmentIds.length > 0) {
+      const policy = await getAttachmentPolicy();
+      if (!policy.customerReplyAttachmentsEnabled) {
+        throw forbidden("当前未开放客户在回复中插入图片");
+      }
+    }
     const replyToMessageId = await validateReplyTarget(
       tx,
       actor,
@@ -775,7 +782,7 @@ export async function addRequestMessage(
     await claimUserInlineAttachments(
       tx,
       actor,
-      extractInlineAttachmentIds(sanitizedBody),
+      inlineAttachmentIds,
       {
         projectId: request.projectId,
         serviceRequestId: request.id,
@@ -811,6 +818,7 @@ export async function addRequestMessage(
         messageId: message.id,
         actorId: actor.id,
         visibility: input.visibility,
+        occurredAt: message.createdAt.toISOString(),
       },
       notificationType: "REQUEST_MESSAGE",
       notificationTitle:
@@ -823,12 +831,11 @@ export async function addRequestMessage(
         !isInternal && Boolean(request.createdByExternalContactId),
       relevantWorkerUserIds: assignedWorkers,
       notifyProjectManagers: isInternal || requestIsUnassigned,
-      notifyPlatformAdmins: !isInternal && requestIsUnassigned,
+      notifyPlatformAdmins: !isInternal && isCustomer,
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
     });
-
     const nextStatus = isCustomer
       ? statusAfterCustomerReply(request.status)
       : input.visibility === "CUSTOMER_VISIBLE"

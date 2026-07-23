@@ -1,17 +1,17 @@
 import { z } from "zod";
 
 export const NOTIFICATION_DELIVERY_RULES = [
-  { key: "PROJECT_UPDATE", category: "项目交付", label: "进度动态与评论", emailSupported: true, emailDefaultEnabled: false },
-  { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", emailSupported: true, emailDefaultEnabled: false },
-  { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", emailSupported: true, emailDefaultEnabled: false },
-  { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", emailSupported: true, emailDefaultEnabled: false },
-  { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", emailSupported: true, emailDefaultEnabled: true },
-  { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", emailSupported: true, emailDefaultEnabled: true },
-  { key: "REQUEST_PUBLIC_MESSAGE", category: "服务请求", label: "公开回复", emailSupported: true, emailDefaultEnabled: true },
-  { key: "REQUEST_INTERNAL_NOTE", category: "服务请求", label: "内部备注", emailSupported: false, emailDefaultEnabled: false },
-  { key: "REQUEST_STATUS", category: "服务请求", label: "手动状态变化", emailSupported: true, emailDefaultEnabled: true },
-  { key: "REQUEST_ATTACHMENT", category: "服务请求", label: "独立附件上传", emailSupported: false, emailDefaultEnabled: false },
-  { key: "REQUEST_ARCHIVE", category: "服务请求", label: "归档与恢复", emailSupported: false, emailDefaultEnabled: false },
+  { key: "PROJECT_UPDATE", category: "项目交付", label: "进度动态与评论", description: "面向客户发布的项目动态和评论", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", description: "项目当前阶段发生变化", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", description: "里程碑新增、修改或删除", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", description: "非编辑器内嵌的公开项目文件", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", description: "客户、外部联系人或后台人员创建新工单", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true },
+  { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", description: "处理人或协作人员发生变化", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false },
+  { key: "REQUEST_PUBLIC_MESSAGE", category: "服务请求", label: "公开回复", description: "邮件双向提醒；钉钉仅提醒客户或外部联系人的回复", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true },
+  { key: "REQUEST_INTERNAL_NOTE", category: "服务请求", label: "内部备注", description: "仅后台人员可见的工单备注", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "REQUEST_STATUS", category: "服务请求", label: "手动状态变化", description: "等待客户、已解决或已关闭等手动状态", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false },
+  { key: "REQUEST_ATTACHMENT", category: "服务请求", label: "独立附件上传", description: "脱离消息单独上传的公开附件", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
+  { key: "REQUEST_ARCHIVE", category: "服务请求", label: "归档与恢复", description: "后台归档或恢复服务请求", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
 ] as const;
 
 export type NotificationDeliveryRuleKey =
@@ -21,6 +21,7 @@ export type NotificationDeliveryRuleState = {
   notificationEnabled: boolean;
   soundEnabled: boolean;
   emailEnabled: boolean;
+  dingtalkEnabled: boolean;
 };
 
 export type NotificationDeliveryRuleView =
@@ -60,6 +61,7 @@ export const updateNotificationDeliveryRulesSchema = z.object({
         notificationEnabled: z.boolean(),
         soundEnabled: z.boolean(),
         emailEnabled: z.boolean(),
+        dingtalkEnabled: z.boolean(),
       }),
     )
     .min(1)
@@ -98,6 +100,15 @@ export function findNotificationDeliveryRuleViolation(
         message: "邮件提醒依赖通知未读状态，请先开启通知红点",
       } as const;
     }
+    if (
+      !definitionByKey.get(rule.key)?.dingtalkSupported &&
+      rule.dingtalkEnabled
+    ) {
+      return {
+        code: "DINGTALK_NOT_SUPPORTED",
+        message: "该场景不支持钉钉机器人提醒",
+      } as const;
+    }
   }
   return null;
 }
@@ -119,6 +130,7 @@ export function defaultNotificationDeliveryRuleState(
     notificationEnabled: true,
     soundEnabled: true,
     emailEnabled: definition?.emailDefaultEnabled ?? false,
+    dingtalkEnabled: false,
   };
 }
 
@@ -149,6 +161,16 @@ export function notificationTypesForEmailRule(
   if (key === "REQUEST_ASSIGNED") return ["REQUEST_ASSIGNED"] as const;
   if (key === "REQUEST_PUBLIC_MESSAGE") return ["REQUEST_MESSAGE"] as const;
   if (key === "REQUEST_STATUS") return ["REQUEST_STATUS"] as const;
+  return [] as const;
+}
+
+export function dingTalkEventTypesForRule(
+  key: NotificationDeliveryRuleKey,
+) {
+  if (key === "REQUEST_CREATED") return ["REQUEST_CREATED"] as const;
+  if (key === "REQUEST_PUBLIC_MESSAGE") {
+    return ["REQUEST_CUSTOMER_REPLIED"] as const;
+  }
   return [] as const;
 }
 

@@ -26,7 +26,7 @@ import {
   validateAttachmentFile,
 } from "@/modules/attachments/attachment-validation";
 import {
-  assertCanManageProjectDelivery,
+  assertCanManageActiveProjectDelivery,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
 import {
@@ -485,7 +485,7 @@ async function authorizeProjectAttachmentUpload(
       customerSpaceId: context.customerSpaceId,
     };
   }
-  return assertCanManageProjectDelivery(tx, actor, input.projectId);
+  return assertCanManageActiveProjectDelivery(tx, actor, input.projectId);
 }
 
 function includeCustomerMembersForRequest(
@@ -538,6 +538,13 @@ async function authorizeUploadInTx(
   const isCustomer = actor.platformRole === "CUSTOMER";
   if (!isCustomer && !canWorkOnRequest(actor, requestAccess)) {
     throw forbidden("只有请求处理人员或客户可以上传附件");
+  }
+
+  if (isCustomer && input.inline && !input.requestMessageId) {
+    const policy = await getAttachmentPolicy();
+    if (!policy.customerReplyAttachmentsEnabled) {
+      throw forbidden("当前未开放客户在回复中插入图片");
+    }
   }
 
   if (input.requestMessageId) {

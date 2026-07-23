@@ -548,10 +548,12 @@ model ServiceRequest {
   notifications            Notification[]
   auditLogs                AuditLog[]
   events                   EventRecord[]
+  dingTalkRobotDeliveries  DingTalkRobotDelivery[]
 
   @@index([projectId, status])
   @@index([projectId, archivedAt, status])
   @@index([assigneeId, status])
+  @@index([status, resolvedAt])
   @@index([createdByExternalContactId, createdAt])
 }
 
@@ -670,6 +672,7 @@ model NotificationDeliveryRule {
   notificationEnabled Boolean @default(true)
   soundEnabled         Boolean @default(true)
   emailEnabled         Boolean @default(false)
+  dingtalkEnabled      Boolean @default(false)
   updatedAt            DateTime @updatedAt
   updatedById          String?
   updatedBy            User?   @relation("NotificationDeliveryRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -803,6 +806,8 @@ model PluginInstallation {
   version       String
   enabled       Boolean   @default(false)
   config        Json
+  secretConfigEncrypted   String?
+  healthConfigFingerprint String?
   healthStatus  String    @default("UNKNOWN")
   lastCheckedAt DateTime?
   lastError     String?
@@ -813,6 +818,26 @@ model PluginInstallation {
   runs            PluginRun[]
   resourceStates  PluginResourceState[]
   projectBindings ProjectPluginBinding[]
+}
+
+model DingTalkRobotDelivery {
+  id            String         @id
+  eventKey      String         @unique
+  eventType     String
+  requestId     String
+  payload       Json
+  status        String         @default("PENDING")
+  attemptCount  Int            @default(0)
+  nextAttemptAt DateTime?
+  lastAttemptAt DateTime?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  request       ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([requestId, createdAt])
 }
 
 model ProjectPluginBinding {

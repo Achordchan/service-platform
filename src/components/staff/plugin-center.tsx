@@ -17,9 +17,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   LinearProgress,
   Paper,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -27,6 +29,13 @@ import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import ArrowForwardOutlinedIcon from "@mui/icons-material/ArrowForwardOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
+import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
+import type {
+  DingTalkRobotConfig,
+  DingTalkRobotEventType,
+  DingTalkRobotTemplate,
+} from "@achord/plugin-dingtalk-robot/config";
+import { DingTalkTemplateSettings } from "@/components/staff/dingtalk-template-settings";
 import { PluginDeveloperGuideDialog } from "@/components/staff/plugin-developer-guide-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useRealtimeRouteRefresh } from "@/hooks/use-realtime-route-refresh";
@@ -64,18 +73,21 @@ export type PluginView = {
   capabilities: string[];
   enabled: boolean;
   config: Record<string, unknown>;
+  configuredSecretKeys: string[];
+  secretConfigState: "MISSING" | "VALID" | "INVALID";
   healthStatus: string;
   lastCheckedAt: string | null;
   lastError: string | null;
   updatedAt: string;
   settings: Array<{
     key: string;
-    type: "number" | "boolean";
+    type: "number" | "boolean" | "secret-url";
     label: string;
     description: string;
     min?: number;
     max?: number;
     step?: number;
+    required?: boolean;
   }>;
   actions?: Array<{
     key: string;
@@ -99,6 +111,23 @@ export function supportsPluginAction(
   return plugin.actions?.some((action) => action.key === actionKey) === true;
 }
 
+export function requiresPluginConfiguration(
+  plugin: Pick<
+    PluginView,
+    "settings" | "configuredSecretKeys" | "secretConfigState"
+  >,
+) {
+  return (
+    plugin.secretConfigState === "MISSING" &&
+    plugin.settings.some(
+      (field) =>
+        field.type === "secret-url" &&
+        field.required &&
+        !plugin.configuredSecretKeys.includes(field.key),
+    )
+  );
+}
+
 const pluginEvents = ["PLUGIN_RUN_UPDATED"] as const;
 
 export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
@@ -108,6 +137,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     null,
   );
   const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -116,23 +146,47 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     () => plugins.find((plugin) => plugin.key === selectedKey) ?? null,
     [plugins, selectedKey],
   );
+  const selectedRequiresConfiguration = selected
+    ? requiresPluginConfiguration(selected)
+    : false;
 
   useRealtimeRouteRefresh({ eventTypes: pluginEvents });
 
   function openSettings(plugin: PluginView) {
     setSelectedKey(plugin.key);
     setConfig(plugin.config);
+    setSecrets({});
     setError("");
     setSuccess("");
   }
 
   async function saveConfig() {
     if (!selected) return;
+    const missingRequiredFields = selected.settings.filter(
+      (field) =>
+        field.type === "secret-url" &&
+        field.required &&
+        !selected.configuredSecretKeys.includes(field.key) &&
+        !secrets[field.key]?.trim(),
+    );
+    if (missingRequiredFields.length > 0) {
+      setError(`请填写${missingRequiredFields[0]?.label ?? "必填配置"}`);
+      return;
+    }
     await execute("save", async () => {
+      const changedSecrets = Object.fromEntries(
+        Object.entries(secrets).filter(([, value]) => value.trim().length > 0),
+      );
       await staffApi(
         `/api/v1/admin/plugins/${selected.key}`,
-        jsonRequest("PATCH", { config }),
+        jsonRequest("PATCH", {
+          config,
+          ...(Object.keys(changedSecrets).length > 0
+            ? { secrets: changedSecrets }
+            : {}),
+        }),
       );
+      setSecrets({});
       setSuccess("插件配置已保存");
     });
   }
@@ -163,6 +217,44 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         jsonRequest("PATCH", { enabled: !selected.enabled }),
       );
       setSuccess(selected.enabled ? "插件已停用" : "插件已启用");
+    });
+  }
+
+  async function sendTestMessage() {
+    if (!selected) return;
+    await execute("test-message", async () => {
+      await staffApi(
+        `/api/v1/admin/plugins/${selected.key}/test-message`,
+        jsonRequest("POST", {}),
+      );
+      setSuccess("测试消息已发送，请在钉钉群中查看");
+    });
+  }
+
+  async function saveDingTalkTemplates(nextConfig: DingTalkRobotConfig) {
+    if (!selected) return false;
+    const saved = await execute("template-save", async () => {
+      await staffApi(
+        `/api/v1/admin/plugins/${selected.key}`,
+        jsonRequest("PATCH", { config: nextConfig }),
+      );
+      setConfig(nextConfig);
+      setSuccess("钉钉通知模板已保存");
+    });
+    return saved;
+  }
+
+  async function sendDingTalkTemplateTest(
+    eventType: DingTalkRobotEventType,
+    template: DingTalkRobotTemplate,
+  ) {
+    if (!selected) return;
+    await execute(`template-test:${eventType}`, async () => {
+      await staffApi(
+        `/api/v1/admin/plugins/${selected.key}/test-message`,
+        jsonRequest("POST", { eventType, template }),
+      );
+      setSuccess("模板测试消息已发送，请在钉钉群中查看");
     });
   }
 
@@ -204,10 +296,12 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     setSuccess("");
     try {
       await action();
+      return true;
     } catch (actionError) {
       setError(
         actionError instanceof Error ? actionError.message : "插件操作失败",
       );
+      return false;
     } finally {
       router.refresh();
       setBusy("");
@@ -287,7 +381,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                 <Button
                   variant="outlined"
                   onClick={() => void checkHealth()}
-                  disabled={Boolean(busy)}
+                  disabled={Boolean(busy) || selectedRequiresConfiguration}
                 >
                   运行环境检测
                 </Button>
@@ -295,14 +389,33 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                   variant={selected.enabled ? "outlined" : "contained"}
                   color={selected.enabled ? "inherit" : "primary"}
                   onClick={() => void toggleEnabled()}
-                  disabled={Boolean(busy)}
+                  disabled={
+                    Boolean(busy) ||
+                    (selectedRequiresConfiguration && !selected.enabled)
+                  }
                 >
                   {selected.enabled ? "停用插件" : "启用插件"}
                 </Button>
+                {supportsPluginAction(selected, "send-test-message") ? (
+                  <Button
+                    variant="outlined"
+                    startIcon={<SendOutlinedIcon />}
+                    onClick={() => void sendTestMessage()}
+                    disabled={
+                      Boolean(busy) || selected.secretConfigState !== "VALID"
+                    }
+                  >
+                    发送测试消息
+                  </Button>
+                ) : null}
               </Stack>
 
               {hasPluginSettings(selected) ? (
-                <Accordion variant="outlined" disableGutters>
+                <Accordion
+                  variant="outlined"
+                  disableGutters
+                  defaultExpanded={selectedRequiresConfiguration}
+                >
                   <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
                     <Typography sx={{ fontWeight: 650 }}>插件设置</Typography>
                   </AccordionSummary>
@@ -331,7 +444,47 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                             }}
                             fullWidth
                           />
-                        ) : null,
+                        ) : field.type === "boolean" ? (
+                          <FormControlLabel
+                            key={field.key}
+                            control={
+                              <Switch
+                                checked={Boolean(config[field.key])}
+                                onChange={(event) =>
+                                  setConfig((current) => ({
+                                    ...current,
+                                    [field.key]: event.target.checked,
+                                  }))
+                                }
+                              />
+                            }
+                            label={field.label}
+                          />
+                        ) : (
+                          <TextField
+                            key={field.key}
+                            type="password"
+                            label={field.label}
+                            value={secrets[field.key] ?? ""}
+                            onChange={(event) =>
+                              setSecrets((current) => ({
+                                ...current,
+                                [field.key]: event.target.value,
+                              }))
+                            }
+                            helperText={
+                              selected.configuredSecretKeys.includes(field.key)
+                                ? "已加密保存；留空表示不修改"
+                                : field.description
+                            }
+                            autoComplete="new-password"
+                            required={
+                              field.required &&
+                              !selected.configuredSecretKeys.includes(field.key)
+                            }
+                            fullWidth
+                          />
+                        ),
                       )}
                       <Button
                         variant="contained"
@@ -345,7 +498,19 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                 </Accordion>
               ) : null}
 
-              {supportsPluginAction(selected, "migrate-history") ? (
+              {selected.key === "dingtalk-robot" ? (
+                <DingTalkTemplateSettings
+                  config={config}
+                  busy={Boolean(busy)}
+                  canTest={selected.secretConfigState === "VALID"}
+                  onSave={saveDingTalkTemplates}
+                  onTest={sendDingTalkTemplateTest}
+                />
+              ) : null}
+
+              {supportsPluginAction(selected, "migrate-history") &&
+              ((selected.enabled && selected.healthStatus === "READY") ||
+                selected.runs.length > 0) ? (
                 <Accordion variant="outlined" disableGutters>
                   <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
                     <Typography sx={{ fontWeight: 650 }}>
@@ -369,17 +534,16 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                           尚未执行历史迁移。
                         </Typography>
                       )}
-                      <Button
-                        variant="outlined"
-                        onClick={() => setConfirmMigrationKey(selected.key)}
-                        disabled={
-                          !selected.enabled ||
-                          selected.healthStatus !== "READY" ||
-                          Boolean(busy)
-                        }
-                      >
-                        启动新的历史迁移
-                      </Button>
+                      {selected.enabled &&
+                      selected.healthStatus === "READY" ? (
+                        <Button
+                          variant="outlined"
+                          onClick={() => setConfirmMigrationKey(selected.key)}
+                          disabled={Boolean(busy)}
+                        >
+                          启动新的历史迁移
+                        </Button>
+                      ) : null}
                     </Stack>
                   </AccordionDetails>
                 </Accordion>
@@ -444,15 +608,19 @@ function PluginCard({
   onOpen: () => void;
 }) {
   const latestRun = plugin.runs[0];
-  const healthError = plugin.healthStatus === "ERROR";
+  const configurationRequired = requiresPluginConfiguration(plugin);
+  const healthError =
+    !configurationRequired && plugin.healthStatus === "ERROR";
   const healthReady = plugin.healthStatus === "READY";
-  const status = healthError
-    ? { label: "环境异常", color: "error" as const }
-    : !healthReady
-      ? { label: "待检测", color: "warning" as const }
-      : plugin.enabled
-        ? { label: "已启用", color: "success" as const }
-        : { label: "未启用", color: "default" as const };
+  const status = configurationRequired
+    ? { label: "待配置", color: "warning" as const }
+    : healthError
+      ? { label: "环境异常", color: "error" as const }
+      : !healthReady
+        ? { label: "待检测", color: "warning" as const }
+        : plugin.enabled
+          ? { label: "已启用", color: "success" as const }
+          : { label: "未启用", color: "default" as const };
   return (
     <Card
       variant="outlined"
@@ -527,8 +695,10 @@ function PluginCard({
                 {plugin.category}
               </Typography>
               <Typography variant="body2" sx={{ fontWeight: 650 }}>
-                {healthError
-                  ? "运行环境检测失败，打开查看原因"
+                {configurationRequired
+                  ? "请先完成必填配置"
+                  : healthError
+                    ? "运行环境检测失败，打开查看原因"
                   : !healthReady
                     ? "版本已更新，需要重新检测运行环境"
                     : latestRun
@@ -558,8 +728,9 @@ function PluginCard({
 }
 
 function PluginStatusSummary({ plugin }: { plugin: PluginView }) {
+  const configurationRequired = requiresPluginConfiguration(plugin);
   const ready = plugin.healthStatus === "READY";
-  const failed = plugin.healthStatus === "ERROR";
+  const failed = !configurationRequired && plugin.healthStatus === "ERROR";
   return (
     <Stack
       spacing={1}
@@ -574,15 +745,33 @@ function PluginStatusSummary({ plugin }: { plugin: PluginView }) {
         <Typography sx={{ fontWeight: 700 }}>运行状态</Typography>
         <Chip
           size="small"
-          label={ready ? "环境正常" : failed ? "环境异常" : "等待检测"}
-          color={ready ? "success" : failed ? "error" : "warning"}
+          label={
+            configurationRequired
+              ? "待配置"
+              : ready
+                ? "环境正常"
+                : failed
+                  ? "环境异常"
+                  : "等待检测"
+          }
+          color={
+            configurationRequired
+              ? "warning"
+              : ready
+                ? "success"
+                : failed
+                  ? "error"
+                  : "warning"
+          }
         />
       </Stack>
       <Typography variant="body2" color="text.secondary">
-        {plugin.lastError ||
-          (plugin.lastCheckedAt
-            ? `最后检测：${formatDate(plugin.lastCheckedAt)}`
-            : "插件版本变化后需要重新检测，检测通过前不会执行任务。")}
+        {configurationRequired
+          ? "请先填写并保存插件必填配置。"
+          : plugin.lastError ||
+            (plugin.lastCheckedAt
+              ? `最后检测：${formatDate(plugin.lastCheckedAt)}`
+              : "插件版本变化后需要重新检测，检测通过前不会执行任务。")}
       </Typography>
     </Stack>
   );

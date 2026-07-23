@@ -187,14 +187,18 @@ export function Sub2ApiIntegrationPanel({
 
   if (loading) return <LinearProgress />;
   if (!view) return <Alert severity="error">{error || "连接信息不可用"}</Alert>;
+  if (!view.plugin.enabled || view.plugin.healthStatus !== "READY") {
+    return (
+      <Alert severity="warning">
+        Sub2API 连接器尚未在插件中心完成检测并启用。
+      </Alert>
+    );
+  }
   const connection = view.connection;
 
   return (
     <Stack spacing={2.5}>
       {error ? <Alert severity="error">{error}</Alert> : null}
-      {!view.plugin.enabled ? (
-        <Alert severity="warning">Sub2API 连接器当前未启用。</Alert>
-      ) : null}
       <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
         <Stack
           direction={{ xs: "column", sm: "row" }}

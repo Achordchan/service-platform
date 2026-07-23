@@ -26,11 +26,14 @@
     "postinstall": "prisma generate",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:integration:prepare": "node scripts/prepare-integration-db.mjs",
+    "test:plugin:dingtalk": "pnpm --filter @achord/plugin-dingtalk-robot test",
+    "typecheck:plugin:dingtalk": "pnpm --filter @achord/plugin-dingtalk-robot typecheck",
     "test:sdk:go": "cd examples/integrations/go && go test ./...",
     "test:sdk:php": "php examples/integrations/php/verify-sdk.php"
   },
   "dependencies": {
     "@achord/platform-plugin-sdk": "workspace:*",
+    "@achord/plugin-dingtalk-robot": "workspace:*",
     "@achord/plugin-image-webp": "workspace:*",
     "@achord/plugin-sub2api-connector": "workspace:*",
     "@achord/plugin-universal-embed-connector": "workspace:*",

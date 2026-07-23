@@ -6,6 +6,7 @@ import {
   isRequestChangeAudible,
   isRequestNotification,
   planStandardRequestEmailRecipientIds,
+  planDingTalkRequestEvent,
 } from "@/modules/notifications/activity-policy";
 
 describe("统一活动投递策略", () => {
@@ -55,7 +56,15 @@ describe("统一活动投递策略", () => {
         eventType: "REQUEST_MESSAGE_CREATED",
         visibility: "CUSTOMER_VISIBLE",
       }),
-    ).toEqual(["tech-1"]);
+    ).toEqual(["tech-1", "admin-1"]);
+    expect(
+      planStandardRequestEmailRecipientIds({
+        ...base,
+        relevantWorkerUserIds: [],
+        eventType: "REQUEST_MESSAGE_CREATED",
+        visibility: "CUSTOMER_VISIBLE",
+      }),
+    ).toEqual(["manager-1", "admin-1"]);
     expect(
       planStandardRequestEmailRecipientIds({
         ...base,
@@ -106,5 +115,50 @@ describe("统一活动投递策略", () => {
         status: "CLOSED",
       }),
     ).toEqual([]);
+  });
+
+  it("钉钉只规划新工单和客户公开回复", () => {
+    const base = {
+      enabled: true,
+      requestId: "request-1",
+      actorName: "测试用户",
+      customerActor: true,
+    };
+    expect(
+      planDingTalkRequestEvent({
+        ...base,
+        eventType: "REQUEST_CREATED",
+      }),
+    ).toMatchObject({
+      eventKey: "request-created:request-1",
+      eventType: "REQUEST_CREATED",
+    });
+    expect(
+      planDingTalkRequestEvent({
+        ...base,
+        eventType: "REQUEST_MESSAGE_CREATED",
+        messageId: "message-1",
+        visibility: "CUSTOMER_VISIBLE",
+      }),
+    ).toMatchObject({
+      eventKey: "customer-replied:message-1",
+      eventType: "REQUEST_CUSTOMER_REPLIED",
+    });
+    expect(
+      planDingTalkRequestEvent({
+        ...base,
+        customerActor: false,
+        eventType: "REQUEST_MESSAGE_CREATED",
+        messageId: "message-1",
+        visibility: "CUSTOMER_VISIBLE",
+      }),
+    ).toBeNull();
+    expect(
+      planDingTalkRequestEvent({
+        ...base,
+        enabled: false,
+        eventType: "REQUEST_CREATED",
+      }),
+    ).toBeNull();
   });
 });

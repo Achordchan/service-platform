@@ -16,7 +16,7 @@ import {
   publishProjectChange,
 } from "@/modules/notifications/notification-service";
 import {
-  assertCanManageProjectDelivery,
+  assertCanManageActiveProjectDelivery,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
 import {
@@ -91,7 +91,11 @@ export function createProjectUpdate(
   input: CreateProjectUpdateInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const body = sanitizeProjectUpdateBody(input.body);
     const update = await tx.projectUpdate.create({
       data: {
@@ -153,7 +157,11 @@ export function updateProjectUpdate(
   input: UpdateProjectUpdateInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const existing = await tx.projectUpdate.findFirst({
       where: { id: projectUpdateId, projectId },
       select: {

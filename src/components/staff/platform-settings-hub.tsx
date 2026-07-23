@@ -152,6 +152,8 @@ export function PlatformSettingsHub({
   initialTemplates,
   roleGroups,
   currentAdminEmail,
+  dingTalkPluginEnabled,
+  dingTalkPluginReady,
 }: {
   initialSettings: PlatformSettingsView;
   initialMessages: MailMessageView[];
@@ -160,6 +162,8 @@ export function PlatformSettingsHub({
   initialTemplates: MailTemplateView[];
   roleGroups: RoleGroupView[];
   currentAdminEmail: string;
+  dingTalkPluginEnabled: boolean;
+  dingTalkPluginReady: boolean;
 }) {
   const [settings, setSettings] = useState(initialSettings);
   const [mailOutboxSummary, setMailOutboxSummary] = useState(
@@ -180,6 +184,13 @@ export function PlatformSettingsHub({
     settings.resendDomainStatus === "verified" &&
     settings.resendWebhookStatus === "enabled" &&
     settings.hasResendWebhookSecret;
+  const mailEnabled = settings.mailMode !== "LOCAL_OUTBOX";
+  const notificationChannels = [
+    "通知红点",
+    "页面提示音",
+    ...(mailEnabled ? ["邮件"] : []),
+    ...(dingTalkPluginEnabled ? ["钉钉机器人"] : []),
+  ];
   const dialogTitle = {
     mail: "邮件设置",
     notifications: "通知规则",
@@ -234,7 +245,7 @@ export function PlatformSettingsHub({
         <Divider />
         <SettingsRow
           title="通知规则"
-          summary="按业务场景控制通知红点、页面提示音和标准工单邮件"
+          summary={`按业务场景控制${notificationChannels.join("、")}`}
           onClick={() => setDialog("notifications")}
         />
         <Divider />
@@ -261,18 +272,20 @@ export function PlatformSettingsHub({
         />
       </Paper>
 
-      <SettingsDisclosure
-        title="邮件模板"
-        summary={`${initialTemplates.length} 个模板`}
-        expanded={expandedSections.templates}
-        onChange={(expanded) => setSectionExpanded("templates", expanded)}
-      >
-        <MailTemplateManager
-          initialTemplates={initialTemplates}
-          currentAdminEmail={currentAdminEmail}
-          embedded
-        />
-      </SettingsDisclosure>
+      {mailEnabled ? (
+        <SettingsDisclosure
+          title="邮件模板"
+          summary={`${initialTemplates.length} 个模板`}
+          expanded={expandedSections.templates}
+          onChange={(expanded) => setSectionExpanded("templates", expanded)}
+        >
+          <MailTemplateManager
+            initialTemplates={initialTemplates}
+            currentAdminEmail={currentAdminEmail}
+            embedded
+          />
+        </SettingsDisclosure>
+      ) : null}
 
       <SettingsDisclosure
         title="角色与权限"
@@ -321,6 +334,8 @@ export function PlatformSettingsHub({
                 settings.standardEmailUnreadDelayEnabled
               }
               mailMode={settings.mailMode}
+              dingTalkPluginEnabled={dingTalkPluginEnabled}
+              dingTalkPluginReady={dingTalkPluginReady}
               onRulesChange={setNotificationRules}
               onUnreadDelayChange={(enabled) =>
                 setSettings((current) => ({

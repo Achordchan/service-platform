@@ -269,6 +269,7 @@ export function createRequest(
         requestId: request.id,
         requestNumber: request.number,
         actorId: actor.id,
+        occurredAt: request.createdAt.toISOString(),
       },
       notificationType: "REQUEST_CREATED",
       notificationTitle: `${actor.name} 提交了请求 ${request.number}`,
@@ -282,7 +283,6 @@ export function createRequest(
       projectId,
       serviceRequestId: request.id,
     });
-
     const [summary] = await hydrateRequestSummaries(tx, [request]);
     return { ...summary, initialMessageId: initialMessage.id };
   });

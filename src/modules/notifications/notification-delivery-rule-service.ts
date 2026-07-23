@@ -5,6 +5,7 @@ import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   defaultNotificationDeliveryRuleState,
+  dingTalkEventTypesForRule,
   findNotificationDeliveryRuleViolation,
   notificationTypesForEmailRule,
   NOTIFICATION_DELIVERY_RULES,
@@ -57,6 +58,7 @@ export async function updateNotificationDeliveryRules(
           notificationEnabled: rule.notificationEnabled,
           soundEnabled: rule.soundEnabled,
           emailEnabled: rule.emailEnabled,
+          dingtalkEnabled: rule.dingtalkEnabled,
           updatedById: actor.id,
         },
       });
@@ -88,6 +90,22 @@ export async function updateNotificationDeliveryRules(
         data: {
           status: "CANCELLED",
           errorMessage: "通知规则已关闭",
+        },
+      });
+    }
+    const disabledDingTalkEventTypes = input.rules
+      .filter((rule) => !rule.dingtalkEnabled)
+      .flatMap((rule) => [...dingTalkEventTypesForRule(rule.key)]);
+    if (disabledDingTalkEventTypes.length > 0) {
+      await tx.dingTalkRobotDelivery.updateMany({
+        where: {
+          eventType: { in: disabledDingTalkEventTypes },
+          status: { in: ["PENDING", "PROCESSING"] },
+        },
+        data: {
+          status: "SKIPPED",
+          nextAttemptAt: null,
+          lastError: "钉钉通知规则已关闭",
         },
       });
     }

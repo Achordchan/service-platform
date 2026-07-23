@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   hasPluginSettings,
+  requiresPluginConfiguration,
   supportsPluginAction,
   type PluginView,
 } from "@/components/staff/plugin-center";
@@ -16,6 +17,8 @@ function pluginView(overrides: Partial<PluginView>): PluginView {
     capabilities: [],
     enabled: false,
     config: {},
+    configuredSecretKeys: [],
+    secretConfigState: "MISSING",
     healthStatus: "READY",
     lastCheckedAt: null,
     lastError: null,
@@ -56,5 +59,53 @@ describe("插件中心能力隔离", () => {
     });
     expect(hasPluginSettings(webp)).toBe(true);
     expect(supportsPluginAction(webp, "migrate-history")).toBe(true);
+  });
+
+  it("仅钉钉清单声明发送测试消息操作", () => {
+    const dingTalk = pluginView({
+      key: "dingtalk-robot",
+      actions: [
+        {
+          key: "send-test-message",
+          label: "发送测试消息",
+          description: "发送连接测试消息",
+        },
+      ],
+    });
+    expect(supportsPluginAction(dingTalk, "send-test-message")).toBe(true);
+    expect(
+      supportsPluginAction(pluginView({ key: "image-webp" }), "send-test-message"),
+    ).toBe(false);
+  });
+
+  it("缺少必填敏感配置时显示为待配置", () => {
+    const dingTalk = pluginView({
+      key: "dingtalk-robot",
+      healthStatus: "ERROR",
+      lastError: "敏感配置无效",
+      settings: [
+        {
+          key: "webhookUrl",
+          type: "secret-url",
+          label: "钉钉机器人 Webhook 地址",
+          description: "Webhook",
+          required: true,
+        },
+      ],
+    });
+    expect(requiresPluginConfiguration(dingTalk)).toBe(true);
+    expect(
+      requiresPluginConfiguration({
+        ...dingTalk,
+        configuredSecretKeys: ["webhookUrl"],
+        secretConfigState: "VALID",
+      }),
+    ).toBe(false);
+    expect(
+      requiresPluginConfiguration({
+        ...dingTalk,
+        secretConfigState: "INVALID",
+      }),
+    ).toBe(false);
   });
 });

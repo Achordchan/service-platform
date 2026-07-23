@@ -63,6 +63,9 @@ export function PluginDeveloperGuideDialog({
           <Alert severity="info">
             平台只运行随代码构建并进入白名单的可信插件，不支持后台上传或执行插件压缩包。
           </Alert>
+          <Alert severity="warning">
+            插件包完成不等于插件功能完成。未进入插件中心，或缺少配置、真实检测、业务事件、异步队列与停用验收，都属于未接入状态。
+          </Alert>
           <Tabs
             value={tab}
             onChange={(_event, value: number) => setTab(value)}
@@ -92,6 +95,18 @@ export function PluginDeveloperGuideDialog({
 function DevelopmentGuide() {
   return (
     <Stack spacing={2.5}>
+      <GuideSection title="完成标准">
+        <RequirementList
+          items={[
+            "包实现：manifest、配置解析、运行时和独立测试完成。",
+            "宿主注册：主应用声明依赖并加入白名单，插件中心可见且默认关闭。",
+            "配置检测：密钥加密保存且不回显，健康检测不得产生业务消息；测试投递必须使用独立的显式操作。",
+            "消息通道：事件开关进入统一通知规则，模板支持变量校验、预览、恢复默认和测试，入队时固定模板快照。",
+            "业务投递：事件写入事务化 Outbox，由 pg-boss 异步发送，具备幂等、重试和失败记录。",
+            "停用验收：停用后终止待处理项，插件测试进入主 CI，并检查权限和页面布局。",
+          ]}
+        />
+      </GuideSection>
       <GuideSection title="1. 建立独立插件包">
         <Typography variant="body2" color="text.secondary">
           插件放在平台仓库的 plugins 目录，或发布为固定版本的私有 npm
@@ -112,9 +127,11 @@ function DevelopmentGuide() {
         <RequirementList
           items={[
             "在 src/modules/plugins/plugin-registry.ts 中显式注册。",
+            "在主应用 package.json 声明固定依赖并更新锁文件。",
             "只通过 @achord/platform-plugin-sdk 和宿主服务访问平台能力。",
             "长任务进入 pg-boss 队列，进度使用 PLUGIN_RUN_UPDATED SSE。",
             "数据库结构由主项目 migration 提供，插件不能自行执行 migration。",
+            "业务事务只写 Outbox，第三方请求由 Worker 处理，并提供 Sweep 补偿。",
             "插件升级后清除旧健康结果，重新检测通过前不执行新任务。",
           ]}
         />
@@ -145,6 +162,7 @@ function BoundaryGuide() {
             "使用 PluginInstallation、PluginRun、PluginResourceState 保存通用状态。",
             "在 manifest 中声明后访问附件转换等受控能力。",
             "敏感配置只能调用宿主加密存储，普通 JSON 配置不得保存密钥。",
+            "敏感配置变更后自动停用，必须重新检测后再启用。",
           ]}
         />
       </GuideSection>
@@ -191,8 +209,10 @@ function ReleaseGuide() {
         <RequirementList
           items={[
             "manifest、配置 schema、后台字段和默认值完全一致。",
+            "插件已显示在插件中心，配置、检测、启用和停用均可操作。",
             "任务支持幂等、暂停、继续、取消、失败重试和文件清理。",
             "数据库表已完成 migration、索引、外键和 RLS 审查。",
+            "独立插件包 typecheck 和 test 已加入主 GitHub Actions。",
             "桌面端、390px 移动端、长文案和错误状态已检查。",
             "不存在 Mock、调试入口、console.log 或未受控网络请求。",
           ]}

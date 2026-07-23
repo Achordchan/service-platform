@@ -30,6 +30,7 @@ export async function loadProjectAccess(
     where: { id: projectId },
     select: {
       id: true,
+      status: true,
       customerSpaceId: true,
       customerUpdatesEnabled: true,
       customerRequestsEnabled: true,
@@ -61,6 +62,7 @@ export async function loadProjectAccess(
 
   return {
     projectId: project.id,
+    projectStatus: project.status,
     customerSpaceId: project.customerSpaceId,
     customerFeatures: {
       milestones: project.showMilestones,
@@ -106,6 +108,22 @@ export async function assertCanManageProjectDelivery(
     canManageProjectDelivery(actor, context.access),
     "仅管理员或项目负责人可以管理项目交付",
   );
+  return context;
+}
+
+export async function assertCanManageActiveProjectDelivery(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+  if (context.projectStatus === "DRAFT") {
+    throw new DomainError(
+      "EXTERNAL_PROJECT_NOT_ACTIVATED",
+      "请先完成外部接入并激活项目",
+      409,
+    );
+  }
   return context;
 }
 

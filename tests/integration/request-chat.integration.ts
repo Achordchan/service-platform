@@ -4,8 +4,10 @@ import { Client, Pool } from "pg";
 import type { Actor } from "@/lib/actor";
 import {
   addRequestMessage,
+  changeRequestStatus,
 } from "@/modules/requests/request-command-service";
 import { updateRequestPresence } from "@/modules/requests/request-presence-service";
+import { closeResolvedRequestsDue } from "@/modules/requests/request-auto-close-service";
 import { createRequest } from "@/modules/requests/request-service";
 
 const ownerPool = new Pool({
@@ -207,6 +209,107 @@ describe("请求聊天生产流程", () => {
       [created.id, customer.id],
     );
     expect(result.rows[0]?.notification_count).toBe("1");
+  });
+
+  it("客户回复已分配请求会通知当前处理人和平台管理员", async () => {
+    const created = await createFixtureRequest("客户回复后台通知");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>技术员已接手处理。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    await addRequestMessage(customer, created.id, {
+      body: "<p>客户补充了新的问题信息。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+
+    const result = await ownerPool.query<{ user_id: string }>(
+      `
+        SELECT "userId" AS user_id
+        FROM "Notification"
+        WHERE "serviceRequestId" = $1
+          AND type = 'REQUEST_MESSAGE'
+          AND "readAt" IS NULL
+          AND "userId" = ANY($2::text[])
+        ORDER BY "userId"
+      `,
+      [created.id, [technician.id, admin.id]],
+    );
+    expect(result.rows.map((row) => row.user_id).sort()).toEqual(
+      [technician.id, admin.id].sort(),
+    );
+  });
+
+  it("已解决请求到期后会独立自动关闭并保持幂等", async () => {
+    const created = await createFixtureRequest("自动关闭");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>技术员开始处理。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    await changeRequestStatus(technician, created.id, "RESOLVED");
+    const resolvedAt = new Date("2026-07-10T00:00:00.000Z");
+    const sweepAt = new Date("2026-07-23T00:00:00.000Z");
+    await ownerPool.query(
+      `UPDATE "ServiceRequest" SET "resolvedAt" = $2 WHERE id = $1`,
+      [created.id, resolvedAt],
+    );
+
+    const first = await closeResolvedRequestsDue(sweepAt);
+    expect(first.failedCount).toBe(0);
+
+    const result = await ownerPool.query<{
+      status: string;
+      closed_at: string | null;
+      system_message_count: string;
+      audit_count: string;
+      event_count: string;
+    }>(
+      `SELECT
+         request.status::text,
+         request."closedAt"::text AS closed_at,
+         (SELECT COUNT(*)::text
+            FROM "RequestMessage" message
+           WHERE message."serviceRequestId" = request.id
+             AND message."isSystem" = true
+             AND message.body LIKE '%系统已自动关闭%') AS system_message_count,
+         (SELECT COUNT(*)::text
+            FROM "AuditLog" audit
+           WHERE audit."serviceRequestId" = request.id
+             AND audit.metadata->>'source' = 'AUTO_CLOSE_AFTER_RESOLUTION') AS audit_count,
+         (SELECT COUNT(*)::text
+            FROM "EventRecord" event
+           WHERE event."serviceRequestId" = request.id
+             AND event.payload->>'source' = 'AUTO_CLOSE_AFTER_RESOLUTION') AS event_count
+       FROM "ServiceRequest" request
+       WHERE request.id = $1`,
+      [created.id],
+    );
+    expect(result.rows[0]).toMatchObject({
+      status: "CLOSED",
+      closed_at: "2026-07-23 00:00:00",
+      system_message_count: "1",
+      audit_count: "1",
+    });
+    expect(Number(result.rows[0]?.event_count ?? 0)).toBeGreaterThan(0);
+
+    await closeResolvedRequestsDue(sweepAt);
+    const duplicateCheck = await ownerPool.query<{
+      system_message_count: string;
+      audit_count: string;
+    }>(
+      `SELECT
+         (SELECT COUNT(*)::text FROM "RequestMessage"
+           WHERE "serviceRequestId" = $1
+             AND "isSystem" = true
+             AND body LIKE '%系统已自动关闭%') AS system_message_count,
+         (SELECT COUNT(*)::text FROM "AuditLog"
+           WHERE "serviceRequestId" = $1
+             AND metadata->>'source' = 'AUTO_CLOSE_AFTER_RESOLUTION') AS audit_count`,
+      [created.id],
+    );
+    expect(duplicateCheck.rows[0]).toEqual({
+      system_message_count: "1",
+      audit_count: "1",
+    });
   });
 
   it("平台管理员公开回复不接手，后续技术员可以接手", async () => {

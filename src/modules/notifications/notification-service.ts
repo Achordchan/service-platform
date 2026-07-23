@@ -21,6 +21,7 @@ import {
 import {
   isProjectChangeAudible,
   isRequestChangeAudible,
+  planDingTalkRequestEvent,
   planStandardRequestEmailRecipientIds,
   PROJECT_UPDATE_NOTIFICATION_TYPES,
 } from "@/modules/notifications/activity-policy";
@@ -40,6 +41,7 @@ import {
   ruleKeyForRequestActivity,
 } from "@/modules/notifications/notification-delivery-rules";
 import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
+import { recordDingTalkRobotDelivery } from "@/modules/plugins/dingtalk-robot-service";
 import { notificationEmailDueAt } from "@/modules/notifications/notification-email-timing";
 import { listProjectCustomerUserIds } from "@/modules/projects/project-customer-recipient-query";
 
@@ -448,6 +450,10 @@ export async function dispatchRequestActivity(
       serviceRequestId: input.serviceRequestId,
     });
   }
+  await recordDingTalkRequestActivity(tx, actor, input, payload, {
+    enabled: rule.dingtalkEnabled,
+    customerActor: actor.platformRole === "CUSTOMER",
+  });
   return delivery;
 }
 
@@ -539,7 +545,34 @@ export async function dispatchExternalRequestActivity(
       serviceRequestId: input.serviceRequestId,
     });
   }
+  await recordDingTalkRequestActivity(tx, actor, input, payload, {
+    enabled: rule.dingtalkEnabled,
+    customerActor: true,
+  });
   return delivery;
+}
+
+async function recordDingTalkRequestActivity(
+  tx: Prisma.TransactionClient,
+  actor: Pick<Actor, "name"> | Pick<ExternalActor, "name">,
+  input: { eventType: string; serviceRequestId: string },
+  payload: Prisma.InputJsonObject,
+  options: { enabled: boolean; customerActor: boolean },
+) {
+  const delivery = planDingTalkRequestEvent({
+    enabled: options.enabled,
+    eventType: input.eventType,
+    requestId: input.serviceRequestId,
+    messageId:
+      typeof payload.messageId === "string" ? payload.messageId : undefined,
+    visibility:
+      typeof payload.visibility === "string" ? payload.visibility : undefined,
+    customerActor: options.customerActor,
+    actorName: actor.name,
+    occurredAt:
+      typeof payload.occurredAt === "string" ? payload.occurredAt : undefined,
+  });
+  if (delivery) await recordDingTalkRobotDelivery(tx, delivery);
 }
 
 export function requestStatusLabel(status: RequestStatus) {
@@ -1022,10 +1055,8 @@ async function persistActivityDelivery(
         delay_enabled: boolean;
       }>
     >`
-      SELECT "mailMode"::text AS mail_mode,
-             "standardRequestEmailEnabled" AS delay_enabled
-      FROM "PlatformSetting"
-      WHERE id = 1
+      SELECT mail_mode, delay_enabled
+      FROM app_notification_mail_runtime_settings()
     `;
     const users = await tx.user.findMany({
       where: { id: { in: emailCandidateUserIds } },

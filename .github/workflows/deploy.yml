@@ -58,6 +58,11 @@ jobs:
       - name: Unit tests
         run: pnpm test
 
+      - name: DingTalk plugin checks
+        run: |
+          pnpm typecheck:plugin:dingtalk
+          pnpm test:plugin:dingtalk
+
       - name: Go SDK tests
         run: pnpm test:sdk:go
 

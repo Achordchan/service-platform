@@ -13,7 +13,7 @@ import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { dispatchProjectActivity } from "@/modules/notifications/notification-service";
 import {
-  assertCanManageProjectDelivery,
+  assertCanManageActiveProjectDelivery,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
 import { assertFound, DomainError } from "@/modules/projects/errors";
@@ -111,7 +111,11 @@ export function createMilestone(
   input: CreateMilestoneInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const description = sanitizeMilestoneDescription(input.description);
     const milestone = await tx.milestone.create({
       data: {
@@ -168,7 +172,11 @@ export function updateMilestone(
   input: UpdateMilestoneInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const existing = await tx.milestone.findFirst({
       where: { id: milestoneId, projectId },
       select: {
@@ -282,7 +290,11 @@ export function deleteMilestone(
   milestoneId: string,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const existing = await tx.milestone.findFirst({
       where: { id: milestoneId, projectId },
       select: {

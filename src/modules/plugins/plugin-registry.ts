@@ -1,5 +1,13 @@
 import type { PlatformPluginManifest } from "@achord/platform-plugin-sdk";
 import {
+  DINGTALK_ROBOT_PLUGIN_KEY,
+  dingTalkRobotManifest,
+} from "@achord/plugin-dingtalk-robot";
+import {
+  parseDingTalkRobotBinding,
+  parseDingTalkRobotConfig,
+} from "@achord/plugin-dingtalk-robot/config";
+import {
   IMAGE_WEBP_PLUGIN_KEY,
   imageWebpManifest,
   parseImageWebpConfig,
@@ -39,12 +47,32 @@ export function configsMatch(left: unknown, right: unknown) {
 export type RegisteredPlugin = {
   manifest: PlatformPluginManifest<Record<string, unknown>>;
   parseConfig: (value: unknown) => Record<string, unknown>;
-  healthCheck?: () =>
+  parseSecretConfig?: (value: unknown) => Record<string, string>;
+  healthConfig?: (
+    config: Record<string, unknown>,
+  ) => Record<string, unknown>;
+  healthCheck?: (context: {
+    config: Record<string, unknown>;
+    secrets: Record<string, string>;
+  }) =>
     | Promise<Record<string, string>>
     | Record<string, string>;
 };
 
 const registeredPlugins: readonly RegisteredPlugin[] = [
+  {
+    manifest:
+      dingTalkRobotManifest as PlatformPluginManifest<Record<string, unknown>>,
+    parseConfig: (value) => parseDingTalkRobotConfig(value),
+    parseSecretConfig: (value) => parseDingTalkRobotBinding(value),
+    healthConfig: () => ({}),
+    healthCheck: async () => {
+      const { getDingTalkRobotRuntimeHealth } = await import(
+        "@achord/plugin-dingtalk-robot/runtime"
+      );
+      return getDingTalkRobotRuntimeHealth();
+    },
+  },
   {
     manifest:
       imageWebpManifest as PlatformPluginManifest<Record<string, unknown>>,
@@ -85,6 +113,7 @@ const registeredPlugins: readonly RegisteredPlugin[] = [
 ];
 
 export {
+  DINGTALK_ROBOT_PLUGIN_KEY,
   IMAGE_WEBP_PLUGIN_KEY,
   SUB2API_CONNECTOR_PLUGIN_KEY,
   UNIVERSAL_EMBED_CONNECTOR_PLUGIN_KEY,
@@ -119,6 +148,22 @@ export function tryParseRegisteredPluginConfig(
   }
 }
 
+export function tryParseRegisteredPluginSecretConfig(
+  pluginKey: string,
+  value: unknown,
+): PluginConfigParseResult {
+  const plugin = getRegisteredPlugin(pluginKey);
+  if (!plugin.parseSecretConfig) return { ok: true, config: {} };
+  try {
+    return { ok: true, config: plugin.parseSecretConfig(value) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : "插件敏感配置无效",
+    };
+  }
+}
+
 /** Parse config for display. Invalid configs keep raw values and never fall back to defaults. */
 export function normalizeRegisteredPluginConfig(
   pluginKey: string,
@@ -127,7 +172,14 @@ export function normalizeRegisteredPluginConfig(
   const parsed = tryParseRegisteredPluginConfig(pluginKey, value);
   if (parsed.ok) return parsed.config;
   if (value && typeof value === "object" && !Array.isArray(value)) {
-    return value as Record<string, unknown>;
+    const secretKeys = new Set(
+      getRegisteredPlugin(pluginKey).manifest.settings
+        .filter((field) => field.type === "secret-url")
+        .map((field) => field.key),
+    );
+    return Object.fromEntries(
+      Object.entries(value).filter(([key]) => !secretKeys.has(key)),
+    );
   }
   return {};
 }
@@ -140,4 +192,12 @@ export function getRegisteredPlugin(pluginKey: string) {
     throw new DomainError("PLUGIN_NOT_FOUND", "插件不存在", 404);
   }
   return plugin;
+}
+
+export function registeredPluginHealthConfig(
+  pluginKey: string,
+  config: Record<string, unknown>,
+) {
+  const plugin = getRegisteredPlugin(pluginKey);
+  return plugin.healthConfig ? plugin.healthConfig(config) : config;
 }

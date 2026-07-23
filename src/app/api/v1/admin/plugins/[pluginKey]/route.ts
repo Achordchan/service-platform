@@ -11,6 +11,7 @@ const schema = z
   .object({
     enabled: z.boolean().optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    secrets: z.record(z.string(), z.unknown()).optional(),
   })
   .refine((value) => Object.keys(value).length > 0, {
     message: "至少提交一个插件配置",
@@ -24,7 +25,9 @@ export async function PATCH(
   if (auth.response) return auth.response;
   try {
     const { pluginKey } = await context.params;
-    const input = schema.parse(await readJson(request));
+    const input = schema.parse(
+      await readJson(request, { maxBytes: 64 * 1024 }),
+    );
     const plugin = await updatePluginInstallation(
       auth.actor,
       pluginKey,

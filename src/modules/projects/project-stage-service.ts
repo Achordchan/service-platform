@@ -4,8 +4,8 @@ import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { dispatchProjectActivity } from "@/modules/notifications/notification-service";
-import { assertCanManageProjectDelivery } from "@/modules/projects/project-access";
-import { DomainError, assertFound } from "@/modules/projects/errors";
+import { assertCanManageActiveProjectDelivery } from "@/modules/projects/project-access";
+import { assertFound } from "@/modules/projects/errors";
 import type { UpdateProjectStageInput } from "@/modules/projects/schemas";
 
 export function updateProjectStage(
@@ -14,20 +14,16 @@ export function updateProjectStage(
   input: UpdateProjectStageInput,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      projectId,
+    );
     const existing = await tx.project.findUnique({
       where: { id: projectId },
-      select: { id: true, status: true, currentStage: true },
+      select: { id: true, currentStage: true },
     });
     assertFound(existing, "项目不存在");
-
-    if (existing.status === "DRAFT") {
-      throw new DomainError(
-        "EXTERNAL_PROJECT_NOT_ACTIVATED",
-        "请先完成外部接入并激活项目",
-        409,
-      );
-    }
 
     const project = await tx.project.update({
       where: { id: projectId },

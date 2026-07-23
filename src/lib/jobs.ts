@@ -27,6 +27,10 @@ import {
 } from "@/modules/plugins/image-webp-runtime-service";
 import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 import {
+  listDueDingTalkRobotDeliveries,
+  processDingTalkRobotDelivery,
+} from "@/modules/plugins/dingtalk-robot-service";
+import {
   cleanupExpiredUniversalLaunchTickets,
 } from "@/modules/integrations/universal/ticket-service";
 import { cleanupAbandonedInlineAttachments } from "@/modules/attachments/inline-attachment-service";
@@ -35,6 +39,7 @@ import {
   processUniversalWebhookDelivery,
 } from "@/modules/integrations/universal/webhook-service";
 import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
+import { closeResolvedRequestsDue } from "@/modules/requests/request-auto-close-service";
 import {
   describeMailQueueFailure,
   formatMailFailureMessage,
@@ -49,6 +54,9 @@ export const UNIVERSAL_MAINTENANCE_JOB = "universal-maintenance";
 export const INLINE_ATTACHMENT_MAINTENANCE_JOB =
   "inline-attachment-maintenance";
 export const MAIL_OUTBOX_SWEEP_JOB = "mail-outbox-sweep";
+export const DINGTALK_ROBOT_JOB = "plugin-dingtalk-robot-delivery";
+export const DINGTALK_ROBOT_SWEEP_JOB = "plugin-dingtalk-robot-sweep";
+export const REQUEST_AUTO_CLOSE_SWEEP_JOB = "request-auto-close-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -67,6 +75,7 @@ type ImageWebpJobData =
     };
 
 type UniversalWebhookJobData = { deliveryId: string };
+type DingTalkRobotJobData = { deliveryId: string };
 
 export type EnqueueMailInput = {
   to: string;
@@ -105,6 +114,9 @@ async function startBoss() {
   await boss.createQueue(UNIVERSAL_MAINTENANCE_JOB);
   await boss.createQueue(INLINE_ATTACHMENT_MAINTENANCE_JOB);
   await boss.createQueue(MAIL_OUTBOX_SWEEP_JOB);
+  await boss.createQueue(DINGTALK_ROBOT_JOB);
+  await boss.createQueue(DINGTALK_ROBOT_SWEEP_JOB);
+  await boss.createQueue(REQUEST_AUTO_CLOSE_SWEEP_JOB);
   return boss;
 }
 
@@ -486,6 +498,32 @@ async function queueDueUniversalWebhooks() {
   }
 }
 
+export async function queueDingTalkRobotDelivery(
+  deliveryId: string,
+  startAfter?: Date | null,
+) {
+  const boss = await getBoss();
+  return boss.send(
+    DINGTALK_ROBOT_JOB,
+    { deliveryId },
+    {
+      retryLimit: 4,
+      retryDelay: 60,
+      retryBackoff: true,
+      ...(startAfter ? { startAfter } : {}),
+      singletonKey: deliveryId,
+      singletonSeconds: 30,
+    },
+  );
+}
+
+async function queueDueDingTalkRobotDeliveries() {
+  const deliveries = await listDueDingTalkRobotDeliveries();
+  for (const delivery of deliveries) {
+    await queueDingTalkRobotDelivery(delivery.id, delivery.nextAttemptAt);
+  }
+}
+
 function scheduleDatabaseListenerReconnect() {
   if (
     globalForBoss.databaseListenerReconnectTimer ||
@@ -513,6 +551,7 @@ async function startDatabaseListener() {
       await client.connect();
       await client.query("LISTEN service_platform_webhook_deliveries");
       await client.query("LISTEN service_platform_mail_outbox");
+      await client.query("LISTEN service_platform_dingtalk_deliveries");
     } catch (error) {
       await client.end().catch(() => undefined);
       throw error;
@@ -532,6 +571,12 @@ async function startDatabaseListener() {
             error instanceof Error ? error.message : String(error),
           );
         });
+        return;
+      }
+      if (message.channel === "service_platform_dingtalk_deliveries") {
+        const deliveryId = message.payload?.trim();
+        if (!deliveryId) return;
+        void queueDingTalkRobotDelivery(deliveryId).catch(() => undefined);
       }
     });
     const handleDisconnect = () => {
@@ -568,6 +613,8 @@ export async function startMailWorker() {
     await boss.schedule(UNIVERSAL_MAINTENANCE_JOB, "17 3 * * *");
     await boss.schedule(INLINE_ATTACHMENT_MAINTENANCE_JOB, "43 3 * * *");
     await boss.schedule(MAIL_OUTBOX_SWEEP_JOB, "* * * * *");
+    await boss.schedule(DINGTALK_ROBOT_SWEEP_JOB, "* * * * *");
+    await boss.schedule(REQUEST_AUTO_CLOSE_SWEEP_JOB, "7 * * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -638,6 +685,17 @@ export async function startMailWorker() {
         }
       },
     );
+    await boss.work<DingTalkRobotJobData>(
+      DINGTALK_ROBOT_JOB,
+      { batchSize: 1, localConcurrency: 1, includeMetadata: true },
+      async (jobs) => {
+        for (const job of jobs as JobWithMetadata<DingTalkRobotJobData>[]) {
+          await processDingTalkRobotDelivery(job.data.deliveryId, {
+            finalAttempt: job.retryCount >= job.retryLimit,
+          });
+        }
+      },
+    );
     await boss.work(
       UNIVERSAL_WEBHOOK_SWEEP_JOB,
       { batchSize: 1, localConcurrency: 1 },
@@ -660,14 +718,35 @@ export async function startMailWorker() {
       },
     );
     await boss.work(
+      DINGTALK_ROBOT_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await queueDueDingTalkRobotDeliveries();
+      },
+    );
+    await boss.work(
       INLINE_ATTACHMENT_MAINTENANCE_JOB,
       { batchSize: 1, localConcurrency: 1 },
       async () => {
         await cleanupAbandonedInlineAttachments();
       },
     );
+    await boss.work(
+      REQUEST_AUTO_CLOSE_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await closeResolvedRequestsDue();
+      },
+    );
     await queueDueUniversalWebhooks();
+    await queueDueDingTalkRobotDeliveries();
     await wakeMailOutbox();
+    await closeResolvedRequestsDue().catch((error) => {
+      console.error(
+        "ACHORD_REQUEST_AUTO_CLOSE_STARTUP_FAILED",
+        error instanceof Error ? error.message : String(error),
+      );
+    });
   })().catch((error) => {
     globalForBoss.bossWorkerStarted = false;
     globalForBoss.bossWorkerPromise = undefined;

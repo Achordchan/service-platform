@@ -4,6 +4,7 @@ import {
   findNotificationDeliveryRuleViolation,
   isNotificationEmailRuleEnabled,
   notificationTypesForEmailRule,
+  dingTalkEventTypesForRule,
   resolveNotificationSoundEnabled,
   ruleKeyForProjectNotification,
   ruleKeyForRequestActivity,
@@ -18,6 +19,7 @@ function rule(
     notificationEnabled: true,
     soundEnabled: true,
     emailEnabled: false,
+    dingtalkEnabled: false,
     ...input,
   };
 }
@@ -52,6 +54,12 @@ describe("后台通知规则", () => {
       "PROJECT_UPDATE",
       "UPDATE_COMMENT",
     ]);
+    expect(dingTalkEventTypesForRule("REQUEST_CREATED")).toEqual([
+      "REQUEST_CREATED",
+    ]);
+    expect(dingTalkEventTypesForRule("REQUEST_PUBLIC_MESSAGE")).toEqual([
+      "REQUEST_CUSTOMER_REPLIED",
+    ]);
   });
 
   it("拒绝重复场景和不支持的邮件渠道", () => {
@@ -68,6 +76,16 @@ describe("后台通知规则", () => {
         rule({ key: "REQUEST_INTERNAL_NOTE", emailEnabled: true }),
       ]),
     ).toEqual(expect.objectContaining({ code: "EMAIL_NOT_SUPPORTED" }));
+    expect(
+      findNotificationDeliveryRuleViolation([
+        rule({ key: "REQUEST_STATUS", dingtalkEnabled: true }),
+      ]),
+    ).toEqual(expect.objectContaining({ code: "DINGTALK_NOT_SUPPORTED" }));
+    expect(
+      findNotificationDeliveryRuleViolation([
+        rule({ key: "REQUEST_CREATED", dingtalkEnabled: true }),
+      ]),
+    ).toBeNull();
   });
 
   it("项目交付邮件支持显式开启，但默认保持关闭", () => {
@@ -75,6 +93,7 @@ describe("后台通知规则", () => {
       notificationEnabled: true,
       soundEnabled: true,
       emailEnabled: false,
+      dingtalkEnabled: false,
     });
     expect(
       findNotificationDeliveryRuleViolation([
@@ -108,6 +127,7 @@ describe("后台通知规则", () => {
               notificationEnabled: true,
               soundEnabled: true,
               emailEnabled: false,
+              dingtalkEnabled: false,
             },
           ],
         ]),
@@ -123,6 +143,7 @@ describe("后台通知规则", () => {
               notificationEnabled: true,
               soundEnabled: true,
               emailEnabled: true,
+              dingtalkEnabled: false,
             },
           ],
         ]),

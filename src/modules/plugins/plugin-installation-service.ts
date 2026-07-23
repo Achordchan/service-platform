@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { withSystemDb } from "@/lib/system-db";
 import {
   configsMatch,
+  DINGTALK_ROBOT_PLUGIN_KEY,
   listRegisteredPlugins,
   tryParseRegisteredPluginConfig,
 } from "@/modules/plugins/plugin-registry";
@@ -36,6 +37,16 @@ export async function applyPluginDisableSideEffects(
     },
     data: { expiresAt: now },
   });
+  if (pluginKey === DINGTALK_ROBOT_PLUGIN_KEY) {
+    await tx.dingTalkRobotDelivery.updateMany({
+      where: { status: { in: ["PENDING", "PROCESSING"] } },
+      data: {
+        status: "SKIPPED",
+        nextAttemptAt: null,
+        lastError: "插件已停用",
+      },
+    });
+  }
 }
 
 export async function ensurePluginInstallations() {
@@ -83,6 +94,7 @@ export async function ensurePluginInstallations() {
                   }
                 : {}),
               enabled: false,
+              healthConfigFingerprint: null,
               healthStatus: "ERROR",
               lastError: nextError,
             },
@@ -106,13 +118,16 @@ export async function ensurePluginInstallations() {
               ? {
                   version: manifest.version,
                   enabled: false,
+                  healthConfigFingerprint: null,
                   healthStatus: "UNKNOWN" as const,
                   lastCheckedAt: null,
                   lastError: null,
                 }
               : {}),
             ...(configChanged
-              ? { config: parsed.config as Prisma.InputJsonValue }
+              ? {
+                  config: parsed.config as Prisma.InputJsonValue,
+                }
               : {}),
           },
         });

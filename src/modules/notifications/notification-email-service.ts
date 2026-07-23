@@ -147,6 +147,7 @@ export async function createDueNotificationMailMessages() {
         notificationEnabled: true,
         soundEnabled: true,
         emailEnabled: true,
+        dingtalkEnabled: true,
       },
     });
     const deliveryRuleByKey = new Map<string, NotificationDeliveryRuleState>(

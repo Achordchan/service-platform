@@ -22,6 +22,7 @@ import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
@@ -83,6 +84,7 @@ export function ProjectDeliveryActions({
     projectId: project.id,
     context: "MILESTONE",
   });
+  const deliveryActive = isProjectDeliveryActive(project.status);
 
   async function execute(url: string, body: unknown) {
     setSubmitting(true);
@@ -213,7 +215,7 @@ export function ProjectDeliveryActions({
           },
         }}
       >
-        {canManage ? (
+        {canManage && deliveryActive ? (
           <>
             <Button
               size="small"
@@ -244,12 +246,6 @@ export function ProjectDeliveryActions({
               size="small"
               variant="outlined"
               startIcon={<RouteOutlinedIcon />}
-              disabled={project.status === "DRAFT"}
-              title={
-                project.status === "DRAFT"
-                  ? "完成外部接入后可更新阶段"
-                  : undefined
-              }
               onClick={() => {
                 setError("");
                 setStageValue(project.currentStage ?? "");

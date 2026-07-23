@@ -89,12 +89,16 @@ export function planStandardRequestEmailRecipientIds(input: {
     input.eventType === "REQUEST_MESSAGE_CREATED" &&
     input.visibility === "CUSTOMER_VISIBLE"
   ) {
-    recipients =
-      input.actorPlatformRole === "CUSTOMER"
-        ? input.relevantWorkerUserIds ?? []
-        : input.includeCustomers
-          ? input.customerUserIds
-          : [];
+    if (input.actorPlatformRole === "CUSTOMER") {
+      const workerUserIds = uniqueStrings(input.relevantWorkerUserIds ?? []);
+      recipients = [
+        ...workerUserIds,
+        ...(workerUserIds.length === 0 ? input.projectManagerUserIds : []),
+        ...input.platformAdminUserIds,
+      ];
+    } else {
+      recipients = input.includeCustomers ? input.customerUserIds : [];
+    }
   } else if (
     input.eventType === "REQUEST_STATUS_CHANGED" &&
     input.actorPlatformRole !== "CUSTOMER" &&
@@ -107,6 +111,50 @@ export function planStandardRequestEmailRecipientIds(input: {
   return uniqueStrings(recipients).filter(
     (userId) => userId !== input.actorId,
   );
+}
+
+export function planDingTalkRequestEvent(input: {
+  enabled: boolean;
+  eventType: string;
+  requestId: string;
+  messageId?: string;
+  visibility?: string;
+  customerActor: boolean;
+  actorName: string;
+  occurredAt?: string;
+}) {
+  if (!input.enabled) return null;
+  const occurredAt = parseOptionalDate(input.occurredAt);
+  if (input.eventType === "REQUEST_CREATED") {
+    return {
+      eventKey: `request-created:${input.requestId}`,
+      eventType: "REQUEST_CREATED" as const,
+      requestId: input.requestId,
+      actorName: input.actorName,
+      occurredAt,
+    };
+  }
+  if (
+    input.eventType !== "REQUEST_MESSAGE_CREATED" ||
+    !input.customerActor ||
+    input.visibility !== "CUSTOMER_VISIBLE" ||
+    !input.messageId
+  ) {
+    return null;
+  }
+  return {
+    eventKey: `customer-replied:${input.messageId}`,
+    eventType: "REQUEST_CUSTOMER_REPLIED" as const,
+    requestId: input.requestId,
+    actorName: input.actorName,
+    occurredAt,
+  };
+}
+
+function parseOptionalDate(value?: string) {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function isRequestStatus(value?: string): value is RequestStatus {

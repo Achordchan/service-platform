@@ -15,6 +15,7 @@ import {
   markNotificationRead,
 } from "@/modules/notifications/notification-service";
 import { updateNotificationPreferences } from "@/modules/users/notification-preference-service";
+import { createRequest } from "@/modules/requests/request-service";
 
 vi.mock("@/lib/jobs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/jobs")>();
@@ -34,6 +35,7 @@ const cleanup = {
   notificationIds: [] as string[],
   summaryNotificationIds: [] as string[],
   eventMarkers: [] as string[],
+  requestIds: [] as string[],
 };
 
 let admin: Actor;
@@ -42,15 +44,22 @@ let customerSpaceId = "";
 let originalMemberLimit = 0;
 let projectId = "";
 let requestId = "";
+let categoryId = "";
 let originalMailMode = "LOCAL_OUTBOX";
 let originalStandardMailEnabled = false;
 let originalUserMailEnabled = true;
+let originalAdminMailEnabled = true;
 let originalProjectUpdateRule: {
   notificationEnabled: boolean;
   soundEnabled: boolean;
   emailEnabled: boolean;
 } | null = null;
 let originalRequestPublicMessageRule: {
+  notificationEnabled: boolean;
+  soundEnabled: boolean;
+  emailEnabled: boolean;
+} | null = null;
+let originalRequestCreatedRule: {
   notificationEnabled: boolean;
   soundEnabled: boolean;
   emailEnabled: boolean;
@@ -68,6 +77,7 @@ beforeAll(async () => {
     member_limit: number;
     project_id: string;
     request_id: string;
+    category_id: string;
   }>(
     `
       SELECT
@@ -80,7 +90,8 @@ beforeAll(async () => {
         project."customerSpaceId" AS customer_space_id,
         customer_space."memberLimit" AS member_limit,
         project.id AS project_id,
-        request.id AS request_id
+        request.id AS request_id,
+        request."categoryId" AS category_id
       FROM "User" admin
       JOIN "User" customer ON customer.email = 'client@local.test'
       JOIN "Membership" membership
@@ -116,6 +127,7 @@ beforeAll(async () => {
   originalMemberLimit = row.member_limit;
   projectId = row.project_id;
   requestId = row.request_id;
+  categoryId = row.category_id;
 
   const settings = await pool.query<{
     mail_mode: string;
@@ -133,6 +145,12 @@ beforeAll(async () => {
     [customer.id],
   );
   originalUserMailEnabled = preference.rows[0]?.enabled ?? true;
+  const adminPreference = await pool.query<{ enabled: boolean }>(
+    `SELECT "requestEmailNotificationsEnabled" AS enabled
+       FROM "User" WHERE id = $1`,
+    [admin.id],
+  );
+  originalAdminMailEnabled = adminPreference.rows[0]?.enabled ?? true;
   const projectRule = await pool.query<{
     notification_enabled: boolean;
     sound_enabled: boolean;
@@ -168,6 +186,24 @@ beforeAll(async () => {
           requestPublicMessageRule.rows[0].notification_enabled,
         soundEnabled: requestPublicMessageRule.rows[0].sound_enabled,
         emailEnabled: requestPublicMessageRule.rows[0].email_enabled,
+      }
+    : null;
+  const requestCreatedRule = await pool.query<{
+    notification_enabled: boolean;
+    sound_enabled: boolean;
+    email_enabled: boolean;
+  }>(
+    `SELECT "notificationEnabled" AS notification_enabled,
+            "soundEnabled" AS sound_enabled,
+            "emailEnabled" AS email_enabled
+       FROM "NotificationDeliveryRule"
+      WHERE key = 'REQUEST_CREATED'`,
+  );
+  originalRequestCreatedRule = requestCreatedRule.rows[0]
+    ? {
+        notificationEnabled: requestCreatedRule.rows[0].notification_enabled,
+        soundEnabled: requestCreatedRule.rows[0].sound_enabled,
+        emailEnabled: requestCreatedRule.rows[0].email_enabled,
       }
     : null;
 });
@@ -211,6 +247,18 @@ afterAll(async () => {
       [cleanup.eventMarkers],
     );
   }
+  if (cleanup.requestIds.length > 0) {
+    await pool.query(
+      `DELETE FROM "AuditLog"
+       WHERE "serviceRequestId" = ANY($1::text[])
+          OR "resourceId" = ANY($1::text[])`,
+      [cleanup.requestIds],
+    );
+    await pool.query(
+      `DELETE FROM "ServiceRequest" WHERE id = ANY($1::text[])`,
+      [cleanup.requestIds],
+    );
+  }
   await pool.query(
     `UPDATE "PlatformSetting"
      SET "mailMode" = $1::"MailDeliveryMode",
@@ -229,6 +277,13 @@ afterAll(async () => {
          "updatedAt" = NOW()
      WHERE id = $2`,
     [originalUserMailEnabled, customer.id],
+  );
+  await pool.query(
+    `UPDATE "User"
+     SET "requestEmailNotificationsEnabled" = $1,
+         "updatedAt" = NOW()
+     WHERE id = $2`,
+    [originalAdminMailEnabled, admin.id],
   );
   if (originalProjectUpdateRule) {
     await pool.query(
@@ -271,6 +326,27 @@ afterAll(async () => {
     await pool.query(
       `DELETE FROM "NotificationDeliveryRule"
        WHERE key = 'REQUEST_PUBLIC_MESSAGE'`,
+    );
+  }
+  if (originalRequestCreatedRule) {
+    await pool.query(
+      `INSERT INTO "NotificationDeliveryRule" (
+         key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+       ) VALUES ('REQUEST_CREATED', $1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         "notificationEnabled" = EXCLUDED."notificationEnabled",
+         "soundEnabled" = EXCLUDED."soundEnabled",
+         "emailEnabled" = EXCLUDED."emailEnabled",
+         "updatedAt" = NOW()`,
+      [
+        originalRequestCreatedRule.notificationEnabled,
+        originalRequestCreatedRule.soundEnabled,
+        originalRequestCreatedRule.emailEnabled,
+      ],
+    );
+  } else {
+    await pool.query(
+      `DELETE FROM "NotificationDeliveryRule" WHERE key = 'REQUEST_CREATED'`,
     );
   }
   await pool.end();
@@ -422,6 +498,58 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     expect(scheduled?.email_due_at).not.toBeNull();
     expect(scheduled?.scheduled_after_four_minutes).toBe(true);
     expect(scheduled?.scheduled_before_six_minutes).toBe(true);
+  });
+
+  it("客户新建标准工单会为平台管理员创建并投递邮件 Outbox", async () => {
+    await configureStandardMail(true, false);
+    await setUserMailPreference(admin.id, true);
+    await setRequestCreatedMailRule(true);
+
+    const created = await createRequest(customer, projectId, {
+      title: `管理员新工单邮件 ${randomUUID().slice(0, 8)}`,
+      description: "<p>验证客户新建工单后平台管理员可以收到邮件。</p>",
+      categoryId,
+      priority: "NORMAL",
+    });
+    cleanup.requestIds.push(created.id);
+
+    const notification = await pool.query<{
+      id: string;
+      email_due_at: Date | null;
+    }>(
+      `SELECT id, "emailDueAt" AS email_due_at
+         FROM "Notification"
+        WHERE "serviceRequestId" = $1
+          AND "userId" = $2
+          AND type = 'REQUEST_CREATED'
+          AND "readAt" IS NULL
+        LIMIT 1`,
+      [created.id, admin.id],
+    );
+    const adminNotification = notification.rows[0];
+    expect(adminNotification?.email_due_at).not.toBeNull();
+    cleanup.notificationIds.push(adminNotification!.id);
+
+    const createdMailIds = await createDueNotificationMailMessages();
+    const message = await pool.query<{
+      to_email: string;
+      source_type: string;
+      status: string;
+    }>(
+      `SELECT "toEmail" AS to_email,
+              "sourceType" AS source_type,
+              status::text
+         FROM "MailMessage"
+        WHERE "notificationId" = $1
+          AND id = ANY($2::text[])
+        LIMIT 1`,
+      [adminNotification!.id, createdMailIds],
+    );
+    expect(message.rows[0]).toEqual({
+      to_email: admin.email,
+      source_type: "STANDARD_REQUEST_NOTIFICATION",
+      status: "QUEUED",
+    });
   });
 
   it("关闭未读延迟后，规则开启的新事件立即进入邮件队列", async () => {
@@ -694,6 +822,30 @@ async function setRequestPublicMessageMailRule(emailEnabled: boolean) {
        "emailEnabled" = EXCLUDED."emailEnabled",
        "updatedAt" = NOW()`,
     [emailEnabled],
+  );
+}
+
+async function setRequestCreatedMailRule(emailEnabled: boolean) {
+  await pool.query(
+    `INSERT INTO "NotificationDeliveryRule" (
+       key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+     ) VALUES ('REQUEST_CREATED', true, true, $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET
+       "notificationEnabled" = true,
+       "soundEnabled" = true,
+       "emailEnabled" = EXCLUDED."emailEnabled",
+       "updatedAt" = NOW()`,
+    [emailEnabled],
+  );
+}
+
+async function setUserMailPreference(userId: string, enabled: boolean) {
+  await pool.query(
+    `UPDATE "User"
+     SET "requestEmailNotificationsEnabled" = $1,
+         "updatedAt" = NOW()
+     WHERE id = $2`,
+    [enabled, userId],
   );
 }
 

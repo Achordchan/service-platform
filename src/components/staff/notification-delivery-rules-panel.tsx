@@ -19,18 +19,53 @@ import type { NotificationDeliveryRuleView } from "@/modules/notifications/notif
 
 export type { NotificationDeliveryRuleView };
 
-type Channel = "notificationEnabled" | "soundEnabled" | "emailEnabled";
+type Channel =
+  | "notificationEnabled"
+  | "soundEnabled"
+  | "emailEnabled"
+  | "dingtalkEnabled";
+
+const channelDefinitions = [
+  ["notificationEnabled", "通知红点"],
+  ["soundEnabled", "页面提示音"],
+  ["emailEnabled", "邮件提醒"],
+  ["dingtalkEnabled", "钉钉机器人"],
+] as const satisfies ReadonlyArray<readonly [Channel, string]>;
+
+export function notificationRuleChannels(
+  mailEnabled: boolean,
+  dingTalkPluginEnabled: boolean,
+) {
+  return channelDefinitions.filter(([channel]) => {
+    if (channel === "emailEnabled") return mailEnabled;
+    if (channel === "dingtalkEnabled") return dingTalkPluginEnabled;
+    return true;
+  });
+}
+
+function channelSupported(
+  rule: NotificationDeliveryRuleView,
+  channel: Channel,
+) {
+  if (channel === "emailEnabled") return rule.emailSupported;
+  if (channel === "dingtalkEnabled") return rule.dingtalkSupported;
+  return true;
+}
 
 export function NotificationDeliveryRulesPanel({
   initialRules,
   standardEmailUnreadDelayEnabled,
   mailMode,
+  dingTalkPluginEnabled,
+  dingTalkPluginReady,
   onRulesChange,
   onUnreadDelayChange,
 }: {
   initialRules: NotificationDeliveryRuleView[];
   standardEmailUnreadDelayEnabled: boolean;
   mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
+  dingTalkPluginEnabled: boolean;
+  dingTalkPluginReady: boolean;
   onRulesChange?: (rules: NotificationDeliveryRuleView[]) => void;
   onUnreadDelayChange?: (enabled: boolean) => void;
 }) {
@@ -40,6 +75,11 @@ export function NotificationDeliveryRulesPanel({
   const [savingEmailSwitch, setSavingEmailSwitch] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+  const mailEnabled = mailMode !== "LOCAL_OUTBOX";
+  const visibleChannels = notificationRuleChannels(
+    mailEnabled,
+    dingTalkPluginEnabled,
+  );
   const categories = useMemo(
     () => [...new Set(rules.map((rule) => rule.category))],
     [rules],
@@ -54,7 +94,8 @@ export function NotificationDeliveryRulesPanel({
       !saved ||
       saved.notificationEnabled !== rule.notificationEnabled ||
       saved.soundEnabled !== rule.soundEnabled ||
-      saved.emailEnabled !== rule.emailEnabled
+      saved.emailEnabled !== rule.emailEnabled ||
+      saved.dingtalkEnabled !== rule.dingtalkEnabled
     );
   });
 
@@ -81,7 +122,7 @@ export function NotificationDeliveryRulesPanel({
   function updateColumn(channel: Channel, checked: boolean) {
     applyRules((current) =>
       current.map((rule) => {
-        if (channel === "emailEnabled" && !rule.emailSupported) return rule;
+        if (!channelSupported(rule, channel)) return rule;
         if (channel === "notificationEnabled" && !checked) {
           return { ...rule, notificationEnabled: false, emailEnabled: false };
         }
@@ -101,12 +142,21 @@ export function NotificationDeliveryRulesPanel({
       const next = await staffApi<NotificationDeliveryRuleView[]>(
         "/api/v1/admin/notification-delivery-rules",
         jsonRequest("PUT", {
-          rules: rules.map(({ key, notificationEnabled, soundEnabled, emailEnabled }) => ({
-            key,
-            notificationEnabled,
-            soundEnabled,
-            emailEnabled,
-          })),
+          rules: rules.map(
+            ({
+              key,
+              notificationEnabled,
+              soundEnabled,
+              emailEnabled,
+              dingtalkEnabled,
+            }) => ({
+              key,
+              notificationEnabled,
+              soundEnabled,
+              emailEnabled,
+              dingtalkEnabled,
+            }),
+          ),
         }),
       );
       setRules(next);
@@ -122,7 +172,7 @@ export function NotificationDeliveryRulesPanel({
 
   const columnChecked = (channel: Channel) =>
     rules
-      .filter((rule) => channel !== "emailEnabled" || rule.emailSupported)
+      .filter((rule) => channelSupported(rule, channel))
       .every((rule) => rule[channel]);
 
   async function updateUnreadDelay(enabled: boolean) {
@@ -145,47 +195,54 @@ export function NotificationDeliveryRulesPanel({
 
   return (
     <Stack spacing={2.5}>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
-          gap: 1.5,
-          alignItems: "center",
-          border: "1px solid",
-          borderColor: "divider",
-          px: 2,
-          py: 1.75,
-        }}
-      >
-        <Box sx={{ minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 700 }}>未读 5 分钟后发送</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
-            开启后，邮件提醒会等待 5 分钟；期间用户已阅读则自动取消。关闭后，新邮件提醒会尽快发送。
-          </Typography>
+      {mailEnabled ? (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "minmax(0, 1fr) auto" },
+            gap: 1.5,
+            alignItems: "center",
+            border: "1px solid",
+            borderColor: "divider",
+            px: 2,
+            py: 1.75,
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 700 }}>未读 5 分钟后发送</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+              开启后，邮件提醒会等待 5 分钟；期间用户已阅读则自动取消。关闭后，新邮件提醒会尽快发送。
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+            <Typography variant="body2" color="text.secondary">
+              {standardEmailUnreadDelayEnabled ? "延迟发送" : "尽快发送"}
+            </Typography>
+            <Switch
+              checked={standardEmailUnreadDelayEnabled}
+              disabled={savingEmailSwitch}
+              onChange={(event) =>
+                void updateUnreadDelay(event.target.checked)
+              }
+              slotProps={{ input: { "aria-label": "未读五分钟后发送" } }}
+            />
+          </Stack>
         </Box>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <Typography variant="body2" color="text.secondary">
-            {standardEmailUnreadDelayEnabled ? "延迟发送" : "尽快发送"}
-          </Typography>
-          <Switch
-            checked={standardEmailUnreadDelayEnabled}
-            disabled={savingEmailSwitch}
-            onChange={(event) =>
-              void updateUnreadDelay(event.target.checked)
-            }
-            slotProps={{ input: { "aria-label": "未读五分钟后发送" } }}
-          />
-        </Stack>
-      </Box>
-      {mailMode === "LOCAL_OUTBOX" ? (
-        <Alert severity="warning">
-          当前没有真实邮件通道；下方邮件规则可以配置，但需启用 SMTP 或 Resend 后才会发送新邮件。
-        </Alert>
-      ) : (
+      ) : null}
+      {mailEnabled ? (
         <Alert severity="info">
           下方“邮件提醒”决定各场景是否发信；此开关只控制发送时机。收件人个人偏好仍可单独关闭邮件。
         </Alert>
-      )}
+      ) : null}
+      {dingTalkPluginEnabled && !dingTalkPluginReady ? (
+        <Alert severity="warning">
+          钉钉机器人插件当前未通过运行环境检测，规则会保留，但新事件暂时不会发送。
+        </Alert>
+      ) : dingTalkPluginEnabled ? (
+        <Alert severity="info">
+          当前插件支持“新建服务请求”和“客户公开回复”。规则保存后对新事件立即生效，不补发历史内容，也不受邮件未读延迟控制。
+        </Alert>
+      ) : null}
       {error ? <Alert severity="error">{error}</Alert> : null}
       {success ? <Alert severity="success">{success}</Alert> : null}
       <Box
@@ -195,16 +252,15 @@ export function NotificationDeliveryRulesPanel({
           borderColor: "divider",
         }}
       >
-        <Table size="small" sx={{ minWidth: 720 }}>
+        <Table
+          size="small"
+          sx={{ minWidth: Math.max(560, 280 + visibleChannels.length * 150) }}
+        >
           <TableHead>
             <TableRow>
               <TableCell sx={{ width: 130 }}>业务分类</TableCell>
               <TableCell>通知场景</TableCell>
-              {([
-                ["notificationEnabled", "通知红点"],
-                ["soundEnabled", "页面提示音"],
-                ["emailEnabled", "邮件提醒"],
-              ] as const).map(([channel, label]) => (
+              {visibleChannels.map(([channel, label]) => (
                 <TableCell key={channel} align="center" sx={{ width: 150 }}>
                   <Stack
                     direction="row"
@@ -245,62 +301,46 @@ export function NotificationDeliveryRulesPanel({
                       {category}
                     </TableCell>
                   ) : null}
-                  <TableCell>{rule.label}</TableCell>
-                  <TableCell align="center">
-                    <Switch
-                      size="small"
-                      checked={rule.notificationEnabled}
-                      onChange={(event) =>
-                        updateRule(
-                          rule.key,
-                          "notificationEnabled",
-                          event.target.checked,
-                        )
-                      }
-                      slotProps={{
-                        input: { "aria-label": `${rule.label}通知红点` },
-                      }}
-                    />
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                      {rule.label}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {rule.description}
+                    </Typography>
                   </TableCell>
-                  <TableCell align="center">
-                    <Switch
-                      size="small"
-                      checked={rule.soundEnabled}
-                      onChange={(event) =>
-                        updateRule(
-                          rule.key,
-                          "soundEnabled",
-                          event.target.checked,
-                        )
-                      }
-                      slotProps={{
-                        input: { "aria-label": `${rule.label}页面提示音` },
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell align="center">
-                    {rule.emailSupported ? (
-                      <Switch
-                        size="small"
-                        checked={rule.emailEnabled}
-                        disabled={!rule.notificationEnabled}
-                        onChange={(event) =>
-                          updateRule(
-                            rule.key,
-                            "emailEnabled",
-                            event.target.checked,
-                          )
-                        }
-                        slotProps={{
-                          input: { "aria-label": `${rule.label}邮件提醒` },
-                        }}
-                      />
-                    ) : (
-                      <Typography variant="caption" color="text.secondary">
-                        不可用
-                      </Typography>
-                    )}
-                  </TableCell>
+                  {visibleChannels.map(([channel, label]) => (
+                    <TableCell key={channel} align="center">
+                      {channelSupported(rule, channel) ? (
+                        <Switch
+                          size="small"
+                          checked={rule[channel]}
+                          disabled={
+                            channel === "emailEnabled" &&
+                            !rule.notificationEnabled
+                          }
+                          onChange={(event) =>
+                            updateRule(
+                              rule.key,
+                              channel,
+                              event.target.checked,
+                            )
+                          }
+                          slotProps={{
+                            input: { "aria-label": `${rule.label}${label}` },
+                          }}
+                        />
+                      ) : (
+                        <Typography
+                          variant="body2"
+                          color="text.disabled"
+                          aria-label={`${rule.label}${label}不支持`}
+                        >
+                          —
+                        </Typography>
+                      )}
+                    </TableCell>
+                  ))}
                 </TableRow>
               ));
             })}

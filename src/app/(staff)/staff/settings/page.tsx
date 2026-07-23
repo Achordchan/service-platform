@@ -18,6 +18,7 @@ import {
 } from "@/modules/platform-settings/platform-setting-service";
 import { listMailTemplates } from "@/modules/platform-settings/mail-template-service";
 import { listNotificationDeliveryRules } from "@/modules/notifications/notification-delivery-rule-service";
+import { listPluginViews } from "@/modules/plugins/plugin-service";
 import { listRoleGroups } from "@/modules/users/role-group-service";
 
 export const metadata = {
@@ -30,14 +31,16 @@ export default async function StaffSettingsPage() {
     redirect("/staff/projects");
   }
 
-  const [settings, messages, mailSummary, notificationRules, roleGroups, templates] = await Promise.all([
+  const [settings, messages, mailSummary, notificationRules, roleGroups, templates, plugins] = await Promise.all([
     getPlatformSettings(actor),
     listMailMessages(actor, 50),
     getMailOutboxSummary(actor),
     listNotificationDeliveryRules(actor),
     listRoleGroups(actor),
     listMailTemplates(actor),
+    listPluginViews(actor),
   ]);
+  const dingTalkPlugin = plugins.find((plugin) => plugin.key === "dingtalk-robot");
 
   const settingsView: PlatformSettingsView = {
     appUrl: settings.appUrl,
@@ -130,6 +133,8 @@ export default async function StaffSettingsPage() {
           initialTemplates={templateViews}
           roleGroups={roleGroupViews}
           currentAdminEmail={actor.email}
+          dingTalkPluginEnabled={dingTalkPlugin?.enabled === true}
+          dingTalkPluginReady={dingTalkPlugin?.healthStatus === "READY"}
         />
       </Stack>
     </Container>

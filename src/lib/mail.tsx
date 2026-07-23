@@ -598,6 +598,7 @@ async function notificationMailStillSendable(message: {
         notificationEnabled: true,
         soundEnabled: true,
         emailEnabled: true,
+        dingtalkEnabled: true,
       },
     });
     const deliveryRuleByKey = new Map<string, NotificationDeliveryRuleState>(

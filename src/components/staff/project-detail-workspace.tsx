@@ -15,6 +15,7 @@ import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { ProjectStaffManager } from "@/components/staff/project-staff-manager";
 import { ProjectFileManager } from "@/components/staff/project-file-manager";
+import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
 import {
@@ -86,6 +87,7 @@ export function ProjectDetailWorkspace({
 }) {
   const [tab, setTab] = useState<ProjectTab>("overview");
   const activeTab = tab;
+  const deliveryActive = isProjectDeliveryActive(project.status);
   const { unread, refresh } = useUnreadNotifications();
   const requestIdSet = new Set(requests.map((item) => item.id));
   const updateUnread = countProjectUpdateUnread(unread, project.id);
@@ -155,46 +157,54 @@ export function ProjectDetailWorkspace({
               />
             }
           />
-          <Tab
-            value="milestones"
-            label={
-              <TabBadgeLabel
-                label={`里程碑 ${project.milestones.length}`}
-                count={projectScopeCounts.milestones}
-              />
-            }
-          />
-          <Tab
-            value="updates"
-            label={
-              <TabBadgeLabel
-                label={`进度动态 ${project.updates.length}`}
-                count={updateUnread}
-              />
-            }
-          />
-          <Tab
-            value="requests"
-            label={
-              <TabBadgeLabel
-                label={`服务请求 ${requests.length}`}
-                count={requestUnread}
-              />
-            }
-          />
-          <Tab
-            value="files"
-            label={
-              <TabBadgeLabel
-                label={`文件资料 ${project.attachments.length}`}
-                count={projectScopeCounts.files}
-              />
-            }
-          />
+          {deliveryActive ? (
+            <Tab
+              value="milestones"
+              label={
+                <TabBadgeLabel
+                  label={`里程碑 ${project.milestones.length}`}
+                  count={projectScopeCounts.milestones}
+                />
+              }
+            />
+          ) : null}
+          {deliveryActive ? (
+            <Tab
+              value="updates"
+              label={
+                <TabBadgeLabel
+                  label={`进度动态 ${project.updates.length}`}
+                  count={updateUnread}
+                />
+              }
+            />
+          ) : null}
+          {deliveryActive ? (
+            <Tab
+              value="requests"
+              label={
+                <TabBadgeLabel
+                  label={`服务请求 ${requests.length}`}
+                  count={requestUnread}
+                />
+              }
+            />
+          ) : null}
+          {deliveryActive ? (
+            <Tab
+              value="files"
+              label={
+                <TabBadgeLabel
+                  label={`文件资料 ${project.attachments.length}`}
+                  count={projectScopeCounts.files}
+                />
+              }
+            />
+          ) : null}
           {project.kind === "EXTERNAL_INTEGRATION" ? (
             <Tab value="integration" label="外部接入" />
           ) : null}
-          {project.kind === "EXTERNAL_INTEGRATION" ? (
+          {project.kind === "EXTERNAL_INTEGRATION" && deliveryActive ? (
             <Tab value="contacts" label="外部联系人" />
           ) : null}
         </Tabs>
@@ -277,7 +287,7 @@ export function ProjectDetailWorkspace({
         </Stack>
       ) : null}
 
-      {activeTab === "milestones" ? (
+      {activeTab === "milestones" && deliveryActive ? (
         <MilestoneManager
           projectId={project.id}
           milestones={project.milestones}
@@ -285,7 +295,7 @@ export function ProjectDetailWorkspace({
         />
       ) : null}
 
-      {activeTab === "updates" ? (
+      {activeTab === "updates" && deliveryActive ? (
         <Stack spacing={2}>
           {project.updates.map((update) => (
             <Paper key={update.id} variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
@@ -332,10 +342,10 @@ export function ProjectDetailWorkspace({
         </Stack>
       ) : null}
 
-      {activeTab === "requests" ? (
+      {activeTab === "requests" && deliveryActive ? (
         <RequestTable requests={requests} hideProjectFilter />
       ) : null}
-      {activeTab === "files" ? (
+      {activeTab === "files" && deliveryActive ? (
         <ProjectFileManager
           projectId={project.id}
           files={project.attachments}
@@ -349,7 +359,9 @@ export function ProjectDetailWorkspace({
           <Sub2ApiIntegrationPanel projectId={project.id} canEdit={canEditProject} />
         )
       ) : null}
-      {activeTab === "contacts" && project.kind === "EXTERNAL_INTEGRATION" ? (
+      {activeTab === "contacts" &&
+      project.kind === "EXTERNAL_INTEGRATION" &&
+      deliveryActive ? (
         <ExternalContactsPanel projectId={project.id} />
       ) : null}
     </Stack>

@@ -29,6 +29,13 @@ export type PluginSettingField =
       type: "boolean";
       label: string;
       description: string;
+    }
+  | {
+      key: string;
+      type: "secret-url";
+      label: string;
+      description: string;
+      required?: boolean;
     };
 
 export type PlatformPluginManifest<TConfig extends Record<string, unknown>> = {
