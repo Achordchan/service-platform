@@ -2,7 +2,6 @@ import "server-only";
 
 import { z } from "zod";
 import type { Actor } from "@/lib/actor";
-import { withActorDb } from "@/lib/actor";
 import { withSystemDb } from "@/lib/system-db";
 import {
   assertMailDeliveryReady,
@@ -17,7 +16,6 @@ import {
 } from "@/modules/invitations/invitation-token";
 import { getPublicAppUrl } from "@/modules/platform-settings/mail-settings-runtime";
 import {
-  assertAllowed,
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
@@ -31,7 +29,15 @@ export async function requestCustomerEmailChange(
   userId: string,
   rawEmail: string,
 ) {
-  assertAllowed(actor.isPlatformAdmin);
+  return requestUserEmailChange(actor, userId, rawEmail);
+}
+
+export async function requestUserEmailChange(
+  actor: Actor,
+  userId: string,
+  rawEmail: string,
+) {
+  await assertEmailChangeAccess(actor, userId);
   await assertMailDeliveryReady();
   const newEmail = emailSchema.parse(rawEmail).toLowerCase();
   const token = createInvitationToken();
@@ -39,7 +45,7 @@ export async function requestCustomerEmailChange(
   const appUrl = await getPublicAppUrl();
   const actionUrl = `${appUrl}/confirm-email-change?token=${encodeURIComponent(token.token)}`;
 
-  const result = await withActorDb(actor, async (tx) => {
+  const result = await withSystemDb(async (tx) => {
     const deliveryMode = await resolveLockedMailDeliveryMode(tx);
     await tx.userEmailChange.updateMany({
       where: {
@@ -58,14 +64,8 @@ export async function requestCustomerEmailChange(
         platformRole: true,
       },
     });
-    assertFound(user, "客户账号不存在");
-    if (user.platformRole !== "CUSTOMER") {
-      throw new DomainError(
-        "EMAIL_CHANGE_CUSTOMER_ONLY",
-        "该入口只用于修改客户账号邮箱",
-        409,
-      );
-    }
+    assertFound(user, "账号不存在");
+    assertCanManageEmailChange(actor, user.id, user.platformRole);
     if (user.email.toLowerCase() === newEmail) {
       throw new DomainError(
         "EMAIL_UNCHANGED",
@@ -124,7 +124,7 @@ export async function requestCustomerEmailChange(
       },
     });
     await writeAuditLog(tx, actor, {
-      action: "CUSTOMER_EMAIL_CHANGE_REQUESTED",
+      action: "USER_EMAIL_CHANGE_REQUESTED",
       resourceType: "UserEmailChange",
       resourceId: change.id,
       metadata: {
@@ -165,20 +165,33 @@ export async function resendCustomerEmailChange(
   actor: Actor,
   userId: string,
 ) {
-  assertAllowed(actor.isPlatformAdmin);
+  return resendUserEmailChange(actor, userId);
+}
+
+export async function resendUserEmailChange(actor: Actor, userId: string) {
+  await assertEmailChangeAccess(actor, userId);
   await assertMailDeliveryReady();
   const token = createInvitationToken();
   const now = new Date();
   const appUrl = await getPublicAppUrl();
   const actionUrl = `${appUrl}/confirm-email-change?token=${encodeURIComponent(token.token)}`;
-  const result = await withActorDb(actor, async (tx) => {
+  const result = await withSystemDb(async (tx) => {
     const deliveryMode = await resolveLockedMailDeliveryMode(tx);
     const change = await tx.userEmailChange.findFirst({
       where: { userId, status: "PENDING" },
-      include: { user: { select: { name: true } } },
+      include: {
+        user: {
+          select: { id: true, name: true, platformRole: true },
+        },
+      },
       orderBy: { createdAt: "desc" },
     });
     assertFound(change, "没有待验证的邮箱变更");
+    assertCanManageEmailChange(
+      actor,
+      change.user.id,
+      change.user.platformRole,
+    );
     if (change.expiresAt <= now) {
       await tx.userEmailChange.update({
         where: { id: change.id },
@@ -211,7 +224,7 @@ export async function resendCustomerEmailChange(
       },
     });
     await writeAuditLog(tx, actor, {
-      action: "CUSTOMER_EMAIL_CHANGE_RESENT",
+      action: "USER_EMAIL_CHANGE_RESENT",
       resourceType: "UserEmailChange",
       resourceId: change.id,
       metadata: { userId, newEmail: change.newEmail },
@@ -247,13 +260,24 @@ export async function resendCustomerEmailChange(
 }
 
 export function cancelCustomerEmailChange(actor: Actor, userId: string) {
-  assertAllowed(actor.isPlatformAdmin);
-  return withActorDb(actor, async (tx) => {
+  return cancelUserEmailChange(actor, userId);
+}
+
+export function cancelUserEmailChange(actor: Actor, userId: string) {
+  return withSystemDb(async (tx) => {
     const change = await tx.userEmailChange.findFirst({
       where: { userId, status: "PENDING" },
+      include: {
+        user: { select: { id: true, platformRole: true } },
+      },
       orderBy: { createdAt: "desc" },
     });
     assertFound(change, "没有待验证的邮箱变更");
+    assertCanManageEmailChange(
+      actor,
+      change.user.id,
+      change.user.platformRole,
+    );
     const updated = await tx.userEmailChange.update({
       where: { id: change.id },
       data: {
@@ -273,12 +297,47 @@ export function cancelCustomerEmailChange(actor: Actor, userId: string) {
       },
     });
     await writeAuditLog(tx, actor, {
-      action: "CUSTOMER_EMAIL_CHANGE_CANCELLED",
+      action: "USER_EMAIL_CHANGE_CANCELLED",
       resourceType: "UserEmailChange",
       resourceId: change.id,
       metadata: { userId, newEmail: change.newEmail },
     });
     return publicChange(updated);
+  });
+}
+
+export function getPendingUserEmailChange(actor: Actor, userId: string) {
+  return withSystemDb(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, platformRole: true },
+    });
+    assertFound(user, "账号不存在");
+    assertCanManageEmailChange(actor, user.id, user.platformRole);
+
+    const now = new Date();
+    await tx.userEmailChange.updateMany({
+      where: {
+        userId,
+        status: "PENDING",
+        expiresAt: { lte: now },
+      },
+      data: { status: "EXPIRED" },
+    });
+    const change = await tx.userEmailChange.findFirst({
+      where: { userId, status: "PENDING", expiresAt: { gt: now } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!change) return null;
+    const message = await tx.mailMessage.findFirst({
+      where: {
+        sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+        sourceId: change.id,
+      },
+      select: { status: true },
+      orderBy: { createdAt: "desc" },
+    });
+    return publicChange(change, message?.status);
   });
 }
 
@@ -367,10 +426,7 @@ export async function confirmCustomerEmailChange(rawToken: string) {
         410,
       );
     }
-    if (
-      change.user.platformRole !== "CUSTOMER" ||
-      change.user.email.toLowerCase() !== change.oldEmail
-    ) {
+    if (change.user.email.toLowerCase() !== change.oldEmail) {
       throw new DomainError(
         "EMAIL_CHANGE_STALE",
         "账号信息已经变化，请联系管理员重新发起",
@@ -433,7 +489,7 @@ export async function confirmCustomerEmailChange(rawToken: string) {
         isStaff: true,
       },
       {
-        action: "CUSTOMER_EMAIL_CHANGE_COMPLETED",
+        action: "USER_EMAIL_CHANGE_COMPLETED",
         resourceType: "UserEmailChange",
         resourceId: change.id,
         metadata: {
@@ -497,7 +553,7 @@ export async function confirmCustomerEmailChange(rawToken: string) {
     ),
   );
   if (notifications.some((item) => item.status === "rejected")) {
-    console.error("CUSTOMER_EMAIL_CHANGE_NOTICE_FAILED", {
+    console.error("USER_EMAIL_CHANGE_NOTICE_FAILED", {
       emailChangeId: result.change.id,
     });
   }
@@ -506,6 +562,33 @@ export async function confirmCustomerEmailChange(rawToken: string) {
     recipientName: result.recipientName,
     newEmail: result.change.newEmail,
   };
+}
+
+function assertCanManageEmailChange(
+  actor: Actor,
+  userId: string,
+  platformRole: string,
+) {
+  if (actor.id === userId) return;
+  if (actor.isPlatformAdmin && platformRole !== "PLATFORM_ADMIN") return;
+  throw new DomainError(
+    "EMAIL_CHANGE_FORBIDDEN",
+    platformRole === "PLATFORM_ADMIN"
+      ? "平台管理员只能修改自己的登录邮箱"
+      : "无权修改该账号的登录邮箱",
+    403,
+  );
+}
+
+function assertEmailChangeAccess(actor: Actor, userId: string) {
+  return withSystemDb(async (tx) => {
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      select: { id: true, platformRole: true },
+    });
+    assertFound(user, "账号不存在");
+    assertCanManageEmailChange(actor, user.id, user.platformRole);
+  });
 }
 
 async function assertEmailAvailable(

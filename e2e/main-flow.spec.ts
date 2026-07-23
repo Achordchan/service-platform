@@ -371,6 +371,56 @@ test.describe("主流程冒烟", () => {
     expect(hasHorizontalOverflow).toBe(false);
   });
 
+  test("团队成员本人和平台管理员都能进入邮箱变更流程", async () => {
+    await technicianPage.goto("/staff/account");
+    await expect(
+      technicianPage.getByRole("heading", { name: "个人设置" }),
+    ).toBeVisible();
+    await expect(
+      technicianPage.getByText("登录邮箱", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      technicianPage.getByLabel("当前登录邮箱"),
+    ).toHaveValue("tech@local.test");
+    await expect(
+      technicianPage.getByLabel("新的登录邮箱"),
+    ).toBeVisible();
+
+    await technicianPage.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await technicianPage.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 1,
+      ),
+    ).toBe(false);
+    await technicianPage.setViewportSize({ width: 1280, height: 720 });
+
+    await adminPage.goto("/staff/team");
+    const technicianRow = adminPage
+      .getByRole("row")
+      .filter({ hasText: "tech@local.test" });
+    await expect(technicianRow).toBeVisible();
+    await technicianRow.getByRole("button", { name: "编辑资料" }).click();
+    await expect(
+      adminPage.getByRole("dialog", { name: "编辑协作成员资料" }),
+    ).toBeVisible();
+    await adminPage.getByRole("button", { name: "修改邮箱" }).click();
+    await expect(
+      adminPage.getByRole("dialog", { name: "修改登录邮箱" }),
+    ).toBeVisible();
+    await expect(adminPage.getByLabel("当前登录邮箱")).toHaveValue(
+      "tech@local.test",
+    );
+
+    await adminPage.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await adminPage.evaluate(
+        () => document.documentElement.scrollWidth > window.innerWidth + 1,
+      ),
+    ).toBe(false);
+    await adminPage.getByRole("button", { name: "关闭" }).click();
+    await adminPage.setViewportSize({ width: 1280, height: 720 });
+  });
+
   test("客户可查看服务项目与请求列表", async () => {
     await expect(
       customerPage.getByRole("heading", {

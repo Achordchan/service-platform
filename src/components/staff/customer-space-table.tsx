@@ -25,7 +25,7 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { CreateCustomerSpaceDialog } from "@/components/staff/create-customer-space-dialog";
-import { CustomerEmailChangeDialog } from "@/components/staff/customer-email-change-dialog";
+import { AccountEmailChangeDialog } from "@/components/staff/account-email-change-dialog";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
@@ -452,9 +452,18 @@ export function CustomerSpaceTable({
           router.refresh();
         }}
       />
-      <CustomerEmailChangeDialog
+      <AccountEmailChangeDialog
         key={emailTarget?.ownerId ?? "closed-email-change"}
-        customer={emailTarget}
+        target={
+          emailTarget
+            ? {
+                id: emailTarget.ownerId,
+                name: emailTarget.ownerName,
+                email: emailTarget.ownerEmail,
+                pendingEmailChange: emailTarget.pendingEmailChange,
+              }
+            : null
+        }
         onClose={() => setEmailTarget(null)}
         onChanged={() => router.refresh()}
       />

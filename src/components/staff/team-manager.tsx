@@ -24,7 +24,9 @@ import {
 } from "@mui/material";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { AccountEmailChangeDialog } from "@/components/staff/account-email-change-dialog";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import type { PendingEmailChange } from "@/components/shared/email-change-control";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
 export type RoleGroupOption = {
@@ -38,6 +40,7 @@ export type TeamMemberView = {
   id: string;
   name: string;
   email: string;
+  pendingEmailChange: PendingEmailChange | null;
   platformRole: "PLATFORM_ADMIN" | "PROJECT_MANAGER" | "TECHNICIAN";
   phone: string | null;
   company: string | null;
@@ -102,6 +105,8 @@ export function TeamManager({
   const [success, setSuccess] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] =
+    useState<TeamMemberView | null>(null);
+  const [emailTarget, setEmailTarget] =
     useState<TeamMemberView | null>(null);
 
   const activeRoleGroups = useMemo(
@@ -277,6 +282,15 @@ export function TeamManager({
                       <Typography variant="body2" color="text.secondary">
                         {member.email}
                       </Typography>
+                      {member.pendingEmailChange ? (
+                        <Chip
+                          size="small"
+                          color="warning"
+                          variant="outlined"
+                          label={`待验证 ${member.pendingEmailChange.newEmail}`}
+                          sx={{ mt: 0.75, maxWidth: "100%" }}
+                        />
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">
@@ -434,20 +448,34 @@ export function TeamManager({
                 required
                 fullWidth
               />
-              <TextField
-                label="邮箱"
-                type="email"
-                value={form.email}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    email: event.target.value,
-                  }))
-                }
-                required
-                fullWidth
-                disabled={Boolean(editing)}
-              />
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ width: "100%" }}>
+                <TextField
+                  label="邮箱"
+                  type="email"
+                  value={form.email}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      email: event.target.value,
+                    }))
+                  }
+                  required
+                  fullWidth
+                  disabled={Boolean(editing)}
+                />
+                {editing ? (
+                  <Button
+                    variant="outlined"
+                    sx={{ flexShrink: 0 }}
+                    onClick={() => {
+                      setEmailTarget(editing);
+                      setEditing(null);
+                    }}
+                  >
+                    修改邮箱
+                  </Button>
+                ) : null}
+              </Stack>
             </Stack>
             <TextField
               select
@@ -616,6 +644,12 @@ export function TeamManager({
           setDeleteTarget(null);
           router.refresh();
         }}
+      />
+      <AccountEmailChangeDialog
+        key={emailTarget?.id ?? "closed-staff-email-change"}
+        target={emailTarget}
+        onClose={() => setEmailTarget(null)}
+        onChanged={() => router.refresh()}
       />
     </Stack>
   );

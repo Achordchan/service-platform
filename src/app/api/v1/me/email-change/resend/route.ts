@@ -5,16 +5,13 @@ import {
 } from "@/modules/projects/api-utils";
 import { resendUserEmailChange } from "@/modules/users/customer-email-change-service";
 
-export async function POST(
-  _request: Request,
-  context: { params: Promise<{ userId: string }> },
-) {
+export async function POST() {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
   try {
-    const { userId } = await context.params;
-    const result = await resendUserEmailChange(auth.actor, userId);
-    return NextResponse.json({ data: result });
+    return NextResponse.json({
+      data: await resendUserEmailChange(auth.actor, auth.actor.id),
+    });
   } catch (error) {
     return routeError(error);
   }

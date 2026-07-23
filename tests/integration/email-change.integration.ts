@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { Pool } from "pg";
+import type { Actor } from "@/lib/actor";
 import { dispatchQueuedMailMessage } from "@/lib/jobs";
 import {
   createInvitationToken,
 } from "@/modules/invitations/invitation-token";
 import {
   confirmCustomerEmailChange,
+  cancelUserEmailChange,
   getEmailChangePreview,
+  getPendingUserEmailChange,
+  requestUserEmailChange,
 } from "@/modules/users/customer-email-change-service";
 
 vi.mock("@/lib/jobs", async (importOriginal) => {
@@ -20,6 +24,10 @@ vi.mock("@/lib/jobs", async (importOriginal) => {
       .mockResolvedValue("email-change-test-job"),
   };
 });
+
+vi.mock("@/modules/platform-settings/mail-provider-lifecycle", () => ({
+  resolveLockedMailDeliveryMode: vi.fn().mockResolvedValue("RESEND"),
+}));
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -36,16 +44,35 @@ const fixture = {
 };
 const token = createInvitationToken();
 let adminId = "";
+let adminActor: Actor;
 let customerSpaceId = "";
+const staffFixture = {
+  userId: randomUUID(),
+  oldEmail: `staff-email-old-${randomUUID()}@local.test`,
+  selfEmail: `staff-email-self-${randomUUID()}@local.test`,
+  adminEmail: `staff-email-admin-${randomUUID()}@local.test`,
+};
+const staffActor: Actor = {
+  id: staffFixture.userId,
+  name: "邮箱变更测试成员",
+  email: staffFixture.oldEmail,
+  platformRole: "TECHNICIAN",
+  isPlatformAdmin: false,
+  isStaff: true,
+};
 
 beforeAll(async () => {
   const context = await pool.query<{
     admin_id: string;
+    admin_name: string;
+    admin_email: string;
     customer_space_id: string;
   }>(
     `
       SELECT
         admin.id AS admin_id,
+        admin.name AS admin_name,
+        admin.email AS admin_email,
         customer_space.id AS customer_space_id
       FROM "User" admin
       CROSS JOIN "CustomerSpace" customer_space
@@ -58,6 +85,14 @@ beforeAll(async () => {
   if (!adminId || !customerSpaceId) {
     throw new Error("请先执行 pnpm test:integration:prepare");
   }
+  adminActor = {
+    id: adminId,
+    name: context.rows[0]?.admin_name ?? "平台管理员",
+    email: context.rows[0]?.admin_email ?? "admin@local.test",
+    platformRole: "PLATFORM_ADMIN",
+    isPlatformAdmin: true,
+    isStaff: true,
+  };
 
   await pool.query(
     `
@@ -72,6 +107,20 @@ beforeAll(async () => {
       VALUES ($1, '邮箱变更测试客户', $2, true, 'CUSTOMER', NOW())
     `,
     [fixture.userId, fixture.oldEmail],
+  );
+  await pool.query(
+    `
+      INSERT INTO "User" (
+        id,
+        name,
+        email,
+        "emailVerified",
+        "platformRole",
+        "updatedAt"
+      )
+      VALUES ($1, '邮箱变更测试成员', $2, true, 'TECHNICIAN', NOW())
+    `,
+    [staffFixture.userId, staffFixture.oldEmail],
   );
   await pool.query(
     `
@@ -145,6 +194,14 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  await pool.query(
+    `DELETE FROM "MailMessage"
+      WHERE "sourceId" IN (
+        SELECT id FROM "UserEmailChange" WHERE "userId" = $1
+      )`,
+    [staffFixture.userId],
+  );
+  await pool.query(`DELETE FROM "User" WHERE id = $1`, [staffFixture.userId]);
   await pool.query(`DELETE FROM "MailMessage" WHERE "sourceId" = $1`, [
     fixture.changeId,
   ]);
@@ -153,6 +210,51 @@ afterAll(async () => {
   ]);
   await pool.query(`DELETE FROM "User" WHERE id = $1`, [fixture.userId]);
   await pool.end();
+});
+
+describe("通用账号邮箱变更", () => {
+  it("团队成员本人和平台管理员都可以发起，但其他用户不能代改", async () => {
+    const selfRequested = await requestUserEmailChange(
+      staffActor,
+      staffFixture.userId,
+      staffFixture.selfEmail,
+    );
+    expect(selfRequested).toMatchObject({
+      oldEmail: staffFixture.oldEmail,
+      newEmail: staffFixture.selfEmail,
+      status: "PENDING",
+    });
+    await expect(
+      getPendingUserEmailChange(staffActor, staffFixture.userId),
+    ).resolves.toMatchObject({ newEmail: staffFixture.selfEmail });
+
+    const customerActor: Actor = {
+      id: fixture.userId,
+      name: "邮箱变更测试客户",
+      email: fixture.oldEmail,
+      platformRole: "CUSTOMER",
+      isPlatformAdmin: false,
+      isStaff: false,
+    };
+    await expect(
+      getPendingUserEmailChange(customerActor, staffFixture.userId),
+    ).rejects.toThrow("无权修改该账号的登录邮箱");
+
+    await cancelUserEmailChange(adminActor, staffFixture.userId);
+    await expect(
+      getPendingUserEmailChange(staffActor, staffFixture.userId),
+    ).resolves.toBeNull();
+
+    const adminRequested = await requestUserEmailChange(
+      adminActor,
+      staffFixture.userId,
+      staffFixture.adminEmail,
+    );
+    expect(adminRequested).toMatchObject({
+      newEmail: staffFixture.adminEmail,
+      status: "PENDING",
+    });
+  });
 });
 
 describe("客户邮箱变更确认页", () => {

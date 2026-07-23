@@ -1,9 +1,11 @@
 import { Container, Stack } from "@mui/material";
 import { ProfileSettingsForm } from "@/components/shared/profile-settings-form";
+import { EmailChangeSettingsForm } from "@/components/shared/email-change-settings-form";
 import { NotificationPreferencesForm } from "@/components/shared/notification-preferences-form";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { prisma } from "@/lib/db";
 import { requireUserWithAccess } from "@/lib/session";
+import { getPendingUserEmailChange } from "@/modules/users/customer-email-change-service";
 
 export const metadata = {
   title: "个人设置",
@@ -11,15 +13,18 @@ export const metadata = {
 
 export default async function StaffAccountPage() {
   const { session, actor } = await requireUserWithAccess();
-  const profile = await prisma.user.findUnique({
-    where: { id: actor.id },
-    select: {
-      image: true,
-      name: true,
-      soundNotificationsEnabled: true,
-      requestEmailNotificationsEnabled: true,
-    },
-  });
+  const [profile, pendingEmailChange] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: actor.id },
+      select: {
+        image: true,
+        name: true,
+        soundNotificationsEnabled: true,
+        requestEmailNotificationsEnabled: true,
+      },
+    }),
+    getPendingUserEmailChange(actor, actor.id),
+  ]);
   return (
     <Container
       maxWidth={false}
@@ -34,6 +39,10 @@ export default async function StaffAccountPage() {
             email: actor.email,
             image: profile?.image ?? session.user.image,
           }}
+        />
+        <EmailChangeSettingsForm
+          currentEmail={actor.email}
+          initialPending={pendingEmailChange}
         />
         <NotificationPreferencesForm
           initialPreferences={{

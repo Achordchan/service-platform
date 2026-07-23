@@ -34,6 +34,15 @@ export default async function StaffTeamPage() {
     id: user.id,
     name: user.name,
     email: user.email,
+    pendingEmailChange: user.emailChanges[0]
+      ? {
+          id: user.emailChanges[0].id,
+          newEmail: user.emailChanges[0].newEmail,
+          expiresAt: user.emailChanges[0].expiresAt.toISOString(),
+          lastSentAt: user.emailChanges[0].lastSentAt.toISOString(),
+          mailStatus: user.emailChanges[0].mailStatus,
+        }
+      : null,
     platformRole: user.platformRole as TeamMemberView["platformRole"],
     phone: user.phone,
     company: user.company,

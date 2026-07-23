@@ -82,8 +82,13 @@ function profileData(input: {
 
 export function listInternalUsers(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
-  return withActorDb(actor, (tx) =>
-    tx.user.findMany({
+  return withActorDb(actor, async (tx) => {
+    const now = new Date();
+    await tx.userEmailChange.updateMany({
+      where: { status: "PENDING", expiresAt: { lte: now } },
+      data: { status: "EXPIRED" },
+    });
+    const users = await tx.user.findMany({
       where: {
         platformRole: {
           in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"],
@@ -104,6 +109,17 @@ export function listInternalUsers(actor: Actor) {
         contactNotes: true,
         roleGroupId: true,
         createdAt: true,
+        emailChanges: {
+          where: { status: "PENDING" },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            newEmail: true,
+            expiresAt: true,
+            lastSentAt: true,
+          },
+        },
         roleGroup: {
           select: {
             id: true,
@@ -122,8 +138,35 @@ export function listInternalUsers(actor: Actor) {
         },
       },
       orderBy: [{ platformRole: "asc" }, { createdAt: "desc" }],
-    }),
-  );
+    });
+    const changeIds = users.flatMap((user) =>
+      user.emailChanges.map((change) => change.id),
+    );
+    const messages =
+      changeIds.length > 0
+        ? await tx.mailMessage.findMany({
+            where: {
+              sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+              sourceId: { in: changeIds },
+            },
+            select: { sourceId: true, status: true },
+            orderBy: { createdAt: "desc" },
+          })
+        : [];
+    const latestStatusByChangeId = new Map<string, string>();
+    for (const message of messages) {
+      if (message.sourceId && !latestStatusByChangeId.has(message.sourceId)) {
+        latestStatusByChangeId.set(message.sourceId, message.status);
+      }
+    }
+    return users.map((user) => ({
+      ...user,
+      emailChanges: user.emailChanges.map((change) => ({
+        ...change,
+        mailStatus: latestStatusByChangeId.get(change.id) ?? null,
+      })),
+    }));
+  });
 }
 
 export function listStaffInvitations(actor: Actor) {
