@@ -57,7 +57,7 @@ export function updateExternalPresence(
       },
     });
     if (!request) {
-      throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+      throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
     }
     const now = new Date();
     const wasOnline = await isCustomerGroupOnline(tx, request.id, now);

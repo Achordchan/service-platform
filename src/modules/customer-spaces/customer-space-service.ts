@@ -9,6 +9,7 @@ import {
   dispatchQueuedMailMessage,
 } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { deactivateCustomerAccountIfOrphaned } from "@/modules/customer-spaces/customer-account-lifecycle";
 import { createInvitationToken } from "@/modules/invitations/invitation-token";
 import {
   assertAllowed,
@@ -85,17 +86,24 @@ export function listCustomerSpaces(actor: Actor) {
               sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
               sourceId: { in: changeIds },
             },
-            select: { sourceId: true, status: true },
+            select: { sourceId: true, status: true, errorMessage: true },
             orderBy: { createdAt: "desc" },
           })
         : [];
-    const latestStatusByChangeId = new Map<string, string>();
+    const latestMailByChangeId = new Map<
+      string,
+      { status: string; dispatchFailed: boolean }
+    >();
     for (const message of verificationMessages) {
       if (
         message.sourceId &&
-        !latestStatusByChangeId.has(message.sourceId)
+        !latestMailByChangeId.has(message.sourceId)
       ) {
-        latestStatusByChangeId.set(message.sourceId, message.status);
+        latestMailByChangeId.set(message.sourceId, {
+          status: message.status,
+          dispatchFailed:
+            message.status === "QUEUED" && Boolean(message.errorMessage),
+        });
       }
     }
     return spaces.map((space) => ({
@@ -104,7 +112,9 @@ export function listCustomerSpaces(actor: Actor) {
         ...space.owner,
         emailChanges: space.owner.emailChanges.map((change) => ({
           ...change,
-          mailStatus: latestStatusByChangeId.get(change.id) ?? null,
+          mailStatus: latestMailByChangeId.get(change.id)?.status ?? null,
+          mailDispatchFailed:
+            latestMailByChangeId.get(change.id)?.dispatchFailed ?? false,
         })),
       },
     }));
@@ -160,13 +170,26 @@ export async function createCustomerSpace(
           name: true,
           email: true,
           platformRole: true,
+          deletedAt: true,
+          memberships: {
+            where: { customerSpace: { kind: "STANDARD" } },
+            select: { id: true },
+            take: 1,
+          },
         },
       });
       assertFound(existingOwner, "空间所有者不存在");
-      if (existingOwner.platformRole !== "CUSTOMER") {
+      if (existingOwner.platformRole !== "CUSTOMER" || existingOwner.deletedAt) {
         throw new DomainError(
           "INVALID_SPACE_OWNER",
           "客户空间所有者必须是客户账号",
+          409,
+        );
+      }
+      if (existingOwner.memberships.length > 0) {
+        throw new DomainError(
+          "CUSTOMER_ACCOUNT_ALREADY_ASSIGNED",
+          "该客户账号已属于其他客户",
           409,
         );
       }
@@ -181,12 +204,32 @@ export async function createCustomerSpace(
           name: true,
           email: true,
           platformRole: true,
+          deletedAt: true,
+          memberships: {
+            where: { customerSpace: { kind: "STANDARD" } },
+            select: { id: true },
+            take: 1,
+          },
         },
       });
       if (existingOwner && existingOwner.platformRole !== "CUSTOMER") {
         throw new DomainError(
           "OWNER_EMAIL_IN_USE",
           "该邮箱已被内部工作人员使用",
+          409,
+        );
+      }
+      if (existingOwner?.deletedAt) {
+        throw new DomainError(
+          "OWNER_EMAIL_IN_USE",
+          "该邮箱对应的客户账号已被删除，请使用新的邮箱",
+          409,
+        );
+      }
+      if (existingOwner?.memberships.length) {
+        throw new DomainError(
+          "CUSTOMER_ACCOUNT_ALREADY_ASSIGNED",
+          "该客户账号已属于其他客户，请使用新的邮箱",
           409,
         );
       }
@@ -344,7 +387,19 @@ export function updateCustomerSpace(
     if (input.ownerId && input.ownerId !== existing.ownerId) {
       const newOwner = await tx.user.findUnique({
         where: { id: input.ownerId },
-        select: { id: true, platformRole: true },
+        select: {
+          id: true,
+          platformRole: true,
+          deletedAt: true,
+          memberships: {
+            where: {
+              customerSpace: { kind: "STANDARD" },
+              customerSpaceId: { not: customerSpaceId },
+            },
+            select: { id: true },
+            take: 1,
+          },
+        },
       });
       const existingMembership = await tx.membership.findUnique({
         where: {
@@ -356,10 +411,17 @@ export function updateCustomerSpace(
         select: { id: true },
       });
       assertFound(newOwner, "新的空间所有者不存在");
-      if (newOwner.platformRole !== "CUSTOMER") {
+      if (newOwner.platformRole !== "CUSTOMER" || newOwner.deletedAt) {
         throw new DomainError(
           "INVALID_SPACE_OWNER",
           "客户空间所有者必须是客户账号",
+          409,
+        );
+      }
+      if (!existingMembership && newOwner.memberships.length > 0) {
+        throw new DomainError(
+          "CUSTOMER_ACCOUNT_ALREADY_ASSIGNED",
+          "该客户账号已属于其他客户",
           409,
         );
       }
@@ -430,6 +492,12 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
             memberships: true,
           },
         },
+        memberships: {
+          select: { userId: true },
+        },
+        invitations: {
+          select: { id: true },
+        },
       },
     });
     assertFound(existing, "客户空间不存在");
@@ -443,6 +511,37 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
       customerSpaceId,
     );
 
+    const invitationIds = existing.invitations.map((invitation) => invitation.id);
+    if (invitationIds.length > 0) {
+      await tx.mailMessage.updateMany({
+        where: {
+          sourceType: {
+            in: ["CUSTOMER_OWNER_INVITATION", "CUSTOMER_MEMBER_INVITATION"],
+          },
+          sourceId: { in: invitationIds },
+          status: { in: ["QUEUED", "PROCESSING"] },
+        },
+        data: {
+          status: "CANCELLED",
+          errorMessage: "客户已删除",
+        },
+      });
+    }
+    let deletedAccountCount = 0;
+    for (const userId of new Set(
+      existing.memberships.map((membership) => membership.userId),
+    )) {
+      const deleted = await deactivateCustomerAccountIfOrphaned(
+        tx,
+        actor,
+        userId,
+        {
+          excludingCustomerSpaceId: customerSpaceId,
+          sourceCustomerSpaceId: customerSpaceId,
+        },
+      );
+      if (deleted) deletedAccountCount += 1;
+    }
     await tx.invitation.deleteMany({ where: { customerSpaceId } });
     await tx.membership.deleteMany({ where: { customerSpaceId } });
     await writeAuditLog(tx, actor, {
@@ -453,6 +552,7 @@ export function deleteCustomerSpace(actor: Actor, customerSpaceId: string) {
       metadata: {
         name: existing.name,
         membershipCount: existing._count.memberships,
+        deletedAccountCount,
       },
     });
     await tx.customerSpace.delete({ where: { id: customerSpaceId } });

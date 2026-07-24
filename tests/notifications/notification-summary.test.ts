@@ -5,6 +5,12 @@ describe("完整未读通知摘要", () => {
   it("31 条以上未读仍返回完整铃铛、导航、项目和工单计数", () => {
     const summary = summarizeUnreadNotificationGroups([
       {
+        type: "PROJECT_CREATED",
+        projectId: "project-1",
+        serviceRequestId: null,
+        _count: { _all: 1 },
+      },
+      {
         type: "PROJECT_UPDATE",
         projectId: "project-1",
         serviceRequestId: null,
@@ -24,9 +30,10 @@ describe("完整未读通知摘要", () => {
       },
     ]);
 
-    expect(summary.totalUnread).toBe(39);
+    expect(summary.totalUnread).toBe(40);
     expect(summary.navigation).toEqual({ projects: true, requests: true });
-    expect(summary.projectDeliveryCounts["project-1"]).toBe(32);
+    expect(summary.projectDeliveryCounts["project-1"]).toBe(33);
+    expect(summary.projectStageCounts["project-1"]).toBe(1);
     expect(summary.projectRequestCounts["project-1"]).toBe(7);
     expect(summary.requestUnreadCounts["request-1"]).toEqual({
       projectId: "project-1",

@@ -125,9 +125,9 @@ async function customerSpaceReport(tx: Tx, resourceId: string) {
     ),
     {
       key: "owner-account",
-      label: "负责人账号",
-      status: "PASS",
-      message: "负责人登录账号会保留，不会随客户空间删除",
+      label: "客户账号",
+      status: "WARN",
+      message: "仅属于该客户的负责人和普通成员账号将停用并退出登录",
     },
   ];
   return {
@@ -137,7 +137,7 @@ async function customerSpaceReport(tx: Tx, resourceId: string) {
     impacts: [
       impact("memberships", "成员关系", space._count.memberships, "DELETE"),
       impact("invitations", "邀请记录", space._count.invitations, "DELETE"),
-      impact("owner", "负责人账号", 1, "PRESERVE"),
+      impact("accounts", "客户账号", space._count.memberships, "DELETE"),
     ],
   };
 }
@@ -149,6 +149,7 @@ async function staffUserReport(tx: Tx, actor: Actor, resourceId: string) {
       id: true,
       name: true,
       platformRole: true,
+      deletedAt: true,
       _count: {
         select: {
           projectAssignments: true,
@@ -167,6 +168,9 @@ async function staffUserReport(tx: Tx, actor: Actor, resourceId: string) {
     },
   });
   assertFound(user, "用户不存在");
+  if (user.deletedAt) {
+    throw new DomainError("NOT_FOUND", "用户不存在", 404);
+  }
   const assignmentCount =
     user._count.projectAssignments +
     user._count.requestsAssigned +
@@ -212,27 +216,27 @@ async function staffUserReport(tx: Tx, actor: Actor, resourceId: string) {
     }),
     countCheck({
       key: "assignments",
-      label: "项目与工单分配",
+      label: "项目与服务请求分配",
       count: assignmentCount,
       blocking: true,
-      clearMessage: "没有未解除的项目或工单分配",
-      blockedMessage: `仍有 ${assignmentCount} 项项目或工单分配`,
+      clearMessage: "没有未解除的项目或服务请求分配",
+      blockedMessage: `仍有 ${assignmentCount} 项项目或服务请求分配`,
       actionHref: "/staff/projects",
     }),
     countCheck({
       key: "history",
-      label: "历史内容",
+      label: "曾发布的内容",
       count: historyCount,
-      blocking: true,
-      clearMessage: "没有需要保留作者关系的历史内容",
-      blockedMessage: `存在 ${historyCount} 条历史内容，暂不支持物理删除`,
+      blocking: false,
+      clearMessage: "该成员没有发布过需要保留的内容",
+      blockedMessage: `该成员曾发布 ${historyCount} 条内容。删除账号后内容继续保留，发布人显示为“已删除成员”。`,
     }),
   ];
   return {
     resourceLabel: user.name,
     confirmationMode: "SIMPLE" as const,
     checks,
-    impacts: [],
+    impacts: [impact("history", "历史内容", historyCount, "PRESERVE")],
   };
 }
 
@@ -339,7 +343,7 @@ async function projectReport(tx: Tx, resourceId: string) {
       ),
       impact("external-contacts", "外部联系人", externalContactCount, "DELETE"),
       impact("embed-sessions", "嵌入会话", embedSessionCount, "DELETE"),
-      impact("external-requests", "外部工单", externalRequestCount, "DELETE"),
+      impact("external-requests", "外部服务请求", externalRequestCount, "DELETE"),
     ],
   };
 }

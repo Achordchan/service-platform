@@ -44,6 +44,7 @@ import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/
 import { recordDingTalkRobotDelivery } from "@/modules/plugins/dingtalk-robot-service";
 import { notificationEmailDueAt } from "@/modules/notifications/notification-email-timing";
 import { listProjectCustomerUserIds } from "@/modules/projects/project-customer-recipient-query";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 type EventInput = {
   type: EventType;
@@ -221,6 +222,7 @@ export async function createNotification(
   };
   if (
     input.aggregationKey &&
+    !input.sourceId &&
     input.customerSpaceId &&
     input.projectId &&
     input.serviceRequestId
@@ -264,6 +266,8 @@ export async function createNotification(
           customerSpaceId: input.customerSpaceId,
           projectId: input.projectId,
           serviceRequestId: input.serviceRequestId,
+          sourceType: input.sourceType,
+          sourceId: input.sourceId,
           aggregationKey: input.aggregationKey,
           emailDueAt: input.emailDueAt,
         },
@@ -306,6 +310,7 @@ export async function dispatchProjectActivity(
     visibility: ContentVisibility;
     customerSpaceId: string;
     projectId: string;
+    contentRiskReviewId?: string;
   },
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
@@ -347,6 +352,49 @@ export async function dispatchProjectActivity(
         : [],
   });
   if (!rule.notificationEnabled) delivery.notifications = [];
+  return persistActivityDelivery(tx, delivery, {
+    contentRiskReviewId: input.contentRiskReviewId,
+  });
+}
+
+export async function dispatchProjectCreatedActivity(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    customerSpaceId: string;
+    projectId: string;
+    projectTitle: string;
+    standardProject: boolean;
+  },
+) {
+  const audience = await loadProjectAudience(tx, input.projectId);
+  const rule = await loadNotificationDeliveryRule(tx, "PROJECT_CREATED");
+  const delivery = planProjectActivity({
+    actorId: actor.id,
+    audience,
+    visibility: "CUSTOMER_VISIBLE",
+    eventType: "PROJECT_UPDATED",
+    eventPayload: {
+      change: "PROJECT_CREATED",
+      actorId: actor.id,
+      audible: rule.soundEnabled,
+      projectId: input.projectId,
+    },
+    notificationType: "PROJECT_CREATED",
+    notificationTitle: `新项目：${input.projectTitle}`,
+    notificationBody: `“${input.projectTitle}”已创建，请查看项目资料与后续进展。`,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    staffAudience: "PROJECT_MANAGERS",
+    emailRecipientUserIds:
+      input.standardProject && rule.emailEnabled
+        ? [
+            ...audience.customerUserIds,
+            ...audience.projectManagerUserIds,
+          ]
+        : [],
+  });
+  if (!rule.notificationEnabled) delivery.notifications = [];
   return persistActivityDelivery(tx, delivery);
 }
 
@@ -367,6 +415,7 @@ export async function dispatchRequestActivity(
       NotificationType,
       | "REQUEST_CREATED"
       | "REQUEST_ASSIGNED"
+      | "REQUEST_CLAIMED"
       | "REQUEST_MESSAGE"
       | "REQUEST_STATUS"
       | "REQUEST_ATTACHMENT"
@@ -381,10 +430,14 @@ export async function dispatchRequestActivity(
     notifyPlatformAdmins: boolean;
     createNotifications?: boolean;
     audible?: boolean;
+    eventAudience?: "DEFAULT" | "NOTIFICATION_RECIPIENTS";
     includeExternalContact?: boolean;
     customerSpaceId: string;
     projectId: string;
     serviceRequestId: string;
+    sourceType?: string;
+    sourceId?: string;
+    contentRiskReviewId?: string;
   },
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
@@ -394,6 +447,16 @@ export async function dispatchRequestActivity(
   });
   const includeCustomers =
     input.includeCustomers && project.customerRequestsEnabled;
+  const validWorkerUserIds = new Set([
+    ...audience.projectStaffUserIds,
+    ...audience.platformAdminUserIds,
+  ]);
+  const relevantWorkerUserIds = uniqueStrings(
+    input.relevantWorkerUserIds ?? [],
+  ).filter((userId) => validWorkerUserIds.has(userId));
+  const emailWorkerUserIds = uniqueStrings(
+    input.emailWorkerUserIds ?? [],
+  ).filter((userId) => validWorkerUserIds.has(userId));
   const payload = jsonObject(input.eventPayload);
   const rule = await loadNotificationDeliveryRule(
     tx,
@@ -407,7 +470,16 @@ export async function dispatchRequestActivity(
     input.createNotifications !== false && rule.notificationEnabled;
   const emailRecipientUserIds =
     project.kind === "STANDARD" && createNotifications && rule.emailEnabled
-      ? standardRequestEmailRecipients(actor, input, audience, includeCustomers)
+      ? standardRequestEmailRecipients(
+          actor,
+          {
+            ...input,
+            relevantWorkerUserIds,
+            emailWorkerUserIds,
+          },
+          audience,
+          includeCustomers,
+        )
       : [];
   const delivery = await persistActivityDelivery(
     tx,
@@ -415,6 +487,7 @@ export async function dispatchRequestActivity(
       actorId: actor.id,
       audience,
       ...input,
+      relevantWorkerUserIds,
       eventPayload: withAudiblePayload(
         input.eventPayload,
         resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
@@ -423,6 +496,7 @@ export async function dispatchRequestActivity(
       createNotifications,
       emailRecipientUserIds,
     }),
+    { contentRiskReviewId: input.contentRiskReviewId },
   );
   if (input.includeExternalContact) {
     // Embed-only copy: explicitly marked so main-app SSE can ignore it without
@@ -450,10 +524,12 @@ export async function dispatchRequestActivity(
       serviceRequestId: input.serviceRequestId,
     });
   }
-  await recordDingTalkRequestActivity(tx, actor, input, payload, {
+  const dingtalkQueued = await recordDingTalkRequestActivity(tx, actor, input, payload, {
     enabled: rule.dingtalkEnabled,
     customerActor: actor.platformRole === "CUSTOMER",
+    contentRiskReviewId: input.contentRiskReviewId,
   });
+  delivery.feedback.dingtalkQueued = dingtalkQueued;
   return delivery;
 }
 
@@ -487,6 +563,9 @@ export async function dispatchExternalRequestActivity(
     customerSpaceId: string;
     projectId: string;
     serviceRequestId: string;
+    sourceType?: string;
+    sourceId?: string;
+    contentRiskReviewId?: string;
   },
 ) {
   const projectContext = await withSystemDb(async (systemTx) => ({
@@ -521,6 +600,7 @@ export async function dispatchExternalRequestActivity(
         input.includeCustomers &&
         projectContext.project.customerRequestsEnabled,
     }),
+    { contentRiskReviewId: input.contentRiskReviewId },
   );
   // Embed multi-tab sync: external contacts only see userId=null request events.
   delivery.events.push(
@@ -545,19 +625,29 @@ export async function dispatchExternalRequestActivity(
       serviceRequestId: input.serviceRequestId,
     });
   }
-  await recordDingTalkRequestActivity(tx, actor, input, payload, {
+  const dingtalkQueued = await recordDingTalkRequestActivity(tx, actor, input, payload, {
     enabled: rule.dingtalkEnabled,
     customerActor: true,
+    contentRiskReviewId: input.contentRiskReviewId,
   });
+  delivery.feedback.dingtalkQueued = dingtalkQueued;
   return delivery;
 }
 
 async function recordDingTalkRequestActivity(
   tx: Prisma.TransactionClient,
   actor: Pick<Actor, "name"> | Pick<ExternalActor, "name">,
-  input: { eventType: string; serviceRequestId: string },
+  input: {
+    eventType: string;
+    serviceRequestId: string;
+    notificationBody: string;
+  },
   payload: Prisma.InputJsonObject,
-  options: { enabled: boolean; customerActor: boolean },
+  options: {
+    enabled: boolean;
+    customerActor: boolean;
+    contentRiskReviewId?: string;
+  },
 ) {
   const delivery = planDingTalkRequestEvent({
     enabled: options.enabled,
@@ -569,10 +659,16 @@ async function recordDingTalkRequestActivity(
       typeof payload.visibility === "string" ? payload.visibility : undefined,
     customerActor: options.customerActor,
     actorName: actor.name,
+    contentSummary: input.notificationBody,
     occurredAt:
       typeof payload.occurredAt === "string" ? payload.occurredAt : undefined,
   });
-  if (delivery) await recordDingTalkRobotDelivery(tx, delivery);
+  if (!delivery) return false;
+  await recordDingTalkRobotDelivery(tx, {
+    ...delivery,
+    contentRiskReviewId: options.contentRiskReviewId,
+  });
+  return true;
 }
 
 export function requestStatusLabel(status: RequestStatus) {
@@ -606,6 +702,7 @@ function standardRequestEmailRecipients(
   actor: Actor,
   input: {
     eventType: EventType;
+    notificationType: NotificationType;
     eventPayload: Prisma.InputJsonValue;
     relevantWorkerUserIds?: Array<string | null | undefined>;
     emailWorkerUserIds?: Array<string | null | undefined>;
@@ -624,6 +721,7 @@ function standardRequestEmailRecipients(
     actorId: actor.id,
     actorPlatformRole: actor.platformRole,
     eventType: input.eventType,
+    notificationType: input.notificationType,
     visibility:
       typeof payload.visibility === "string" ? payload.visibility : undefined,
     status: typeof payload.status === "string" ? payload.status : undefined,
@@ -730,7 +828,7 @@ export function markProjectNotificationsRead(
   scope: "overview" | "updates" | "milestones" | "files" | "all" = "updates",
 ) {
   const typesByScope: Record<Exclude<typeof scope, "all">, NotificationType[]> = {
-    overview: ["PROJECT_STAGE"],
+    overview: ["PROJECT_CREATED", "PROJECT_STAGE"],
     updates: PROJECT_UPDATE_NOTIFICATION_TYPES,
     milestones: ["PROJECT_MILESTONE"],
     files: ["PROJECT_FILE"],
@@ -1013,6 +1111,7 @@ async function loadProjectAudience(
 async function persistActivityDelivery(
   tx: Prisma.TransactionClient,
   delivery: ActivityDelivery,
+  options?: { contentRiskReviewId?: string },
 ) {
   const events = [];
   const notifications = [];
@@ -1073,20 +1172,44 @@ async function persistActivityDelivery(
   }
   const emailDueAt = notificationEmailDueAt(delayEmailUntilUnread);
   let immediateMailNotificationId: string | null = null;
+  let emailCount = 0;
   for (const notification of delivery.notifications) {
-    if (activeUserIds.has(notification.userId)) continue;
+    if (
+      !options?.contentRiskReviewId &&
+      activeUserIds.has(notification.userId)
+    ) {
+      continue;
+    }
     const notificationEmailDueAt = emailEnabledUserIds.has(notification.userId)
       ? emailDueAt
       : undefined;
+    const persistenceInput = toNotificationPersistenceInput(
+      notification,
+      options?.contentRiskReviewId ? undefined : notificationEmailDueAt,
+    );
     const persistedNotification = await createNotification(
       tx,
-      toNotificationPersistenceInput(
-        notification,
-        notificationEmailDueAt,
-      ),
+      options?.contentRiskReviewId
+        ? { ...persistenceInput, aggregationKey: undefined }
+        : persistenceInput,
     );
+    if (options?.contentRiskReviewId) {
+      const [held] = await tx.$queryRaw<Array<{ held: boolean }>>`
+        SELECT app_hold_notification_for_content_risk(
+          ${persistedNotification.id},
+          ${options.contentRiskReviewId},
+          ${notificationEmailDueAt ?? null}
+        ) AS held
+      `;
+      if (!held?.held) throw new Error("风控通知暂缓失败");
+    }
     notifications.push(persistedNotification);
-    if (notificationEmailDueAt && !delayEmailUntilUnread) {
+    if (notificationEmailDueAt) emailCount += 1;
+    if (
+      notificationEmailDueAt &&
+      !delayEmailUntilUnread &&
+      !options?.contentRiskReviewId
+    ) {
       immediateMailNotificationId ??= persistedNotification.id;
     }
   }
@@ -1099,7 +1222,19 @@ async function persistActivityDelivery(
     `;
   }
 
-  return { events, notifications };
+  const feedback: DeliveryFeedback = {
+    notificationCount: notifications.length,
+    emailCount,
+    emailTiming:
+      emailCount === 0
+        ? null
+        : delayEmailUntilUnread
+          ? "DELAYED"
+          : "IMMEDIATE",
+    dingtalkQueued: false,
+  };
+
+  return { events, notifications, feedback };
 }
 
 function hasInternalVisibility(payload: Prisma.JsonValue) {

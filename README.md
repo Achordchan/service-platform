@@ -57,10 +57,10 @@ pnpm db:seed
 
 访问 [http://localhost:3000](http://localhost:3000)。
 
-启动脚本会保持在前台并显示日志，按 `Ctrl+C` 或关闭当前终端即可停止服务。脚本会固定使用 Node.js 24、检查本地 PostgreSQL、生成 Prisma Client、应用已有迁移，并将运行日志写入 `.data/local-runtime/web.log`；它不会关闭 PostgreSQL 或其他共享服务。
+启动脚本会保持在前台并显示日志，按 `Ctrl+C` 或关闭当前终端即可同时停止 Web 与后台任务 Worker。脚本会固定使用 Node.js 24、检查本地 PostgreSQL、生成 Prisma Client、应用已有迁移，并将日志分别写入 `.data/local-runtime/web.log` 和 `.data/local-runtime/worker.log`；它不会关闭 PostgreSQL 或其他共享服务。
 
-本地默认只需要这一个进程：邮件会进入后台「平台设置 → 发件箱」。  
-`pnpm worker` 用于单独运行邮件和插件后台任务。
+本地默认只需要执行一次 `./start.sh`：邮件、钉钉、内容风控和其他插件后台任务由脚本启动的 Worker 处理。
+`pnpm worker` 仅用于脱离启动脚本单独调试后台任务。
 
 生产环境使用独立的 `service-platform-worker`，Web 进程不会再重复启动邮件 Worker；如需显式配置，请在生产环境设置 `MAIL_INLINE_WORKER=false`。
 

@@ -27,6 +27,7 @@ import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
 import { AccountEmailChangeDialog } from "@/components/staff/account-email-change-dialog";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import type { PendingEmailChange } from "@/components/shared/email-change-control";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 
 export type RoleGroupOption = {
@@ -97,13 +98,11 @@ export function TeamManager({
   roleGroups: RoleGroupOption[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<TeamMemberView | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState<string | null>(null);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] =
     useState<TeamMemberView | null>(null);
   const [emailTarget, setEmailTarget] =
@@ -115,7 +114,6 @@ export function TeamManager({
   );
 
   function openInvite() {
-    setError("");
     setForm({
       ...emptyForm,
       roleGroupId: activeRoleGroups[0]?.id ?? "",
@@ -125,7 +123,6 @@ export function TeamManager({
 
   function openEdit(member: TeamMemberView) {
     if (member.platformRole === "PLATFORM_ADMIN") return;
-    setError("");
     setEditing(member);
     setForm({
       name: member.name,
@@ -143,9 +140,6 @@ export function TeamManager({
 
   async function invite() {
     setSubmitting(true);
-    setError("");
-    setSuccess(null);
-    setPreviewUrl(null);
     try {
       const result = await staffApi<StaffInviteView>(
         "/api/v1/admin/staff-invitations",
@@ -153,13 +147,20 @@ export function TeamManager({
       );
       setOpen(false);
       setForm(emptyForm);
-      setSuccess(
+      toast.show(
         `已邀请 ${result.email} 成为${result.roleGroupName || "协作成员"}`,
+        {
+          severity: "success",
+          action: result.previewUrl ? (
+            <Button color="inherit" size="small" href={result.previewUrl}>
+              打开邀请
+            </Button>
+          ) : undefined,
+        },
       );
-      if (result.previewUrl) setPreviewUrl(result.previewUrl);
       router.refresh();
     } catch (inviteError) {
-      setError(
+      toast.error(
         inviteError instanceof Error ? inviteError.message : "邀请失败",
       );
     } finally {
@@ -170,7 +171,6 @@ export function TeamManager({
   async function saveProfile() {
     if (!editing) return;
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/admin/users/${editing.id}`,
@@ -187,10 +187,10 @@ export function TeamManager({
         }),
       );
       setEditing(null);
-      setSuccess("成员资料已更新");
+      toast.success("成员资料已更新");
       router.refresh();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
     } finally {
       setSubmitting(false);
     }
@@ -198,14 +198,14 @@ export function TeamManager({
 
   async function revoke(invitationId: string) {
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(`/api/v1/admin/staff-invitations/${invitationId}`, {
         method: "DELETE",
       });
+      toast.success("邀请已撤销");
       router.refresh();
     } catch (revokeError) {
-      setError(
+      toast.error(
         revokeError instanceof Error ? revokeError.message : "撤销失败",
       );
     } finally {
@@ -221,21 +221,6 @@ export function TeamManager({
 
   return (
     <Stack spacing={3}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? (
-        <Alert
-          severity="success"
-          action={
-            previewUrl ? (
-              <Button color="inherit" size="small" href={previewUrl}>
-                打开邀请
-              </Button>
-            ) : undefined
-          }
-        >
-          {success}
-        </Alert>
-      ) : null}
 
       <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
         <Stack
@@ -437,7 +422,6 @@ export function TeamManager({
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <TextField
                 label="姓名"
@@ -640,7 +624,7 @@ export function TeamManager({
         }
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
-          setSuccess(`已删除协作成员 ${deleteTarget?.name ?? ""}`);
+          toast.success(`已删除协作成员 ${deleteTarget?.name ?? ""}`);
           setDeleteTarget(null);
           router.refresh();
         }}

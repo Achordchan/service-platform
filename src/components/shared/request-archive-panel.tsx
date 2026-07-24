@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Alert, Button, Paper, Stack, Typography } from "@mui/material";
+import { Button, Paper, Stack, Typography } from "@mui/material";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import UnarchiveOutlinedIcon from "@mui/icons-material/UnarchiveOutlined";
+import { useToast } from "@/components/shared/toast-provider";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
 import { canArchiveRequestStatus } from "@/lib/request-archive";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -27,15 +29,14 @@ export function RequestArchivePanel({
   archivedAt?: string | null;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const archived = Boolean(archivedAt);
   const canArchive = canArchiveRequestStatus(status);
   if (!archived && !canArchive) return null;
 
   async function updateArchive() {
     setSubmitting(true);
-    setError("");
     try {
       const response = await fetch(`/api/v1/requests/${requestId}/archive`, {
         method: "PATCH",
@@ -43,6 +44,7 @@ export function RequestArchivePanel({
         body: JSON.stringify({ archived: !archived }),
       });
       const payload = (await response.json().catch(() => ({}))) as {
+        data?: { deliveryFeedback?: DeliveryFeedback | null };
         error?: { message?: string } | string;
       };
       if (!response.ok) {
@@ -52,10 +54,14 @@ export function RequestArchivePanel({
             : payload.error?.message || "归档操作失败",
         );
       }
+      toast.success(
+        archived ? "服务请求已恢复到常规列表" : "服务请求已归档",
+      );
+      toast.delivery(payload.data?.deliveryFeedback);
       markRequestLocalMutation();
       router.refresh();
     } catch (updateError) {
-      setError(
+      toast.error(
         updateError instanceof Error ? updateError.message : "归档操作失败",
       );
     } finally {
@@ -67,7 +73,6 @@ export function RequestArchivePanel({
     <Paper variant="outlined" sx={{ p: 2.5 }}>
       <Typography variant="h3">归档管理</Typography>
       <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
         <Typography variant="body2" color="text.secondary">
           {archived && archivedAt
             ? `已归档于 ${dateFormatter.format(new Date(archivedAt))}`

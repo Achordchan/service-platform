@@ -233,7 +233,7 @@ export function DingTalkTemplateSettings({
                 {renderSample(body)}
               </Typography>
               <Typography sx={{ mt: 2, color: "primary.main", fontWeight: 650 }}>
-                打开工单
+                打开服务请求
               </Typography>
             </Paper>
           </Stack>

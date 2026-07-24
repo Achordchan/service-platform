@@ -15,6 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { useToast } from "@/components/shared/toast-provider";
 import type { NotificationDeliveryRuleView } from "@/modules/notifications/notification-delivery-rules";
 
 export type { NotificationDeliveryRuleView };
@@ -69,12 +70,11 @@ export function NotificationDeliveryRulesPanel({
   onRulesChange?: (rules: NotificationDeliveryRuleView[]) => void;
   onUnreadDelayChange?: (enabled: boolean) => void;
 }) {
+  const toast = useToast();
   const [rules, setRules] = useState(initialRules);
   const [savedRules, setSavedRules] = useState(initialRules);
   const [saving, setSaving] = useState(false);
   const [savingEmailSwitch, setSavingEmailSwitch] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const mailEnabled = mailMode !== "LOCAL_OUTBOX";
   const visibleChannels = notificationRuleChannels(
     mailEnabled,
@@ -103,8 +103,6 @@ export function NotificationDeliveryRulesPanel({
     update: (current: NotificationDeliveryRuleView[]) => NotificationDeliveryRuleView[],
   ) {
     setRules(update);
-    setError("");
-    setSuccess("");
   }
 
   function updateRule(key: string, channel: Channel, checked: boolean) {
@@ -136,8 +134,6 @@ export function NotificationDeliveryRulesPanel({
 
   async function save() {
     setSaving(true);
-    setError("");
-    setSuccess("");
     try {
       const next = await staffApi<NotificationDeliveryRuleView[]>(
         "/api/v1/admin/notification-delivery-rules",
@@ -162,9 +158,9 @@ export function NotificationDeliveryRulesPanel({
       setRules(next);
       setSavedRules(next);
       onRulesChange?.(next);
-      setSuccess("通知规则已保存");
+      toast.success("通知规则已保存，仅对后续新事件生效");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
     } finally {
       setSaving(false);
     }
@@ -177,17 +173,15 @@ export function NotificationDeliveryRulesPanel({
 
   async function updateUnreadDelay(enabled: boolean) {
     setSavingEmailSwitch(true);
-    setError("");
-    setSuccess("");
     try {
       await staffApi(
         "/api/v1/admin/settings",
         jsonRequest("PATCH", { standardEmailUnreadDelayEnabled: enabled }),
       );
       onUnreadDelayChange?.(enabled);
-      setSuccess(enabled ? "未读延迟已开启" : "未读延迟已关闭");
+      toast.success(enabled ? "未读 5 分钟延迟已开启" : "邮件已改为尽快发送");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
     } finally {
       setSavingEmailSwitch(false);
     }
@@ -243,8 +237,6 @@ export function NotificationDeliveryRulesPanel({
           当前插件支持“新建服务请求”和“客户公开回复”。规则保存后对新事件立即生效，不补发历史内容，也不受邮件未读延迟控制。
         </Alert>
       ) : null}
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? <Alert severity="success">{success}</Alert> : null}
       <Box
         sx={{
           overflowX: "auto",
@@ -316,8 +308,10 @@ export function NotificationDeliveryRulesPanel({
                           size="small"
                           checked={rule[channel]}
                           disabled={
-                            channel === "emailEnabled" &&
-                            !rule.notificationEnabled
+                            (channel === "emailEnabled" &&
+                              !rule.notificationEnabled) ||
+                            (rule.key === "CONTENT_RISK_ALERT" &&
+                              channel === "notificationEnabled")
                           }
                           onChange={(event) =>
                             updateRule(

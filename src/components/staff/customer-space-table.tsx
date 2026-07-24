@@ -22,11 +22,13 @@ import {
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { CreateCustomerSpaceDialog } from "@/components/staff/create-customer-space-dialog";
-import { AccountEmailChangeDialog } from "@/components/staff/account-email-change-dialog";
+import { CustomerAccountManagerDialog } from "@/components/staff/customer-account-manager-dialog";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
 
@@ -42,19 +44,15 @@ export function CustomerSpaceTable({
   spaces: CustomerSpaceItem[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerSpaceItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] =
     useState<CustomerSpaceItem | null>(null);
-  const [emailTarget, setEmailTarget] =
+  const [accountsTarget, setAccountsTarget] =
     useState<CustomerSpaceItem | null>(null);
-  const [created, setCreated] = useState<{
-    name: string;
-    previewUrl?: string;
-  } | null>(null);
   const rows = useMemo(() => {
     const normalized = keyword.trim().toLowerCase();
     return spaces.filter(
@@ -71,7 +69,6 @@ export function CustomerSpaceTable({
     if (!editing) return;
     const data = new FormData(event.currentTarget);
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/admin/customer-spaces/${editing.id}`,
@@ -82,9 +79,10 @@ export function CustomerSpaceTable({
         }),
       );
       setEditing(null);
+      toast.success("客户资料已更新");
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "客户更新失败",
       );
     } finally {
@@ -154,10 +152,20 @@ export function CustomerSpaceTable({
         headerName: "操作",
         sortable: false,
         filterable: false,
-        minWidth: 180,
+        minWidth: 270,
         display: "flex",
         renderCell: ({ row }) => (
           <Stack direction="row" spacing={0.5}>
+            <Button
+              size="small"
+              startIcon={<ManageAccountsOutlinedIcon />}
+              onClick={(event) => {
+                event.stopPropagation();
+                setAccountsTarget(row);
+              }}
+            >
+              账号
+            </Button>
             <Button
               size="small"
               startIcon={<EditOutlinedIcon />}
@@ -189,29 +197,6 @@ export function CustomerSpaceTable({
 
   return (
     <Stack spacing={2}>
-      {error && !editing ? <Alert severity="error" onClose={() => setError("")}>{error}</Alert> : null}
-      {created ? (
-        <Alert
-          severity="success"
-          onClose={() => setCreated(null)}
-          action={
-            created.previewUrl ? (
-              <Button
-                component="a"
-                href={created.previewUrl}
-                target="_blank"
-                rel="noreferrer"
-                color="inherit"
-                size="small"
-              >
-                打开邀请
-              </Button>
-            ) : undefined
-          }
-        >
-          {created.name}已创建，负责人邀请已加入发送队列。
-        </Alert>
-      ) : null}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={1.5}
@@ -306,7 +291,14 @@ export function CustomerSpaceTable({
               <Typography variant="body2" color="text.secondary">
                 成员 {space.memberCount}/{space.memberLimit} · 项目 {space.projectCount}
               </Typography>
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<ManageAccountsOutlinedIcon />}
+                  onClick={() => setAccountsTarget(space)}
+                >
+                  账号
+                </Button>
                 <Button
                   variant="outlined"
                   startIcon={<EditOutlinedIcon />}
@@ -341,7 +333,6 @@ export function CustomerSpaceTable({
             <DialogTitle>管理客户</DialogTitle>
             <DialogContent>
               <Stack spacing={2} sx={{ pt: 1 }}>
-                {error ? <Alert severity="error">{error}</Alert> : null}
                 <TextField
                   name="name"
                   label="客户名称"
@@ -366,36 +357,19 @@ export function CustomerSpaceTable({
                   <MenuItem value="SUSPENDED">暂停</MenuItem>
                   <MenuItem value="ARCHIVED">归档</MenuItem>
                 </TextField>
-                <Stack
-                  direction={{ xs: "column", sm: "row" }}
-                  spacing={1}
-                  sx={{ alignItems: { sm: "center" } }}
-                >
-                  <TextField
-                    label="负责人登录邮箱"
-                    value={editing.ownerEmail}
-                    disabled
-                    fullWidth
-                  />
-                  <Button
-                    variant="outlined"
-                    sx={{ flexShrink: 0 }}
-                    onClick={() => {
-                      setEmailTarget(editing);
-                      setEditing(null);
-                    }}
-                  >
-                    修改邮箱
-                  </Button>
-                </Stack>
-                {editing.pendingEmailChange ? (
-                  <Alert severity="warning">
-                    新邮箱 {editing.pendingEmailChange.newEmail} 正在等待验证。
-                  </Alert>
-                ) : null}
                 <Alert severity="info">
-                  当前成员 {editing.memberCount} 人，成员上限不能低于当前人数。
+                  当前共有 {editing.memberCount} 个客户账号。姓名、邮箱、负责人和普通成员请在“客户账号”中管理。
                 </Alert>
+                <Button
+                  variant="outlined"
+                  startIcon={<ManageAccountsOutlinedIcon />}
+                  onClick={() => {
+                    setAccountsTarget(editing);
+                    setEditing(null);
+                  }}
+                >
+                  管理客户账号
+                </Button>
               </Stack>
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 3, justifyContent: "space-between" }}>
@@ -424,9 +398,20 @@ export function CustomerSpaceTable({
         onClose={() => setCreateOpen(false)}
         onCreated={(result) => {
           setCreateOpen(false);
-          setCreated({
-            name: result.name,
-            previewUrl: result.previewUrl,
+          toast.show(`${result.name}已创建，负责人邀请已加入发送队列`, {
+            severity: "success",
+            action: result.previewUrl ? (
+              <Button
+                component="a"
+                href={result.previewUrl}
+                target="_blank"
+                rel="noreferrer"
+                color="inherit"
+                size="small"
+              >
+                打开邀请
+              </Button>
+            ) : undefined,
           });
           router.refresh();
         }}
@@ -448,23 +433,14 @@ export function CustomerSpaceTable({
         }
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
+          toast.success("客户已删除");
           setDeleteTarget(null);
           router.refresh();
         }}
       />
-      <AccountEmailChangeDialog
-        key={emailTarget?.ownerId ?? "closed-email-change"}
-        target={
-          emailTarget
-            ? {
-                id: emailTarget.ownerId,
-                name: emailTarget.ownerName,
-                email: emailTarget.ownerEmail,
-                pendingEmailChange: emailTarget.pendingEmailChange,
-              }
-            : null
-        }
-        onClose={() => setEmailTarget(null)}
+      <CustomerAccountManagerDialog
+        target={accountsTarget}
+        onClose={() => setAccountsTarget(null)}
         onChanged={() => router.refresh()}
       />
     </Stack>

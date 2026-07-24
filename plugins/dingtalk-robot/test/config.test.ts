@@ -46,6 +46,32 @@ test("fills default notification templates for existing empty config", () => {
   assert.deepEqual(parseDingTalkRobotConfig({}), DINGTALK_ROBOT_DEFAULT_CONFIG);
 });
 
+test("upgrades untouched legacy default templates without overwriting custom templates", () => {
+  const legacy = structuredClone(DINGTALK_ROBOT_DEFAULT_CONFIG);
+  legacy.templates.REQUEST_CUSTOMER_REPLIED.body = [
+    "- **服务请求**：{{requestNumber}} {{requestTitle}}",
+    "- **客户**：{{customerName}}",
+    "- **项目**：{{projectName}}",
+    "- **回复人**：{{actorName}}",
+    "- **时间**：{{occurredAt}}",
+  ].join("\n");
+  legacy.templates.CONTENT_RISK_ALERT.body = [
+    "- **位置**：{{targetLabel}}",
+    "- **摘要**：{{riskSummary}}",
+    "- **时间**：{{occurredAt}}",
+    "",
+    "原始内容仅可在平台受限风控记录中查看。",
+  ].join("\n");
+
+  assert.deepEqual(parseDingTalkRobotConfig(legacy), DINGTALK_ROBOT_DEFAULT_CONFIG);
+
+  legacy.templates.REQUEST_CUSTOMER_REPLIED.title = "我的客户回复模板";
+  assert.equal(
+    parseDingTalkRobotConfig(legacy).templates.REQUEST_CUSTOMER_REPLIED.title,
+    "我的客户回复模板",
+  );
+});
+
 test("accepts customized templates and rejects unknown variables", () => {
   const customized = structuredClone(DINGTALK_ROBOT_DEFAULT_CONFIG);
   customized.templates.REQUEST_CREATED.title =

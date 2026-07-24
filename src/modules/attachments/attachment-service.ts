@@ -6,6 +6,7 @@ import type {
 } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { extractInlineAttachmentIds } from "@/lib/message-content";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import { writeAuditLog } from "@/modules/audit/audit-service";
@@ -27,6 +28,8 @@ import {
 } from "@/modules/attachments/attachment-validation";
 import {
   assertCanManageActiveProjectDelivery,
+  assertCanPublishActiveProjectUpdate,
+  assertCanUploadActiveProjectFile,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
 import {
@@ -42,10 +45,15 @@ import {
 } from "@/modules/requests/request-context";
 import {
   canAttachToRequestMessage,
-  canWorkOnRequest,
+  canUploadRequestFile,
   canWriteInternalNote,
 } from "@/modules/requests/request-permissions";
 import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
+import {
+  createContentRiskReview,
+  enforceActorPublicContentRules,
+  isContentRiskAttachmentRevoked,
+} from "@/modules/plugins/content-risk-service";
 
 export type UploadAttachmentInput = {
   fileName: string;
@@ -137,6 +145,18 @@ export async function uploadRequestAttachment(
     throw badRequest("INLINE_IMAGE_REQUIRED", "正文中只能插入图片文件");
   }
   await authorizeUpload(actor, input);
+  if ((input.visibility ?? "CUSTOMER_VISIBLE") === "CUSTOMER_VISIBLE") {
+    await enforceActorPublicContentRules(actor, {
+      targetType: "ATTACHMENT",
+      customerSpaceId: null,
+      projectId: null,
+      serviceRequestId: input.serviceRequestId,
+      snapshot: {
+        body: input.fileName,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+    });
+  }
   const storageKey = createStorageKey(
     input.serviceRequestId,
     validated.extension,
@@ -190,6 +210,23 @@ export async function uploadRequestAttachment(
           requestMessageId: attachment.requestMessageId,
         },
       });
+      const contentRiskReview = await createContentRiskReview(tx, {
+        targetType: "ATTACHMENT",
+        targetId: attachment.id,
+        actorId: actor.id,
+        actorName: actor.name,
+        actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+        isPlatformAdmin: actor.isPlatformAdmin,
+        customerSpaceId: request.project.customerSpaceId,
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+        snapshot: {
+          body: attachment.originalName,
+          visibility: attachment.visibility,
+          attachmentIds: [attachment.id],
+        },
+      });
+      let deliveryFeedback = null;
       if (!input.inline) {
         const workerIds = Array.from(
           new Set(
@@ -200,7 +237,7 @@ export async function uploadRequestAttachment(
           ),
         );
         const internal = attachment.visibility === "INTERNAL";
-        await dispatchRequestActivity(tx, actor, {
+        const delivery = await dispatchRequestActivity(tx, actor, {
           eventType: "REQUEST_UPDATED",
           eventPayload: {
             change: "REQUEST_ATTACHMENT_UPLOADED",
@@ -212,7 +249,7 @@ export async function uploadRequestAttachment(
           notificationType: "REQUEST_ATTACHMENT",
           notificationTitle: internal
             ? `${actor.name} 上传了内部附件`
-            : `${actor.name} 上传了工单附件`,
+            : `${actor.name} 上传了服务请求附件`,
           notificationBody: attachment.originalName,
           includeCustomers:
             !internal && includeCustomerMembersForRequest(request),
@@ -224,9 +261,11 @@ export async function uploadRequestAttachment(
           customerSpaceId: request.project.customerSpaceId,
           projectId: request.projectId,
           serviceRequestId: request.id,
+          contentRiskReviewId: contentRiskReview?.id,
         });
+        deliveryFeedback = delivery.feedback;
       }
-      return attachment;
+      return { ...attachment, deliveryFeedback };
     });
   } catch (error) {
     await removePrivateFile(storageKey);
@@ -263,6 +302,18 @@ export async function uploadProjectAttachment(
     throw badRequest("INLINE_IMAGE_REQUIRED", "正文中只能插入图片文件");
   }
   const visibility = input.visibility ?? "CUSTOMER_VISIBLE";
+  if (visibility === "CUSTOMER_VISIBLE") {
+    await enforceActorPublicContentRules(actor, {
+      targetType: "ATTACHMENT",
+      customerSpaceId: null,
+      projectId: input.projectId,
+      serviceRequestId: null,
+      snapshot: {
+        body: input.fileName,
+        visibility,
+      },
+    });
+  }
   const storageKey = createProjectStorageKey(
     input.projectId,
     validated.extension,
@@ -315,8 +366,25 @@ export async function uploadProjectAttachment(
           visibility: attachment.visibility,
         },
       });
+      const contentRiskReview = await createContentRiskReview(tx, {
+        targetType: "ATTACHMENT",
+        targetId: attachment.id,
+        actorId: actor.id,
+        actorName: actor.name,
+        actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+        isPlatformAdmin: actor.isPlatformAdmin,
+        customerSpaceId: project.customerSpaceId,
+        projectId: project.projectId,
+        serviceRequestId: null,
+        snapshot: {
+          body: attachment.originalName,
+          visibility: attachment.visibility,
+          attachmentIds: [attachment.id],
+        },
+      });
+      let deliveryFeedback = null;
       if (!input.inlineContext) {
-        await dispatchProjectActivity(tx, actor, {
+        const delivery = await dispatchProjectActivity(tx, actor, {
           eventType: "PROJECT_UPDATED",
           eventPayload: {
             change: "PROJECT_ATTACHMENT_UPLOADED",
@@ -330,9 +398,11 @@ export async function uploadProjectAttachment(
           visibility: attachment.visibility,
           customerSpaceId: project.customerSpaceId,
           projectId: project.projectId,
+          contentRiskReviewId: contentRiskReview?.id,
         });
+        deliveryFeedback = delivery.feedback;
       }
-      return attachment;
+      return { ...attachment, deliveryFeedback };
     });
   } catch (error) {
     await removePrivateFile(storageKey);
@@ -367,11 +437,18 @@ export function readAttachmentDownload(
         milestoneId: true,
         supportPlaybookKey: true,
         serviceRequestId: true,
+        requestMessageId: true,
         uploadedById: true,
       },
     });
     if (!attachment) {
       throw notFound("附件不存在或无权访问");
+    }
+    if (
+      !actor.isPlatformAdmin &&
+      (await isContentRiskAttachmentRevoked(tx, attachment))
+    ) {
+      throw notFound("附件已被撤回");
     }
     if (attachment.visibility === "INTERNAL" && !actor.isStaff) {
       throw notFound("附件不存在或无权访问");
@@ -480,12 +557,23 @@ async function authorizeProjectAttachmentUpload(
         "只有进行中的项目可以插入正文图片",
       );
     }
+    if (actor.isStaff && !hasRolePermission(actor, "file.upload")) {
+      throw forbidden("当前角色无权上传文件");
+    }
     return {
       projectId: context.projectId,
       customerSpaceId: context.customerSpaceId,
     };
   }
-  return assertCanManageActiveProjectDelivery(tx, actor, input.projectId);
+  const context = input.inlineContext
+    ? input.inlineContext === "PROJECT_UPDATE"
+      ? await assertCanPublishActiveProjectUpdate(tx, actor, input.projectId)
+      : await assertCanManageActiveProjectDelivery(tx, actor, input.projectId)
+    : await assertCanUploadActiveProjectFile(tx, actor, input.projectId);
+  if (!hasRolePermission(actor, "file.upload")) {
+    throw forbidden("当前角色无权上传文件");
+  }
+  return context;
 }
 
 function includeCustomerMembersForRequest(
@@ -536,7 +624,7 @@ async function authorizeUploadInTx(
     projectRole: getProjectRole(request),
   };
   const isCustomer = actor.platformRole === "CUSTOMER";
-  if (!isCustomer && !canWorkOnRequest(actor, requestAccess)) {
+  if (!isCustomer && !canUploadRequestFile(actor, requestAccess)) {
     throw forbidden("只有请求处理人员或客户可以上传附件");
   }
 

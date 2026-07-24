@@ -11,7 +11,7 @@ export const dingTalkRobotManifest: PlatformPluginManifest<DingTalkRobotConfig> 
   key: DINGTALK_ROBOT_PLUGIN_KEY,
   kind: "UTILITY",
   name: "钉钉机器人通知",
-  description: "将新工单和客户回复发送到后台人员使用的钉钉群。",
+  description: "将新服务请求和客户回复发送到后台人员使用的钉钉群。",
   version: "1.1.0",
   category: "消息通知",
   minimumPlatformVersion: "0.1.0",

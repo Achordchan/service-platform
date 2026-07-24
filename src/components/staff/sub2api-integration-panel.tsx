@@ -485,7 +485,7 @@ export function ExternalContactsPanel({ projectId }: { projectId: string }) {
               <TableCell>来源</TableCell>
               <TableCell>外部用户 ID</TableCell>
               <TableCell>邮箱 / 用户名</TableCell>
-              <TableCell align="right">工单</TableCell>
+              <TableCell align="right">服务请求</TableCell>
               <TableCell>最后访问</TableCell>
               <TableCell align="right">操作</TableCell>
             </TableRow>

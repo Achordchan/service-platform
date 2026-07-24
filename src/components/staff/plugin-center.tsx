@@ -36,7 +36,9 @@ import type {
   DingTalkRobotTemplate,
 } from "@achord/plugin-dingtalk-robot/config";
 import { DingTalkTemplateSettings } from "@/components/staff/dingtalk-template-settings";
+import { ContentRiskPluginSettings } from "@/components/staff/content-risk-plugin-settings";
 import { PluginDeveloperGuideDialog } from "@/components/staff/plugin-developer-guide-dialog";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useRealtimeRouteRefresh } from "@/hooks/use-realtime-route-refresh";
 
@@ -81,13 +83,22 @@ export type PluginView = {
   updatedAt: string;
   settings: Array<{
     key: string;
-    type: "number" | "boolean" | "secret-url";
+    type:
+      | "number"
+      | "boolean"
+      | "secret-url"
+      | "url"
+      | "text"
+      | "secret-text"
+      | "dynamic-select";
     label: string;
     description: string;
     min?: number;
     max?: number;
     step?: number;
     required?: boolean;
+    placeholder?: string;
+    actionKey?: string;
   }>;
   actions?: Array<{
     key: string;
@@ -121,7 +132,7 @@ export function requiresPluginConfiguration(
     plugin.secretConfigState === "MISSING" &&
     plugin.settings.some(
       (field) =>
-        field.type === "secret-url" &&
+        (field.type === "secret-url" || field.type === "secret-text") &&
         field.required &&
         !plugin.configuredSecretKeys.includes(field.key),
     )
@@ -132,6 +143,7 @@ const pluginEvents = ["PLUGIN_RUN_UPDATED"] as const;
 
 export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   const router = useRouter();
+  const toast = useToast();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [confirmMigrationKey, setConfirmMigrationKey] = useState<string | null>(
     null,
@@ -139,8 +151,6 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [guideOpen, setGuideOpen] = useState(false);
   const selected = useMemo(
     () => plugins.find((plugin) => plugin.key === selectedKey) ?? null,
@@ -156,21 +166,19 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     setSelectedKey(plugin.key);
     setConfig(plugin.config);
     setSecrets({});
-    setError("");
-    setSuccess("");
   }
 
   async function saveConfig() {
     if (!selected) return;
     const missingRequiredFields = selected.settings.filter(
       (field) =>
-        field.type === "secret-url" &&
+        (field.type === "secret-url" || field.type === "secret-text") &&
         field.required &&
         !selected.configuredSecretKeys.includes(field.key) &&
         !secrets[field.key]?.trim(),
     );
     if (missingRequiredFields.length > 0) {
-      setError(`请填写${missingRequiredFields[0]?.label ?? "必填配置"}`);
+      toast.warning(`请填写${missingRequiredFields[0]?.label ?? "必填配置"}`);
       return;
     }
     await execute("save", async () => {
@@ -187,7 +195,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         }),
       );
       setSecrets({});
-      setSuccess("插件配置已保存");
+      toast.success("插件配置已保存");
     });
   }
 
@@ -202,9 +210,9 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         jsonRequest("POST"),
       );
       if (result.healthStatus === "READY") {
-        setSuccess("运行环境检测通过");
+        toast.success("运行环境检测通过");
       } else {
-        setError(result.lastError || "运行环境检测未通过");
+        toast.error(result.lastError || "运行环境检测未通过");
       }
     });
   }
@@ -216,7 +224,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         `/api/v1/admin/plugins/${selected.key}`,
         jsonRequest("PATCH", { enabled: !selected.enabled }),
       );
-      setSuccess(selected.enabled ? "插件已停用" : "插件已启用");
+      toast.success(selected.enabled ? "插件已停用" : "插件已启用");
     });
   }
 
@@ -227,7 +235,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         `/api/v1/admin/plugins/${selected.key}/test-message`,
         jsonRequest("POST", {}),
       );
-      setSuccess("测试消息已发送，请在钉钉群中查看");
+      toast.success("测试消息已提交，请在钉钉群中查看");
     });
   }
 
@@ -239,7 +247,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         jsonRequest("PATCH", { config: nextConfig }),
       );
       setConfig(nextConfig);
-      setSuccess("钉钉通知模板已保存");
+      toast.success("钉钉通知模板已保存");
     });
     return saved;
   }
@@ -254,7 +262,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         `/api/v1/admin/plugins/${selected.key}/test-message`,
         jsonRequest("POST", { eventType, template }),
       );
-      setSuccess("模板测试消息已发送，请在钉钉群中查看");
+      toast.success("模板测试消息已提交，请在钉钉群中查看");
     });
   }
 
@@ -266,7 +274,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
       );
       setConfirmMigrationKey(null);
       setSelectedKey(pluginKey);
-      setSuccess("历史图片迁移已加入后台队列");
+      toast.success("历史图片迁移已加入后台队列");
     });
   }
 
@@ -280,7 +288,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         `/api/v1/admin/plugins/${pluginKey}/runs/${runId}`,
         jsonRequest("PATCH", { action }),
       );
-      setSuccess(
+      toast.success(
         action === "pause"
           ? "任务已暂停"
           : action === "resume"
@@ -292,13 +300,11 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
 
   async function execute(key: string, action: () => Promise<void>) {
     setBusy(key);
-    setError("");
-    setSuccess("");
     try {
       await action();
       return true;
     } catch (actionError) {
-      setError(
+      toast.error(
         actionError instanceof Error ? actionError.message : "插件操作失败",
       );
       return false;
@@ -368,10 +374,6 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         <DialogContent>
           {selected ? (
             <Stack spacing={2.25} sx={{ pt: 0.5 }}>
-              {error && error !== selected.lastError ? (
-                <Alert severity="error">{error}</Alert>
-              ) : null}
-              {success ? <Alert severity="success">{success}</Alert> : null}
               <PluginStatusSummary plugin={selected} />
               <Stack
                 direction={{ xs: "column", sm: "row" }}
@@ -410,7 +412,21 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                 ) : null}
               </Stack>
 
-              {hasPluginSettings(selected) ? (
+              {selected.key === "content-contact-risk" ? (
+                <ContentRiskPluginSettings
+                  enabled={selected.enabled}
+                  healthStatus={selected.healthStatus}
+                  config={config}
+                  secrets={secrets}
+                  hasApiKey={selected.configuredSecretKeys.includes("apiKey")}
+                  busy={Boolean(busy)}
+                  onConfigChange={setConfig}
+                  onSecretChange={(key, value) =>
+                    setSecrets((current) => ({ ...current, [key]: value }))
+                  }
+                  onSave={saveConfig}
+                />
+              ) : hasPluginSettings(selected) ? (
                 <Accordion
                   variant="outlined"
                   disableGutters
@@ -460,7 +476,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                             }
                             label={field.label}
                           />
-                        ) : (
+                        ) : field.type === "secret-url" || field.type === "secret-text" ? (
                           <TextField
                             key={field.key}
                             type="password"
@@ -484,7 +500,23 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                             }
                             fullWidth
                           />
-                        ),
+                        ) : field.type === "url" || field.type === "text" ? (
+                          <TextField
+                            key={field.key}
+                            type={field.type === "url" ? "url" : "text"}
+                            label={field.label}
+                            value={String(config[field.key] ?? "")}
+                            onChange={(event) =>
+                              setConfig((current) => ({
+                                ...current,
+                                [field.key]: event.target.value,
+                              }))
+                            }
+                            helperText={field.description}
+                            placeholder={field.placeholder}
+                            fullWidth
+                          />
+                        ) : null,
                       )}
                       <Button
                         variant="contained"

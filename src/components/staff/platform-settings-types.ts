@@ -35,6 +35,7 @@ export type PlatformSettingsView = {
   attachmentAllowedExtensions: string;
   customerReplyAttachmentsEnabled: boolean;
   standardEmailUnreadDelayEnabled: boolean;
+  emailOtpLoginEnabled: boolean;
   updatedAt?: string;
 };
 
@@ -79,23 +80,7 @@ export type MailOutboxSummary = {
 };
 
 export type MailTemplateView = {
-  key:
-    | "PASSWORD_RESET"
-    | "STAFF_INVITATION"
-    | "CUSTOMER_OWNER_INVITATION"
-    | "CUSTOMER_MEMBER_INVITATION"
-    | "CUSTOMER_EMAIL_CHANGE_VERIFY"
-    | "CUSTOMER_EMAIL_CHANGE_COMPLETED"
-    | "CUSTOMER_EMAIL_CHANGE_SECURITY_NOTICE"
-    | "STANDARD_REQUEST_CUSTOMER_UPDATE"
-    | "STANDARD_REQUEST_STAFF_UPDATE"
-    | "STANDARD_REQUEST_ASSIGNMENT"
-    | "STANDARD_PROJECT_CUSTOMER_UPDATE"
-    | "EXTERNAL_REQUEST_PUBLIC_REPLY"
-    | "EXTERNAL_REQUEST_WAITING_CUSTOMER"
-    | "EXTERNAL_REQUEST_RESOLVED"
-    | "EXTERNAL_REQUEST_CLOSED"
-    | "TEST_EMAIL";
+  key: MailTemplateKey;
   name: string;
   description: string;
   variables: Array<{
@@ -120,3 +105,4 @@ export type MailTemplateView = {
   customized: boolean;
   updatedAt: string | null;
 };
+import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";

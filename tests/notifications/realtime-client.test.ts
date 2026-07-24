@@ -2,6 +2,7 @@
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  isProjectDeletedRealtimeEvent,
   matchesRealtimeScope,
   resetRealtimeClientForTests,
   subscribeRealtime,
@@ -52,6 +53,25 @@ afterAll(() => {
 });
 
 describe("SSE 浏览器连接复用", () => {
+  it("只把当前项目的删除事件识别为详情页退出信号", () => {
+    const event: RealtimeEvent = {
+      type: "PROJECT_UPDATED",
+      payload: { projectId: "project-1", change: "PROJECT_DELETED" },
+      live: true,
+      replayed: false,
+      lastEventId: "1",
+    };
+
+    expect(isProjectDeletedRealtimeEvent(event, "project-1")).toBe(true);
+    expect(isProjectDeletedRealtimeEvent(event, "project-2")).toBe(false);
+    expect(
+      isProjectDeletedRealtimeEvent(
+        { ...event, payload: { ...event.payload, change: "PROJECT_UPDATED" } },
+        "project-1",
+      ),
+    ).toBe(false);
+  });
+
   it("多个订阅者共用一条连接，并区分补取事件和实时事件", () => {
     const received: RealtimeEvent[] = [];
     const readyStates: boolean[] = [];
@@ -155,6 +175,39 @@ describe("SSE 浏览器连接复用", () => {
         payload: expect.objectContaining({
           requestId: "request-1",
           typing: true,
+        }),
+      }),
+    ]);
+    unsubscribe();
+  });
+
+  it("可以接收内容风控审核状态事件", () => {
+    const received: RealtimeEvent[] = [];
+    const unsubscribe = subscribeRealtime(
+      ["CONTENT_RISK_REVIEW_UPDATED"],
+      (event) => received.push(event),
+    );
+    const source = FakeEventSource.instances[0]!;
+    source.emit("STREAM_READY", { eventId: "40" }, "40");
+    source.emit(
+      "CONTENT_RISK_REVIEW_UPDATED",
+      {
+        projectId: "project-1",
+        serviceRequestId: "request-1",
+        targetType: "REQUEST_MESSAGE",
+        targetId: "message-1",
+        status: "VIOLATION",
+      },
+      "41",
+    );
+
+    expect(received).toEqual([
+      expect.objectContaining({
+        type: "CONTENT_RISK_REVIEW_UPDATED",
+        live: true,
+        payload: expect.objectContaining({
+          serviceRequestId: "request-1",
+          status: "VIOLATION",
         }),
       }),
     ]);

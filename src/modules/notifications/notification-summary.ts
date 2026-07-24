@@ -45,7 +45,7 @@ export function summarizeUnreadNotificationGroups(
     incrementProjectCount(
       projectStageCounts,
       item.projectId,
-      item.type === "PROJECT_STAGE",
+      item.type === "PROJECT_CREATED" || item.type === "PROJECT_STAGE",
       itemCount,
     );
     incrementProjectCount(

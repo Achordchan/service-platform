@@ -4,8 +4,14 @@ import { canAccessCustomerRequestModule } from "../../src/modules/requests/reque
 import {
   canAttachToRequestMessage,
   canConfirmRequestClosed,
+  canChangeRequestStatus,
+  canClaimUnassignedRequest,
   canManageRequestArchive,
   canManageRequestAssignment,
+  canReplyToRequest,
+  canUploadRequestFile,
+  canViewProjectRequests,
+  canViewRequest,
   canWorkOnRequest,
   canWriteInternalNote,
 } from "../../src/modules/requests/request-permissions";
@@ -41,6 +47,67 @@ describe("服务请求权限", () => {
         projectRole: null,
       }),
     ).toBe(false);
+  });
+
+  it("项目负责人被关闭分配权限后，前后端授权结果必须拒绝", () => {
+    const restrictedManager = actor("restricted-manager", "PROJECT_MANAGER", [
+      "project.view",
+      "request.reply",
+    ]);
+    expect(
+      canManageRequestAssignment(restrictedManager, {
+        assigneeId: null,
+        projectRole: "PROJECT_MANAGER",
+      }),
+    ).toBe(false);
+  });
+
+  it("工单回复、状态和附件分别服从角色组权限", () => {
+    const replyOnly = actor("reply-only", "TECHNICIAN", [
+      "project.view",
+      "request.view_assigned",
+      "request.reply",
+    ]);
+    const context = {
+      assigneeId: replyOnly.id,
+      assigneeIds: [replyOnly.id],
+      projectRole: "TECHNICIAN" as const,
+    };
+    expect(canReplyToRequest(replyOnly, context)).toBe(true);
+    expect(canChangeRequestStatus(replyOnly, context)).toBe(false);
+    expect(canUploadRequestFile(replyOnly, context)).toBe(false);
+  });
+
+  it("有回复权限的项目人员可以接手未分配工单", () => {
+    expect(
+      canClaimUnassignedRequest(technician, {
+        assigneeId: null,
+        assigneeIds: [],
+        projectRole: "TECHNICIAN",
+      }),
+    ).toBe(true);
+  });
+
+  it("仅查看已分配请求的角色不能读取其他人的请求", () => {
+    const assignedOnly = actor("assigned-only", "TECHNICIAN", [
+      "project.view",
+      "request.view_assigned",
+    ]);
+    expect(canViewProjectRequests(assignedOnly, "TECHNICIAN")).toBe(true);
+    expect(
+      canViewRequest(assignedOnly, {
+        assigneeId: "other",
+        assigneeIds: ["other"],
+        projectRole: "TECHNICIAN",
+      }),
+    ).toBe(false);
+    expect(
+      canViewRequest(assignedOnly, {
+        assigneeId: assignedOnly.id,
+        assigneeIds: [assignedOnly.id],
+        projectRole: "TECHNICIAN",
+      }),
+    ).toBe(true);
   });
 
   it("处理人、项目经理和平台管理员可以处理请求", () => {
@@ -141,7 +208,11 @@ describe("服务请求权限", () => {
   });
 });
 
-function actor(id: string, platformRole: Actor["platformRole"]): Actor {
+function actor(
+  id: string,
+  platformRole: Actor["platformRole"],
+  permissions?: Actor["permissions"],
+): Actor {
   return {
     id,
     name: id,
@@ -149,5 +220,6 @@ function actor(id: string, platformRole: Actor["platformRole"]): Actor {
     platformRole,
     isPlatformAdmin: platformRole === "PLATFORM_ADMIN",
     isStaff: platformRole !== "CUSTOMER",
+    permissions,
   };
 }

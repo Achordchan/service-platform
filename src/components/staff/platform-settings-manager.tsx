@@ -23,6 +23,7 @@ import {
   Typography,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { useToast } from "@/components/shared/toast-provider";
 import { MailSettingsPanel } from "@/components/staff/mail-settings-panel";
 import type {
   MailMessageView,
@@ -88,6 +89,7 @@ export function PlatformSettingsManager({
   onSettingsChange?: (settings: PlatformSettingsView) => void;
   onMailOutboxSummaryChange?: (summary: MailOutboxSummary) => void;
 }) {
+  const toast = useToast();
   const [settings, setSettings] = useState(initialSettings);
   const [messages, setMessages] = useState(initialMessages);
   const [mailOutboxSummary, setMailOutboxSummary] = useState(
@@ -98,8 +100,6 @@ export function PlatformSettingsManager({
   const [submitting, setSubmitting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [messageAction, setMessageAction] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] =
     useState<MailMessageView | null>(null);
   const activeSections = sections?.length
@@ -112,8 +112,6 @@ export function PlatformSettingsManager({
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setError(null);
-    setSuccess(null);
     const form = new FormData(event.currentTarget);
     const hasAttachmentFields = form.has("attachmentMaxSizeMb");
     const payload: Record<string, unknown> = {};
@@ -137,9 +135,9 @@ export function PlatformSettingsManager({
       setSettings(next);
       onSettingsChange?.(next);
       setCustomerReplyAttachmentsEnabled(next.customerReplyAttachmentsEnabled);
-      setSuccess("附件策略已保存");
+      toast.success("附件策略已保存");
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error
           ? submitError.message
           : "保存失败，请稍后重试",
@@ -151,7 +149,6 @@ export function PlatformSettingsManager({
 
   async function refreshMessages() {
     setRefreshing(true);
-    setError(null);
     try {
       const [next, nextSummary] = await Promise.all([
         staffApi<MailMessageView[]>("/api/v1/admin/mail-messages?limit=50"),
@@ -161,7 +158,7 @@ export function PlatformSettingsManager({
       setMailOutboxSummary(nextSummary);
       onMailOutboxSummaryChange?.(nextSummary);
     } catch (refreshError) {
-      setError(
+      toast.error(
         refreshError instanceof Error
           ? refreshError.message
           : "刷新发件箱失败",
@@ -173,17 +170,15 @@ export function PlatformSettingsManager({
 
   async function retryMessage(mailMessageId: string) {
     setMessageAction(`${mailMessageId}:retry`);
-    setError(null);
-    setSuccess(null);
     try {
       await staffApi(
         `/api/v1/admin/mail-messages/${mailMessageId}/retry`,
         jsonRequest("POST", {}),
       );
-      setSuccess("邮件已使用当前发信通道重新入队");
+      toast.success("邮件已使用当前发信通道重新入队");
       await refreshMessages();
     } catch (retryError) {
-      setError(
+      toast.error(
         retryError instanceof Error ? retryError.message : "邮件重试失败",
       );
     } finally {
@@ -194,16 +189,14 @@ export function PlatformSettingsManager({
   async function cancelMessage(mailMessageId: string) {
     if (!window.confirm("确认取消这封排队中的邮件？")) return;
     setMessageAction(`${mailMessageId}:cancel`);
-    setError(null);
-    setSuccess(null);
     try {
       await staffApi(`/api/v1/admin/mail-messages/${mailMessageId}`, {
         method: "DELETE",
       });
-      setSuccess("邮件已取消");
+      toast.success("邮件已取消");
       await refreshMessages();
     } catch (cancelError) {
-      setError(
+      toast.error(
         cancelError instanceof Error ? cancelError.message : "取消失败",
       );
     } finally {
@@ -213,9 +206,6 @@ export function PlatformSettingsManager({
 
   return (
     <Stack spacing={3}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? <Alert severity="success">{success}</Alert> : null}
-
       {showSiteMail ? (
         <MailSettingsPanel
           settings={settings}
@@ -257,7 +247,7 @@ export function PlatformSettingsManager({
                 }
               />
             }
-            label="允许客户在工单回复中添加附件 / 粘贴图片"
+            label="允许客户在服务请求回复中添加附件 / 粘贴图片"
           />
           <Stack direction="row" spacing={1.5} sx={{ justifyContent: "flex-end" }}>
             <Button type="submit" variant="contained" disabled={submitting}>

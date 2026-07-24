@@ -129,6 +129,10 @@ export async function disconnectSmtpProvider(actor: Actor) {
       data: {
         mailMode:
           current.mailMode === "SMTP" ? "LOCAL_OUTBOX" : current.mailMode,
+        emailOtpLoginEnabled:
+          current.mailMode === "SMTP"
+            ? false
+            : current.emailOtpLoginEnabled,
         smtpHost: null,
         smtpPort: null,
         smtpUser: null,

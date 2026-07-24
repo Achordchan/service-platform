@@ -49,6 +49,7 @@ function isProjectUpdateModuleEvent(
   const change = eventPayloadString(payload, "change");
   return (
     change === "PROJECT_UPDATE_UPDATED" ||
+    change === "PROJECT_UPDATE_DELETED" ||
     change === "UPDATE_COMMENT_UPDATED"
   );
 }

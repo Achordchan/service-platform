@@ -6,6 +6,7 @@ export type ChatAttachment = {
   inline?: boolean;
   createdAt: string;
   visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type ChatReplyReference = {
@@ -39,10 +40,22 @@ export type ChatMessage = {
   replyToMessageId?: string | null;
   replyTo?: ChatReplyReference | null;
   attachments: ChatAttachment[];
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  contentRiskReason?: string | null;
+  reeditBody?: string | null;
+  reeditAttachmentCount?: number;
 };
 
 export type ChatReplyTarget = Pick<
   ChatMessage,
   "id" | "body" | "authorName" | "visibility" | "attachments"
 >;
+
+export type ChatReeditDraft = {
+  version: number;
+  requestId: string;
+  messageId: string;
+  body: string;
+  attachmentCount: number;
+};
 import type { SupportReplyPlaybook } from "@/lib/support-reply-playbooks";

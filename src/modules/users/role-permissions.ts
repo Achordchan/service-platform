@@ -73,6 +73,7 @@ export const DEFAULT_PERMISSIONS_BY_LEVEL: Record<
     "request.change_status",
     "file.upload",
     "update.publish",
+    "update.comment",
   ],
   TECHNICIAN: [
     "project.view",

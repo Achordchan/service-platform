@@ -1,9 +1,11 @@
 import "server-only";
 
-import type { Prisma } from "@/generated/prisma/client";
+import { randomUUID } from "node:crypto";
+import { Prisma } from "@/generated/prisma/client";
 import { withSystemDb } from "@/lib/system-db";
 import {
   configsMatch,
+  CONTENT_CONTACT_RISK_PLUGIN_KEY,
   DINGTALK_ROBOT_PLUGIN_KEY,
   listRegisteredPlugins,
   tryParseRegisteredPluginConfig,
@@ -39,7 +41,7 @@ export async function applyPluginDisableSideEffects(
   });
   if (pluginKey === DINGTALK_ROBOT_PLUGIN_KEY) {
     await tx.dingTalkRobotDelivery.updateMany({
-      where: { status: { in: ["PENDING", "PROCESSING"] } },
+      where: { status: { in: ["PENDING", "HELD", "PROCESSING"] } },
       data: {
         status: "SKIPPED",
         nextAttemptAt: null,
@@ -47,6 +49,135 @@ export async function applyPluginDisableSideEffects(
       },
     });
   }
+  if (pluginKey === CONTENT_CONTACT_RISK_PLUGIN_KEY) {
+    await tx.contentRiskRuntimeState.updateMany({
+      where: { pluginKey },
+      data: { bypassedAt: now },
+    });
+    const reviews = await tx.contentRiskReview.findMany({
+      where: { status: { in: ["QUEUED", "PROCESSING"] } },
+      select: { id: true },
+    });
+    const reviewIds = reviews.map((review) => review.id);
+    if (reviewIds.length > 0) {
+      const [mailNotification, heldMail, dingTalkDeliveries] = await Promise.all([
+        tx.notification.findFirst({
+          where: {
+            contentRiskReviewId: { in: reviewIds },
+            contentRiskEmailDueAt: { not: null },
+            readAt: null,
+          },
+          select: { id: true },
+        }),
+        tx.mailMessage.findFirst({
+          where: {
+            contentRiskReviewId: { in: reviewIds },
+            status: "QUEUED",
+          },
+          select: { id: true },
+        }),
+        tx.dingTalkRobotDelivery.findMany({
+          where: {
+            contentRiskReviewId: { in: reviewIds },
+            status: "HELD",
+          },
+          select: { id: true },
+        }),
+      ]);
+      await tx.contentRiskReview.updateMany({
+        where: { id: { in: reviewIds } },
+        data: {
+          status: "CANCELLED",
+          completedAt: now,
+          nextAttemptAt: null,
+          lastError: "插件已停用或进入异常旁路",
+        },
+      });
+      await tx.$executeRaw`
+        UPDATE "Notification"
+        SET "emailDueAt" = "contentRiskEmailDueAt",
+            "contentRiskEmailDueAt" = NULL,
+            "contentRiskReviewId" = NULL,
+            "emailClaimedAt" = NULL,
+            "readAt" = CASE
+              WHEN "contentRiskSuppressed" = TRUE
+                THEN "contentRiskReadAtBeforeSuppression"
+              ELSE "readAt"
+            END,
+            body = CASE
+              WHEN "contentRiskSuppressed" = TRUE
+                THEN COALESCE("contentRiskBodyBeforeSuppression", body)
+              ELSE body
+            END,
+            "contentRiskReadAtBeforeSuppression" = NULL,
+            "contentRiskBodyBeforeSuppression" = NULL,
+            "contentRiskSuppressed" = FALSE
+        WHERE "contentRiskReviewId" = ANY(${reviewIds}::text[])
+      `;
+      await tx.dingTalkRobotDelivery.updateMany({
+        where: {
+          contentRiskReviewId: { in: reviewIds },
+          status: "HELD",
+        },
+        data: {
+          contentRiskReviewId: null,
+          status: "PENDING",
+          nextAttemptAt: now,
+          lastError: null,
+        },
+      });
+      await tx.mailMessage.updateMany({
+        where: {
+          contentRiskReviewId: { in: reviewIds },
+          status: "QUEUED",
+        },
+        data: {
+          contentRiskReviewId: null,
+          status: "QUEUED",
+          lastAttemptAt: null,
+          errorMessage: null,
+        },
+      });
+      if (mailNotification) {
+        await tx.$executeRaw`
+          SELECT pg_notify('service_platform_mail_outbox', ${mailNotification.id})
+        `;
+      }
+      if (heldMail) {
+        await tx.$executeRaw`
+          SELECT pg_notify('service_platform_mail_outbox', ${heldMail.id})
+        `;
+      }
+      for (const delivery of dingTalkDeliveries) {
+        await tx.$executeRaw`
+          SELECT pg_notify('service_platform_dingtalk_deliveries', ${delivery.id})
+        `;
+      }
+    }
+  }
+}
+
+export async function applyPluginEnableSideEffects(
+  tx: Prisma.TransactionClient,
+  pluginKey: string,
+) {
+  if (pluginKey !== CONTENT_CONTACT_RISK_PLUGIN_KEY) return;
+  const now = new Date();
+  await tx.contentRiskRuntimeState.upsert({
+    where: { pluginKey },
+    create: {
+      pluginKey,
+      activationId: randomUUID(),
+      enabledAt: now,
+      bypassedAt: null,
+    },
+    update: {
+      activationId: randomUUID(),
+      enabledAt: now,
+      bypassedAt: null,
+      unsupportedNotified: Prisma.JsonNull,
+    },
+  });
 }
 
 export async function ensurePluginInstallations() {

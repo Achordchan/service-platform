@@ -25,6 +25,7 @@ export type RuntimeMailSettings = {
   smtpLastCheckedAt: Date | null;
   smtpLastError: string | null;
   standardEmailUnreadDelayEnabled: boolean;
+  emailOtpLoginEnabled: boolean;
 };
 
 type StoredMailSettings = Awaited<ReturnType<typeof ensurePlatformSettings>>;
@@ -118,6 +119,7 @@ export function runtimeMailSettingsFromStored(
     smtpLastError: settings.smtpLastError,
     standardEmailUnreadDelayEnabled:
       settings.standardRequestEmailEnabled ?? false,
+    emailOtpLoginEnabled: settings.emailOtpLoginEnabled ?? false,
   };
 }
 

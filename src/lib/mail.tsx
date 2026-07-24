@@ -63,6 +63,11 @@ function MailDocument({
   StoredMailPayload,
   "id" | "toEmail" | "subject" | "deliveryMode"
 >) {
+  const bodyParagraphs = body
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+
   return (
     <html lang="zh-CN">
       <body
@@ -125,18 +130,23 @@ function MailDocument({
           >
             {heading}
           </h1>
-          <p
-            style={{
-              margin: 0,
-              color: "#374151",
-              fontSize: 16,
-              lineHeight: 1.8,
-              whiteSpace: "pre-line",
-              overflowWrap: "anywhere",
-            }}
-          >
-            {body}
-          </p>
+          <div>
+            {bodyParagraphs.map((paragraph, index) => (
+              <p
+                key={`${index}:${paragraph.slice(0, 24)}`}
+                style={{
+                  margin: index === 0 ? 0 : "18px 0 0",
+                  color: "#374151",
+                  fontSize: 16,
+                  lineHeight: 1.8,
+                  whiteSpace: "pre-line",
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {paragraph}
+              </p>
+            ))}
+          </div>
           {actionLabel && actionUrl ? (
             <>
               <a
@@ -349,6 +359,7 @@ export async function processMailMessage(
         ...(options.expectedDeliveryMode
           ? { deliveryMode: options.expectedDeliveryMode }
           : {}),
+        contentRiskReviewId: null,
         AND: [
           mailAttemptBudgetWhere(),
           {
@@ -587,6 +598,10 @@ async function notificationMailStillSendable(message: {
                 memberships: { select: { userId: true } },
               },
             },
+            staff: {
+              where: { role: "PROJECT_MANAGER" },
+              select: { userId: true },
+            },
           },
         },
       },
@@ -652,10 +667,14 @@ async function notificationMailStillSendable(message: {
         isStandardProjectRecipientRelevant({
           userId: notification.user.id,
           platformRole: notification.user.platformRole,
+          notificationType: notification.type,
           membershipUserIds:
             notification.project.customerSpace.memberships.map(
               (item) => item.userId,
             ),
+          projectManagerUserIds: notification.project.staff.map(
+            (item) => item.userId,
+          ),
         }) &&
         canSendStandardProjectEmailForModule({
           notificationType: notification.type,

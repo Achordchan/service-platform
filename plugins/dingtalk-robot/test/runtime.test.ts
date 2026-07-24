@@ -77,12 +77,13 @@ test("renders an event template while preserving the required keyword", async ()
       requestUrl: "https://support.example.com/staff/requests/request-1",
       customerName: "示例客户",
       actorName: "李四",
+      contentSummary: "页面一直提示连接失败，请协助处理。",
       occurredAt: "2026-07-23T02:30:00.000Z",
     },
     {
       template: {
         title: "{{customerName}} 回复了 {{requestNumber}}",
-        body: "回复人：{{actorName}}\n不存在的可选项：{{projectName}}",
+        body: "回复人：{{actorName}}\n回复摘要：{{contentSummary}}\n不存在的可选项：{{projectName}}",
       },
       fetch: async (_input, init) => {
         requestBody = String(init?.body ?? "");
@@ -96,7 +97,41 @@ test("renders an event template while preserving the required keyword", async ()
   };
   assert.match(body.markdown.title, /工单通知：示例客户 回复了 REQ\\-1001/);
   assert.match(body.markdown.text, /回复人：李四/);
+  assert.match(body.markdown.text, /回复摘要：页面一直提示连接失败/);
   assert.doesNotMatch(body.markdown.text, /不存在的可选项/);
+});
+
+test("renders a redacted content-risk template with request context", async () => {
+  let requestBody = "";
+  await sendDingTalkTicketNotification(
+    { webhookUrl },
+    {
+      type: "CONTENT_RISK_ALERT",
+      requestId: "request-1",
+      requestNumber: "REQ-1001",
+      title: "VPN 连接失败",
+      requestUrl: "https://support.example.com/staff/plugins",
+      projectName: "企业 VPN 服务",
+      actorName: "李四",
+      targetLabel: "服务请求回复",
+      riskSummary: "系统已撤回疑似包含站外联系引导的公开内容",
+      occurredAt: "2026-07-23T02:30:00.000Z",
+    },
+    {
+      fetch: async (_input, init) => {
+        requestBody = String(init?.body ?? "");
+        return Response.json({ errcode: 0, errmsg: "ok" });
+      },
+    },
+  );
+
+  const body = JSON.parse(requestBody) as {
+    markdown: { text: string };
+  };
+  assert.match(body.markdown.text, /发送人.*李四/);
+  assert.match(body.markdown.text, /项目.*企业 VPN 服务/);
+  assert.match(body.markdown.text, /服务请求.*REQ\\-1001 VPN 连接失败/);
+  assert.match(body.markdown.text, /原始内容仅可在平台受限风控记录中查看/);
 });
 
 test("rejects non-HTTPS public request links", async () => {

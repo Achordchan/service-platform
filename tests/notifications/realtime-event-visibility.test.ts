@@ -13,6 +13,12 @@ describe("实时事件模块可见性", () => {
   it.each([
     ["项目动态", "PROJECT_UPDATE_CREATED", {}, "customerUpdatesEnabled"],
     [
+      "项目动态删除",
+      "PROJECT_UPDATED",
+      { change: "PROJECT_UPDATE_DELETED" },
+      "customerUpdatesEnabled",
+    ],
+    [
       "项目文件",
       "PROJECT_UPDATED",
       { change: "PROJECT_ATTACHMENT_UPLOADED" },

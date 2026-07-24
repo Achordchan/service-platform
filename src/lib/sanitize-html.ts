@@ -62,7 +62,19 @@ function protectInlineImages(input: string) {
 
 export function sanitizeMessageHtml(input: string) {
   const protectedContent = protectInlineImages(input);
-  const purified = DOMPurify.sanitize(protectedContent.html, {
+  let result = purifyMessageHtml(protectedContent.html);
+  for (const [token, image] of protectedContent.images) {
+    result = result.replaceAll(token, image);
+  }
+  return result;
+}
+
+export function sanitizeReeditableMessageHtml(input: string) {
+  return purifyMessageHtml(input);
+}
+
+function purifyMessageHtml(input: string) {
+  const purified = DOMPurify.sanitize(input, {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOW_DATA_ATTR: false,
@@ -78,7 +90,7 @@ export function sanitizeMessageHtml(input: string) {
     FORBID_ATTR: ["style", "onerror", "onclick", "onload"],
   });
 
-  let result = purified
+  return purified
     .replace(/<a\b([^>]*)>/gi, (_match, attrs: string) => {
       const hrefMatch = attrs.match(
         /\bhref\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i,
@@ -90,8 +102,4 @@ export function sanitizeMessageHtml(input: string) {
       return `<a href="${href}" target="_blank" rel="noopener noreferrer">`;
     })
     .trim();
-  for (const [token, image] of protectedContent.images) {
-    result = result.replaceAll(token, image);
-  }
-  return result;
 }

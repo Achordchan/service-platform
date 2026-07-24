@@ -359,6 +359,10 @@ export async function disconnectResendProvider(actor: Actor) {
       data: {
         mailMode:
           current.mailMode === "RESEND" ? "LOCAL_OUTBOX" : current.mailMode,
+        emailOtpLoginEnabled:
+          current.mailMode === "RESEND"
+            ? false
+            : current.emailOtpLoginEnabled,
         resendApiKeyEncrypted: null,
         resendDomainId: null,
         resendDomainStatus: null,

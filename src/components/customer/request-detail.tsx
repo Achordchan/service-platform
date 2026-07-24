@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useRequestRealtime } from "@/hooks/use-request-realtime";
 import { useRequestNotificationsRead } from "@/hooks/use-request-notifications-read";
 import { useRequestPresence } from "@/hooks/use-request-presence";
@@ -12,9 +12,12 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
-import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
+import { RequestPresenceIndicator } from "@/components/shared/request-presence-indicator";
+import type {
+  ChatReeditDraft,
+  ChatReplyTarget,
+} from "@/components/shared/request-chat-types";
 import type {
   RequestPriority,
   ServiceRequestDetail,
@@ -45,34 +48,19 @@ const priorityMap: Record<
 export function RequestDetail({
   request,
   currentUserId,
-  created,
 }: {
   request: ServiceRequestDetail;
   currentUserId: string;
-  created?: boolean;
 }) {
   const priority = priorityMap[request.priority];
-  const [showCreatedNotice, setShowCreatedNotice] = useState(created === true);
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
+  const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
   const presence = useRequestPresence(request.id, "CUSTOMER");
   useRequestRealtime(request.id, {
     currentUserId,
     projectId: request.projectId,
   });
   useRequestNotificationsRead(request.id);
-
-  useEffect(() => {
-    if (!created) return;
-    const url = new URL(window.location.href);
-    url.searchParams.delete("created");
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${url.pathname}${url.search}${url.hash}`,
-    );
-    const timer = window.setTimeout(() => setShowCreatedNotice(false), 5_000);
-    return () => window.clearTimeout(timer);
-  }, [created]);
 
   return (
     <Stack spacing={3}>
@@ -81,14 +69,16 @@ export function RequestDetail({
         backHref={`/customer/projects/${request.projectId}?tab=requests`}
         title={request.title}
         description={`${request.number} · ${request.projectTitle}`}
-        status={<StatusIndicator status={request.status} />}
+        status={
+          <>
+            <StatusIndicator status={request.status} />
+            <RequestPresenceIndicator
+              online={presence.counterpartOnline}
+              label="服务人员在线"
+            />
+          </>
+        }
       />
-      {showCreatedNotice ? (
-        <Alert severity="success" onClose={() => setShowCreatedNotice(false)}>
-          服务请求已提交。
-        </Alert>
-      ) : null}
-
       <Box
         sx={{
           display: "grid",
@@ -98,20 +88,38 @@ export function RequestDetail({
         }}
       >
         <Stack spacing={2.5}>
-          <Box>
-            <RequestChatHeading
-              counterpartOnline={presence.counterpartOnline}
-              counterpartLabel="服务人员"
-            />
-            <RequestChatThread
-              messages={request.messages}
-              currentUserId={currentUserId}
-              onReply={setReplyTarget}
-              counterpartTypingLabel={
-                presence.counterpartTyping ? "服务人员" : null
-              }
-            />
-          </Box>
+          <RequestChatThread
+            messages={request.messages}
+            currentUserId={currentUserId}
+            contentRiskEnabled={request.contentRiskUiEnabled}
+            onReply={setReplyTarget}
+            onReedit={
+              !request.archivedAt && request.status !== "CLOSED"
+                ? (message) => {
+                    if (!message.reeditBody) return;
+                    setReplyTarget(null);
+                    setReeditDraft((current) => ({
+                      version: (current?.version ?? 0) + 1,
+                      requestId: request.id,
+                      messageId: message.id,
+                      body: message.reeditBody!,
+                      attachmentCount: message.reeditAttachmentCount ?? 0,
+                    }));
+                    requestAnimationFrame(() => {
+                      document
+                        .getElementById("request-reply-composer")
+                        ?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                    });
+                  }
+                : undefined
+            }
+            counterpartTypingLabel={
+              presence.counterpartTyping ? "服务人员" : null
+            }
+          />
 
           {request.archivedAt ? (
             <Alert severity="info">
@@ -119,7 +127,7 @@ export function RequestDetail({
             </Alert>
           ) : (
             <RequestReplyForm
-              key={`${request.id}:${request.status}`}
+              key={`${request.id}:${request.status}:${reeditDraft?.version ?? 0}`}
               requestId={request.id}
               status={request.status}
               disabled={request.status === "CLOSED"}
@@ -129,6 +137,10 @@ export function RequestDetail({
                 presence.reportTypingActivity("CUSTOMER_VISIBLE")
               }
               onTypingStopped={presence.stopTyping}
+              contentRiskEnabled={request.contentRiskUiEnabled}
+              initialBody={reeditDraft?.body}
+              restoredAttachmentCount={reeditDraft?.attachmentCount ?? 0}
+              onSent={() => setReeditDraft(null)}
             />
           )}
         </Stack>

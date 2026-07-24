@@ -2,6 +2,10 @@ import "server-only";
 
 import type { PlatformRole, Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
+import {
+  DEFAULT_PERMISSIONS_BY_LEVEL,
+  type RolePermissionKey,
+} from "@/modules/users/role-permissions";
 
 export type Actor = {
   id: string;
@@ -10,6 +14,7 @@ export type Actor = {
   platformRole: PlatformRole;
   isPlatformAdmin: boolean;
   isStaff: boolean;
+  permissions?: RolePermissionKey[];
 };
 
 export async function resolveActor(userId: string): Promise<Actor | null> {
@@ -20,14 +25,32 @@ export async function resolveActor(userId: string): Promise<Actor | null> {
       name: true,
       email: true,
       platformRole: true,
+      deletedAt: true,
+      roleGroup: {
+        select: {
+          permissions: true,
+        },
+      },
     },
   });
-  if (!user) return null;
+  if (!user || user.deletedAt) return null;
 
+  const { roleGroup } = user;
   return {
-    ...user,
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    platformRole: user.platformRole,
     isPlatformAdmin: user.platformRole === "PLATFORM_ADMIN",
     isStaff: user.platformRole !== "CUSTOMER",
+    permissions:
+      user.platformRole === "PROJECT_MANAGER" ||
+      user.platformRole === "TECHNICIAN"
+        ? ((roleGroup?.permissions ??
+            DEFAULT_PERMISSIONS_BY_LEVEL[
+              user.platformRole
+            ]) as RolePermissionKey[])
+        : [],
   };
 }
 
@@ -58,6 +81,7 @@ export async function withSystemDb<T>(
     platformRole: "PLATFORM_ADMIN",
     isPlatformAdmin: true,
     isStaff: true,
+    permissions: [],
   };
   return withActorDb(systemActor, callback);
 }

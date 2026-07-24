@@ -5,7 +5,6 @@ import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
-  Alert,
   Box,
   Button,
   Chip,
@@ -32,6 +31,7 @@ import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import RestoreOutlinedIcon from "@mui/icons-material/RestoreOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import {
   buildDefaultSupportReplyPlaybookContent,
@@ -61,16 +61,13 @@ export function SupportPlaybookManager({
 }: {
   initialPlaybooks: SupportReplyPlaybookView[];
 }) {
+  const toast = useToast();
   const [playbooks, setPlaybooks] = useState(initialPlaybooks);
   const [editor, setEditor] = useState<EditorState>(null);
   const [editorContent, setEditorContent] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [busyKey, setBusyKey] = useState("");
-  const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
   const visiblePlaybooks = playbooks.filter((playbook) => !playbook.deletedAt);
   const deletedPlaybooks = playbooks.filter((playbook) => playbook.deletedAt);
 
@@ -92,13 +89,11 @@ export function SupportPlaybookManager({
   }, []);
 
   function openCreate() {
-    setMessage(null);
     setEditorContent("");
     setEditor({ mode: "create" });
   }
 
   function openEdit(playbook: SupportReplyPlaybookView) {
-    setMessage(null);
     setEditorContent(
       playbook.content || buildDefaultSupportReplyPlaybookContent(playbook),
     );
@@ -119,7 +114,6 @@ export function SupportPlaybookManager({
     };
     const actionKey = editor.mode === "create" ? "create" : editor.playbook.key;
     setBusyKey(actionKey);
-    setMessage(null);
     try {
       setPlaybooks(
         await staffApi<SupportReplyPlaybookView[]>(
@@ -130,12 +124,9 @@ export function SupportPlaybookManager({
         ),
       );
       setEditor(null);
-      setMessage({ type: "success", text: "回复指南已保存" });
+      toast.success("回复指南已保存");
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "回复指南保存失败",
-      });
+      toast.error(error instanceof Error ? error.message : "回复指南保存失败");
     } finally {
       setBusyKey("");
     }
@@ -190,15 +181,11 @@ export function SupportPlaybookManager({
     successText?: string,
   ) {
     setBusyKey(key);
-    setMessage(null);
     try {
       setPlaybooks(await staffApi<SupportReplyPlaybookView[]>(url, init));
-      if (successText) setMessage({ type: "success", text: successText });
+      if (successText) toast.success(successText);
     } catch (error) {
-      setMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : fallbackError,
-      });
+      toast.error(error instanceof Error ? error.message : fallbackError);
     } finally {
       setBusyKey("");
     }
@@ -234,7 +221,6 @@ export function SupportPlaybookManager({
           </Button>
         </Stack>
       </Stack>
-      {message ? <Alert severity={message.type}>{message.text}</Alert> : null}
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
         {visiblePlaybooks.map((playbook, index) => (
           <Box key={playbook.key}>
@@ -297,7 +283,6 @@ export function SupportPlaybookManager({
             <DialogTitle>{editor.mode === "create" ? "新建回复指南" : "编辑回复指南"}</DialogTitle>
             <DialogContent dividers sx={{ overflowY: "auto" }}>
               <Stack spacing={2.25} sx={{ pt: 0.5 }}>
-                {message?.type === "error" ? <Alert severity="error">{message.text}</Alert> : null}
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                   <TextField name="title" label="指南名称" defaultValue={editing?.title ?? ""} required fullWidth />
                   <TextField name="category" label="分类" defaultValue={editing?.category ?? "INFORMATION"} select required sx={{ minWidth: { sm: 180 } }}>

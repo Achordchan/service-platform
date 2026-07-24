@@ -5,6 +5,11 @@ import type { Actor } from "@/lib/actor";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { calculateProjectProgress } from "@/modules/projects/progress";
 import { projectBaseSelect } from "@/modules/projects/project-summary-query";
+import {
+  contentRiskStatusFor,
+  isContentRiskStateRevoked,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
 
 export async function loadProjectDetail(
   tx: Prisma.TransactionClient,
@@ -113,6 +118,7 @@ export async function loadProjectDetail(
             mimeType: true,
             size: true,
             visibility: true,
+            uploadedById: true,
             createdAt: true,
           },
           orderBy: { createdAt: "desc" },
@@ -122,6 +128,41 @@ export async function loadProjectDetail(
     where: { projectId },
     select: { pluginKey: true, status: true },
   });
+  const contentRisk = await loadContentRiskPageState(
+    [
+      ...milestoneRows.map((milestone) => ({
+        targetType: "MILESTONE" as const,
+        targetId: milestone.id,
+      })),
+      ...updates.map((update) => ({
+        targetType: "PROJECT_UPDATE" as const,
+        targetId: update.id,
+      })),
+      ...comments.map((comment) => ({
+        targetType: "UPDATE_COMMENT" as const,
+        targetId: comment.id,
+      })),
+      ...attachments.map((attachment) => ({
+        targetType: "ATTACHMENT" as const,
+        targetId: attachment.id,
+      })),
+    ],
+    tx,
+  );
+  const riskStatus = (
+    targetType: "MILESTONE" | "PROJECT_UPDATE" | "UPDATE_COMMENT" | "ATTACHMENT",
+    targetId: string,
+    authoredByCurrentUser: boolean,
+  ) =>
+    actor.isPlatformAdmin
+      ? null
+      : contentRiskStatusFor(
+          contentRisk.states.get(`${targetType}:${targetId}`),
+          {
+            pluginEnabled: contentRisk.enabled,
+            showPending: authoredByCurrentUser,
+          },
+        );
 
   const staffUserById = new Map(staffUsers.map((user) => [user.id, user]));
   const authorById = new Map(contentAuthors.map((user) => [user.id, user]));
@@ -133,9 +174,15 @@ export async function loadProjectDetail(
   }
   const milestones =
     actor.isStaff || project.showMilestones ? milestoneRows : [];
+  const progressMilestoneRows = milestoneRows.filter(
+    (milestone) =>
+      !isContentRiskStateRevoked(
+        contentRisk.states.get(`MILESTONE:${milestone.id}`),
+      ),
+  );
   const progress =
     actor.isStaff || project.showProgress
-      ? calculateProjectProgress(milestoneRows)
+      ? calculateProjectProgress(progressMilestoneRows)
       : { percentage: 0, counts: { total: 0, completed: 0, inProgress: 0, notStarted: 0 } };
   return {
     ...project,
@@ -155,21 +202,72 @@ export async function loadProjectDetail(
       .filter((item): item is NonNullable<typeof item> => Boolean(item)),
     milestones: milestones.map((milestone) => ({
       ...milestone,
-      description: milestone.description
-        ? sanitizeMessageHtml(milestone.description)
-        : null,
+      title:
+        !actor.isPlatformAdmin &&
+        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
+          ? ""
+          : milestone.title,
+      contentRiskStatus: riskStatus(
+        "MILESTONE",
+        milestone.id,
+        milestone.createdById === actor.id,
+      ),
+      description:
+        !actor.isPlatformAdmin &&
+        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
+          ? null
+          : milestone.description
+            ? sanitizeMessageHtml(milestone.description)
+            : null,
     })),
     updates: updates.map((update) => ({
       ...update,
-      body: sanitizeMessageHtml(update.body),
+      title:
+        !actor.isPlatformAdmin &&
+        riskStatus("PROJECT_UPDATE", update.id, false) === "REVOKED"
+          ? ""
+          : update.title,
+      contentRiskStatus: riskStatus(
+        "PROJECT_UPDATE",
+        update.id,
+        update.authorId === actor.id,
+      ),
+      body:
+        !actor.isPlatformAdmin &&
+        riskStatus("PROJECT_UPDATE", update.id, false) === "REVOKED"
+          ? ""
+          : sanitizeMessageHtml(update.body),
       author: authorById.get(update.authorId)!,
       comments: (commentsByUpdateId.get(update.id) ?? []).map((comment) => ({
         ...comment,
+        contentRiskStatus: riskStatus(
+          "UPDATE_COMMENT",
+          comment.id,
+          comment.authorId === actor.id,
+        ),
+        body:
+          !actor.isPlatformAdmin &&
+          riskStatus("UPDATE_COMMENT", comment.id, false) === "REVOKED"
+            ? ""
+            : comment.body,
         author: authorById.get(comment.authorId)!,
       })),
     })),
-    attachments,
+    attachments: attachments.map((attachment) => ({
+      ...attachment,
+      originalName:
+        !actor.isPlatformAdmin &&
+        riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED"
+          ? ""
+          : attachment.originalName,
+      contentRiskStatus: riskStatus(
+        "ATTACHMENT",
+        attachment.id,
+        attachment.uploadedById === actor.id,
+      ),
+    })),
     pluginBindings,
+    contentRiskUiEnabled: contentRisk.enabled,
     progress: progress.percentage,
     progressDetails: progress.counts,
   };

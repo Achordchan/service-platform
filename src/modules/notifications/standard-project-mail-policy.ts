@@ -3,11 +3,15 @@ import type { NotificationType, PlatformRole } from "@/generated/prisma/client";
 export function isStandardProjectRecipientRelevant(input: {
   userId: string;
   platformRole: PlatformRole;
+  notificationType: NotificationType;
   membershipUserIds: string[];
+  projectManagerUserIds: string[];
 }) {
   return (
-    input.platformRole === "CUSTOMER" &&
-    input.membershipUserIds.includes(input.userId)
+    (input.platformRole === "CUSTOMER" &&
+      input.membershipUserIds.includes(input.userId)) ||
+    (input.notificationType === "PROJECT_CREATED" &&
+      input.projectManagerUserIds.includes(input.userId))
   );
 }
 
@@ -18,6 +22,7 @@ export function canSendStandardProjectEmailForModule(input: {
   showMilestones: boolean;
   showProgress: boolean;
 }) {
+  if (input.notificationType === "PROJECT_CREATED") return true;
   if (
     input.notificationType === "PROJECT_UPDATE" ||
     input.notificationType === "UPDATE_COMMENT"

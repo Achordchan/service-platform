@@ -3,8 +3,15 @@ import { MilestoneList } from "@/components/shared/milestone-list";
 
 export function MilestoneTimeline({
   milestones,
+  contentRiskEnabled = false,
 }: {
   milestones: ProjectMilestone[];
+  contentRiskEnabled?: boolean;
 }) {
-  return <MilestoneList milestones={milestones} />;
+  return (
+    <MilestoneList
+      milestones={milestones}
+      contentRiskEnabled={contentRiskEnabled}
+    />
+  );
 }

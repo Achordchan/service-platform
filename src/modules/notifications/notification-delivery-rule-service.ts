@@ -15,6 +15,7 @@ import {
   updateNotificationDeliveryRulesSchema,
 } from "@/modules/notifications/notification-delivery-rules";
 import { assertAllowed, DomainError } from "@/modules/projects/errors";
+import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 
 const defaults = new Map<
   NotificationDeliveryRuleKey,
@@ -28,12 +29,16 @@ const defaults = new Map<
 
 export async function listNotificationDeliveryRules(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
+  await ensurePluginInstallations();
   return withActorDb(actor, async (tx) => {
-    const stored = await tx.notificationDeliveryRule.findMany();
+    const [stored, riskOperational] = await Promise.all([
+      tx.notificationDeliveryRule.findMany(),
+      isContentRiskOperational(tx),
+    ]);
     const byKey = new Map<string, NotificationDeliveryRuleState>(
       stored.map((rule) => [rule.key, rule]),
     );
-    return mergeDefinitions(byKey);
+    return visibleDefinitions(byKey, riskOperational);
   });
 }
 
@@ -80,6 +85,7 @@ export async function updateNotificationDeliveryRules(
             in: [
               "STANDARD_REQUEST_NOTIFICATION",
               "STANDARD_PROJECT_NOTIFICATION",
+              "CONTENT_RISK_NOTIFICATION",
             ],
           },
           status: "QUEUED",
@@ -100,7 +106,7 @@ export async function updateNotificationDeliveryRules(
       await tx.dingTalkRobotDelivery.updateMany({
         where: {
           eventType: { in: disabledDingTalkEventTypes },
-          status: { in: ["PENDING", "PROCESSING"] },
+          status: { in: ["PENDING", "HELD", "PROCESSING"] },
         },
         data: {
           status: "SKIPPED",
@@ -115,11 +121,15 @@ export async function updateNotificationDeliveryRules(
       resourceId: "platform",
       metadata: { keys: [...uniqueKeys] },
     });
-    const stored = await listRulesInTx(tx);
-    return mergeDefinitions(
+    const [stored, riskOperational] = await Promise.all([
+      listRulesInTx(tx),
+      isContentRiskOperational(tx),
+    ]);
+    return visibleDefinitions(
       new Map<string, NotificationDeliveryRuleState>(
         stored.map((rule) => [rule.key, rule]),
       ),
+      riskOperational,
     );
   });
 }
@@ -147,4 +157,34 @@ function mergeDefinitions(
     const state = byKey.get(definition.key) ?? defaults.get(definition.key)!;
     return { ...definition, ...state };
   });
+}
+
+function visibleDefinitions(
+  byKey: Map<string, NotificationDeliveryRuleState>,
+  riskOperational: boolean,
+) {
+  return mergeDefinitions(byKey).filter(
+    (rule) => rule.key !== "CONTENT_RISK_ALERT" || riskOperational,
+  );
+}
+
+async function isContentRiskOperational(
+  tx: import("@/generated/prisma/client").Prisma.TransactionClient,
+) {
+  const [installation, runtime] = await Promise.all([
+    tx.pluginInstallation.findUnique({
+      where: { key: "content-contact-risk" },
+      select: { enabled: true, healthStatus: true },
+    }),
+    tx.contentRiskRuntimeState.findUnique({
+      where: { pluginKey: "content-contact-risk" },
+      select: { bypassedAt: true },
+    }),
+  ]);
+  return Boolean(
+    installation?.enabled &&
+      installation.healthStatus === "READY" &&
+      runtime &&
+      !runtime.bypassedAt,
+  );
 }

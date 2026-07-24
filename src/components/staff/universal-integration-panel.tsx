@@ -29,6 +29,7 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { useToast } from "@/components/shared/toast-provider";
 import {
   UniversalIntegrationGuideDialog,
   type UniversalGuideStage,
@@ -80,7 +81,7 @@ const webhookEventOptions: Array<{
   value: WebhookEventType;
   label: string;
 }> = [
-  { value: "request.created", label: "工单创建" },
+  { value: "request.created", label: "服务请求创建" },
   { value: "request.public_message.created", label: "公开回复" },
   { value: "request.status.changed", label: "状态变化" },
   { value: "request.unread.changed", label: "未读数量变化" },
@@ -115,11 +116,11 @@ export function UniversalIntegrationPanel({
   projectId: string;
   canEdit: boolean;
 }) {
+  const toast = useToast();
   const [view, setView] = useState<IntegrationView | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [name, setName] = useState("");
   const [origins, setOrigins] = useState("");
   const [profileFields, setProfileFields] = useState<ProfileField[]>([]);
@@ -161,6 +162,7 @@ export function UniversalIntegrationPanel({
       `/api/v1/projects/${projectId}/integrations/universal`,
     );
     setView(next);
+    setError("");
     applyConnection(next.connection, next.project.title);
     return next;
   }, [applyConnection, projectId]);
@@ -244,8 +246,6 @@ export function UniversalIntegrationPanel({
     activate?: boolean;
   }) {
     setBusy(true);
-    setError("");
-    setSuccess("");
     try {
       const result = await staffApi<{
         connection: ConnectionView;
@@ -258,9 +258,9 @@ export function UniversalIntegrationPanel({
         setSecret({ title: "Webhook 签名密钥", value: result.webhookSecret });
       }
       await load();
-      setSuccess(options?.activate ? "连接已激活" : "配置已保存");
+      toast.success(options?.activate ? "连接已激活" : "配置已保存");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "配置保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "配置保存失败");
     } finally {
       setBusy(false);
     }
@@ -268,7 +268,6 @@ export function UniversalIntegrationPanel({
 
   async function createCredential() {
     setBusy(true);
-    setError("");
     try {
       const created = await staffApi<{
         clientId: string;
@@ -283,8 +282,9 @@ export function UniversalIntegrationPanel({
         value: created.clientSecret,
       });
       await load();
+      toast.success("接入凭据已生成");
     } catch (credentialError) {
-      setError(
+      toast.error(
         credentialError instanceof Error
           ? credentialError.message
           : "凭据生成失败",
@@ -296,15 +296,15 @@ export function UniversalIntegrationPanel({
 
   async function revokeCredential(credentialId: string) {
     setBusy(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/credentials/${credentialId}`,
         { method: "DELETE" },
       );
       await load();
+      toast.success("接入凭据已撤销");
     } catch (revokeError) {
-      setError(
+      toast.error(
         revokeError instanceof Error ? revokeError.message : "凭据撤销失败",
       );
     } finally {
@@ -314,16 +314,15 @@ export function UniversalIntegrationPanel({
 
   async function checkConnection() {
     setBusy(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/check`,
         { method: "POST" },
       );
       await load();
-      setSuccess("连接检测通过");
+      toast.success("连接检测通过");
     } catch (checkError) {
-      setError(checkError instanceof Error ? checkError.message : "连接检测失败");
+      toast.error(checkError instanceof Error ? checkError.message : "连接检测失败");
       await load().catch(() => undefined);
     } finally {
       setBusy(false);
@@ -339,16 +338,15 @@ export function UniversalIntegrationPanel({
 
   async function testWebhook() {
     setBusy(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/webhook/test`,
         { method: "POST" },
       );
-      setSuccess("Webhook 测试已加入投递队列");
+      toast.success("Webhook 测试已加入投递队列");
       if (deliveryOpen) await loadDeliveries();
     } catch (testError) {
-      setError(testError instanceof Error ? testError.message : "Webhook 测试失败");
+      toast.error(testError instanceof Error ? testError.message : "Webhook 测试失败");
     } finally {
       setBusy(false);
     }
@@ -356,15 +354,15 @@ export function UniversalIntegrationPanel({
 
   async function retryDelivery(deliveryId: string) {
     setBusy(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/webhook-deliveries/${deliveryId}/retry`,
         { method: "POST" },
       );
       await loadDeliveries();
+      toast.success("Webhook 已重新加入投递队列");
     } catch (retryError) {
-      setError(retryError instanceof Error ? retryError.message : "重新投递失败");
+      toast.error(retryError instanceof Error ? retryError.message : "重新投递失败");
     } finally {
       setBusy(false);
     }
@@ -372,8 +370,6 @@ export function UniversalIntegrationPanel({
 
   async function archiveConnection() {
     setBusy(true);
-    setError("");
-    setSuccess("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/archive`,
@@ -381,9 +377,9 @@ export function UniversalIntegrationPanel({
       );
       setArchiveOpen(false);
       await load();
-      setSuccess("连接已归档，现有凭据、票据和嵌入会话已失效");
+      toast.success("连接已归档，现有凭据、票据和嵌入会话已失效");
     } catch (archiveError) {
-      setError(
+      toast.error(
         archiveError instanceof Error ? archiveError.message : "连接归档失败",
       );
     } finally {
@@ -412,7 +408,7 @@ export function UniversalIntegrationPanel({
           </Button>
         </Stack>
         <Alert severity="warning">
-          通用工单连接器尚未在插件中心完成检测并启用。
+          通用服务请求连接器尚未在插件中心完成检测并启用。
         </Alert>
         <UniversalIntegrationGuideDialog
           open={guideOpen}
@@ -444,10 +440,9 @@ export function UniversalIntegrationPanel({
       </Stack>
       {busy ? <LinearProgress /> : null}
       {error ? <Alert severity="error" onClose={() => setError("")}>{error}</Alert> : null}
-      {success ? <Alert severity="success" onClose={() => setSuccess("")}>{success}</Alert> : null}
       {connectionArchived ? (
         <Alert severity="info">
-          连接已归档。历史工单和联系人仍保留，配置、凭据和嵌入入口不可再使用。
+          连接已归档。历史服务请求和联系人仍保留，配置、凭据和嵌入入口不可再使用。
         </Alert>
       ) : activeStep === 4 ? (
         <Alert severity="success">
@@ -658,7 +653,7 @@ export function UniversalIntegrationPanel({
               onClick={() => {
                 setDeliveryOpen(true);
                 void loadDeliveries().catch((deliveryError) =>
-                  setError(
+                  toast.error(
                     deliveryError instanceof Error
                       ? deliveryError.message
                       : "投递记录加载失败",
@@ -732,7 +727,7 @@ export function UniversalIntegrationPanel({
         <DialogTitle>归档通用连接</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mt: 1 }}>
-            归档后所有凭据、未使用票据和嵌入会话立即失效，历史工单与联系人不会删除。此操作不能在后台恢复。
+            归档后所有凭据、未使用票据和嵌入会话立即失效，历史服务请求与联系人不会删除。此操作不能在后台恢复。
           </Alert>
         </DialogContent>
         <DialogActions>

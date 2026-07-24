@@ -15,6 +15,11 @@ import { validateAttachmentFile } from "@/modules/attachments/attachment-validat
 import { dispatchExternalRequestActivity } from "@/modules/notifications/notification-service";
 import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
 import { DomainError } from "@/modules/projects/errors";
+import {
+  createContentRiskReview,
+  enforceExternalPublicContentRules,
+  isContentRiskAttachmentRevoked,
+} from "@/modules/plugins/content-risk-service";
 
 type UploadInput = {
   fileName: string;
@@ -58,7 +63,7 @@ export async function uploadExternalAttachment(
       },
     });
     if (!request) {
-      throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+      throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
     }
     if (
       request.project.status !== "ACTIVE" ||
@@ -67,7 +72,7 @@ export async function uploadExternalAttachment(
     ) {
       throw new DomainError(
         "EXTERNAL_REQUEST_READ_ONLY",
-        "当前工单只允许查看历史内容",
+        "当前服务请求只允许查看历史内容",
         409,
       );
     }
@@ -115,6 +120,16 @@ export async function uploadExternalAttachment(
       422,
     );
   }
+  await enforceExternalPublicContentRules(actor, {
+    targetType: "ATTACHMENT",
+    customerSpaceId: authorized.request.project.customerSpaceId,
+    projectId: authorized.request.projectId,
+    serviceRequestId: authorized.request.id,
+    snapshot: {
+      body: input.fileName,
+      visibility: "CUSTOMER_VISIBLE",
+    },
+  });
   const storageKey = createStorageKey(
     input.serviceRequestId,
     validated.extension,
@@ -142,7 +157,7 @@ export async function uploadExternalAttachment(
         },
       });
       if (!request) {
-        throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+        throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
       }
       if (
         request.project.status !== "ACTIVE" ||
@@ -151,7 +166,7 @@ export async function uploadExternalAttachment(
       ) {
         throw new DomainError(
           "EXTERNAL_REQUEST_READ_ONLY",
-          "当前工单只允许查看历史内容",
+          "当前服务请求只允许查看历史内容",
           409,
         );
       }
@@ -194,6 +209,22 @@ export async function uploadExternalAttachment(
           requestMessageId: created.requestMessageId,
         },
       });
+      const contentRiskReview = await createContentRiskReview(tx, {
+        targetType: "ATTACHMENT",
+        targetId: created.id,
+        actorId: actor.id,
+        actorName: actor.name,
+        actorKind: "EXTERNAL",
+        isPlatformAdmin: false,
+        customerSpaceId: request.project.customerSpaceId,
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+        snapshot: {
+          body: created.originalName,
+          visibility: "CUSTOMER_VISIBLE",
+          attachmentIds: [created.id],
+        },
+      });
       if (!input.inline) {
         const workers = Array.from(
           new Set(
@@ -219,7 +250,7 @@ export async function uploadExternalAttachment(
               : {}),
           },
           notificationType: "REQUEST_ATTACHMENT",
-          notificationTitle: `${actor.name} 上传了工单附件`,
+          notificationTitle: `${actor.name} 上传了服务请求附件`,
           notificationBody: created.originalName,
           includeCustomers: options.customerMemberNotificationsEnabled,
           relevantWorkerUserIds: workers,
@@ -230,6 +261,7 @@ export async function uploadExternalAttachment(
           customerSpaceId: request.project.customerSpaceId,
           projectId: request.projectId,
           serviceRequestId: request.id,
+          contentRiskReviewId: contentRiskReview?.id,
         });
       }
       return created;
@@ -262,11 +294,18 @@ export function readExternalAttachment(
         mimeType: true,
         size: true,
         serviceRequestId: true,
+        requestMessageId: true,
+        projectUpdateId: true,
+        updateCommentId: true,
+        milestoneId: true,
         supportPlaybookKey: true,
       },
     });
     if (!attachment) {
       throw new DomainError("ATTACHMENT_NOT_FOUND", "附件不存在", 404);
+    }
+    if (await isContentRiskAttachmentRevoked(tx, attachment)) {
+      throw new DomainError("ATTACHMENT_REVOKED", "该附件已被撤回", 404);
     }
     const normalRequest = attachment.serviceRequestId
       ? await tx.serviceRequest.findFirst({

@@ -1,0 +1,5 @@
+ALTER TABLE "User"
+ADD COLUMN "deletedAt" TIMESTAMP(3);
+
+CREATE INDEX "User_deletedAt_platformRole_idx"
+ON "User"("deletedAt", "platformRole");

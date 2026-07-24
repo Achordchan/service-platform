@@ -27,6 +27,12 @@ function requestTemplateFor(
   type: NotificationType,
   customer: boolean,
 ): MailTemplateKey {
+  if (!customer && type === "REQUEST_CREATED") {
+    return "STANDARD_REQUEST_STAFF_CREATED";
+  }
+  if (!customer && type === "REQUEST_CLAIMED") {
+    return "STANDARD_REQUEST_STAFF_CLAIMED";
+  }
   if (!customer && type === "REQUEST_ASSIGNED") {
     return "STANDARD_REQUEST_ASSIGNMENT";
   }
@@ -100,6 +106,9 @@ export async function createDueNotificationMailMessages() {
         title: true,
         archivedAt: true,
         projectId: true,
+        createdBy: {
+          select: { name: true },
+        },
       },
     });
     const projectIds = [
@@ -134,10 +143,17 @@ export async function createDueNotificationMailMessages() {
     });
     const projectStaff = await tx.projectStaff.findMany({
       where: { projectId: { in: projectIds } },
-      select: { projectId: true, userId: true },
+      select: { projectId: true, userId: true, role: true },
     });
     const requestAssignees = await tx.requestAssignee.findMany({
       where: { serviceRequestId: { in: requests.map((request) => request.id) } },
+      select: { serviceRequestId: true, userId: true },
+    });
+    const activeRequestPresence = await tx.requestPresence.findMany({
+      where: {
+        serviceRequestId: { in: requests.map((request) => request.id) },
+        expiresAt: { gt: now },
+      },
       select: { serviceRequestId: true, userId: true },
     });
     const deliveryRules = await tx.notificationDeliveryRule.findMany({
@@ -161,9 +177,18 @@ export async function createDueNotificationMailMessages() {
       "customerSpaceId",
     );
     const staffUserIdsByProjectId = groupUserIds(projectStaff, "projectId");
+    const managerUserIdsByProjectId = groupUserIds(
+      projectStaff.filter((staff) => staff.role === "PROJECT_MANAGER"),
+      "projectId",
+    );
     const assigneeUserIdsByRequestId = groupUserIds(
       requestAssignees,
       "serviceRequestId",
+    );
+    const activeRequestPresenceKeys = new Set(
+      activeRequestPresence.map(
+        (presence) => `${presence.serviceRequestId}:${presence.userId}`,
+      ),
     );
 
     const createdIds: string[] = [];
@@ -212,6 +237,9 @@ export async function createDueNotificationMailMessages() {
                 membershipUserIdsBySpaceId.get(projectRow.customerSpaceId) ?? []
               ).map((userId) => ({ userId })),
             },
+            staff: (
+              managerUserIdsByProjectId.get(projectRow.id) ?? []
+            ).map((userId) => ({ userId })),
           }
         : null;
       const customer = user.platformRole === "CUSTOMER";
@@ -231,6 +259,7 @@ export async function createDueNotificationMailMessages() {
           commonValid &&
           request &&
           !request.archivedAt &&
+          !activeRequestPresenceKeys.has(`${request.id}:${user.id}`) &&
           request.project.kind === "STANDARD" &&
           canSendStandardRequestEmailForModule({
             platformRole: user.platformRole,
@@ -254,9 +283,11 @@ export async function createDueNotificationMailMessages() {
           isStandardProjectRecipientRelevant({
             userId: user.id,
             platformRole: user.platformRole,
+            notificationType: notification.type,
             membershipUserIds: project.customerSpace.memberships.map(
               (item) => item.userId,
             ),
+            projectManagerUserIds: project.staff.map((item) => item.userId),
           }) &&
           canSendStandardProjectEmailForModule({
             notificationType: notification.type,
@@ -266,7 +297,12 @@ export async function createDueNotificationMailMessages() {
             showProgress: project.showProgress,
           }),
       );
-      if ((!requestValid && !projectValid) || !settings) {
+      const contentRiskValid = Boolean(
+        commonValid &&
+          notification.type === "CONTENT_RISK" &&
+          user.platformRole === "PLATFORM_ADMIN",
+      );
+      if ((!requestValid && !projectValid && !contentRiskValid) || !settings) {
         await clearClaim(tx, notification.id);
         continue;
       }
@@ -282,16 +318,28 @@ export async function createDueNotificationMailMessages() {
       }
       const appUrl = (settings.appUrl?.trim() || env.APP_URL).replace(/\/$/, "");
       const template = await buildTemplateMailInTx(tx, {
-        key: requestValid
+        key: contentRiskValid
+          ? "CONTENT_RISK_ALERT"
+          : requestValid
           ? requestTemplateFor(notification.type, customer)
-          : "STANDARD_PROJECT_CUSTOMER_UPDATE",
-        variables: requestValid
+          : notification.type === "PROJECT_CREATED"
+            ? "STANDARD_PROJECT_CREATED"
+            : "STANDARD_PROJECT_CUSTOMER_UPDATE",
+        variables: contentRiskValid
+          ? {
+              recipientName: user.name,
+              notificationTitle: notification.title,
+              notificationBody: notification.body,
+            }
+          : requestValid
           ? {
               recipientName: user.name,
               requestNumber: request!.number,
               requestTitle: request!.title,
               projectName: request!.project.title,
-              notificationTitle: notification.title,
+              ...(notification.type === "REQUEST_CREATED" && !customer
+                ? { requesterName: request!.createdBy?.name ?? "客户" }
+                : { notificationTitle: notification.title }),
               notificationBody: notification.body,
             }
           : {
@@ -300,11 +348,15 @@ export async function createDueNotificationMailMessages() {
               notificationTitle: notification.title,
               notificationBody: notification.body,
             },
-        actionUrl: requestValid
+        actionUrl: contentRiskValid
+          ? `${appUrl}/staff/plugins`
+          : requestValid
           ? customer
             ? `${appUrl}/customer/requests/${request!.id}`
             : `${appUrl}/staff/requests/${request!.id}`
-          : `${appUrl}/customer/projects/${project!.id}`,
+          : customer
+            ? `${appUrl}/customer/projects/${project!.id}`
+            : `${appUrl}/staff/projects/${project!.id}`,
       });
       const message = await tx.mailMessage.create({
         data: {
@@ -321,7 +373,9 @@ export async function createDueNotificationMailMessages() {
           idempotencyKey,
           notificationId: notification.id,
           notificationOccurrenceCount: notification.occurrenceCount,
-          sourceType: requestValid
+          sourceType: contentRiskValid
+            ? "CONTENT_RISK_NOTIFICATION"
+            : requestValid
             ? "STANDARD_REQUEST_NOTIFICATION"
             : "STANDARD_PROJECT_NOTIFICATION",
           sourceId: notification.id,

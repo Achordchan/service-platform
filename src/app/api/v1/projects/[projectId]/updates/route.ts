@@ -37,8 +37,8 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const { projectId } = await context.params;
     const input = createProjectUpdateSchema.parse(await readJson(request));
-    const update = await createProjectUpdate(auth.actor, projectId, input);
-    return NextResponse.json({ data: update }, { status: 201 });
+    const result = await createProjectUpdate(auth.actor, projectId, input);
+    return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {
     return routeError(error, {
       request,

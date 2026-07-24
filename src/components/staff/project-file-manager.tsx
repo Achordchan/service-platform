@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Button,
   MenuItem,
   Paper,
@@ -14,10 +13,16 @@ import {
 } from "@mui/material";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import { useToast } from "@/components/shared/toast-provider";
+import {
+  ContentRiskNotice,
+  ContentRiskStatusLine,
+} from "@/components/shared/content-risk-notice";
 import type {
   ContentVisibility,
   RequestAttachment,
 } from "@/components/staff/staff-types";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -29,21 +34,24 @@ export function ProjectFileManager({
   projectId,
   files,
   canUpload,
+  contentRiskEnabled = false,
+  contentRiskNoticeEnabled = false,
 }: {
   projectId: string;
   files: RequestAttachment[];
   canUpload: boolean;
+  contentRiskEnabled?: boolean;
+  contentRiskNoticeEnabled?: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const { policy } = useAttachmentPolicy();
   const [visibility, setVisibility] =
     useState<ContentVisibility>("CUSTOMER_VISIBLE");
   const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
 
   async function upload(file: File) {
     setUploading(true);
-    setError("");
     const body = new FormData();
     body.append("file", file);
     body.append("projectId", projectId);
@@ -56,8 +64,17 @@ export function ProjectFileManager({
       const result = (await response.json().catch(() => ({}))) as {
         error?: { message?: string };
       };
-      setError(result.error?.message ?? "文件上传失败");
+      toast.error(result.error?.message ?? "文件上传失败");
     } else {
+      const result = (await response.json()) as {
+        data?: { deliveryFeedback?: DeliveryFeedback | null };
+      };
+      toast.success(
+        visibility === "CUSTOMER_VISIBLE"
+          ? "文件已上传，客户可在项目中查看"
+          : "内部文件已上传",
+      );
+      toast.delivery(result.data?.deliveryFeedback);
       router.refresh();
     }
     setUploading(false);
@@ -67,6 +84,9 @@ export function ProjectFileManager({
     <Stack spacing={2}>
       {canUpload ? (
         <Paper variant="outlined" sx={{ p: 2 }}>
+          {contentRiskNoticeEnabled && visibility === "CUSTOMER_VISIBLE" ? (
+            <ContentRiskNotice audience="STAFF" />
+          ) : null}
           <Stack
             direction={{ xs: "column", sm: "row" }}
             spacing={1.5}
@@ -107,7 +127,6 @@ export function ProjectFileManager({
           </Stack>
         </Paper>
       ) : null}
-      {error ? <Alert severity="error">{error}</Alert> : null}
       <Paper variant="outlined">
         {files.map((file, index) => (
           <Stack
@@ -125,6 +144,13 @@ export function ProjectFileManager({
             }}
           >
             <div>
+              {file.contentRiskStatus === "REVOKED" ? (
+                <ContentRiskStatusLine
+                  status="REVOKED"
+                  pluginEnabled={contentRiskEnabled}
+                />
+              ) : (
+                <>
               <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <Typography sx={{ fontWeight: 650 }}>
                   {file.originalName}
@@ -136,14 +162,16 @@ export function ProjectFileManager({
               <Typography variant="body2" color="text.secondary">
                 {dateFormatter.format(new Date(file.createdAt))}
               </Typography>
+                </>
+              )}
             </div>
-            <Button
+            {file.contentRiskStatus !== "REVOKED" ? <Button
               component="a"
               href={`/api/v1/attachments/${file.id}`}
               variant="outlined"
             >
               下载
-            </Button>
+            </Button> : null}
           </Stack>
         ))}
         {files.length === 0 ? (

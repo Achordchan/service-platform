@@ -43,6 +43,7 @@ export function useRequestPresence(
   const sendRef = useRef<
     ((payload: PresenceReport, keepalive?: boolean) => void) | null
   >(null);
+  const activelyViewingRef = useRef(false);
   const localTypingRef = useRef(false);
   const localTypingVisibilityRef =
     useRef<RequestTypingVisibility>("CUSTOMER_VISIBLE");
@@ -115,7 +116,7 @@ export function useRequestPresence(
   const reportTypingActivity = useCallback(
     (visibility: RequestTypingVisibility = "CUSTOMER_VISIBLE") => {
       const sender = sendRef.current;
-      if (!sender) return;
+      if (!sender || !activelyViewingRef.current) return;
 
       if (
         localTypingRef.current &&
@@ -176,7 +177,14 @@ export function useRequestPresence(
             keepalive,
           },
         );
-        if (!response.ok || !active || payload.action !== "heartbeat") return;
+        if (
+          !response.ok ||
+          !active ||
+          !activelyViewingRef.current ||
+          payload.action !== "heartbeat"
+        ) {
+          return;
+        }
         const result = (await response.json()) as {
           data?: { counterpartOnline?: boolean };
         };
@@ -194,11 +202,28 @@ export function useRequestPresence(
       reportQueue = reportQueue.then(() => report(payload));
     };
 
-    function refreshHeartbeat() {
+    function isActivelyViewingRequest() {
+      return document.visibilityState === "visible" && document.hasFocus();
+    }
+
+    function releasePresence() {
+      if (!activelyViewingRef.current) return;
+      activelyViewingRef.current = false;
+      stopTypingInternal();
+      sendRef.current?.({ action: "leave" });
+    }
+
+    function syncPresence() {
+      if (!isActivelyViewingRequest()) {
+        releasePresence();
+        return;
+      }
+      activelyViewingRef.current = true;
       sendRef.current?.({ action: "heartbeat" });
     }
 
     function handlePageHide() {
+      activelyViewingRef.current = false;
       stopTypingInternal(true);
       void report({ action: "leave" }, true);
     }
@@ -250,16 +275,18 @@ export function useRequestPresence(
     });
 
     const heartbeatTimer = window.setInterval(
-      refreshHeartbeat,
+      syncPresence,
       HEARTBEAT_MS,
     );
-    document.addEventListener("visibilitychange", refreshHeartbeat);
-    window.addEventListener("focus", refreshHeartbeat);
-    window.addEventListener("pageshow", refreshHeartbeat);
+    document.addEventListener("visibilitychange", syncPresence);
+    window.addEventListener("focus", syncPresence);
+    window.addEventListener("blur", syncPresence);
+    window.addEventListener("pageshow", syncPresence);
     window.addEventListener("pagehide", handlePageHide);
-    refreshHeartbeat();
+    syncPresence();
 
     return () => {
+      activelyViewingRef.current = false;
       stopTypingInternal(true);
       void report({ action: "leave" }, true);
       active = false;
@@ -271,9 +298,10 @@ export function useRequestPresence(
       }
       counterpartTypingSessions.clear();
       unsubscribe();
-      document.removeEventListener("visibilitychange", refreshHeartbeat);
-      window.removeEventListener("focus", refreshHeartbeat);
-      window.removeEventListener("pageshow", refreshHeartbeat);
+      document.removeEventListener("visibilitychange", syncPresence);
+      window.removeEventListener("focus", syncPresence);
+      window.removeEventListener("blur", syncPresence);
+      window.removeEventListener("pageshow", syncPresence);
       window.removeEventListener("pagehide", handlePageHide);
     };
   }, [

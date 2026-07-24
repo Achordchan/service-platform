@@ -45,7 +45,7 @@ export function updateNotificationPreferences(
     if (input.requestEmailNotificationsEnabled === false) {
       await tx.$executeRaw`
         SELECT app_cancel_notification_mail_for_current_user(
-          '用户已关闭未读邮件提醒'
+          '用户已关闭业务通知邮件'
         )
       `;
     }

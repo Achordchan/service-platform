@@ -18,6 +18,8 @@ const REQUEST_LIVE_EVENTS: readonly RealtimeEventType[] = [
   "REQUEST_STATUS_CHANGED",
   "REQUEST_ASSIGNED",
   "REQUEST_UPDATED",
+  "CONTENT_RISK_REVIEW_UPDATED",
+  "PLUGIN_RUN_UPDATED",
 ] as const;
 
 function matchesRequest(
@@ -75,7 +77,15 @@ export function useRequestRealtime(
         event.type === "PROJECT_UPDATED" &&
         Boolean(projectId) &&
         payload.projectId === projectId;
-      if (!projectChanged && !matchesRequest(payload, requestId)) return;
+      const pluginChanged =
+        event.type === "PLUGIN_RUN_UPDATED" && payload.scope === "GLOBAL";
+      if (
+        !pluginChanged &&
+        !projectChanged &&
+        !matchesRequest(payload, requestId)
+      ) {
+        return;
+      }
 
       if (!event.live) {
         pendingCatchupRef.current = true;

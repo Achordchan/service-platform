@@ -1,6 +1,7 @@
 import { Alert, Stack } from "@mui/material";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { LoginForm } from "@/components/auth/login-form";
+import { isEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 
 export default async function LoginPage({
   searchParams,
@@ -8,6 +9,7 @@ export default async function LoginPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
+  const emailOtpEnabled = await isEmailOtpLoginAvailable();
   return (
     <AuthShell brandSide title="登录" description="使用受邀邮箱登录">
       <Stack spacing={2}>
@@ -16,10 +18,10 @@ export default async function LoginPage({
         ) : null}
         {params.invitation ? (
           <Alert severity="success">
-            邀请已接受，请使用该邮箱与密码登录。
+            邀请已接受，请使用该邮箱登录。
           </Alert>
         ) : null}
-        <LoginForm />
+        <LoginForm emailOtpEnabled={emailOtpEnabled} />
       </Stack>
     </AuthShell>
   );

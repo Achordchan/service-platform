@@ -2,6 +2,7 @@
 
 import { AppRouterCacheProvider } from "@mui/material-nextjs/v16-appRouter";
 import { CssBaseline, ThemeProvider } from "@mui/material";
+import { ToastProvider } from "@/components/shared/toast-provider";
 import { appTheme } from "@/theme/theme";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
@@ -9,7 +10,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     <AppRouterCacheProvider options={{ enableCssLayer: true }}>
       <ThemeProvider theme={appTheme}>
         <CssBaseline />
-        {children}
+        <ToastProvider>{children}</ToastProvider>
       </ThemeProvider>
     </AppRouterCacheProvider>
   );

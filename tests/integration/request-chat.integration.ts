@@ -6,9 +6,11 @@ import {
   addRequestMessage,
   changeRequestStatus,
 } from "@/modules/requests/request-command-service";
+import { revokeRequestMessageByAdmin } from "@/modules/plugins/content-risk-review-service";
+import { removeProjectStaff } from "@/modules/projects/project-staff-service";
 import { updateRequestPresence } from "@/modules/requests/request-presence-service";
 import { closeResolvedRequestsDue } from "@/modules/requests/request-auto-close-service";
-import { createRequest } from "@/modules/requests/request-service";
+import { createRequest, getRequest } from "@/modules/requests/request-service";
 
 const ownerPool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -16,6 +18,8 @@ const ownerPool = new Pool({
 });
 
 const requestIds: string[] = [];
+const riskTargetIds: string[] = [];
+const temporaryUserIds: string[] = [];
 let projectId: string;
 let categoryId: string;
 let customer: Actor;
@@ -102,6 +106,16 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  if (riskTargetIds.length > 0) {
+    await ownerPool.query(
+      `DELETE FROM "ContentRiskReview" WHERE "targetId" = ANY($1::text[])`,
+      [riskTargetIds],
+    );
+    await ownerPool.query(
+      `DELETE FROM "ContentRiskState" WHERE "targetId" = ANY($1::text[])`,
+      [riskTargetIds],
+    );
+  }
   if (requestIds.length > 0) {
     await ownerPool.query(
       `
@@ -116,10 +130,106 @@ afterAll(async () => {
       [requestIds],
     );
   }
+  if (temporaryUserIds.length > 0) {
+    await ownerPool.query('DELETE FROM "User" WHERE id = ANY($1::text[])', [
+      temporaryUserIds,
+    ]);
+  }
   await ownerPool.end();
 });
 
 describe("请求聊天生产流程", () => {
+  it("平台管理员可以填写原因人工撤回客户公开消息", async () => {
+    const created = await createFixtureRequest("管理员人工撤回");
+    const reply = await addRequestMessage(customer, created.id, {
+      body: "<p>这条公开回复需要由管理员撤回</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    riskTargetIds.push(reply.message.id);
+
+    await revokeRequestMessageByAdmin(
+      admin,
+      created.id,
+      reply.message.id,
+      "包含站外联系方式引导",
+    );
+
+    const [customerView, managerView, adminView, review, notifications] =
+      await Promise.all([
+      getRequest(customer, created.id),
+      getRequest(manager, created.id),
+      getRequest(admin, created.id),
+      ownerPool.query<{
+        source: string;
+        status: string;
+        decision_reason: string;
+      }>(
+        `
+          SELECT source, status, "decisionReason" AS decision_reason
+          FROM "ContentRiskReview"
+          WHERE "targetType" = 'REQUEST_MESSAGE'
+            AND "targetId" = $1
+          ORDER BY "createdAt" DESC
+          LIMIT 1
+        `,
+        [reply.message.id],
+      ),
+      ownerPool.query<{
+        total: string;
+        unread: string;
+        email_due: string;
+      }>(
+        `SELECT
+           COUNT(*)::text AS total,
+           COUNT(*) FILTER (WHERE "readAt" IS NULL)::text AS unread,
+           COUNT(*) FILTER (WHERE "emailDueAt" IS NOT NULL)::text AS email_due
+         FROM "Notification"
+         WHERE "sourceType" = 'REQUEST_MESSAGE'
+           AND "sourceId" = $1`,
+        [reply.message.id],
+      ),
+    ]);
+    const customerMessage = customerView.messages.find(
+      (message) => message.id === reply.message.id,
+    );
+    const adminMessage = adminView.messages.find(
+      (message) => message.id === reply.message.id,
+    );
+    const managerMessage = managerView.messages.find(
+      (message) => message.id === reply.message.id,
+    );
+
+    expect(customerMessage).toMatchObject({
+      body: "该内容已撤回",
+      contentRiskStatus: "REVOKED",
+      contentRiskReason: "包含站外联系方式引导",
+      attachments: [],
+      reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
+      reeditAttachmentCount: 0,
+    });
+    expect(managerMessage).toMatchObject({
+      body: "该内容已撤回",
+      contentRiskStatus: "REVOKED",
+      reeditBody: null,
+    });
+    expect(adminMessage).toMatchObject({
+      body: "<p>这条公开回复需要由管理员撤回</p>",
+      contentRiskStatus: "REVOKED",
+      contentRiskReason: "包含站外联系方式引导",
+      reeditBody: null,
+    });
+    expect(review.rows[0]).toEqual({
+      source: "ADMIN",
+      status: "VIOLATION",
+      decision_reason: "包含站外联系方式引导",
+    });
+    expect(Number(notifications.rows[0]?.total ?? "0")).toBeGreaterThan(0);
+    expect(notifications.rows[0]).toMatchObject({
+      unread: "0",
+      email_due: "0",
+    });
+  });
+
   it("创建请求时同步生成包含标题和描述的首条消息", async () => {
     const created = await createFixtureRequest("首条消息");
     const result = await ownerPool.query<{
@@ -179,7 +289,7 @@ describe("请求聊天生产流程", () => {
             FROM "RequestMessage"
             WHERE "serviceRequestId" = $1
               AND "isSystem" = true
-              AND body LIKE '%已接手此请求%'
+              AND body LIKE '%已接手此服务请求%'
           )::text AS system_count
       `,
       [created.id],
@@ -190,25 +300,38 @@ describe("请求聊天生产流程", () => {
     });
   });
 
-  it("项目负责人公开回复会为客户创建通知", async () => {
+  it("项目负责人公开回复会通知客户，并将接手状态通知平台管理员", async () => {
     const created = await createFixtureRequest("客户回复通知");
     await addRequestMessage(manager, created.id, {
       body: "<p>项目负责人正在处理，请客户查看。</p>",
       visibility: "CUSTOMER_VISIBLE",
     });
 
-    const result = await ownerPool.query<{ notification_count: string }>(
+    const result = await ownerPool.query<{
+      customer_notification_count: string;
+      admin_claimed_count: string;
+    }>(
       `
-        SELECT COUNT(*)::text AS notification_count
-        FROM "Notification"
-        WHERE "serviceRequestId" = $1
-          AND "userId" = $2
-          AND type = 'REQUEST_MESSAGE'
-          AND "readAt" IS NULL
+        SELECT
+          (SELECT COUNT(*)::text
+             FROM "Notification"
+            WHERE "serviceRequestId" = $1
+              AND "userId" = $2
+              AND type = 'REQUEST_MESSAGE'
+              AND "readAt" IS NULL) AS customer_notification_count,
+          (SELECT COUNT(*)::text
+             FROM "Notification"
+            WHERE "serviceRequestId" = $1
+              AND "userId" = $3
+              AND type = 'REQUEST_CLAIMED'
+              AND "readAt" IS NULL) AS admin_claimed_count
       `,
-      [created.id, customer.id],
+      [created.id, customer.id, admin.id],
     );
-    expect(result.rows[0]?.notification_count).toBe("1");
+    expect(result.rows[0]).toEqual({
+      customer_notification_count: "1",
+      admin_claimed_count: "1",
+    });
   });
 
   it("客户回复已分配请求会通知当前处理人和平台管理员", async () => {
@@ -237,6 +360,76 @@ describe("请求聊天生产流程", () => {
     expect(result.rows.map((row) => row.user_id).sort()).toEqual(
       [technician.id, admin.id].sort(),
     );
+  });
+
+  it("历史遗留的无效处理人不会阻断管理员更新状态", async () => {
+    const created = await createFixtureRequest("无效处理人通知过滤");
+    const staleUserId = randomUUID();
+    temporaryUserIds.push(staleUserId);
+    await ownerPool.query(
+      `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+       VALUES ($1, '已移除处理人', $2, true, 'TECHNICIAN', NOW(), NOW())`,
+      [staleUserId, `stale-${staleUserId}@example.test`],
+    );
+    await ownerPool.query(
+      `UPDATE "ServiceRequest" SET "assigneeId" = $2 WHERE id = $1`,
+      [created.id, staleUserId],
+    );
+    await ownerPool.query(
+      `INSERT INTO "RequestAssignee" (id, "serviceRequestId", "userId", "assignedById")
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), created.id, staleUserId, admin.id],
+    );
+
+    await expect(
+      changeRequestStatus(admin, created.id, "IN_PROGRESS"),
+    ).resolves.toMatchObject({ status: "IN_PROGRESS" });
+  });
+
+  it("移除项目成员会同步解除其全部工单分配", async () => {
+    const created = await createFixtureRequest("移除成员解除分配");
+    const removableUserId = randomUUID();
+    const projectStaffId = randomUUID();
+    temporaryUserIds.push(removableUserId);
+    await ownerPool.query(
+      `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+       VALUES ($1, '待移除处理人', $2, true, 'TECHNICIAN', NOW(), NOW())`,
+      [removableUserId, `remove-${removableUserId}@example.test`],
+    );
+    await ownerPool.query(
+      `INSERT INTO "ProjectStaff" (id, "projectId", "userId", role)
+       VALUES ($1, $2, $3, 'TECHNICIAN')`,
+      [projectStaffId, projectId, removableUserId],
+    );
+    await ownerPool.query(
+      `UPDATE "ServiceRequest" SET "assigneeId" = $2 WHERE id = $1`,
+      [created.id, removableUserId],
+    );
+    await ownerPool.query(
+      `INSERT INTO "RequestAssignee" (id, "serviceRequestId", "userId", "assignedById")
+       VALUES ($1, $2, $3, $4)`,
+      [randomUUID(), created.id, removableUserId, admin.id],
+    );
+
+    await removeProjectStaff(admin, projectId, projectStaffId);
+
+    const result = await ownerPool.query<{
+      assignee_id: string | null;
+      assignment_count: string;
+    }>(
+      `SELECT
+         request."assigneeId" AS assignee_id,
+         (SELECT COUNT(*)::text FROM "RequestAssignee"
+           WHERE "serviceRequestId" = request.id
+             AND "userId" = $2) AS assignment_count
+       FROM "ServiceRequest" request
+       WHERE request.id = $1`,
+      [created.id, removableUserId],
+    );
+    expect(result.rows[0]).toEqual({
+      assignee_id: null,
+      assignment_count: "0",
+    });
   });
 
   it("已解决请求到期后会独立自动关闭并保持幂等", async () => {

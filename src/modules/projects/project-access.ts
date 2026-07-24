@@ -4,7 +4,11 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import {
   canContributeToProject,
+  canCommentOnProjectUpdate,
   canManageProjectDelivery,
+  canManageProjectStaff,
+  canPublishProjectUpdate,
+  canUploadProjectFile,
   canViewProject,
   type ProjectAccess,
 } from "@/modules/projects/permissions";
@@ -111,6 +115,68 @@ export async function assertCanManageProjectDelivery(
   return context;
 }
 
+export async function assertCanManageProjectStaff(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await loadProjectAccess(tx, actor, projectId);
+  assertAllowed(
+    canManageProjectStaff(actor, context.access),
+    "仅管理员或有人员管理权限的项目负责人可以管理项目人员",
+  );
+  return context;
+}
+
+export async function assertCanPublishProjectUpdate(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await loadProjectAccess(tx, actor, projectId);
+  assertAllowed(
+    canPublishProjectUpdate(actor, context.access),
+    "仅管理员或有进度发布权限的项目负责人可以维护进度动态",
+  );
+  return context;
+}
+
+export async function assertCanPublishActiveProjectUpdate(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await assertCanPublishProjectUpdate(tx, actor, projectId);
+  if (context.projectStatus === "DRAFT") {
+    throw new DomainError(
+      "EXTERNAL_PROJECT_NOT_ACTIVATED",
+      "请先完成外部接入并激活项目",
+      409,
+    );
+  }
+  return context;
+}
+
+export async function assertCanUploadActiveProjectFile(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await loadProjectAccess(tx, actor, projectId);
+  assertAllowed(
+    canUploadProjectFile(actor, context.access),
+    "仅管理员或有文件上传权限的项目负责人可以上传项目文件",
+  );
+  if (context.projectStatus === "DRAFT") {
+    throw new DomainError(
+      "EXTERNAL_PROJECT_NOT_ACTIVATED",
+      "请先完成外部接入并激活项目",
+      409,
+    );
+  }
+  return context;
+}
+
 export async function assertCanManageActiveProjectDelivery(
   tx: Prisma.TransactionClient,
   actor: Actor,
@@ -136,6 +202,19 @@ export async function assertCanContributeToProject(
   assertAllowed(
     canContributeToProject(actor, context.access),
     "仅项目内部人员可以执行此操作",
+  );
+  return context;
+}
+
+export async function assertCanCommentOnProjectUpdate(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+) {
+  const context = await loadProjectAccess(tx, actor, projectId);
+  assertAllowed(
+    canCommentOnProjectUpdate(actor, context.access),
+    "当前角色无权评论项目动态",
   );
   return context;
 }

@@ -5,7 +5,10 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/.data/local-runtime"
 LOG_FILE="$RUNTIME_DIR/web.log"
+WORKER_LOG_FILE="$RUNTIME_DIR/worker.log"
 HOST="${HOST:-127.0.0.1}"
+worker_pid=""
+web_pid=""
 
 cd "$ROOT_DIR"
 
@@ -13,6 +16,23 @@ fail() {
   printf '启动失败：%s\n' "$1" >&2
   exit 1
 }
+
+cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ -n "$web_pid" ]] && kill -0 "$web_pid" >/dev/null 2>&1; then
+    kill "$web_pid" >/dev/null 2>&1 || true
+    wait "$web_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" >/dev/null 2>&1; then
+    kill "$worker_pid" >/dev/null 2>&1 || true
+    wait "$worker_pid" 2>/dev/null || true
+  fi
+  exit "$exit_status"
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 usage() {
   printf '用法：./start.sh [端口号]\n'
@@ -139,12 +159,45 @@ pnpm db:generate
 pnpm exec prisma migrate deploy
 
 : > "$LOG_FILE"
+: > "$WORKER_LOG_FILE"
 LOCAL_APP_URL="http://localhost:$PORT"
 export APP_URL="$LOCAL_APP_URL"
 export BETTER_AUTH_URL="$LOCAL_APP_URL"
+export MAIL_INLINE_WORKER=false
 
 printf '\n本地服务将在前台运行： %s\n' "$LOCAL_APP_URL"
 printf '按 Ctrl+C 或关闭当前终端即可停止。\n'
-printf '运行日志：%s\n\n' "$LOG_FILE"
+printf 'Web 日志：%s\n' "$LOG_FILE"
+printf '后台任务日志：%s\n\n' "$WORKER_LOG_FILE"
 
-exec pnpm dev --hostname "$HOST" --port "$PORT" > >(tee -a "$LOG_FILE") 2>&1
+pnpm worker > >(tee -a "$WORKER_LOG_FILE") 2>&1 &
+worker_pid=$!
+if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
+  wait "$worker_pid" || true
+  fail "后台任务 Worker 启动失败，请查看 $WORKER_LOG_FILE。"
+fi
+
+pnpm dev --hostname "$HOST" --port "$PORT" > >(tee -a "$LOG_FILE") 2>&1 &
+web_pid=$!
+
+while true; do
+  if ! kill -0 "$worker_pid" >/dev/null 2>&1; then
+    set +e
+    wait "$worker_pid"
+    worker_status=$?
+    set -e
+    if (( worker_status == 0 )); then
+      worker_status=1
+    fi
+    printf '后台任务 Worker 已退出，正在停止 Web。请查看 %s。\n' "$WORKER_LOG_FILE" >&2
+    exit "$worker_status"
+  fi
+  if ! kill -0 "$web_pid" >/dev/null 2>&1; then
+    set +e
+    wait "$web_pid"
+    web_status=$?
+    set -e
+    exit "$web_status"
+  fi
+  sleep 1
+done

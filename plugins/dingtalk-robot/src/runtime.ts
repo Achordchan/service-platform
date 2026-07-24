@@ -16,18 +16,22 @@ type FetchLike = (
 
 export type DingTalkTicketEventType =
   | "REQUEST_CREATED"
-  | "REQUEST_CUSTOMER_REPLIED";
+  | "REQUEST_CUSTOMER_REPLIED"
+  | "CONTENT_RISK_ALERT";
 
 export type DingTalkTicketEvent = {
   type: DingTalkTicketEventType;
-  requestId: string;
-  requestNumber: string;
-  title: string;
+  requestId?: string;
+  requestNumber?: string;
+  title?: string;
   requestUrl: string;
   customerName?: string | null;
   projectName?: string | null;
   priorityLabel?: string | null;
   actorName?: string | null;
+  contentSummary?: string | null;
+  targetLabel?: string | null;
+  riskSummary?: string | null;
   occurredAt: Date | string;
 };
 
@@ -87,7 +91,7 @@ export async function testDingTalkRobotBinding(
         text: [
           `## ${DINGTALK_ROBOT_KEYWORD}：绑定成功`,
           "",
-          "工单系统已连接到当前钉钉群。后续新工单和客户回复会发送到这里。",
+          "服务支持中心已连接到当前钉钉群。后续新服务请求和客户回复会发送到这里。",
         ].join("\n"),
       },
       at: { isAtAll: false },
@@ -118,6 +122,9 @@ function buildTicketPayload(
     projectName: normalizeText(event.projectName),
     priorityLabel: normalizeText(event.priorityLabel),
     actorName: normalizeText(event.actorName),
+    contentSummary: normalizeText(event.contentSummary),
+    targetLabel: normalizeText(event.targetLabel),
+    riskSummary: normalizeText(event.riskSummary),
     occurredAt: normalizeText(formatOccurredAt(event.occurredAt)),
   };
   const heading = renderTemplate(template.title, variables)
@@ -138,7 +145,7 @@ function buildTicketPayload(
         "",
         body,
         "",
-        `[打开工单](${requestUrl})`,
+        `[${event.type === "CONTENT_RISK_ALERT" ? "打开风控插件" : "打开服务请求"}](${requestUrl})`,
       ].join("\n"),
     },
     at: { isAtAll: false },
@@ -184,16 +191,16 @@ function validateRequestUrl(value: string) {
   try {
     url = new URL(value);
   } catch {
-    throw new TypeError("工单链接格式无效");
+    throw new TypeError("服务请求链接格式无效");
   }
   const localHttp =
     url.protocol === "http:" &&
     (url.hostname === "127.0.0.1" || url.hostname === "localhost");
   if (url.protocol !== "https:" && !localHttp) {
-    throw new TypeError("工单链接协议无效");
+    throw new TypeError("服务请求链接协议无效");
   }
   if (url.username || url.password) {
-    throw new TypeError("工单链接不能包含用户凭据");
+    throw new TypeError("服务请求链接不能包含用户凭据");
   }
   return url.toString();
 }

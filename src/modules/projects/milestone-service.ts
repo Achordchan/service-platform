@@ -13,6 +13,15 @@ import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { dispatchProjectActivity } from "@/modules/notifications/notification-service";
 import {
+  createContentRiskReview,
+  enforceActorPublicContentRules,
+} from "@/modules/plugins/content-risk-service";
+import {
+  contentRiskStatusFor,
+  isContentRiskStateRevoked,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
+import {
   assertCanManageActiveProjectDelivery,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
@@ -45,14 +54,49 @@ export function listMilestones(actor: Actor, projectId: string) {
       where: { projectId },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
+    const contentRisk = await loadContentRiskPageState(
+      milestones.map((milestone) => ({
+        targetType: "MILESTONE" as const,
+        targetId: milestone.id,
+      })),
+      tx,
+    );
+    const progressMilestones = milestones.filter(
+      (milestone) =>
+        !isContentRiskStateRevoked(
+          contentRisk.states.get(`MILESTONE:${milestone.id}`),
+        ),
+    );
     return {
       milestones: milestones.map((milestone) => ({
         ...milestone,
-        description: milestone.description
-          ? sanitizeMessageHtml(milestone.description)
-          : null,
+        title:
+          !actor.isPlatformAdmin &&
+          isContentRiskStateRevoked(
+            contentRisk.states.get(`MILESTONE:${milestone.id}`),
+          )
+            ? ""
+            : milestone.title,
+        description:
+          !actor.isPlatformAdmin &&
+          isContentRiskStateRevoked(
+            contentRisk.states.get(`MILESTONE:${milestone.id}`),
+          )
+            ? null
+            : milestone.description
+              ? sanitizeMessageHtml(milestone.description)
+              : null,
+        contentRiskStatus: actor.isPlatformAdmin
+          ? null
+          : contentRiskStatusFor(
+              contentRisk.states.get(`MILESTONE:${milestone.id}`),
+              {
+                pluginEnabled: contentRisk.enabled,
+                showPending: milestone.createdById === actor.id,
+              },
+            ),
       })),
-      progress: calculateProjectProgress(milestones),
+      progress: calculateProjectProgress(progressMilestones),
     };
   });
 }
@@ -65,27 +109,6 @@ export function getProjectProgress(actor: Actor, projectId: string) {
       projectId,
       "progress",
     );
-    if (!actor.isStaff && !context.customerFeatures.milestones) {
-      const [progress] = await tx.$queryRaw<
-        Array<{
-          total: number;
-          not_started: number;
-          in_progress: number;
-          completed: number;
-          percentage: number;
-        }>
-      >`SELECT * FROM app_project_milestone_progress(${projectId})`;
-      return {
-        percentage: progress?.percentage ?? 0,
-        counts: {
-          total: progress?.total ?? 0,
-          notStarted: progress?.not_started ?? 0,
-          inProgress: progress?.in_progress ?? 0,
-          completed: progress?.completed ?? 0,
-        },
-        milestones: [],
-      };
-    }
     const milestones = await tx.milestone.findMany({
       where: { projectId },
       select: {
@@ -98,18 +121,52 @@ export function getProjectProgress(actor: Actor, projectId: string) {
       },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
+    const contentRisk = await loadContentRiskPageState(
+      milestones.map((milestone) => ({
+        targetType: "MILESTONE" as const,
+        targetId: milestone.id,
+      })),
+      tx,
+    );
+    const visibleMilestones = milestones.filter(
+      (milestone) =>
+        !isContentRiskStateRevoked(
+          contentRisk.states.get(`MILESTONE:${milestone.id}`),
+        ),
+    );
     return {
-      ...calculateProjectProgress(milestones),
-      milestones,
+      ...calculateProjectProgress(visibleMilestones),
+      milestones:
+        actor.isStaff || context.customerFeatures.milestones
+          ? visibleMilestones
+          : [],
     };
   });
 }
 
-export function createMilestone(
+export async function createMilestone(
   actor: Actor,
   projectId: string,
   input: CreateMilestoneInput,
 ) {
+  const preflightContext = await withActorDb(actor, (tx) =>
+    assertCanManageActiveProjectDelivery(tx, actor, projectId),
+  );
+  await enforceActorPublicContentRules(actor, {
+    targetType: "MILESTONE",
+    customerSpaceId: preflightContext.customerSpaceId,
+    projectId,
+    serviceRequestId: null,
+    snapshot: {
+      title: input.title,
+      body: input.description,
+      visibility:
+        preflightContext.customerFeatures.milestones ||
+        preflightContext.customerFeatures.progress
+          ? "CUSTOMER_VISIBLE"
+          : "INTERNAL",
+    },
+  });
   return withActorDb(actor, async (tx) => {
     const context = await assertCanManageActiveProjectDelivery(
       tx,
@@ -135,6 +192,26 @@ export function createMilestone(
         visibility: "CUSTOMER_VISIBLE",
       },
     );
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "MILESTONE",
+      targetId: milestone.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        title: milestone.title,
+        body: milestone.description,
+        visibility:
+          context.customerFeatures.milestones || context.customerFeatures.progress
+            ? "CUSTOMER_VISIBLE"
+            : "INTERNAL",
+        attachmentIds: extractInlineAttachmentIds(description ?? ""),
+      },
+    });
     await writeAuditLog(tx, actor, {
       action: "MILESTONE_CREATED",
       resourceType: "Milestone",
@@ -143,7 +220,7 @@ export function createMilestone(
       projectId,
       metadata: auditMetadata({ ...input, description }),
     });
-    await dispatchProjectActivity(tx, actor, {
+    const delivery = await dispatchProjectActivity(tx, actor, {
       eventType: "PROJECT_UPDATED",
       eventPayload: {
         change: "MILESTONE_CREATED",
@@ -160,17 +237,42 @@ export function createMilestone(
           : "INTERNAL",
       customerSpaceId: context.customerSpaceId,
       projectId,
+      contentRiskReviewId: contentRiskReview?.id,
     });
-    return milestone;
+    return { ...milestone, deliveryFeedback: delivery.feedback };
   });
 }
 
-export function updateMilestone(
+export async function updateMilestone(
   actor: Actor,
   projectId: string,
   milestoneId: string,
   input: UpdateMilestoneInput,
 ) {
+  const preflight = await withActorDb(actor, async (tx) => ({
+    context: await assertCanManageActiveProjectDelivery(tx, actor, projectId),
+    milestone: await tx.milestone.findFirst({
+      where: { id: milestoneId, projectId },
+      select: { title: true, description: true },
+    }),
+  }));
+  if (preflight.milestone) {
+    await enforceActorPublicContentRules(actor, {
+      targetType: "MILESTONE",
+      customerSpaceId: preflight.context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        title: input.title ?? preflight.milestone.title,
+        body: input.description ?? preflight.milestone.description,
+        visibility:
+          preflight.context.customerFeatures.milestones ||
+          preflight.context.customerFeatures.progress
+            ? "CUSTOMER_VISIBLE"
+            : "INTERNAL",
+      },
+    });
+  }
   return withActorDb(actor, async (tx) => {
     const context = await assertCanManageActiveProjectDelivery(
       tx,
@@ -181,6 +283,8 @@ export function updateMilestone(
       where: { id: milestoneId, projectId },
       select: {
         id: true,
+        title: true,
+        description: true,
         startDate: true,
         endDate: true,
         attachments: {
@@ -223,6 +327,35 @@ export function updateMilestone(
       where: { id: milestoneId },
       data: updateInput,
     });
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "MILESTONE",
+      targetId: milestone.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        title: milestone.title,
+        body: milestone.description,
+        visibility:
+          context.customerFeatures.milestones || context.customerFeatures.progress
+            ? "CUSTOMER_VISIBLE"
+            : "INTERNAL",
+        attachmentIds: extractInlineAttachmentIds(milestone.description ?? ""),
+      },
+      previousSnapshot: {
+        title: existing.title,
+        body: existing.description,
+        visibility:
+          context.customerFeatures.milestones || context.customerFeatures.progress
+            ? "CUSTOMER_VISIBLE"
+            : "INTERNAL",
+        attachmentIds: extractInlineAttachmentIds(existing.description ?? ""),
+      },
+    });
     const removedStorageKeys: string[] = [];
     if (description !== undefined) {
       const nextAttachmentIds = new Set(
@@ -242,7 +375,7 @@ export function updateMilestone(
       const removedAttachments = existing.attachments.filter(
         (attachment) => !nextAttachmentIds.has(attachment.id),
       );
-      if (removedAttachments.length > 0) {
+      if (removedAttachments.length > 0 && !contentRiskReview) {
         await tx.attachment.deleteMany({
           where: { id: { in: removedAttachments.map((item) => item.id) } },
         });
@@ -259,7 +392,7 @@ export function updateMilestone(
       projectId,
       metadata: auditMetadata(updateInput),
     });
-    await dispatchProjectActivity(tx, actor, {
+    const delivery = await dispatchProjectActivity(tx, actor, {
       eventType: "PROJECT_UPDATED",
       eventPayload: {
         change: "MILESTONE_UPDATED",
@@ -276,11 +409,12 @@ export function updateMilestone(
           : "INTERNAL",
       customerSpaceId: context.customerSpaceId,
       projectId,
+      contentRiskReviewId: contentRiskReview?.id,
     });
-    return { milestone, removedStorageKeys };
-  }).then(async ({ milestone, removedStorageKeys }) => {
+    return { milestone, removedStorageKeys, deliveryFeedback: delivery.feedback };
+  }).then(async ({ milestone, removedStorageKeys, deliveryFeedback }) => {
     await removeMilestoneFiles(milestone.id, removedStorageKeys);
-    return milestone;
+    return { ...milestone, deliveryFeedback };
   });
 }
 

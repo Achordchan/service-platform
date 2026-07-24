@@ -14,6 +14,7 @@ describe("邮件 Outbox 补投策略", () => {
 
     expect(buildMailOutboxCandidateWhere(now)).toEqual({
       AND: [
+        { contentRiskReviewId: null },
         mailAttemptBudgetWhere(),
         {
           OR: [

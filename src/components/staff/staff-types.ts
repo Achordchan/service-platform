@@ -88,6 +88,7 @@ export type ProjectMilestone = {
   startDate?: string | null;
   endDate?: string | null;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type ProjectUpdate = {
@@ -97,16 +98,19 @@ export type ProjectUpdate = {
   visibility: ContentVisibility;
   authorName: string;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
   comments: Array<{
     id: string;
     body: string;
     visibility: ContentVisibility;
     authorName: string;
     createdAt: string;
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
   }>;
 };
 
 export type ProjectDetail = ProjectListItem & {
+  contentRiskUiEnabled?: boolean;
   staff: ProjectStaffMember[];
   milestones: ProjectMilestone[];
   updates: ProjectUpdate[];
@@ -145,6 +149,7 @@ export type RequestAttachment = {
   size: number;
   visibility: ContentVisibility;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type RequestAssignee = {
@@ -156,6 +161,7 @@ export type RequestAssignee = {
 };
 
 export type RequestDetail = RequestListItem & {
+  contentRiskUiEnabled: boolean;
   externalContact?: {
     externalUserId: string;
     email: string | null;
@@ -199,6 +205,10 @@ export type RequestDetail = RequestListItem & {
       }>;
     } | null;
     attachments: RequestAttachment[];
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
+    contentRiskReason?: string | null;
+    reeditBody?: string | null;
+    reeditAttachmentCount?: number;
   }>;
 };
 
@@ -217,6 +227,7 @@ export type CustomerSpaceItem = {
     expiresAt: string;
     lastSentAt: string;
     mailStatus: string | null;
+    mailDispatchFailed: boolean;
   } | null;
   memberCount: number;
   projectCount: number;

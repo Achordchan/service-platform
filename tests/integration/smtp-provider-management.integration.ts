@@ -9,6 +9,7 @@ import {
 } from "@/lib/jobs";
 import { encryptSecret } from "@/lib/secret-crypto";
 import { ensurePlatformSettings } from "@/modules/platform-settings/mail-settings-runtime";
+import { assertEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 import { updatePlatformSettings } from "@/modules/platform-settings/platform-setting-service";
 import { checkSmtpProvider } from "@/modules/platform-settings/smtp-provider-service";
 
@@ -89,6 +90,7 @@ afterAll(async () => {
             "resendWebhookId" = $16,
             "resendWebhookStatus" = $17,
             "resendWebhookSecretEncrypted" = $18,
+            "emailOtpLoginEnabled" = $19,
             "updatedAt" = NOW()
       WHERE id = 1`,
     [
@@ -110,6 +112,7 @@ afterAll(async () => {
       original.resendWebhookId ?? null,
       original.resendWebhookStatus ?? null,
       original.resendWebhookSecretEncrypted ?? null,
+      original.emailOtpLoginEnabled ?? false,
     ],
   );
   if (mailMessageIds.length > 0) {
@@ -189,6 +192,11 @@ describe("SMTP 通道管理", () => {
     );
     const enabled = await updatePlatformSettings(admin, { mailMode: "SMTP" });
     expect(enabled.mailMode).toBe("SMTP");
+    const otpEnabled = await updatePlatformSettings(admin, {
+      emailOtpLoginEnabled: true,
+    });
+    expect(otpEnabled.emailOtpLoginEnabled).toBe(true);
+    await expect(assertEmailOtpLoginAvailable()).resolves.toBe("SMTP");
 
     const changed = await updatePlatformSettings(admin, {
       smtpHost: "smtp-updated.test.example",
@@ -196,6 +204,7 @@ describe("SMTP 通道管理", () => {
     expect(changed.mailMode).toBe("LOCAL_OUTBOX");
     expect(changed.smtpHealthStatus).toBe("unchecked");
     expect(changed.standardEmailUnreadDelayEnabled).toBe(false);
+    expect(changed.emailOtpLoginEnabled).toBe(false);
   });
 
   it("QQ SMTP 检测会拒绝与登录账号不一致的发件邮箱", async () => {

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { updateProjectUpdate } from "@/modules/projects/project-update-service";
+import {
+  deleteProjectUpdate,
+  updateProjectUpdate,
+} from "@/modules/projects/project-update-service";
 import { updateProjectUpdateSchema } from "@/modules/projects/schemas";
 import {
   readJson,
@@ -30,5 +33,25 @@ export async function PATCH(request: Request, context: RouteContext) {
     return NextResponse.json({ data: update });
   } catch (error) {
     return routeError(error);
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { projectId, projectUpdateId } = await context.params;
+    const result = await deleteProjectUpdate(
+      auth.actor,
+      projectId,
+      projectUpdateId,
+    );
+    return NextResponse.json({ data: result });
+  } catch (error) {
+    return routeError(error, {
+      request,
+      operation: "project_update.delete",
+    });
   }
 }

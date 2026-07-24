@@ -41,6 +41,7 @@ export default async function StaffTeamPage() {
           expiresAt: user.emailChanges[0].expiresAt.toISOString(),
           lastSentAt: user.emailChanges[0].lastSentAt.toISOString(),
           mailStatus: user.emailChanges[0].mailStatus,
+          mailDispatchFailed: user.emailChanges[0].mailDispatchFailed,
         }
       : null,
     platformRole: user.platformRole as TeamMemberView["platformRole"],

@@ -1,23 +1,34 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
+  IconButton,
   LinearProgress,
   Paper,
   Stack,
   Tab,
   Tabs,
+  Tooltip,
   Typography,
 } from "@mui/material";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
+import { useToast } from "@/components/shared/toast-provider";
 import { ProjectStaffManager } from "@/components/staff/project-staff-manager";
 import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
+import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
 import {
   countProjectRequestUnread,
   countProjectScopeUnread,
@@ -30,8 +41,10 @@ import {
   Sub2ApiIntegrationPanel,
 } from "@/components/staff/sub2api-integration-panel";
 import { UniversalIntegrationPanel } from "@/components/staff/universal-integration-panel";
+import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   ProjectDetail,
+  ProjectUpdate,
   RequestListItem,
   StaffCandidate,
 } from "@/components/staff/staff-types";
@@ -75,17 +88,29 @@ function SummaryField({
 export function ProjectDetailWorkspace({
   project,
   requests,
-  canManage,
+  canManageDelivery,
+  canPublishUpdate,
+  canManageStaff,
+  canUploadFiles,
   canEditProject,
   staffCandidates,
+  contentRiskNoticeEnabled = false,
 }: {
   project: ProjectDetail;
   requests: RequestListItem[];
-  canManage: boolean;
+  canManageDelivery: boolean;
+  canPublishUpdate: boolean;
+  canManageStaff: boolean;
+  canUploadFiles: boolean;
   canEditProject: boolean;
   staffCandidates: StaffCandidate[];
+  contentRiskNoticeEnabled?: boolean;
 }) {
+  const router = useRouter();
+  const toast = useToast();
   const [tab, setTab] = useState<ProjectTab>("overview");
+  const [deleteTarget, setDeleteTarget] = useState<ProjectUpdate | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const activeTab = tab;
   const deliveryActive = isProjectDeliveryActive(project.status);
   const { unread, refresh } = useUnreadNotifications();
@@ -137,6 +162,24 @@ export function ProjectDetailWorkspace({
       cancelled = true;
     };
   }, [activeTab, project.id, projectScopeCounts, refresh]);
+
+  async function confirmDeleteUpdate() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await staffApi<{ deleted: true }>(
+        `/api/v1/projects/${project.id}/updates/${deleteTarget.id}`,
+        jsonRequest("DELETE"),
+      );
+      setDeleteTarget(null);
+      toast.success("进度动态已删除");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "进度动态删除失败");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <Stack spacing={3} sx={{ width: "100%" }}>
@@ -280,7 +323,7 @@ export function ProjectDetailWorkspace({
                 projectId={project.id}
                 staff={project.staff}
                 candidates={staffCandidates}
-                canEdit={canEditProject}
+                canEdit={canManageStaff}
               />
             </Paper>
           </Box>
@@ -291,7 +334,9 @@ export function ProjectDetailWorkspace({
         <MilestoneManager
           projectId={project.id}
           milestones={project.milestones}
-          canManage={canManage}
+          canManage={canManageDelivery}
+          contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+          contentRiskNoticeEnabled={contentRiskNoticeEnabled}
         />
       ) : null}
 
@@ -300,13 +345,22 @@ export function ProjectDetailWorkspace({
           {project.updates.map((update) => (
             <Paper key={update.id} variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
               <Stack
-                direction={{ xs: "column", sm: "row" }}
+                direction="row"
                 spacing={1}
-                sx={{ justifyContent: "space-between" }}
+                sx={{ alignItems: "flex-start", justifyContent: "space-between" }}
               >
-                <Box>
+                <Box sx={{ minWidth: 0 }}>
                   <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Typography variant="h3">{update.title}</Typography>
+                    {update.contentRiskStatus === "REVOKED" ? (
+                      <ContentRiskStatusLine
+                        status="REVOKED"
+                        pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                      />
+                    ) : (
+                      <Typography variant="h3" sx={{ overflowWrap: "anywhere" }}>
+                        {update.title}
+                      </Typography>
+                    )}
                     {update.visibility === "INTERNAL" ? (
                       <LockOutlinedIcon fontSize="small" color="action" />
                     ) : null}
@@ -315,9 +369,33 @@ export function ProjectDetailWorkspace({
                     {update.authorName} · {dateFormatter.format(new Date(update.createdAt))}
                   </Typography>
                 </Box>
+                {canPublishUpdate ? (
+                  <Tooltip title="删除进度">
+                    <span>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        aria-label={`删除进度 ${update.title}`}
+                        onClick={() => setDeleteTarget(update)}
+                        disabled={deleting}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        <DeleteOutlineOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                ) : null}
               </Stack>
-              <CollapsibleText text={update.body} maxLines={16} />
-              {update.comments.length > 0 ? (
+              {update.contentRiskStatus === "PENDING" ? (
+                <ContentRiskStatusLine
+                  status="PENDING"
+                  pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                />
+              ) : null}
+              {update.contentRiskStatus !== "REVOKED" ? (
+                <CollapsibleText text={update.body} maxLines={16} />
+              ) : null}
+              {update.contentRiskStatus !== "REVOKED" && update.comments.length > 0 ? (
                 <Stack spacing={1.5} sx={{ mt: 2.5, pl: 2, borderLeft: "2px solid #e5e7eb" }}>
                   {update.comments.map((comment) => (
                     <Box key={comment.id}>
@@ -325,9 +403,22 @@ export function ProjectDetailWorkspace({
                         {comment.authorName}
                         {comment.visibility === "INTERNAL" ? " · 内部评论" : ""}
                       </Typography>
-                      <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                        {comment.body}
-                      </Typography>
+                      {comment.contentRiskStatus === "REVOKED" ? (
+                        <ContentRiskStatusLine
+                          status="REVOKED"
+                          pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                        />
+                      ) : (
+                        <>
+                          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+                            {comment.body}
+                          </Typography>
+                          <ContentRiskStatusLine
+                            status={comment.contentRiskStatus}
+                            pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                          />
+                        </>
+                      )}
                     </Box>
                   ))}
                 </Stack>
@@ -339,6 +430,36 @@ export function ProjectDetailWorkspace({
               <Typography color="text.secondary">尚未发布项目进度</Typography>
             </Paper>
           ) : null}
+
+          <Dialog
+            open={Boolean(deleteTarget)}
+            onClose={deleting ? undefined : () => setDeleteTarget(null)}
+            fullWidth
+            maxWidth="xs"
+          >
+            <DialogTitle>删除进度动态</DialogTitle>
+            <DialogContent>
+              <Typography color="text.secondary">
+                确认删除“{deleteTarget?.title}”？正文、评论和其中的图片将一并删除，此操作不可恢复。
+              </Typography>
+            </DialogContent>
+            <DialogActions sx={{ px: 3, pb: 3 }}>
+              <Button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                取消
+              </Button>
+              <Button
+                color="error"
+                variant="contained"
+                onClick={() => void confirmDeleteUpdate()}
+                disabled={deleting}
+              >
+                {deleting ? "删除中..." : "确认删除"}
+              </Button>
+            </DialogActions>
+          </Dialog>
         </Stack>
       ) : null}
 
@@ -349,7 +470,9 @@ export function ProjectDetailWorkspace({
         <ProjectFileManager
           projectId={project.id}
           files={project.attachments}
-          canUpload={canManage}
+          canUpload={canUploadFiles}
+          contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+          contentRiskNoticeEnabled={contentRiskNoticeEnabled}
         />
       ) : null}
       {activeTab === "integration" && project.kind === "EXTERNAL_INTEGRATION" ? (

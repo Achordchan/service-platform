@@ -13,6 +13,37 @@ const audience: ActivityAudience = {
 };
 
 describe("项目活动通知规划", () => {
+  it("新建项目只通知客户和项目负责人并排除创建人", () => {
+    const delivery = planProjectActivity({
+      actorId: "admin-1",
+      audience,
+      visibility: "CUSTOMER_VISIBLE",
+      eventType: "PROJECT_UPDATED",
+      eventPayload: {
+        change: "PROJECT_CREATED",
+        projectId: "project-1",
+      },
+      notificationType: "PROJECT_CREATED",
+      notificationTitle: "新项目：官网升级",
+      notificationBody: "项目已创建。",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      staffAudience: "PROJECT_MANAGERS",
+      emailRecipientUserIds: ["customer-1", "customer-2", "manager-1"],
+    });
+
+    expect(delivery.notifications.map((item) => item.userId)).toEqual([
+      "customer-1",
+      "customer-2",
+      "manager-1",
+    ]);
+    expect(
+      delivery.notifications
+        .filter((item) => item.emailEligible)
+        .map((item) => item.userId),
+    ).toEqual(["customer-1", "customer-2", "manager-1"]);
+  });
+
   it("公开进度动态通知客户和工作人员，但不通知操作者本人", () => {
     const delivery = planProjectActivity({
       actorId: "manager-1",
@@ -89,6 +120,41 @@ describe("项目活动通知规划", () => {
 });
 
 describe("请求活动通知规划", () => {
+  it("服务请求消息通知保留消息级来源，供人工撤回精确取消投递", () => {
+    const delivery = planRequestActivity({
+      actorId: "customer-1",
+      audience,
+      relevantWorkerUserIds: ["tech-1"],
+      includeCustomers: false,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: true,
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: {
+        requestId: "request-1",
+        messageId: "message-1",
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "客户回复了服务请求",
+      notificationBody: "消息摘要",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+      sourceType: "REQUEST_MESSAGE",
+      sourceId: "message-1",
+    });
+
+    expect(delivery.notifications).not.toHaveLength(0);
+    expect(delivery.notifications).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: "REQUEST_MESSAGE",
+          sourceId: "message-1",
+        }),
+      ]),
+    );
+  });
+
   it("外部联系人不会被当作正式用户事件接收人", () => {
     const delivery = planRequestActivity({
       actorId: "",
@@ -103,7 +169,7 @@ describe("请求活动通知规划", () => {
         requestId: "request-1",
       },
       notificationType: "REQUEST_CREATED",
-      notificationTitle: "外部工单已创建",
+      notificationTitle: "外部服务请求已创建",
       notificationBody: "问题详情",
       customerSpaceId: "space-1",
       projectId: "project-1",
@@ -161,6 +227,42 @@ describe("请求活动通知规划", () => {
           item.customerSpaceId === "space-1",
       ),
     ).toBe(true);
+  });
+
+  it("项目人员自动接手时只通知平台管理员", () => {
+    const delivery = planRequestActivity({
+      actorId: "manager-1",
+      audience,
+      relevantWorkerUserIds: ["manager-1"],
+      includeCustomers: false,
+      notifyProjectManagers: false,
+      notifyPlatformAdmins: true,
+      eventAudience: "NOTIFICATION_RECIPIENTS",
+      emailRecipientUserIds: ["admin-1"],
+      eventType: "REQUEST_ASSIGNED",
+      eventPayload: {
+        requestId: "request-1",
+        source: "FIRST_PUBLIC_REPLY",
+      },
+      notificationType: "REQUEST_CLAIMED",
+      notificationTitle: "项目负责人已接手服务请求 REQ-1",
+      notificationBody: "服务请求已开始处理。",
+      customerSpaceId: "space-1",
+      projectId: "project-1",
+      serviceRequestId: "request-1",
+    });
+
+    expect(delivery.notifications).toEqual([
+      expect.objectContaining({
+        userId: "admin-1",
+        type: "REQUEST_CLAIMED",
+        emailEligible: true,
+      }),
+    ]);
+    expect(delivery.events.map((item) => item.userId)).toEqual([
+      "admin-1",
+      "manager-1",
+    ]);
   });
 
   it("内部备注只面向项目经理、管理员和当前处理人", () => {
@@ -270,7 +372,7 @@ describe("请求活动通知规划", () => {
     ).toBe("request:request-1:REQUEST_MESSAGE:mail");
   });
 
-  it("不同通知类型和邮件策略不会覆盖同一工单的待发邮件", () => {
+  it("不同通知类型和邮件策略不会覆盖同一服务请求的待发邮件", () => {
     const publicMessage = planRequestActivity({
       actorId: "manager-1",
       audience,

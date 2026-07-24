@@ -19,7 +19,19 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "@achord/plugin-content-contact-risk": [
+        "./plugins/content-contact-risk/src/manifest.ts"
+      ],
+      "@achord/plugin-content-contact-risk/config": [
+        "./plugins/content-contact-risk/src/config.ts"
+      ],
+      "@achord/plugin-content-contact-risk/rules": [
+        "./plugins/content-contact-risk/src/rules.ts"
+      ],
+      "@achord/plugin-content-contact-risk/runtime": [
+        "./plugins/content-contact-risk/src/runtime.ts"
+      ]
     }
   },
   "include": [

@@ -12,6 +12,7 @@ import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import type { ProjectAttachment } from "@/components/customer/customer-types";
 import { EmptyState } from "@/components/shared/content-state";
+import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -25,7 +26,13 @@ function formatSize(size: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function ProjectFiles({ files }: { files: ProjectAttachment[] }) {
+export function ProjectFiles({
+  files,
+  contentRiskEnabled = false,
+}: {
+  files: ProjectAttachment[];
+  contentRiskEnabled?: boolean;
+}) {
   if (files.length === 0) {
     return (
       <EmptyState
@@ -65,21 +72,28 @@ export function ProjectFiles({ files }: { files: ProjectAttachment[] }) {
             <InsertDriveFileOutlinedIcon />
           </Box>
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography noWrap sx={{ fontWeight: 600 }}>
-              {file.originalName}
-            </Typography>
+            {file.contentRiskStatus === "REVOKED" ? (
+              <ContentRiskStatusLine
+                status="REVOKED"
+                pluginEnabled={contentRiskEnabled}
+              />
+            ) : (
+              <Typography noWrap sx={{ fontWeight: 600 }}>
+                {file.originalName}
+              </Typography>
+            )}
             <Typography variant="body2" color="text.secondary">
               {formatSize(file.size)} ·{" "}
               {dateFormatter.format(new Date(file.createdAt))}
             </Typography>
           </Box>
-          <IconButton
+          {file.contentRiskStatus !== "REVOKED" ? <IconButton
             component={Link}
             href={`/api/v1/attachments/${file.id}`}
             aria-label={`下载 ${file.originalName}`}
           >
             <DownloadOutlinedIcon />
-          </IconButton>
+          </IconButton> : null}
         </Stack>
       ))}
     </Paper>

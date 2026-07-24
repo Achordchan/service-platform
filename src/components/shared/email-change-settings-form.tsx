@@ -1,6 +1,7 @@
 "use client";
 
 import { Paper, Stack, Typography } from "@mui/material";
+import { useRouter } from "next/navigation";
 import {
   EmailChangeControl,
   type PendingEmailChange,
@@ -13,6 +14,7 @@ export function EmailChangeSettingsForm({
   currentEmail: string;
   initialPending: PendingEmailChange | null;
 }) {
+  const router = useRouter();
   return (
     <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
       <Stack spacing={2.25}>
@@ -23,10 +25,12 @@ export function EmailChangeSettingsForm({
           </Typography>
         </div>
         <EmailChangeControl
+          key={`${initialPending?.id ?? "none"}:${initialPending?.lastSentAt ?? "none"}:${initialPending?.mailStatus ?? "none"}:${initialPending?.mailDispatchFailed ?? false}`}
           currentEmail={currentEmail}
           initialPending={initialPending}
           apiBase="/api/v1/me/email-change"
           warning="请确认新邮箱由你本人控制。系统只会在新邮箱完成验证后更新登录邮箱。"
+          onChanged={() => router.refresh()}
         />
       </Stack>
     </Paper>

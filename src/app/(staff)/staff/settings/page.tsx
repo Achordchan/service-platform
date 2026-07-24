@@ -75,6 +75,7 @@ export default async function StaffSettingsPage() {
     customerReplyAttachmentsEnabled: settings.customerReplyAttachmentsEnabled,
     standardEmailUnreadDelayEnabled:
       settings.standardEmailUnreadDelayEnabled,
+    emailOtpLoginEnabled: settings.emailOtpLoginEnabled,
     updatedAt: settings.updatedAt,
   };
 

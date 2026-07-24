@@ -51,6 +51,10 @@ export const createInvitationSchema = z.object({
   email: z.email().trim().toLowerCase(),
 });
 
+export const updateCustomerSpaceMemberSchema = z.object({
+  name: z.string().trim().min(2).max(60),
+});
+
 export type CreateCustomerSpaceInput = z.infer<
   typeof createCustomerSpaceSchema
 >;
@@ -58,3 +62,6 @@ export type UpdateCustomerSpaceInput = z.infer<
   typeof updateCustomerSpaceSchema
 >;
 export type CreateInvitationInput = z.infer<typeof createInvitationSchema>;
+export type UpdateCustomerSpaceMemberInput = z.infer<
+  typeof updateCustomerSpaceMemberSchema
+>;

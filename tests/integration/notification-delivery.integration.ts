@@ -64,6 +64,11 @@ let originalRequestCreatedRule: {
   soundEnabled: boolean;
   emailEnabled: boolean;
 } | null = null;
+let originalRequestClaimedRule: {
+  notificationEnabled: boolean;
+  soundEnabled: boolean;
+  emailEnabled: boolean;
+} | null = null;
 
 beforeAll(async () => {
   const result = await pool.query<{
@@ -204,6 +209,24 @@ beforeAll(async () => {
         notificationEnabled: requestCreatedRule.rows[0].notification_enabled,
         soundEnabled: requestCreatedRule.rows[0].sound_enabled,
         emailEnabled: requestCreatedRule.rows[0].email_enabled,
+      }
+    : null;
+  const requestClaimedRule = await pool.query<{
+    notification_enabled: boolean;
+    sound_enabled: boolean;
+    email_enabled: boolean;
+  }>(
+    `SELECT "notificationEnabled" AS notification_enabled,
+            "soundEnabled" AS sound_enabled,
+            "emailEnabled" AS email_enabled
+       FROM "NotificationDeliveryRule"
+      WHERE key = 'REQUEST_CLAIMED'`,
+  );
+  originalRequestClaimedRule = requestClaimedRule.rows[0]
+    ? {
+        notificationEnabled: requestClaimedRule.rows[0].notification_enabled,
+        soundEnabled: requestClaimedRule.rows[0].sound_enabled,
+        emailEnabled: requestClaimedRule.rows[0].email_enabled,
       }
     : null;
 });
@@ -347,6 +370,27 @@ afterAll(async () => {
   } else {
     await pool.query(
       `DELETE FROM "NotificationDeliveryRule" WHERE key = 'REQUEST_CREATED'`,
+    );
+  }
+  if (originalRequestClaimedRule) {
+    await pool.query(
+      `INSERT INTO "NotificationDeliveryRule" (
+         key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+       ) VALUES ('REQUEST_CLAIMED', $1, $2, $3, NOW())
+       ON CONFLICT (key) DO UPDATE SET
+         "notificationEnabled" = EXCLUDED."notificationEnabled",
+         "soundEnabled" = EXCLUDED."soundEnabled",
+         "emailEnabled" = EXCLUDED."emailEnabled",
+         "updatedAt" = NOW()`,
+      [
+        originalRequestClaimedRule.notificationEnabled,
+        originalRequestClaimedRule.soundEnabled,
+        originalRequestClaimedRule.emailEnabled,
+      ],
+    );
+  } else {
+    await pool.query(
+      `DELETE FROM "NotificationDeliveryRule" WHERE key = 'REQUEST_CLAIMED'`,
     );
   }
   await pool.end();
@@ -500,14 +544,14 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     expect(scheduled?.scheduled_before_six_minutes).toBe(true);
   });
 
-  it("客户新建标准工单会为平台管理员创建并投递邮件 Outbox", async () => {
+  it("客户新建标准服务请求会为平台管理员创建并投递邮件 Outbox", async () => {
     await configureStandardMail(true, false);
     await setUserMailPreference(admin.id, true);
     await setRequestCreatedMailRule(true);
 
     const created = await createRequest(customer, projectId, {
-      title: `管理员新工单邮件 ${randomUUID().slice(0, 8)}`,
-      description: "<p>验证客户新建工单后平台管理员可以收到邮件。</p>",
+      title: `管理员新服务请求邮件 ${randomUUID().slice(0, 8)}`,
+      description: "<p>验证客户新建服务请求后平台管理员可以收到邮件。</p>",
       categoryId,
       priority: "NORMAL",
     });
@@ -535,21 +579,71 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
       to_email: string;
       source_type: string;
       status: string;
+      template_key: string;
+      subject: string;
+      body: string;
     }>(
       `SELECT "toEmail" AS to_email,
               "sourceType" AS source_type,
-              status::text
+              status::text,
+              "templateKey" AS template_key,
+              subject,
+              body
          FROM "MailMessage"
         WHERE "notificationId" = $1
           AND id = ANY($2::text[])
         LIMIT 1`,
       [adminNotification!.id, createdMailIds],
     );
-    expect(message.rows[0]).toEqual({
+    expect(message.rows[0]).toMatchObject({
       to_email: admin.email,
       source_type: "STANDARD_REQUEST_NOTIFICATION",
       status: "QUEUED",
+      template_key: "STANDARD_REQUEST_STAFF_CREATED",
     });
+    expect(message.rows[0]?.subject).toContain("收到新服务请求");
+    expect(message.rows[0]?.body).toContain(`提交人：${customer.name}`);
+    expect(message.rows[0]?.body).toContain("问题摘要：验证客户新建服务请求");
+  });
+
+  it("服务请求接手通知会使用平台管理员专用邮件模板", async () => {
+    await configureStandardMail(true, false);
+    await setUserMailPreference(admin.id, true);
+    await setRequestClaimedMailRule(true);
+    const notificationId = await withActorDb(admin, async (tx) => {
+      const notification = await createNotification(tx, {
+        type: "REQUEST_CLAIMED",
+        title: "项目负责人已接手服务请求",
+        body: "“网站优化进度咨询”已由项目人员开始处理。",
+        userId: admin.id,
+        customerSpaceId,
+        projectId,
+        serviceRequestId: requestId,
+        emailDueAt: new Date(Date.now() - 60_000),
+      });
+      return notification.id;
+    });
+    cleanup.notificationIds.push(notificationId);
+
+    const createdMailIds = await createDueNotificationMailMessages();
+    const message = await pool.query<{
+      template_key: string;
+      subject: string;
+      body: string;
+    }>(
+      `SELECT "templateKey" AS template_key, subject, body
+         FROM "MailMessage"
+        WHERE "notificationId" = $1
+          AND id = ANY($2::text[])
+        LIMIT 1`,
+      [notificationId, createdMailIds],
+    );
+
+    expect(message.rows[0]?.template_key).toBe(
+      "STANDARD_REQUEST_STAFF_CLAIMED",
+    );
+    expect(message.rows[0]?.subject).toContain("已有项目人员接手");
+    expect(message.rows[0]?.body).toContain("服务请求已有项目人员接手");
   });
 
   it("关闭未读延迟后，规则开启的新事件立即进入邮件队列", async () => {
@@ -830,6 +924,20 @@ async function setRequestCreatedMailRule(emailEnabled: boolean) {
     `INSERT INTO "NotificationDeliveryRule" (
        key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
      ) VALUES ('REQUEST_CREATED', true, true, $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET
+       "notificationEnabled" = true,
+       "soundEnabled" = true,
+       "emailEnabled" = EXCLUDED."emailEnabled",
+       "updatedAt" = NOW()`,
+    [emailEnabled],
+  );
+}
+
+async function setRequestClaimedMailRule(emailEnabled: boolean) {
+  await pool.query(
+    `INSERT INTO "NotificationDeliveryRule" (
+       key, "notificationEnabled", "soundEnabled", "emailEnabled", "updatedAt"
+     ) VALUES ('REQUEST_CLAIMED', true, true, $1, NOW())
      ON CONFLICT (key) DO UPDATE SET
        "notificationEnabled" = true,
        "soundEnabled" = true,

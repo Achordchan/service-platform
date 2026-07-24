@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -22,9 +21,12 @@ import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import { useToast } from "@/components/shared/toast-provider";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { hasMeaningfulHtml } from "@/lib/message-content";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import type {
   ProjectDetail,
@@ -46,17 +48,21 @@ function dateInput(value?: string | null) {
 
 export function ProjectDeliveryActions({
   project,
-  canManage,
+  canManageDelivery,
+  canPublishUpdate,
   canEditProject,
+  contentRiskNoticeEnabled = false,
 }: {
   project: ProjectDetail;
-  canManage: boolean;
+  canManageDelivery: boolean;
+  canPublishUpdate: boolean;
   canEditProject: boolean;
+  contentRiskNoticeEnabled?: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [dialog, setDialog] = useState<DialogName>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const [milestoneDescription, setMilestoneDescription] = useState("");
   const [updateBody, setUpdateBody] = useState("");
   const [updateInternal, setUpdateInternal] = useState(false);
@@ -86,19 +92,25 @@ export function ProjectDeliveryActions({
   });
   const deliveryActive = isProjectDeliveryActive(project.status);
 
-  async function execute(url: string, body: unknown) {
+  async function execute<T>(
+    url: string,
+    body: unknown,
+    successMessage: string,
+    deliveryFeedback?: (result: T) => DeliveryFeedback | undefined,
+  ) {
     setSubmitting(true);
-    setError("");
     try {
-      await staffApi(url, jsonRequest("POST", body));
+      const result = await staffApi<T>(url, jsonRequest("POST", body));
       setMilestoneDescription("");
       setUpdateBody("");
       setUpdateInternal(false);
       setInlineImageUploading(false);
       setDialog(null);
+      toast.success(successMessage);
+      toast.delivery(deliveryFeedback?.(result));
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "操作失败",
       );
     } finally {
@@ -109,41 +121,50 @@ export function ProjectDeliveryActions({
   async function submitMilestone(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    await execute(`/api/v1/projects/${project.id}/milestones`, {
-      title: String(data.get("title") ?? "").trim(),
-      description: hasMeaningfulHtml(milestoneDescription)
-        ? milestoneDescription
-        : null,
-      status: String(data.get("status") ?? "NOT_STARTED"),
-      startDate: data.get("startDate")
-        ? new Date(String(data.get("startDate"))).toISOString()
-        : null,
-      endDate: data.get("endDate")
-        ? new Date(String(data.get("endDate"))).toISOString()
-        : null,
-      sortOrder: project.milestones.length,
-    });
+    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+      `/api/v1/projects/${project.id}/milestones`,
+      {
+        title: String(data.get("title") ?? "").trim(),
+        description: hasMeaningfulHtml(milestoneDescription)
+          ? milestoneDescription
+          : null,
+        status: String(data.get("status") ?? "NOT_STARTED"),
+        startDate: data.get("startDate")
+          ? new Date(String(data.get("startDate"))).toISOString()
+          : null,
+        endDate: data.get("endDate")
+          ? new Date(String(data.get("endDate"))).toISOString()
+          : null,
+        sortOrder: project.milestones.length,
+      },
+      "里程碑已创建",
+      (result) => result.deliveryFeedback,
+    );
   }
 
   async function submitUpdate(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     if (!hasMeaningfulHtml(updateBody)) {
-      setError("请填写进度说明");
+      toast.warning("请填写进度说明");
       return;
     }
-    await execute(`/api/v1/projects/${project.id}/updates`, {
-      title: String(data.get("title") ?? "").trim(),
-      body: updateBody,
-      visibility: updateInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
-    });
+    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+      `/api/v1/projects/${project.id}/updates`,
+      {
+        title: String(data.get("title") ?? "").trim(),
+        body: updateBody,
+        visibility: updateInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+      },
+      updateInternal ? "内部进度已发布" : "客户进度已发布",
+      (result) => result.deliveryFeedback,
+    );
   }
 
   async function submitProject(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${project.id}`,
@@ -167,9 +188,10 @@ export function ProjectDeliveryActions({
         }),
       );
       setDialog(null);
+      toast.success("项目设置已保存");
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "项目更新失败",
       );
     } finally {
@@ -180,16 +202,17 @@ export function ProjectDeliveryActions({
   async function submitStage(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setError("");
     try {
-      await staffApi(
+      const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/projects/${project.id}/stage`,
         jsonRequest("PATCH", { currentStage: stageValue.trim() || null }),
       );
       setDialog(null);
+      toast.success("项目阶段已更新");
+      toast.delivery(result.deliveryFeedback);
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "阶段更新失败",
       );
     } finally {
@@ -197,7 +220,7 @@ export function ProjectDeliveryActions({
     }
   }
 
-  if (!canManage && !canEditProject) return null;
+  if (!canManageDelivery && !canPublishUpdate && !canEditProject) return null;
 
   return (
     <>
@@ -215,45 +238,48 @@ export function ProjectDeliveryActions({
           },
         }}
       >
-        {canManage && deliveryActive ? (
+        {deliveryActive ? (
           <>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<CampaignOutlinedIcon />}
-              onClick={() => {
-                setError("");
-                setUpdateBody("");
-                setUpdateInternal(false);
-                setDialog("update");
-              }}
-            >
-              发布进度
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<AddOutlinedIcon />}
-              onClick={() => {
-                setError("");
-                setMilestoneDescription("");
-                setDialog("milestone");
-              }}
-            >
-              新增里程碑
-            </Button>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<RouteOutlinedIcon />}
-              onClick={() => {
-                setError("");
-                setStageValue(project.currentStage ?? "");
-                setDialog("stage");
-              }}
-            >
-              更新阶段
-            </Button>
+            {canPublishUpdate ? (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<CampaignOutlinedIcon />}
+                onClick={() => {
+                  setUpdateBody("");
+                  setUpdateInternal(false);
+                  setDialog("update");
+                }}
+              >
+                发布进度
+              </Button>
+            ) : null}
+            {canManageDelivery ? (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddOutlinedIcon />}
+                  onClick={() => {
+                    setMilestoneDescription("");
+                    setDialog("milestone");
+                  }}
+                >
+                  新增里程碑
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<RouteOutlinedIcon />}
+                  onClick={() => {
+                    setStageValue(project.currentStage ?? "");
+                    setDialog("stage");
+                  }}
+                >
+                  更新阶段
+                </Button>
+              </>
+            ) : null}
           </>
         ) : null}
         {canEditProject ? (
@@ -298,7 +324,9 @@ export function ProjectDeliveryActions({
           <DialogTitle>新增里程碑</DialogTitle>
           <DialogContent sx={{ overflowY: "auto" }}>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
+              {contentRiskNoticeEnabled ? (
+                <ContentRiskNotice audience="STAFF" />
+              ) : null}
               <TextField name="title" label="里程碑名称" required />
               <TextField
                 name="status"
@@ -367,7 +395,6 @@ export function ProjectDeliveryActions({
           <DialogTitle>更新当前阶段</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
               <TextField
                 label="当前阶段"
                 value={stageValue}
@@ -409,7 +436,9 @@ export function ProjectDeliveryActions({
           <DialogTitle>发布项目进度</DialogTitle>
           <DialogContent sx={{ overflowY: "auto" }}>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
+              {contentRiskNoticeEnabled && !updateInternal ? (
+                <ContentRiskNotice audience="STAFF" />
+              ) : null}
               <TextField name="title" label="动态标题" required />
               <Stack spacing={1}>
                 <Typography sx={{ fontWeight: 650 }}>进度说明 *</Typography>
@@ -467,7 +496,6 @@ export function ProjectDeliveryActions({
           <DialogTitle>项目设置</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
               <TextField name="title" label="项目名称" defaultValue={project.title} required />
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
                 <TextField

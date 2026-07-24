@@ -11,6 +11,10 @@ import { deleteCustomerSpace } from "@/modules/customer-spaces/customer-space-se
 import { getDeletionPreflight } from "@/modules/deletion/deletion-service";
 import { routeError } from "@/modules/projects/api-utils";
 import { deleteProject } from "@/modules/projects/project-service";
+import {
+  deactivateStaffUser,
+  listInternalUsers,
+} from "@/modules/users/staff-invitation-service";
 
 const ownerPool = new Pool({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -25,6 +29,8 @@ const fixture = {
   roleGroupId: randomUUID(),
   historicalInvitationId: randomUUID(),
   pendingInvitationId: randomUUID(),
+  staffUserId: randomUUID(),
+  staffUpdateId: randomUUID(),
 };
 
 let admin: Actor;
@@ -92,6 +98,18 @@ beforeAll(async () => {
       serviceTypeId,
       admin.id,
     ],
+  );
+  await ownerPool.query(
+    `INSERT INTO "User" (
+       id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt"
+     ) VALUES ($1, '历史作者', $2, true, 'TECHNICIAN', NOW(), NOW())`,
+    [fixture.staffUserId, `history-${randomUUID()}@local.test`],
+  );
+  await ownerPool.query(
+    `INSERT INTO "ProjectUpdate" (
+       id, title, body, visibility, "projectId", "authorId", "createdAt", "updatedAt"
+     ) VALUES ($1, '历史内容', '<p>保留的历史内容</p>', 'INTERNAL', $2, $3, NOW(), NOW())`,
+    [fixture.staffUpdateId, fixture.projectId, fixture.staffUserId],
   );
   await ownerPool.query(
     `
@@ -176,6 +194,9 @@ afterAll(async () => {
   ]);
   await ownerPool.query('DELETE FROM "Project" WHERE id = $1', [
     fixture.projectId,
+  ]);
+  await ownerPool.query('DELETE FROM "User" WHERE id = $1', [
+    fixture.staffUserId,
   ]);
   await ownerPool.query(
     'DELETE FROM "CustomerSpace" WHERE id = ANY($1::text[])',
@@ -275,6 +296,54 @@ describe("删除操作审计", () => {
         count: 1,
       }),
     );
+  });
+
+  it("协作成员有历史内容时允许注销并自动匿名保留作者", async () => {
+    const report = await getDeletionPreflight(
+      admin,
+      "STAFF_USER",
+      fixture.staffUserId,
+    );
+    expect(report.allowed).toBe(true);
+    expect(report.checks).toContainEqual(
+      expect.objectContaining({
+        key: "history",
+        status: "WARN",
+        count: 1,
+      }),
+    );
+
+    await deactivateStaffUser(admin, fixture.staffUserId);
+
+    const result = await ownerPool.query<{
+      name: string;
+      email: string;
+      deleted_at: Date | null;
+      update_count: string;
+    }>(
+      `SELECT
+         user_account.name,
+         user_account.email,
+         user_account."deletedAt" AS deleted_at,
+         (SELECT COUNT(*)::text FROM "ProjectUpdate"
+           WHERE id = $2 AND "authorId" = user_account.id) AS update_count
+       FROM "User" user_account
+       WHERE user_account.id = $1`,
+      [fixture.staffUserId, fixture.staffUpdateId],
+    );
+    expect(result.rows[0]).toMatchObject({
+      name: "已删除成员",
+      update_count: "1",
+    });
+    expect(result.rows[0]?.email).toBe(
+      `deleted-${fixture.staffUserId}@deleted.invalid`,
+    );
+    expect(result.rows[0]?.deleted_at).toBeInstanceOf(Date);
+    expect(
+      (await listInternalUsers(admin)).some(
+        (user) => user.id === fixture.staffUserId,
+      ),
+    ).toBe(false);
   });
 
   it("删除项目后保留审计记录且不触发外键冲突", async () => {

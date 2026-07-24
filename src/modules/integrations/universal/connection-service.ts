@@ -123,7 +123,7 @@ async function assertPluginReady(tx: Prisma.TransactionClient) {
   if (!installation?.enabled || installation.healthStatus !== "READY") {
     throw new DomainError(
       "UNIVERSAL_PLUGIN_NOT_READY",
-      "请先在插件中心完成通用工单连接器检测并启用",
+      "请先在插件中心完成通用服务请求连接器检测并启用",
       409,
     );
   }

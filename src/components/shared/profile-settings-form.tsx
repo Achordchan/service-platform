@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Avatar,
   Box,
   Button,
@@ -14,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import PhotoCameraOutlinedIcon from "@mui/icons-material/PhotoCameraOutlined";
+import { useToast } from "@/components/shared/toast-provider";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 
 export function ProfileSettingsForm({
@@ -27,12 +27,11 @@ export function ProfileSettingsForm({
   };
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [name, setName] = useState(user.name);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   const avatarSrc = useMemo(
     () => preview || resolveAvatarSrc(user.image, name || user.name, user.id),
@@ -42,8 +41,6 @@ export function ProfileSettingsForm({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSubmitting(true);
-    setError("");
-    setSuccess("");
     try {
       const formData = new FormData();
       formData.append("name", name.trim());
@@ -60,10 +57,10 @@ export function ProfileSettingsForm({
       }
       setFile(null);
       setPreview(null);
-      setSuccess("个人资料已更新");
+      toast.success("个人资料已更新");
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "保存失败",
       );
     } finally {
@@ -75,8 +72,6 @@ export function ProfileSettingsForm({
     <Paper component="form" variant="outlined" onSubmit={submit} sx={{ p: { xs: 2.5, md: 3 } }}>
       {submitting ? <LinearProgress sx={{ mb: 2 }} /> : null}
       <Stack spacing={2.5}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
-        {success ? <Alert severity="success">{success}</Alert> : null}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={2.5} sx={{ alignItems: "center" }}>
           <Avatar src={avatarSrc} alt={name} sx={{ width: 84, height: 84, fontSize: 28 }}>
             {(name || user.name).slice(0, 1)}

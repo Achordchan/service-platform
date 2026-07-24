@@ -19,6 +19,7 @@ export const updatePlatformSettingsSchema = z
     attachmentAllowedExtensions: z.string().max(500).optional(),
     customerReplyAttachmentsEnabled: z.boolean().optional(),
     standardEmailUnreadDelayEnabled: z.boolean().optional(),
+    emailOtpLoginEnabled: z.boolean().optional(),
   })
   .superRefine((value, ctx) => {
     if (value.smtpPassword && value.clearSmtpPassword) {

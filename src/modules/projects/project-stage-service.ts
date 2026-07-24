@@ -42,7 +42,7 @@ export function updateProjectStage(
         currentStage: project.currentStage,
       },
     });
-    await dispatchProjectActivity(tx, actor, {
+    const delivery = await dispatchProjectActivity(tx, actor, {
       eventType: "PROJECT_UPDATED",
       eventPayload: {
         change: "PROJECT_STAGE_UPDATED",
@@ -60,6 +60,6 @@ export function updateProjectStage(
       projectId,
     });
 
-    return project;
+    return { ...project, deliveryFeedback: delivery.feedback };
   });
 }

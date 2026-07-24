@@ -1,4 +1,5 @@
 import { Box, Container } from "@mui/material";
+import { notFound } from "next/navigation";
 import type {
   ProjectDetail,
   ServiceRequestSummary,
@@ -18,6 +19,7 @@ import { EmptyState } from "@/components/shared/content-state";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
+import { DomainError } from "@/modules/projects/errors";
 import { listProjectRequests } from "@/modules/requests/request-service";
 
 const validTabs = new Set<TabKey>([
@@ -64,7 +66,12 @@ export default async function CustomerProjectPage({
   const { projectId } = await params;
   const query = await searchParams;
   const requestedTab = Array.isArray(query.tab) ? query.tab[0] : query.tab;
-  const project = await getProject(actor, projectId);
+  const project = await getProject(actor, projectId).catch((error: unknown) => {
+    if (error instanceof DomainError && error.status === 404) {
+      notFound();
+    }
+    throw error;
+  });
   const milestonesEnabled = project.showMilestones !== false;
   const updatesEnabled = project.customerUpdatesEnabled !== false;
   const requestsEnabled = project.customerRequestsEnabled !== false;
@@ -112,8 +119,12 @@ export default async function CustomerProjectPage({
       id: project.customerSpace.id,
       name: project.customerSpace.name,
     },
+    managerNames: project.staff
+      .filter((member) => member.role === "PROJECT_MANAGER")
+      .map((member) => member.user.name),
     requestCount: requestResult.filter((request) => !request.archivedAt).length,
     updateCount: project.updates.length,
+    contentRiskUiEnabled: project.contentRiskUiEnabled,
     staff: project.staff.map((member) => ({
       id: member.user.id,
       name: member.user.name,
@@ -127,6 +138,7 @@ export default async function CustomerProjectPage({
       startDate: milestone.startDate?.toISOString() ?? null,
       endDate: milestone.endDate?.toISOString() ?? null,
       createdAt: milestone.createdAt.toISOString(),
+      contentRiskStatus: milestone.contentRiskStatus,
     })),
     updates: project.updates.map((update) => ({
       id: update.id,
@@ -134,11 +146,13 @@ export default async function CustomerProjectPage({
       body: update.body,
       authorName: update.author.name,
       createdAt: update.createdAt.toISOString(),
+      contentRiskStatus: update.contentRiskStatus,
       comments: update.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
         authorName: comment.author.name,
         createdAt: comment.createdAt.toISOString(),
+        contentRiskStatus: comment.contentRiskStatus,
       })),
     })),
     attachments: project.attachments.map((attachment) => ({
@@ -147,6 +161,7 @@ export default async function CustomerProjectPage({
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),
+      contentRiskStatus: attachment.contentRiskStatus,
     })),
   };
   const requests = requestResult.map((request) =>
@@ -163,7 +178,11 @@ export default async function CustomerProjectPage({
         py: { xs: 3, md: 4 },
       }}
     >
-      <RealtimeRouteRefresh mode="project-detail" projectId={project.id} />
+      <RealtimeRouteRefresh
+        mode="project-detail"
+        projectId={project.id}
+        projectDeletedRedirect="/customer/projects"
+      />
       <PageHeading
         backLabel="服务项目"
         backHref="/customer/projects"
@@ -208,7 +227,10 @@ export default async function CustomerProjectPage({
       {activeTab === "milestones" && milestonesEnabled ? (
         <Box sx={{ pt: 3 }}>
           {projectView.milestones.length > 0 ? (
-            <MilestoneTimeline milestones={projectView.milestones} />
+            <MilestoneTimeline
+              milestones={projectView.milestones}
+              contentRiskEnabled={projectView.contentRiskUiEnabled}
+            />
           ) : (
             <EmptyState
               title="暂无里程碑"
@@ -219,7 +241,10 @@ export default async function CustomerProjectPage({
       ) : null}
       {activeTab === "updates" && updatesEnabled ? (
         <Box sx={{ pt: 3 }}>
-          <ProjectUpdates updates={projectView.updates} />
+          <ProjectUpdates
+            updates={projectView.updates}
+            contentRiskEnabled={projectView.contentRiskUiEnabled}
+          />
         </Box>
       ) : null}
       {activeTab === "requests" && requestsEnabled ? (
@@ -229,7 +254,10 @@ export default async function CustomerProjectPage({
       ) : null}
       {activeTab === "files" && filesEnabled ? (
         <Box sx={{ pt: 3 }}>
-          <ProjectFiles files={projectView.attachments} />
+          <ProjectFiles
+            files={projectView.attachments}
+            contentRiskEnabled={projectView.contentRiskUiEnabled}
+          />
         </Box>
       ) : null}
     </Container>

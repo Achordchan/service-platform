@@ -10,6 +10,7 @@ import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutline
 import type { ProjectUpdate } from "@/components/customer/customer-types";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
+import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -23,9 +24,11 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
 export function ProjectUpdates({
   updates,
   compact = false,
+  contentRiskEnabled = false,
 }: {
   updates: ProjectUpdate[];
   compact?: boolean;
+  contentRiskEnabled?: boolean;
 }) {
   const visibleUpdates = compact ? updates.slice(0, 3) : updates;
   if (visibleUpdates.length === 0) {
@@ -62,9 +65,16 @@ export function ProjectUpdates({
                 }}
               />
               <Box sx={{ minWidth: 0 }}>
-                <Typography sx={{ fontWeight: 650 }}>
-                  {update.title}
-                </Typography>
+                {update.contentRiskStatus === "REVOKED" ? (
+                  <ContentRiskStatusLine
+                    status="REVOKED"
+                    pluginEnabled={contentRiskEnabled}
+                  />
+                ) : (
+                  <Typography sx={{ fontWeight: 650 }}>
+                    {update.title}
+                  </Typography>
+                )}
                 <Typography
                   variant="body2"
                   color="text.secondary"
@@ -101,9 +111,16 @@ export function ProjectUpdates({
                   sx={{ justifyContent: "space-between" }}
                 >
                   <Box>
-                    <Typography sx={{ fontWeight: 650, fontSize: 17 }}>
-                      {update.title}
-                    </Typography>
+                    {update.contentRiskStatus === "REVOKED" ? (
+                      <ContentRiskStatusLine
+                        status="REVOKED"
+                        pluginEnabled={contentRiskEnabled}
+                      />
+                    ) : (
+                      <Typography sx={{ fontWeight: 650, fontSize: 17 }}>
+                        {update.title}
+                      </Typography>
+                    )}
                     <Typography variant="body2" color="text.secondary">
                       {update.authorName}
                     </Typography>
@@ -112,8 +129,16 @@ export function ProjectUpdates({
                     {dateFormatter.format(new Date(update.createdAt))}
                   </Typography>
                 </Stack>
-                <CollapsibleText text={update.body} maxLines={12} />
-                {update.comments.length > 0 ? (
+                {update.contentRiskStatus === "PENDING" ? (
+                  <ContentRiskStatusLine
+                    status="PENDING"
+                    pluginEnabled={contentRiskEnabled}
+                  />
+                ) : null}
+                {update.contentRiskStatus !== "REVOKED" ? (
+                  <CollapsibleText text={update.body} maxLines={12} />
+                ) : null}
+                {update.contentRiskStatus !== "REVOKED" && update.comments.length > 0 ? (
                   <>
                     <Divider sx={{ my: 2 }} />
                     <Stack
@@ -141,9 +166,22 @@ export function ProjectUpdates({
                           <Typography variant="body2" sx={{ fontWeight: 650 }}>
                             {comment.authorName}
                           </Typography>
-                          <Typography sx={{ mt: 0.5 }}>
-                            {comment.body}
-                          </Typography>
+                          {comment.contentRiskStatus === "REVOKED" ? (
+                            <ContentRiskStatusLine
+                              status="REVOKED"
+                              pluginEnabled={contentRiskEnabled}
+                            />
+                          ) : (
+                            <>
+                              <Typography sx={{ mt: 0.5 }}>
+                                {comment.body}
+                              </Typography>
+                              <ContentRiskStatusLine
+                                status={comment.contentRiskStatus}
+                                pluginEnabled={contentRiskEnabled}
+                              />
+                            </>
+                          )}
                         </Box>
                       ))}
                     </Stack>

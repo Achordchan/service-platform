@@ -17,6 +17,7 @@ import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { StatusIndicator } from "@/components/shared/status-indicator";
+import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
 import type { MilestoneStatus } from "@/components/customer/customer-types";
 import {
   extractInlineAttachmentIds,
@@ -31,6 +32,7 @@ export type MilestoneListItem = {
   startDate?: string | null;
   endDate?: string | null;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -63,10 +65,12 @@ export function MilestoneList({
   milestones,
   emptyText = "尚未设置里程碑",
   renderActions,
+  contentRiskEnabled = false,
 }: {
   milestones: MilestoneListItem[];
   emptyText?: string;
   renderActions?: (milestone: MilestoneListItem) => ReactNode;
+  contentRiskEnabled?: boolean;
 }) {
   const [detail, setDetail] = useState<MilestoneListItem | null>(null);
 
@@ -80,6 +84,7 @@ export function MilestoneList({
             extractInlineAttachmentIds(description).length > 0 ||
             /<img\b/i.test(description);
           const dateRange = formatDateRange(milestone);
+          const revoked = milestone.contentRiskStatus === "REVOKED";
           return (
             <Box
               key={milestone.id}
@@ -99,6 +104,12 @@ export function MilestoneList({
               }}
             >
               <Stack spacing={1.25} sx={{ minWidth: 0 }}>
+                {revoked ? (
+                  <ContentRiskStatusLine
+                    status="REVOKED"
+                    pluginEnabled={contentRiskEnabled}
+                  />
+                ) : (
                 <Stack
                   direction="row"
                   spacing={1.5}
@@ -110,7 +121,14 @@ export function MilestoneList({
                   </Typography>
                   <StatusIndicator status={milestone.status} compact />
                 </Stack>
-                {preview ? (
+                )}
+                {!revoked && milestone.contentRiskStatus === "PENDING" ? (
+                  <ContentRiskStatusLine
+                    status="PENDING"
+                    pluginEnabled={contentRiskEnabled}
+                  />
+                ) : null}
+                {!revoked && preview ? (
                   <Typography
                     color="text.secondary"
                     sx={{
@@ -124,12 +142,12 @@ export function MilestoneList({
                   >
                     {preview}
                   </Typography>
-                ) : milestone.description ? null : (
+                ) : !revoked && milestone.description ? null : !revoked ? (
                   <Typography color="text.secondary">
                     未填写说明
                   </Typography>
-                )}
-                {hasImages ? (
+                ) : null}
+                {!revoked && hasImages ? (
                   <Stack
                     direction="row"
                     spacing={0.75}
@@ -171,7 +189,7 @@ export function MilestoneList({
                     </Typography>
                   </Box>
                 ) : null}
-                {milestone.description || renderActions ? (
+                {!revoked && (milestone.description || renderActions) ? (
                   <Stack
                     direction="row"
                     spacing={0.75}

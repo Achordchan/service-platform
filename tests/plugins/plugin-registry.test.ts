@@ -15,6 +15,7 @@ import {
 describe("插件注册白名单", () => {
   it("只暴露显式注册的可信插件", () => {
     expect(listRegisteredPlugins().map((plugin) => plugin.key)).toEqual([
+      "content-contact-risk",
       "dingtalk-robot",
       "image-webp",
       "sub2api-connector",

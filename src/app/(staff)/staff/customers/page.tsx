@@ -32,6 +32,8 @@ export default async function StaffCustomersPage() {
           expiresAt: space.owner.emailChanges[0].expiresAt.toISOString(),
           lastSentAt: space.owner.emailChanges[0].lastSentAt.toISOString(),
           mailStatus: space.owner.emailChanges[0].mailStatus,
+          mailDispatchFailed:
+            space.owner.emailChanges[0].mailDispatchFailed,
         }
       : null,
     memberCount: space._count.memberships,

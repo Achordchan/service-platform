@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  Alert,
   Button,
   FormControlLabel,
   Paper,
@@ -10,6 +9,7 @@ import {
   Switch,
   Typography,
 } from "@mui/material";
+import { useToast } from "@/components/shared/toast-provider";
 
 type Preferences = {
   soundNotificationsEnabled: boolean;
@@ -21,15 +21,12 @@ export function NotificationPreferencesForm({
 }: {
   initialPreferences: Preferences;
 }) {
+  const toast = useToast();
   const [preferences, setPreferences] = useState(initialPreferences);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   async function save() {
     setSaving(true);
-    setError("");
-    setSuccess("");
     try {
       const response = await fetch("/api/v1/me/notification-preferences", {
         method: "PATCH",
@@ -44,14 +41,14 @@ export function NotificationPreferencesForm({
         throw new Error(result.error?.message || "通知设置保存失败");
       }
       setPreferences(result.data);
-      setSuccess("通知设置已保存");
+      toast.success("通知设置已保存");
       window.dispatchEvent(
         new CustomEvent("notification-preferences-updated", {
           detail: result.data,
         }),
       );
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
     } finally {
       setSaving(false);
     }
@@ -66,8 +63,6 @@ export function NotificationPreferencesForm({
             设置会同步到使用此账号登录的其他设备。
           </Typography>
         </div>
-        {error ? <Alert severity="error">{error}</Alert> : null}
-        {success ? <Alert severity="success">{success}</Alert> : null}
         <FormControlLabel
           control={
             <Switch
@@ -94,10 +89,10 @@ export function NotificationPreferencesForm({
               }
             />
           }
-          label="未读邮件提醒"
+          label="业务通知邮件"
         />
         <Typography variant="body2" color="text.secondary" sx={{ mt: -1.5 }}>
-          控制工单及管理员已开启的项目交付邮件；进入对应内容后自动取消待发邮件。
+          控制服务请求及管理员已开启的项目交付通知邮件，包含尽快发送和未读后发送；进入对应内容后自动取消待发邮件。
         </Typography>
         <Button
           variant="contained"

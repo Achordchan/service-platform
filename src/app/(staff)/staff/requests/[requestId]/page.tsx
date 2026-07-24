@@ -1,8 +1,7 @@
-import { Box, Container } from "@mui/material";
+import { Container } from "@mui/material";
 import { RequestDetailWorkspace } from "@/components/staff/request-detail-workspace";
-import { StaffPageHeading } from "@/components/staff/staff-page-heading";
-import { StaffStatus } from "@/components/staff/staff-status";
 import type { RequestDetail } from "@/components/staff/staff-types";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
 import { getRequest } from "@/modules/requests/request-service";
@@ -21,19 +20,30 @@ export default async function StaffRequestDetailPage({
     (member) => member.user.id === actor.id,
   );
   const canAssign =
-    actor.isPlatformAdmin || currentAssignment?.role === "PROJECT_MANAGER";
+    actor.isPlatformAdmin ||
+    (currentAssignment?.role === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "request.assign"));
   const assigneeIds = [
     ...(request.assigneeId ? [request.assigneeId] : []),
     ...request.assignees.map((item) => item.userId),
   ];
   const requestUnassigned = assigneeIds.length === 0;
   const claimRequired = Boolean(
-    !actor.isPlatformAdmin && currentAssignment && requestUnassigned,
+    !actor.isPlatformAdmin &&
+      currentAssignment &&
+      requestUnassigned &&
+      hasRolePermission(actor, "request.reply"),
   );
-  const canManage =
-    canAssign ||
-    (actor.platformRole === "TECHNICIAN" && assigneeIds.includes(actor.id)) ||
+  const hasRequestScope = Boolean(
+    actor.isPlatformAdmin ||
+      currentAssignment?.role === "PROJECT_MANAGER" ||
+      assigneeIds.includes(actor.id),
+  );
+  const canReply =
+    (hasRequestScope && hasRolePermission(actor, "request.reply")) ||
     claimRequired;
+  const canChangeStatus =
+    hasRequestScope && hasRolePermission(actor, "request.change_status");
   const connectorKey = project.pluginBindings[0]?.pluginKey ?? null;
   const connectorLabel = connectorKey
     ? getRegisteredPlugin(connectorKey).manifest.name
@@ -102,6 +112,7 @@ export default async function StaffRequestDetailPage({
           ).manifest.name,
         }
       : null,
+    contentRiskUiEnabled: request.contentRiskUiEnabled,
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
@@ -109,6 +120,7 @@ export default async function StaffRequestDetailPage({
       size: attachment.size,
       visibility: attachment.visibility,
       createdAt: attachment.createdAt.toISOString(),
+      contentRiskStatus: attachment.contentRiskStatus,
     })),
     messages: request.messages.map((message) => ({
       id: message.id,
@@ -176,7 +188,12 @@ export default async function StaffRequestDetailPage({
         size: attachment.size,
         visibility: attachment.visibility,
         createdAt: attachment.createdAt.toISOString(),
+        contentRiskStatus: attachment.contentRiskStatus,
       })),
+      contentRiskStatus: message.contentRiskStatus,
+      contentRiskReason: message.contentRiskReason,
+      reeditBody: message.reeditBody,
+      reeditAttachmentCount: message.reeditAttachmentCount,
     })),
   };
 
@@ -190,47 +207,46 @@ export default async function StaffRequestDetailPage({
         py: { xs: 3, md: 4 },
       }}
     >
-      <StaffPageHeading
-        backHref="/staff/requests"
-        backLabel="服务请求"
-        title={request.title}
-        description={headingDescription}
-        status={<StaffStatus value={request.status} />}
+      <RequestDetailWorkspace
+        request={requestView}
+        headingDescription={headingDescription}
+        canViewRevokedContent={actor.isPlatformAdmin}
+        canModerateMessages={actor.isPlatformAdmin}
+        currentUserId={actor.id}
+        projectStaff={(() => {
+          const members = project.staff.map((member) => ({
+            id: member.id,
+            userId: member.user.id,
+            name: member.user.name,
+            email:
+              "email" in member.user && typeof member.user.email === "string"
+                ? member.user.email
+                : "",
+            role: member.role,
+          }));
+          if (
+            actor.isPlatformAdmin &&
+            !members.some((member) => member.userId === actor.id)
+          ) {
+            members.unshift({
+              id: `admin-${actor.id}`,
+              userId: actor.id,
+              name: actor.name,
+              email: actor.email,
+              role: "PROJECT_MANAGER",
+            });
+          }
+          return members;
+        })()}
+        canReply={canReply}
+        canChangeStatus={canChangeStatus}
+        canArchive={canChangeStatus}
+        canAssign={canAssign}
+        claimRequired={claimRequired}
+        contentRiskNoticeEnabled={
+          request.contentRiskUiEnabled && !actor.isPlatformAdmin
+        }
       />
-      <Box sx={{ mt: 3 }}>
-        <RequestDetailWorkspace
-          request={requestView}
-          currentUserId={actor.id}
-          projectStaff={(() => {
-            const members = project.staff.map((member) => ({
-              id: member.id,
-              userId: member.user.id,
-              name: member.user.name,
-              email:
-                "email" in member.user && typeof member.user.email === "string"
-                  ? member.user.email
-                  : "",
-              role: member.role,
-            }));
-            if (
-              actor.isPlatformAdmin &&
-              !members.some((member) => member.userId === actor.id)
-            ) {
-              members.unshift({
-                id: `admin-${actor.id}`,
-                userId: actor.id,
-                name: actor.name,
-                email: actor.email,
-                role: "PROJECT_MANAGER",
-              });
-            }
-            return members;
-          })()}
-          canManage={canManage}
-          canAssign={canAssign}
-          claimRequired={claimRequired}
-        />
-      </Box>
     </Container>
   );
 }

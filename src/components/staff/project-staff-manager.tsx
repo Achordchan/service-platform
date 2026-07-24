@@ -15,6 +15,7 @@ import {
   Typography,
 } from "@mui/material";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   ProjectStaffMember,
@@ -45,12 +46,12 @@ export function ProjectStaffManager({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [projectRole, setProjectRole] =
     useState<ProjectStaffMember["role"]>("PROJECT_MANAGER");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
 
   const availableCandidates = useMemo(() => {
     const assigned = new Set(staff.map((member) => member.userId));
@@ -72,7 +73,6 @@ export function ProjectStaffManager({
   async function addStaff() {
     if (!selectedCandidate) return;
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/staff`,
@@ -87,9 +87,10 @@ export function ProjectStaffManager({
       setOpen(false);
       setSelectedUserId("");
       setProjectRole("PROJECT_MANAGER");
+      toast.success("项目人员已分配");
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "人员分配失败",
       );
     } finally {
@@ -99,15 +100,15 @@ export function ProjectStaffManager({
 
   async function removeStaff(projectStaffId: string) {
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/staff/${projectStaffId}`,
         { method: "DELETE" },
       );
+      toast.success("项目人员已移除，相关服务请求分配已同步清理");
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "移除失败",
       );
     } finally {
@@ -128,7 +129,6 @@ export function ProjectStaffManager({
             size="small"
             startIcon={<PersonAddAltOutlinedIcon />}
             onClick={() => {
-              setError("");
               setOpen(true);
             }}
           >
@@ -136,7 +136,6 @@ export function ProjectStaffManager({
           </Button>
         ) : null}
       </Stack>
-      {error ? <Alert severity="error" sx={{ mt: 2 }}>{error}</Alert> : null}
       <Stack spacing={2} sx={{ mt: 2 }}>
         {staff.map((member) => (
           <Stack
@@ -182,7 +181,6 @@ export function ProjectStaffManager({
         <DialogTitle>分配项目人员</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
             <TextField
               select
               label="协作人员"

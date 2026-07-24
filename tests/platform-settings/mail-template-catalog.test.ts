@@ -8,6 +8,73 @@ import {
 } from "../../src/modules/platform-settings/mail-template-catalog";
 
 describe("mail template catalog", () => {
+  it("renders a dedicated staff email for customer-created requests", () => {
+    const definition = getMailTemplateDefinition(
+      "STANDARD_REQUEST_STAFF_CREATED",
+    );
+    const rendered = renderTemplateContent(
+      definition.key,
+      definition.defaults,
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.subject).toBe(
+      "网站 SEO 项目 收到新服务请求 SR-20260721-001",
+    );
+    expect(rendered.previewText).toBe(
+      "张三 提交了“网站优化进度咨询”",
+    );
+    expect(rendered.body).toContain(
+      "你负责或参与管理的项目“网站 SEO 项目”",
+    );
+    expect(rendered.body).toContain("提交人：张三");
+    expect(rendered.body).toContain("服务请求编号：SR-20260721-001");
+    expect(rendered.body).toContain("问题摘要：想确认当前优化工作");
+    expect(rendered.actionLabel).toBe("查看并处理");
+  });
+
+  it("renders the platform-admin request-claimed email", () => {
+    const definition = getMailTemplateDefinition(
+      "STANDARD_REQUEST_STAFF_CLAIMED",
+    );
+    const rendered = renderTemplateContent(
+      definition.key,
+      definition.defaults,
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.subject).toContain("已有项目人员接手");
+    expect(rendered.previewText).toContain("金晶已接手服务请求");
+    expect(rendered.body).toContain("服务请求已有项目人员接手");
+    expect(rendered.actionLabel).toBe("查看服务请求");
+  });
+
+  it("renders the project-created template", () => {
+    const definition = getMailTemplateDefinition("STANDARD_PROJECT_CREATED");
+    const rendered = renderTemplateContent(
+      definition.key,
+      definition.defaults,
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.subject).toContain("官网升级项目");
+    expect(rendered.body).toContain("已创建并与你关联");
+    expect(rendered.actionLabel).toBe("查看项目");
+  });
+
+  it("renders the login email OTP template without an action link", () => {
+    const definition = getMailTemplateDefinition("LOGIN_EMAIL_OTP");
+    const rendered = renderTemplateContent(
+      definition.key,
+      definition.defaults,
+      sampleVariablesForTemplate(definition.key),
+    );
+
+    expect(rendered.subject).toContain("382941");
+    expect(rendered.body).toContain("5 分钟");
+    expect(rendered.actionLabel).toBeNull();
+  });
+
   it("renders personalized staff invitation variables", () => {
     const definition = getMailTemplateDefinition("STAFF_INVITATION");
     const rendered = renderTemplateContent(

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
+  isProjectDeletedRealtimeEvent,
   matchesRealtimeScope,
   subscribeRealtime,
   subscribeRealtimeReady,
@@ -13,6 +14,7 @@ export function useRealtimeRouteRefresh(input: {
   eventTypes: readonly RealtimeEventType[];
   projectId?: string;
   requestId?: string;
+  projectDeletedRedirect?: string;
 }) {
   const router = useRouter();
   const pendingCatchupRef = useRef(false);
@@ -40,6 +42,14 @@ export function useRealtimeRouteRefresh(input: {
             requestId: input.requestId,
           })
         ) {
+          return;
+        }
+        if (
+          event.live &&
+          input.projectDeletedRedirect &&
+          isProjectDeletedRealtimeEvent(event, input.projectId)
+        ) {
+          router.replace(input.projectDeletedRedirect);
           return;
         }
         if (event.live) {
@@ -81,6 +91,7 @@ export function useRealtimeRouteRefresh(input: {
     eventTypesKey,
     input.eventTypes,
     input.projectId,
+    input.projectDeletedRedirect,
     input.requestId,
     router,
   ]);

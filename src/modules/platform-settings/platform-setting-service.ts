@@ -58,6 +58,7 @@ function publicSettings(settings: {
   attachmentAllowedExtensions?: string;
   customerReplyAttachmentsEnabled?: boolean;
   standardRequestEmailEnabled?: boolean;
+  emailOtpLoginEnabled?: boolean;
   updatedAt?: Date;
 }) {
   const smtpUser = settings.smtpUser ?? env.SMTP_USER ?? null;
@@ -116,6 +117,7 @@ function publicSettings(settings: {
       settings.customerReplyAttachmentsEnabled ?? true,
     standardEmailUnreadDelayEnabled:
       settings.standardRequestEmailEnabled ?? false,
+    emailOtpLoginEnabled: settings.emailOtpLoginEnabled ?? false,
     updatedAt: settings.updatedAt?.toISOString(),
   };
 }
@@ -213,6 +215,9 @@ export async function updatePlatformSettings(
       data.standardRequestEmailEnabled =
         input.standardEmailUnreadDelayEnabled;
     }
+    if (input.emailOtpLoginEnabled !== undefined) {
+      data.emailOtpLoginEnabled = input.emailOtpLoginEnabled;
+    }
 
     const nextMailMode =
       (data.mailMode as "LOCAL_OUTBOX" | "RESEND" | "SMTP" | undefined) ??
@@ -226,6 +231,9 @@ export async function updatePlatformSettings(
         "生产环境不能启用本地发件箱",
         409,
       );
+    }
+    if (nextMailMode === "LOCAL_OUTBOX") {
+      data.emailOtpLoginEnabled = false;
     }
     if (nextMailMode === "RESEND") {
       if (
@@ -336,6 +344,7 @@ export async function updatePlatformSettings(
         customerReplyAttachmentsEnabled: updated.customerReplyAttachmentsEnabled,
         standardEmailUnreadDelayEnabled:
           updated.standardRequestEmailEnabled,
+        emailOtpLoginEnabled: updated.emailOtpLoginEnabled,
       },
     });
 

@@ -10,7 +10,11 @@ import {
   prepareMailMessageTemplate,
 } from "@/lib/jobs";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import type { CreateInvitationInput } from "@/modules/customer-spaces/schemas";
+import { deactivateCustomerAccountIfOrphaned } from "@/modules/customer-spaces/customer-account-lifecycle";
+import type {
+  CreateInvitationInput,
+  UpdateCustomerSpaceMemberInput,
+} from "@/modules/customer-spaces/schemas";
 import { createInvitationToken } from "@/modules/invitations/invitation-token";
 import {
   assertAllowed,
@@ -74,6 +78,17 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
                 name: true,
                 email: true,
                 platformRole: true,
+                emailChanges: {
+                  where: { status: "PENDING" },
+                  orderBy: { createdAt: "desc" },
+                  take: 1,
+                  select: {
+                    id: true,
+                    newEmail: true,
+                    expiresAt: true,
+                    lastSentAt: true,
+                  },
+                },
               },
             },
           },
@@ -98,6 +113,33 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
     });
     assertStandardCustomerSpace(space);
     assertOwnerOrAdmin(actor, space.memberships, "管理成员");
+    const changeIds = space.memberships.flatMap((membership) =>
+      membership.user.emailChanges.map((change) => change.id),
+    );
+    const verificationMessages =
+      changeIds.length > 0
+        ? await tx.mailMessage.findMany({
+            where: {
+              sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+              sourceId: { in: changeIds },
+            },
+            select: { sourceId: true, status: true, errorMessage: true },
+            orderBy: { createdAt: "desc" },
+          })
+        : [];
+    const latestMailByChangeId = new Map<
+      string,
+      { status: string; dispatchFailed: boolean }
+    >();
+    for (const message of verificationMessages) {
+      if (message.sourceId && !latestMailByChangeId.has(message.sourceId)) {
+        latestMailByChangeId.set(message.sourceId, {
+          status: message.status,
+          dispatchFailed:
+            message.status === "QUEUED" && Boolean(message.errorMessage),
+        });
+      }
+    }
     return {
       id: space.id,
       name: space.name,
@@ -109,7 +151,18 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
       updatedAt: space.updatedAt,
       owner: space.owner,
       _count: space._count,
-      memberships: space.memberships,
+      memberships: space.memberships.map((membership) => ({
+        ...membership,
+        user: {
+          ...membership.user,
+          emailChanges: membership.user.emailChanges.map((change) => ({
+            ...change,
+            mailStatus: latestMailByChangeId.get(change.id)?.status ?? null,
+            mailDispatchFailed:
+              latestMailByChangeId.get(change.id)?.dispatchFailed ?? false,
+          })),
+        },
+      })),
       invitations: space.invitations,
     };
   });
@@ -201,6 +254,12 @@ export function removeCustomerSpaceMember(
     }
 
     await tx.membership.delete({ where: { id: membership.id } });
+    const accountDeleted = await deactivateCustomerAccountIfOrphaned(
+      tx,
+      actor,
+      membership.userId,
+      { sourceCustomerSpaceId: customerSpaceId },
+    );
     await writeAuditLog(tx, actor, {
       action: "CUSTOMER_SPACE_MEMBER_REMOVED",
       resourceType: "Membership",
@@ -209,8 +268,52 @@ export function removeCustomerSpaceMember(
       metadata: {
         userId: membership.userId,
         email: membership.user.email,
+        accountDeleted,
       },
     });
+    return { accountDeleted };
+  });
+}
+
+export function updateCustomerSpaceMember(
+  actor: Actor,
+  customerSpaceId: string,
+  membershipId: string,
+  input: UpdateCustomerSpaceMemberInput,
+) {
+  assertAllowed(actor.isPlatformAdmin, "仅平台管理员可以编辑客户账号");
+  return withActorDb(actor, async (tx) => {
+    const membership = await tx.membership.findFirst({
+      where: {
+        id: membershipId,
+        customerSpaceId,
+        customerSpace: { kind: "STANDARD" },
+        user: { platformRole: "CUSTOMER", deletedAt: null },
+      },
+      select: {
+        id: true,
+        userId: true,
+        user: { select: { name: true, email: true } },
+      },
+    });
+    assertFound(membership, "客户账号不存在");
+    const updated = await tx.user.update({
+      where: { id: membership.userId },
+      data: { name: input.name },
+      select: { id: true, name: true, email: true },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "CUSTOMER_ACCOUNT_UPDATED",
+      resourceType: "User",
+      resourceId: updated.id,
+      customerSpaceId,
+      metadata: {
+        previousName: membership.user.name,
+        name: updated.name,
+        email: updated.email,
+      },
+    });
+    return updated;
   });
 }
 
@@ -303,6 +406,21 @@ export async function createInvitation(
       where: { customerSpaceId, user: { email: input.email } },
       select: { id: true },
     });
+    const assignedCustomer = await tx.user.findUnique({
+      where: { email: input.email },
+      select: {
+        platformRole: true,
+        deletedAt: true,
+        memberships: {
+          where: {
+            customerSpace: { kind: "STANDARD" },
+            customerSpaceId: { not: customerSpaceId },
+          },
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
     const duplicateInvitation = await tx.invitation.findFirst({
       where: {
         customerSpaceId,
@@ -315,6 +433,23 @@ export async function createInvitation(
     });
     if (existingMember) {
       throw new DomainError("ALREADY_MEMBER", "该邮箱已经是空间成员", 409);
+    }
+    if (
+      assignedCustomer &&
+      (assignedCustomer.platformRole !== "CUSTOMER" || assignedCustomer.deletedAt)
+    ) {
+      throw new DomainError(
+        "CUSTOMER_EMAIL_UNAVAILABLE",
+        "该邮箱不能用于客户成员账号",
+        409,
+      );
+    }
+    if (assignedCustomer?.memberships.length) {
+      throw new DomainError(
+        "CUSTOMER_ACCOUNT_ALREADY_ASSIGNED",
+        "该客户账号已属于其他客户，请使用新的邮箱",
+        409,
+      );
     }
     if (duplicateInvitation) {
       throw new DomainError(
@@ -378,6 +513,64 @@ export async function createInvitation(
     previewUrl:
       process.env.NODE_ENV === "development" ? actionUrl : undefined,
   };
+}
+
+export function revokeCustomerSpaceInvitation(
+  actor: Actor,
+  customerSpaceId: string,
+  invitationId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    const space = await tx.customerSpace.findUnique({
+      where: { id: customerSpaceId },
+      select: {
+        kind: true,
+        memberships: {
+          where: { userId: actor.id },
+          select: { role: true },
+        },
+      },
+    });
+    assertStandardCustomerSpace(space);
+    assertAllowed(
+      actor.isPlatformAdmin || space.memberships[0]?.role === "OWNER",
+      "仅管理员或空间所有者可以撤销邀请",
+    );
+    const invitation = await tx.invitation.findFirst({
+      where: {
+        id: invitationId,
+        customerSpaceId,
+        acceptedAt: null,
+        revokedAt: null,
+      },
+      select: { id: true, email: true },
+    });
+    assertFound(invitation, "待处理邀请不存在");
+    await tx.invitation.update({
+      where: { id: invitation.id },
+      data: { revokedAt: new Date() },
+    });
+    await tx.mailMessage.updateMany({
+      where: {
+        sourceType: {
+          in: ["CUSTOMER_OWNER_INVITATION", "CUSTOMER_MEMBER_INVITATION"],
+        },
+        sourceId: invitation.id,
+        status: { in: ["QUEUED", "PROCESSING"] },
+      },
+      data: {
+        status: "CANCELLED",
+        errorMessage: "客户邀请已撤销",
+      },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "CUSTOMER_SPACE_INVITATION_REVOKED",
+      resourceType: "Invitation",
+      resourceId: invitation.id,
+      customerSpaceId,
+      metadata: { email: invitation.email },
+    });
+  });
 }
 
 

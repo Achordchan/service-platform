@@ -2,6 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import {
+  isContentRiskStateRevoked,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
 import { calculateProjectProgress } from "@/modules/projects/progress";
 
 export const projectBaseSelect = {
@@ -61,34 +65,23 @@ export async function hydrateProjectSummaries(
     where: { id: { in: managerRows.map((row) => row.userId) } },
     select: { id: true, name: true },
   });
-  const milestones = actor.isStaff
-    ? await tx.milestone.findMany({
-        where: { projectId: { in: projectIds } },
-        select: { projectId: true, status: true },
-      })
-    : [];
-  const customerProgressProjectIds = actor.isStaff
-    ? []
-    : projects
-        .filter((project) => project.showProgress)
-        .map((project) => project.id);
-  const customerProgressRows =
-    customerProgressProjectIds.length > 0
-      ? await tx.$queryRaw<
-          Array<{
-            project_id: string;
-            total: number;
-            not_started: number;
-            in_progress: number;
-            completed: number;
-            percentage: number;
-          }>
-        >`
-          SELECT project_id, progress.*
-          FROM unnest(${customerProgressProjectIds}::text[]) AS input(project_id)
-          CROSS JOIN LATERAL app_project_milestone_progress(input.project_id) progress
-        `
+  const progressProjectIds = projects
+    .filter((project) => actor.isStaff || project.showProgress)
+    .map((project) => project.id);
+  const milestones =
+    progressProjectIds.length > 0
+      ? await tx.milestone.findMany({
+          where: { projectId: { in: progressProjectIds } },
+          select: { id: true, projectId: true, status: true },
+        })
       : [];
+  const contentRisk = await loadContentRiskPageState(
+    milestones.map((milestone) => ({
+      targetType: "MILESTONE" as const,
+      targetId: milestone.id,
+    })),
+    tx,
+  );
   const pluginBindings = await tx.projectPluginBinding.findMany({
     where: { projectId: { in: projectIds } },
     select: { projectId: true, pluginKey: true, status: true },
@@ -148,13 +141,17 @@ export async function hydrateProjectSummaries(
     Array<{ status: "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED" }>
   >();
   for (const milestone of milestones) {
+    if (
+      isContentRiskStateRevoked(
+        contentRisk.states.get(`MILESTONE:${milestone.id}`),
+      )
+    ) {
+      continue;
+    }
     const current = milestonesByProjectId.get(milestone.projectId) ?? [];
     current.push({ status: milestone.status });
     milestonesByProjectId.set(milestone.projectId, current);
   }
-  const customerProgressByProjectId = new Map(
-    customerProgressRows.map((row) => [row.project_id, row]),
-  );
   const bindingsByProjectId = new Map<
     string,
     Array<{ pluginKey: string; status: (typeof pluginBindings)[number]["status"] }>
@@ -176,18 +173,7 @@ export async function hydrateProjectSummaries(
 
   return projects.map((project) => {
     const projectMilestones = milestonesByProjectId.get(project.id) ?? [];
-    const customerProgress = customerProgressByProjectId.get(project.id);
-    const progress = actor.isStaff
-      ? calculateProjectProgress(projectMilestones)
-      : {
-          percentage: customerProgress?.percentage ?? 0,
-          counts: {
-            total: customerProgress?.total ?? 0,
-            notStarted: customerProgress?.not_started ?? 0,
-            inProgress: customerProgress?.in_progress ?? 0,
-            completed: customerProgress?.completed ?? 0,
-          },
-        };
+    const progress = calculateProjectProgress(projectMilestones);
     return {
       ...project,
       customerSpace: customerSpaceById.get(project.customerSpaceId)!,

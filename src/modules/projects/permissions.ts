@@ -1,10 +1,8 @@
 import type { ProjectStaffRole } from "@/generated/prisma/client";
+import type { Actor } from "@/lib/actor";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 
-export type ProjectPermissionActor = {
-  id: string;
-  isPlatformAdmin: boolean;
-  isStaff: boolean;
-};
+export type ProjectPermissionActor = Actor;
 
 export type ProjectAccess = {
   isCustomerSpaceMember: boolean;
@@ -16,7 +14,11 @@ export function canViewProject(
   access: ProjectAccess,
 ) {
   if (actor.isPlatformAdmin) return true;
-  if (actor.isStaff) return access.projectRole !== null;
+  if (actor.isStaff) {
+    return (
+      access.projectRole !== null && hasRolePermission(actor, "project.view")
+    );
+  }
   return access.isCustomerSpaceMember;
 }
 
@@ -26,7 +28,45 @@ export function canManageProjectDelivery(
 ) {
   return (
     actor.isPlatformAdmin ||
-    (actor.isStaff && access.projectRole === "PROJECT_MANAGER")
+    (actor.isStaff &&
+      access.projectRole === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "project.manage_delivery"))
+  );
+}
+
+export function canManageProjectStaff(
+  actor: ProjectPermissionActor,
+  access: ProjectAccess,
+) {
+  return (
+    actor.isPlatformAdmin ||
+    (actor.isStaff &&
+      access.projectRole === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "project.manage_staff"))
+  );
+}
+
+export function canPublishProjectUpdate(
+  actor: ProjectPermissionActor,
+  access: ProjectAccess,
+) {
+  return (
+    actor.isPlatformAdmin ||
+    (actor.isStaff &&
+      access.projectRole === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "update.publish"))
+  );
+}
+
+export function canUploadProjectFile(
+  actor: ProjectPermissionActor,
+  access: ProjectAccess,
+) {
+  return (
+    actor.isPlatformAdmin ||
+    (actor.isStaff &&
+      access.projectRole === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "file.upload"))
   );
 }
 
@@ -35,6 +75,18 @@ export function canContributeToProject(
   access: ProjectAccess,
 ) {
   return actor.isPlatformAdmin || (actor.isStaff && access.projectRole !== null);
+}
+
+export function canCommentOnProjectUpdate(
+  actor: ProjectPermissionActor,
+  access: ProjectAccess,
+) {
+  return (
+    actor.isPlatformAdmin ||
+    (actor.isStaff &&
+      access.projectRole !== null &&
+      hasRolePermission(actor, "update.comment"))
+  );
 }
 
 export function canViewContent(

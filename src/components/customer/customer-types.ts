@@ -53,6 +53,7 @@ export type ProjectSummary = {
     name: string;
   };
   customerSpace: CustomerSpaceOption;
+  managerNames: string[];
   requestCount: number;
   updateCount: number;
 };
@@ -71,6 +72,7 @@ export type ProjectMilestone = {
   startDate?: string | null;
   endDate?: string | null;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type ProjectUpdate = {
@@ -79,11 +81,13 @@ export type ProjectUpdate = {
   body: string;
   authorName: string;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
   comments: Array<{
     id: string;
     body: string;
     authorName: string;
     createdAt: string;
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
   }>;
 };
 
@@ -93,9 +97,11 @@ export type ProjectAttachment = {
   mimeType: string;
   size: number;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type ProjectDetail = ProjectSummary & {
+  contentRiskUiEnabled?: boolean;
   staff: ProjectStaffMember[];
   milestones: ProjectMilestone[];
   updates: ProjectUpdate[];
@@ -128,6 +134,7 @@ export type RequestAttachment = {
   mimeType: string;
   size: number;
   createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 export type RequestMessage = {
@@ -155,6 +162,10 @@ export type RequestMessage = {
     }>;
   } | null;
   attachments: RequestAttachment[];
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  contentRiskReason?: string | null;
+  reeditBody?: string | null;
+  reeditAttachmentCount?: number;
 };
 
 export type ServiceRequestDetail = ServiceRequestSummary & {
@@ -162,6 +173,7 @@ export type ServiceRequestDetail = ServiceRequestSummary & {
   assigneeNames?: string[];
   attachments: RequestAttachment[];
   messages: RequestMessage[];
+  contentRiskUiEnabled: boolean;
 };
 
 export type RequestCategoryOption = {

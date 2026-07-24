@@ -127,6 +127,8 @@ export function countRequestStatusUnread(
   status?: string,
   projectId?: string,
 ) {
+  if (!status || status === "ALL") return 0;
+
   let count = 0;
   for (const request of requests) {
     const unreadCount = unread.requestUnreadCounts[request.id]?.count ?? 0;

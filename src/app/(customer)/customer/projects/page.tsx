@@ -37,6 +37,7 @@ export default async function CustomerProjectsPage() {
       id: project.customerSpace.id,
       name: project.customerSpace.name,
     },
+    managerNames: project.staff.map((member) => member.user.name),
     requestCount: project._count.requests,
     updateCount: project._count.updates,
   }));

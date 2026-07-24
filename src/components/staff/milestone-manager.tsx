@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -21,6 +20,7 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { MilestoneList } from "@/components/shared/milestone-list";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   MilestoneStatus,
@@ -28,6 +28,8 @@ import type {
 } from "@/components/staff/staff-types";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { hasMeaningfulHtml } from "@/lib/message-content";
+import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 function dateInput(value?: string | null) {
   return value ? value.slice(0, 10) : "";
@@ -37,18 +39,22 @@ export function MilestoneManager({
   projectId,
   milestones,
   canManage,
+  contentRiskEnabled = false,
+  contentRiskNoticeEnabled = false,
 }: {
   projectId: string;
   milestones: ProjectMilestone[];
   canManage: boolean;
+  contentRiskEnabled?: boolean;
+  contentRiskNoticeEnabled?: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [editing, setEditing] = useState<ProjectMilestone | null>(null);
   const [deleting, setDeleting] = useState<ProjectMilestone | null>(null);
   const [description, setDescription] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const [actionId, setActionId] = useState("");
-  const [error, setError] = useState("");
   const uploadImage = useInlineImageUpload({
     projectId,
     context: "MILESTONE",
@@ -59,15 +65,16 @@ export function MilestoneManager({
     status: MilestoneStatus,
   ) {
     setActionId(milestone.id);
-    setError("");
     try {
-      await staffApi(
+      const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/projects/${projectId}/milestones/${milestone.id}`,
         jsonRequest("PATCH", { status }),
       );
+      toast.success("里程碑状态已更新");
+      toast.delivery(result.deliveryFeedback);
       router.refresh();
     } catch (updateError) {
-      setError(
+      toast.error(
         updateError instanceof Error ? updateError.message : "状态更新失败",
       );
     } finally {
@@ -76,14 +83,12 @@ export function MilestoneManager({
   }
 
   function openEdit(milestone: ProjectMilestone) {
-    setError("");
     setDescription(milestone.description ?? "");
     setInlineImageUploading(false);
     setEditing(milestone);
   }
 
   function openDelete(milestone: ProjectMilestone) {
-    setError("");
     setDeleting(milestone);
   }
 
@@ -92,9 +97,8 @@ export function MilestoneManager({
     if (!editing) return;
     const data = new FormData(event.currentTarget);
     setActionId(editing.id);
-    setError("");
     try {
-      await staffApi(
+      const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/projects/${projectId}/milestones/${editing.id}`,
         jsonRequest("PATCH", {
           title: String(data.get("title") ?? "").trim(),
@@ -109,9 +113,11 @@ export function MilestoneManager({
         }),
       );
       setEditing(null);
+      toast.success("里程碑已更新");
+      toast.delivery(result.deliveryFeedback);
       router.refresh();
     } catch (updateError) {
-      setError(
+      toast.error(
         updateError instanceof Error ? updateError.message : "里程碑更新失败",
       );
     } finally {
@@ -122,16 +128,16 @@ export function MilestoneManager({
   async function confirmDelete() {
     if (!deleting) return;
     setActionId(deleting.id);
-    setError("");
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/milestones/${deleting.id}`,
         jsonRequest("DELETE"),
       );
       setDeleting(null);
+      toast.success("里程碑已删除");
       router.refresh();
     } catch (deleteError) {
-      setError(
+      toast.error(
         deleteError instanceof Error ? deleteError.message : "里程碑删除失败",
       );
     } finally {
@@ -141,9 +147,9 @@ export function MilestoneManager({
 
   return (
     <Stack spacing={2}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
       <MilestoneList
         milestones={milestones}
+        contentRiskEnabled={contentRiskEnabled}
         renderActions={
           canManage
             ? (milestone) => (
@@ -229,7 +235,9 @@ export function MilestoneManager({
             <DialogTitle>编辑里程碑</DialogTitle>
             <DialogContent sx={{ overflowY: "auto" }}>
               <Stack spacing={2} sx={{ pt: 1 }}>
-                {error ? <Alert severity="error">{error}</Alert> : null}
+                {contentRiskNoticeEnabled ? (
+                  <ContentRiskNotice audience="STAFF" />
+                ) : null}
                 <TextField
                   name="title"
                   label="里程碑名称"
@@ -309,7 +317,6 @@ export function MilestoneManager({
         <DialogTitle>删除里程碑</DialogTitle>
         <DialogContent>
           <Stack spacing={2}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
             <Typography color="text.secondary">
               删除“{deleting?.title}”后，其正文图片也会一并删除。此操作无法撤销。
             </Typography>

@@ -23,6 +23,7 @@ import {
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { useToast } from "@/components/shared/toast-provider";
 import {
   apiErrorMessage,
   readApiJson,
@@ -55,9 +56,9 @@ export function NewRequestForm({
   initialProjectId?: string;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const { policy, validateFiles } = useAttachmentPolicy();
   const [files, setFiles] = useState<File[]>([]);
-  const [submitError, setSubmitError] = useState("");
   const [submitProgress, setSubmitProgress] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const {
@@ -90,15 +91,13 @@ export function NewRequestForm({
 
   function addFiles(nextFiles: File[]) {
     const { accepted, error } = validateFiles(nextFiles, files.length);
-    if (error) setSubmitError(error);
+    if (error) toast.warning(error);
     if (accepted.length > 0) {
-      if (!error) setSubmitError("");
       setFiles((current) => [...current, ...accepted]);
     }
   }
 
   async function onSubmit(values: FormValues) {
-    setSubmitError("");
     setSubmitProgress("正在创建服务请求");
 
     try {
@@ -151,11 +150,11 @@ export function NewRequestForm({
         }
       }
 
-      router.push(`/customer/requests/${requestId}?created=1`);
-      router.refresh();
+      toast.success("服务请求已提交");
+      router.push(`/customer/requests/${requestId}`);
     } catch (error) {
       setSubmitProgress("");
-      setSubmitError(
+      toast.error(
         error instanceof Error ? error.message : "提交失败，请稍后重试",
       );
     }
@@ -178,7 +177,6 @@ export function NewRequestForm({
     >
       {isSubmitting ? <LinearProgress /> : null}
       <Stack spacing={3} sx={{ p: { xs: 2.5, md: 4 } }}>
-        {submitError ? <Alert severity="error">{submitError}</Alert> : null}
         {submitProgress ? (
           <Alert severity="info">{submitProgress}</Alert>
         ) : null}

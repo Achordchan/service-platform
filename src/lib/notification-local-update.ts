@@ -15,7 +15,9 @@ type NotificationLocalUpdateItem = {
 
 function matchesProjectScope(type: string, scope?: NotificationLocalUpdateDetail["projectScope"]) {
   if (scope === "all") return true;
-  if (scope === "overview") return type === "PROJECT_STAGE";
+  if (scope === "overview") {
+    return type === "PROJECT_CREATED" || type === "PROJECT_STAGE";
+  }
   if (scope === "milestones") return type === "PROJECT_MILESTONE";
   if (scope === "files") return type === "PROJECT_FILE";
   return type === "PROJECT_UPDATE" || type === "UPDATE_COMMENT";

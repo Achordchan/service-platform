@@ -31,7 +31,10 @@ import {
   filterRequestRows,
   type RequestAdvancedFilterValue,
 } from "@/components/staff/request-table-filters";
-import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
+import {
+  TabBadgeLabel,
+  UnreadDot,
+} from "@/components/shared/tab-badge-label";
 import {
   countRequestStatusUnread,
   useUnreadNotifications,
@@ -95,7 +98,17 @@ export function RequestTable({
 
   const columns = useMemo<GridColDef<RequestListItem>[]>(
     () => [
-      { field: "number", headerName: "请求编号", minWidth: 170 },
+      {
+        field: "number",
+        headerName: "请求编号",
+        minWidth: 170,
+        renderCell: ({ row }) => (
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+            <UnreadDot count={unread.requestUnreadCounts[row.id]?.count ?? 0} />
+            <Typography variant="body2" noWrap>{row.number}</Typography>
+          </Stack>
+        ),
+      },
       {
         field: "title",
         headerName: "标题",
@@ -179,7 +192,7 @@ export function RequestTable({
         ),
       },
     ],
-    [router],
+    [router, unread.requestUnreadCounts],
   );
 
   return (
@@ -345,7 +358,10 @@ export function RequestTable({
               }}
             >
               <Stack direction="row" spacing={1} sx={{ justifyContent: "space-between" }}>
-                <Typography sx={{ fontWeight: 650 }}>{request.title}</Typography>
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+                  <UnreadDot count={unread.requestUnreadCounts[request.id]?.count ?? 0} />
+                  <Typography sx={{ fontWeight: 650 }} noWrap>{request.title}</Typography>
+                </Stack>
                 <StaffStatus value={request.status} compact />
               </Stack>
               <Typography variant="body2" color="text.secondary">

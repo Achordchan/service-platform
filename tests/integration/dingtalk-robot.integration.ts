@@ -244,11 +244,16 @@ describe("钉钉机器人宿主接入", () => {
       body: "<p>客户补充的正文也不得进入钉钉 Outbox。</p>",
       visibility: "CUSTOMER_VISIBLE",
     });
+    expect(reply.deliveryFeedback.dingtalkQueued).toBe(true);
 
     const result = await pool.query<{
       eventKey: string;
       eventType: string;
-      payload: { actorName?: string; occurredAt?: string };
+      payload: {
+        actorName?: string;
+        contentSummary?: string;
+        occurredAt?: string;
+      };
     }>(
       `
         SELECT "eventKey", "eventType", payload
@@ -266,7 +271,9 @@ describe("钉钉机器人宿主接入", () => {
     ]);
     expect(result.rows[0]?.eventKey).toBe(`request-created:${created.id}`);
     expect(result.rows[1]?.eventKey).toBe(`customer-replied:${reply.message.id}`);
-    expect(JSON.stringify(result.rows)).not.toContain("正文");
+    expect(result.rows[0]?.payload.contentSummary).toBeUndefined();
+    expect(result.rows[1]?.payload.contentSummary).toContain("客户补充的正文");
+    expect(result.rows[1]?.payload.contentSummary).not.toContain("<p>");
   });
 
   it("停用插件会跳过待处理投递", async () => {

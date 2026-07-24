@@ -70,7 +70,7 @@ export const defaultSupportReplyPlaybooks: SupportReplyPlaybook[] = [
       "排查结束后删除临时公钥或账号，并检查登录日志。",
     ],
     safetyNotes: [
-      "请先备份重要配置和数据，不要在工单中发送长期密钥或数据库密码。",
+      "请先备份重要配置和数据，不要在服务请求中发送长期密钥或数据库密码。",
       "涉及生产变更时，我们会先说明操作内容并等待确认。",
     ],
   },
@@ -88,7 +88,7 @@ export const defaultSupportReplyPlaybooks: SupportReplyPlaybook[] = [
       "在请求列表空白处右键，导出包含内容的 HAR 文件并作为附件上传。",
     ],
     safetyNotes: [
-      "HAR 可能包含登录令牌、Cookie 或请求参数，上传前请确认工单仅对授权人员可见。",
+      "HAR 可能包含登录令牌、Cookie 或请求参数，上传前请确认服务请求仅对授权人员可见。",
       "如包含支付、身份或隐私数据，请先告知我们，不要直接公开发送。",
     ],
   },

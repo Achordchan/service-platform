@@ -17,11 +17,14 @@ import {
   IconButton,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ReplyOutlinedIcon from "@mui/icons-material/ReplyOutlined";
 import VerifiedUserOutlinedIcon from "@mui/icons-material/VerifiedUserOutlined";
+import WarningAmberOutlinedIcon from "@mui/icons-material/WarningAmberOutlined";
 import { RequestMessageAttachments } from "@/components/shared/request-chat-attachments";
 import type { ChatMessage } from "@/components/shared/request-chat-types";
 import type { ChatAttachment } from "@/components/shared/request-chat-types";
@@ -108,19 +111,27 @@ export function RequestChatThread({
   currentUserId,
   emptyText = "暂无沟通记录",
   onReply,
+  onRevoke,
+  onReedit,
   counterpartTypingLabel,
   attachmentUrl,
   onAttachmentDownload,
   locale = "zh-CN",
+  contentRiskEnabled = false,
+  canViewRevokedContent = false,
 }: {
   messages: ChatMessage[];
   currentUserId: string;
   emptyText?: string;
   onReply?: (message: ChatMessage) => void;
+  onRevoke?: (message: ChatMessage) => void;
+  onReedit?: (message: ChatMessage) => void;
   counterpartTypingLabel?: string | null;
   attachmentUrl?: (file: ChatAttachment, inline: boolean) => string;
   onAttachmentDownload?: (file: ChatAttachment) => void;
   locale?: string;
+  contentRiskEnabled?: boolean;
+  canViewRevokedContent?: boolean;
 }) {
   const dateFormatter = useMemo(
     () =>
@@ -324,6 +335,8 @@ export function RequestChatThread({
             const isSelf = message.authorId === currentUserId;
             const isInternal = message.visibility === "INTERNAL";
             const isAdmin = message.authorPlatformRole === "PLATFORM_ADMIN";
+            const isRevoked = message.contentRiskStatus === "REVOKED";
+            const showRevokedPlaceholder = isRevoked && !canViewRevokedContent;
             const tone = isInternal
               ? "internal"
               : isSelf
@@ -373,18 +386,18 @@ export function RequestChatThread({
                     maxWidth: { xs: "86%", sm: "74%", md: "64%" },
                     minWidth: 0,
                     position: "relative",
-                    "& .request-message-reply": {
+                    "& .request-message-action": {
                       opacity: 0,
                       pointerEvents: "none",
                       transition: "opacity 120ms ease",
                     },
-                    "&:hover .request-message-reply, &:focus-within .request-message-reply":
+                    "&:hover .request-message-action, &:focus-within .request-message-action":
                       {
                         opacity: 1,
                         pointerEvents: "auto",
                       },
                     "@media (hover: none)": {
-                      "& .request-message-reply": {
+                      "& .request-message-action": {
                         opacity: 1,
                         pointerEvents: "auto",
                       },
@@ -433,9 +446,9 @@ export function RequestChatThread({
                     <Typography variant="caption" color="text.secondary">
                       {dateFormatter.format(new Date(message.createdAt))}
                     </Typography>
-                    {onReply ? (
+                    {onReply && !isRevoked ? (
                       <IconButton
-                        className="request-message-reply"
+                        className="request-message-action"
                         size="small"
                         onClick={() => onReply(message)}
                         aria-label={`回复 ${message.authorName} 的消息`}
@@ -447,6 +460,23 @@ export function RequestChatThread({
                       >
                         <ReplyOutlinedIcon sx={{ fontSize: 17 }} />
                       </IconButton>
+                    ) : null}
+                    {onRevoke && !isRevoked && !isInternal && !message.isInitial ? (
+                      <Tooltip title="撤回消息">
+                        <IconButton
+                          className="request-message-action"
+                          size="small"
+                          onClick={() => onRevoke(message)}
+                          aria-label={`撤回 ${message.authorName} 的消息`}
+                          sx={{
+                            width: 26,
+                            height: 26,
+                            color: "error.main",
+                          }}
+                        >
+                          <WarningAmberOutlinedIcon sx={{ fontSize: 17 }} />
+                        </IconButton>
+                      </Tooltip>
                     ) : null}
                   </Stack>
                   <Box
@@ -462,30 +492,37 @@ export function RequestChatThread({
                       borderRadius: isSelf
                         ? "18px 18px 6px 18px"
                         : "18px 18px 18px 6px",
-                      bgcolor: isInternal
-                        ? "#fffbeb"
-                        : isSelf
-                          ? "primary.main"
-                          : isAdmin
-                            ? "#111827"
-                            : "background.paper",
-                      color:
-                        (isSelf || isAdmin) && !isInternal
+                      bgcolor: showRevokedPlaceholder
+                        ? "rgba(239, 68, 68, 0.06)"
+                        : isInternal
+                          ? "#fffbeb"
+                          : isSelf
+                            ? "primary.main"
+                            : isAdmin
+                              ? "#111827"
+                              : "background.paper",
+                      color: showRevokedPlaceholder
+                        ? "error.main"
+                        : (isSelf || isAdmin) && !isInternal
                           ? "common.white"
                           : "text.primary",
                       border: "1px solid",
-                      borderColor: isInternal
-                        ? "#fcd34d"
+                      borderColor: showRevokedPlaceholder
+                        ? "rgba(239, 68, 68, 0.28)"
+                        : isInternal
+                          ? "#fcd34d"
+                          : isSelf
+                            ? "primary.main"
+                            : isAdmin
+                              ? "#111827"
+                              : "divider",
+                      boxShadow: showRevokedPlaceholder
+                        ? "0 4px 14px rgba(239, 68, 68, 0.06)"
                         : isSelf
-                          ? "primary.main"
+                          ? "0 8px 20px rgba(37, 99, 235, 0.12)"
                           : isAdmin
-                            ? "#111827"
-                            : "divider",
-                      boxShadow: isSelf
-                        ? "0 8px 20px rgba(37, 99, 235, 0.12)"
-                        : isAdmin
-                          ? "0 8px 20px rgba(17, 24, 39, 0.18)"
-                          : "0 4px 14px rgba(15, 23, 42, 0.04)",
+                            ? "0 8px 20px rgba(17, 24, 39, 0.18)"
+                            : "0 4px 14px rgba(15, 23, 42, 0.04)",
                       overflowWrap: "anywhere",
                       "& a": {
                         color:
@@ -514,67 +551,145 @@ export function RequestChatThread({
                       },
                     }}
                   >
-                    <RequestQuotedMessage
-                      reference={message.replyTo}
-                      unavailable={Boolean(
-                        message.replyToMessageId && !message.replyTo,
-                      )}
-                      inverted={(isSelf || isAdmin) && !isInternal}
-                    />
-                    {message.supportPlaybook ? (
-                      <SupportPlaybookMessageCard
-                        playbook={message.supportPlaybook}
-                        inverted={(isSelf || isAdmin) && !isInternal}
-                        resolveImageUrl={(attachmentId) => {
-                          const file = message.attachments.find(
-                            (item) => item.id === attachmentId && item.inline,
-                          );
-                          if (!file) return "about:blank";
-                          return attachmentUrl
-                            ? attachmentUrl(file, true)
-                            : `/api/v1/attachments/${file.id}?disposition=inline`;
-                        }}
-                      />
-                    ) : looksLikeHtml(message.body) ? (
-                      <Box
-                        sx={{
-                          lineHeight: 1.7,
-                          wordBreak: "break-word",
-                        }}
-                        dangerouslySetInnerHTML={{
-                          __html: resolveInlineAttachmentHtml(
-                            message.body,
-                            (attachmentId) => {
+                    {showRevokedPlaceholder ? (
+                      <Stack
+                        direction="row"
+                        spacing={0.65}
+                        role="status"
+                        sx={{ alignItems: "flex-start", color: "error.main" }}
+                      >
+                        <WarningAmberOutlinedIcon
+                          sx={{ fontSize: 16, flexShrink: 0, mt: "2px" }}
+                        />
+                        <Typography
+                          variant="caption"
+                          sx={{ color: "inherit", lineHeight: 1.55 }}
+                        >
+                          {message.contentRiskReason
+                            ? `该内容已被系统撤回：${message.contentRiskReason}`
+                            : contentRiskEnabled
+                              ? "该内容已被系统撤回：疑似包含联系方式或站外交易引导。"
+                              : "该内容已撤回"}
+                        </Typography>
+                      </Stack>
+                    ) : (
+                      <>
+                        <RequestQuotedMessage
+                          reference={message.replyTo}
+                          unavailable={Boolean(
+                            message.replyToMessageId && !message.replyTo,
+                          )}
+                          inverted={(isSelf || isAdmin) && !isInternal}
+                        />
+                        {message.supportPlaybook ? (
+                          <SupportPlaybookMessageCard
+                            playbook={message.supportPlaybook}
+                            inverted={(isSelf || isAdmin) && !isInternal}
+                            resolveImageUrl={(attachmentId) => {
                               const file = message.attachments.find(
-                                (item) =>
-                                  item.id === attachmentId && item.inline,
+                                (item) => item.id === attachmentId && item.inline,
                               );
                               if (!file) return "about:blank";
                               return attachmentUrl
                                 ? attachmentUrl(file, true)
                                 : `/api/v1/attachments/${file.id}?disposition=inline`;
-                            },
-                          ),
-                        }}
-                      />
-                    ) : (
-                      <Typography
-                        sx={{
-                          whiteSpace: "pre-wrap",
-                          lineHeight: 1.7,
-                          wordBreak: "break-word",
-                        }}
-                      >
-                        {message.body}
-                      </Typography>
+                            }}
+                          />
+                        ) : looksLikeHtml(message.body) ? (
+                          <Box
+                            sx={{
+                              lineHeight: 1.7,
+                              wordBreak: "break-word",
+                            }}
+                            dangerouslySetInnerHTML={{
+                              __html: resolveInlineAttachmentHtml(
+                                message.body,
+                                (attachmentId) => {
+                                  const file = message.attachments.find(
+                                    (item) =>
+                                      item.id === attachmentId && item.inline,
+                                  );
+                                  if (!file) return "about:blank";
+                                  return attachmentUrl
+                                    ? attachmentUrl(file, true)
+                                    : `/api/v1/attachments/${file.id}?disposition=inline`;
+                                },
+                              ),
+                            }}
+                          />
+                        ) : (
+                          <Typography
+                            sx={{
+                              whiteSpace: "pre-wrap",
+                              lineHeight: 1.7,
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {message.body}
+                          </Typography>
+                        )}
+                        <RequestMessageAttachments
+                          files={message.attachments.filter(
+                            (file) =>
+                              !file.inline && file.contentRiskStatus !== "REVOKED",
+                          )}
+                          tone={tone}
+                          resolveUrl={attachmentUrl}
+                          onDownload={onAttachmentDownload}
+                        />
+                        {isRevoked ? (
+                          <Stack
+                            direction="row"
+                            spacing={0.65}
+                            role="status"
+                            sx={{
+                              alignItems: "flex-start",
+                              color: "error.main",
+                              mt: 1.25,
+                              pt: 1,
+                              borderTop: "1px solid",
+                              borderColor: "rgba(239, 68, 68, 0.24)",
+                            }}
+                          >
+                            <WarningAmberOutlinedIcon
+                              sx={{ fontSize: 16, flexShrink: 0, mt: "2px" }}
+                            />
+                            <Typography
+                              variant="caption"
+                              sx={{ color: "inherit", lineHeight: 1.55 }}
+                            >
+                              {message.contentRiskReason
+                                ? `该内容已被系统撤回：${message.contentRiskReason}。原文仅平台管理员可见。`
+                                : contentRiskEnabled
+                                  ? "该内容已被系统撤回，原文仅平台管理员可见。"
+                                  : "该内容已撤回，原文仅平台管理员可见。"}
+                            </Typography>
+                          </Stack>
+                        ) : null}
+                      </>
                     )}
-                    <RequestMessageAttachments
-                      files={message.attachments.filter((file) => !file.inline)}
-                      tone={tone}
-                      resolveUrl={attachmentUrl}
-                      onDownload={onAttachmentDownload}
-                    />
+                    {isRevoked && message.reeditBody && onReedit ? (
+                      <Button
+                        size="small"
+                        color="error"
+                        variant="outlined"
+                        startIcon={<EditOutlinedIcon />}
+                        onClick={() => onReedit(message)}
+                        sx={{ mt: 1.25 }}
+                      >
+                        重新编辑
+                      </Button>
+                    ) : null}
                   </Box>
+                  {message.contentRiskStatus === "PENDING" ? (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: "block", mt: 0.5, px: 0.5 }}
+                    >
+                      内容已发送，正在进行安全复查
+                    </Typography>
+                  ) : null}
                 </Box>
               </Stack>
             );

@@ -9,7 +9,10 @@ import {
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
-import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import {
+  sanitizeMessageHtml,
+  sanitizeReeditableMessageHtml,
+} from "@/lib/sanitize-html";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import { claimExternalInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { writeExternalAuditLog } from "@/modules/audit/audit-service";
@@ -18,6 +21,15 @@ import {
 } from "@/modules/notifications/notification-service";
 import { DomainError } from "@/modules/projects/errors";
 import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
+import {
+  createContentRiskReview,
+  enforceExternalPublicContentRules,
+} from "@/modules/plugins/content-risk-service";
+import {
+  contentRiskReasonFor,
+  contentRiskStatusFor,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
 import { recordUniversalUnreadWebhook } from "@/modules/integrations/universal/webhook-service";
 import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
 import { generateRequestNumber } from "@/modules/requests/request-number";
@@ -121,7 +133,7 @@ function ensureProjectWritable(status: string) {
   if (status !== "ACTIVE") {
     throw new DomainError(
       "EXTERNAL_PROJECT_READ_ONLY",
-      "当前项目只允许查看历史工单",
+      "当前项目只允许查看历史服务请求",
       409,
     );
   }
@@ -176,6 +188,7 @@ export function listExternalRequests(actor: ExternalActor) {
     const unreadByRequestId = new Map(
       readStates.map((item) => [item.serviceRequestId, item.unreadCount]),
     );
+    const contentRisk = await loadContentRiskPageState([], tx);
     return {
       project: {
         id: project.id,
@@ -184,6 +197,7 @@ export function listExternalRequests(actor: ExternalActor) {
         writable: project.status === "ACTIVE",
       },
       categories,
+      contentRiskUiEnabled: contentRisk.enabled,
       requests: requests.map((request) => ({
         ...request,
         category: categoryById.get(request.categoryId) ?? {
@@ -196,11 +210,22 @@ export function listExternalRequests(actor: ExternalActor) {
   });
 }
 
-export function createExternalRequest(
+export async function createExternalRequest(
   actor: ExternalActor,
   input: CreateInput,
   options: { customerMemberNotificationsEnabled: boolean },
 ) {
+  await enforceExternalPublicContentRules(actor, {
+    targetType: "SERVICE_REQUEST",
+    customerSpaceId: actor.customerSpaceId,
+    projectId: actor.projectId,
+    serviceRequestId: null,
+    snapshot: {
+      title: input.title,
+      body: input.description,
+      visibility: "CUSTOMER_VISIBLE",
+    },
+  });
   return withExternalActorDb(actor, async (tx) => {
     const project = await tx.project.findUnique({
       where: { id: actor.projectId },
@@ -268,6 +293,23 @@ export function createExternalRequest(
       },
       select: { id: true },
     });
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "SERVICE_REQUEST",
+      targetId: request.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: "EXTERNAL",
+      isPlatformAdmin: false,
+      customerSpaceId: project.customerSpaceId,
+      projectId: project.id,
+      serviceRequestId: request.id,
+      snapshot: {
+        title: request.title,
+        body: description,
+        visibility: "CUSTOMER_VISIBLE",
+        attachmentIds: extractInlineAttachmentIds(description),
+      },
+    });
     await writeExternalAuditLog(tx, actor, {
       action: "REQUEST_CREATED",
       resourceType: "ServiceRequest",
@@ -300,6 +342,7 @@ export function createExternalRequest(
       customerSpaceId: project.customerSpaceId,
       projectId: project.id,
       serviceRequestId: request.id,
+      contentRiskReviewId: contentRiskReview?.id,
     });
     return { ...request, initialMessageId: initialMessage.id };
   });
@@ -330,7 +373,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       },
     });
     if (!request) {
-      throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+      throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
     }
     const category = await tx.requestCategory.findUniqueOrThrow({
       where: { id: request.categoryId },
@@ -433,6 +476,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         mimeType: true,
         size: true,
         inline: true,
+        uploadedByExternalContactId: true,
         createdAt: true,
       },
       orderBy: { createdAt: "asc" },
@@ -505,6 +549,49 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       }
     }
     const messageById = new Map(messages.map((message) => [message.id, message]));
+    const contentRisk = await loadContentRiskPageState(
+      [
+        { targetType: "SERVICE_REQUEST", targetId: request.id },
+        ...messages.map((message) => ({
+          targetType: "REQUEST_MESSAGE" as const,
+          targetId: message.id,
+        })),
+        ...attachments.map((attachment) => ({
+          targetType: "ATTACHMENT" as const,
+          targetId: attachment.id,
+        })),
+      ],
+      tx,
+    );
+    const riskState = (
+      targetType: "SERVICE_REQUEST" | "REQUEST_MESSAGE" | "ATTACHMENT",
+      targetId: string,
+    ) => contentRisk.states.get(`${targetType}:${targetId}`);
+    const requestRiskStatus = contentRiskStatusFor(
+      riskState("SERVICE_REQUEST", request.id),
+      { pluginEnabled: contentRisk.enabled, showPending: false },
+    );
+    const messageRiskState = (message: (typeof messages)[number]) =>
+      message.isInitial
+        ? riskState("SERVICE_REQUEST", request.id)
+        : riskState("REQUEST_MESSAGE", message.id);
+    const messageRiskStatus = (message: (typeof messages)[number]) =>
+      contentRiskStatusFor(messageRiskState(message),
+        {
+          pluginEnabled: contentRisk.enabled,
+          showPending: message.externalAuthorId === actor.id,
+        },
+      );
+    const attachmentRiskStatus = (
+      attachment: (typeof attachments)[number],
+      parentStatus?: "PENDING" | "REVOKED" | null,
+    ) => {
+      if (parentStatus === "REVOKED") return "REVOKED" as const;
+      return contentRiskStatusFor(riskState("ATTACHMENT", attachment.id), {
+        pluginEnabled: contentRisk.enabled,
+        showPending: attachment.uploadedByExternalContactId === actor.id,
+      });
+    };
     const authorFor = (message: (typeof messages)[number]) => ({
       author: message.authorId ? userById.get(message.authorId) ?? null : null,
       externalAuthor: message.externalAuthorId
@@ -512,31 +599,51 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         : null,
     });
     const serializedMessages = messages.map((message) => {
+      const contentRiskStatus = messageRiskStatus(message);
+      const contentRiskReason = contentRiskReasonFor(
+        messageRiskState(message),
+      );
+      const canReeditRevokedMessage =
+        contentRiskStatus === "REVOKED" &&
+        message.externalAuthorId === actor.id;
       const replyTo = message.replyToMessageId
         ? messageById.get(message.replyToMessageId)
         : null;
+      const replyToRiskStatus = replyTo ? messageRiskStatus(replyTo) : null;
       return {
         id: message.id,
-        body: message.body,
+        body:
+          contentRiskStatus === "REVOKED" ? "该内容已撤回" : message.body,
         visibility: message.visibility,
         isSystem: message.isSystem,
         isInitial: message.isInitial,
-        supportPlaybook: parseSupportPlaybookSnapshot(
-          message.supportPlaybookSnapshot,
-        ),
+        supportPlaybook:
+          contentRiskStatus === "REVOKED"
+            ? null
+            : parseSupportPlaybookSnapshot(message.supportPlaybookSnapshot),
         replyToMessageId: message.replyToMessageId,
         createdAt: message.createdAt,
         updatedAt: message.updatedAt,
+        contentRiskStatus,
+        contentRiskReason,
+        reeditBody: canReeditRevokedMessage
+          ? sanitizeReeditableMessageHtml(message.body)
+          : null,
+        reeditAttachmentCount: canReeditRevokedMessage
+          ? (attachmentsByMessageId.get(message.id) ?? []).length
+          : 0,
         author: serializeAuthor(authorFor(message), actor),
-        attachments: [
-          ...(attachmentsByMessageId.get(message.id) ?? []),
-          ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
-            .map((id) => attachmentById.get(id))
-            .filter(
-              (value): value is (typeof attachments)[number] =>
-                Boolean(value),
-            ),
-        ].map(
+        attachments: (contentRiskStatus === "REVOKED"
+          ? []
+          : [
+              ...(attachmentsByMessageId.get(message.id) ?? []),
+              ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
+                .map((id) => attachmentById.get(id))
+                .filter(
+                  (value): value is (typeof attachments)[number] =>
+                    Boolean(value),
+                ),
+            ]).map(
           (attachment) => ({
             id: attachment.id,
             originalName: attachment.originalName,
@@ -544,35 +651,50 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
             size: attachment.size,
             inline: attachment.inline,
             createdAt: attachment.createdAt,
+            contentRiskStatus: attachmentRiskStatus(
+              attachment,
+              contentRiskStatus,
+            ),
           }),
         ),
         replyTo: replyTo
           ? {
               id: replyTo.id,
-              body: replyTo.body,
+              body:
+                replyToRiskStatus === "REVOKED"
+                  ? "该内容已撤回"
+                  : replyTo.body,
               visibility: replyTo.visibility,
               isSystem: replyTo.isSystem,
               author: serializeAuthor(authorFor(replyTo), actor),
-              attachments: (attachmentsByMessageId.get(replyTo.id) ?? []).map(
-                (attachment) => ({
-                  id: attachment.id,
-                  originalName: attachment.originalName,
-                  inline: attachment.inline,
-                }),
-              ),
+              attachments:
+                replyToRiskStatus === "REVOKED"
+                  ? []
+                  : (attachmentsByMessageId.get(replyTo.id) ?? []).map(
+                      (attachment) => ({
+                        id: attachment.id,
+                        originalName: attachment.originalName,
+                        inline: attachment.inline,
+                      }),
+                    ),
             }
           : null,
       };
     });
     return {
       ...request,
+      description:
+        requestRiskStatus === "REVOKED"
+          ? "该内容已撤回"
+          : request.description,
       category,
       project,
+      contentRiskUiEnabled: contentRisk.enabled,
       assignees: assigneeRows
         .map((item) => userById.get(item.userId))
         .filter((user): user is NonNullable<typeof user> => Boolean(user))
         .map((user) => ({ user })),
-      attachments: attachments
+      attachments: (requestRiskStatus === "REVOKED" ? [] : attachments)
         .filter(
           (attachment) => !attachment.requestMessageId && !attachment.inline,
         )
@@ -582,6 +704,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
           mimeType: attachment.mimeType,
           size: attachment.size,
           createdAt: attachment.createdAt,
+          contentRiskStatus: attachmentRiskStatus(attachment),
         })),
       unreadCount: 0,
       writable:
@@ -593,12 +716,31 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
   });
 }
 
-export function addExternalRequestMessage(
+export async function addExternalRequestMessage(
   actor: ExternalActor,
   requestId: string,
   input: MessageInput,
   options: { customerMemberNotificationsEnabled: boolean },
 ) {
+  const preflightRequest = await withExternalActorDb(actor, (tx) =>
+    tx.serviceRequest.findFirst({
+      where: {
+        id: requestId,
+        projectId: actor.projectId,
+        createdByExternalContactId: actor.id,
+      },
+      select: { id: true, projectId: true },
+    }),
+  );
+  if (preflightRequest) {
+    await enforceExternalPublicContentRules(actor, {
+      targetType: "REQUEST_MESSAGE",
+      customerSpaceId: actor.customerSpaceId,
+      projectId: preflightRequest.projectId,
+      serviceRequestId: preflightRequest.id,
+      snapshot: { body: input.body, visibility: "CUSTOMER_VISIBLE" },
+    });
+  }
   return withExternalActorDb(actor, async (tx) => {
     const request = await tx.serviceRequest.findFirst({
       where: {
@@ -620,18 +762,18 @@ export function addExternalRequestMessage(
       },
     });
     if (!request) {
-      throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+      throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
     }
     ensureProjectWritable(request.project.status);
     if (request.archivedAt) {
       throw new DomainError(
         "REQUEST_ARCHIVED",
-        "当前工单已归档，只允许查看历史内容",
+        "当前服务请求已归档，只允许查看历史内容",
         409,
       );
     }
     if (request.status === "CLOSED") {
-      throw new DomainError("REQUEST_CLOSED", "已关闭的工单不能回复", 409);
+      throw new DomainError("REQUEST_CLOSED", "已关闭的服务请求不能回复", 409);
     }
     const body = sanitizeMessageHtml(input.body);
     if (!hasMeaningfulHtml(body)) {
@@ -685,6 +827,22 @@ export function addExternalRequestMessage(
         requestMessageId: message.id,
       },
     );
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "REQUEST_MESSAGE",
+      targetId: message.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: "EXTERNAL",
+      isPlatformAdmin: false,
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.project.id,
+      serviceRequestId: request.id,
+      snapshot: {
+        body,
+        visibility: "CUSTOMER_VISIBLE",
+        attachmentIds: extractInlineAttachmentIds(body),
+      },
+    });
     const nextStatus = statusAfterCustomerReply(request.status);
     if (nextStatus !== request.status) {
       assertRequestTransition(request.status, nextStatus);
@@ -695,7 +853,7 @@ export function addExternalRequestMessage(
       if (updateResult.count !== 1) {
         throw new DomainError(
           "REQUEST_STATUS_CONFLICT",
-          "工单状态已变更，请刷新后重试",
+          "服务请求状态已变更，请刷新后重试",
           409,
         );
       }
@@ -751,6 +909,9 @@ export function addExternalRequestMessage(
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.project.id,
       serviceRequestId: request.id,
+      sourceType: "REQUEST_MESSAGE",
+      sourceId: message.id,
+      contentRiskReviewId: contentRiskReview?.id,
     });
     if (nextStatus !== request.status) {
       // Directed staff/customer events + one request-scoped null event for embed.
@@ -810,13 +971,13 @@ export async function confirmExternalRequestClosed(
       },
     });
     if (!request) {
-      throw new DomainError("REQUEST_NOT_FOUND", "工单不存在", 404);
+      throw new DomainError("REQUEST_NOT_FOUND", "服务请求不存在", 404);
     }
     ensureProjectWritable(request.project.status);
     if (request.archivedAt) {
       throw new DomainError(
         "REQUEST_ARCHIVED",
-        "当前工单已归档，只允许查看历史内容",
+        "当前服务请求已归档，只允许查看历史内容",
         409,
       );
     }
@@ -831,7 +992,7 @@ export async function confirmExternalRequestClosed(
     if (updateResult.count !== 1) {
       throw new DomainError(
         "REQUEST_STATUS_CONFLICT",
-        "工单状态已变更，请刷新后重试",
+        "服务请求状态已变更，请刷新后重试",
         409,
       );
     }

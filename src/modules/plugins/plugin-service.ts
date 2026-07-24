@@ -11,11 +11,13 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import { publishEvent } from "@/modules/notifications/notification-service";
 import { publishPluginRunEvent } from "@/modules/plugins/plugin-events";
 import {
+  applyPluginEnableSideEffects,
   applyPluginDisableSideEffects,
   ensurePluginInstallations,
 } from "@/modules/plugins/plugin-installation-service";
 import {
   configsMatch,
+  CONTENT_CONTACT_RISK_PLUGIN_KEY,
   getRegisteredPlugin,
   IMAGE_WEBP_PLUGIN_KEY,
   listRegisteredPlugins,
@@ -227,6 +229,9 @@ export async function updatePluginInstallation(
     ) {
       await applyPluginDisableSideEffects(tx, pluginKey);
     }
+    if (input.enabled === true) {
+      await applyPluginEnableSideEffects(tx, pluginKey);
+    }
     await writeAuditLog(tx, actor, {
       action: "PLUGIN_INSTALLATION_UPDATED",
       resourceType: "PluginInstallation",
@@ -238,13 +243,54 @@ export async function updatePluginInstallation(
         secretConfigChanged: parsedSecrets !== undefined,
       },
     });
-    await publishEvent(tx, {
-      type: "PLUGIN_RUN_UPDATED",
-      payload: {
-        pluginKey,
-        change: "PLUGIN_INSTALLATION_UPDATED",
-      },
-    });
+    if (pluginKey === CONTENT_CONTACT_RISK_PLUGIN_KEY) {
+      const [users, externalRequests] = await Promise.all([
+        tx.user.findMany({
+          where: { deletedAt: null },
+          select: { id: true },
+        }),
+        tx.serviceRequest.findMany({
+          where: { createdByExternalContactId: { not: null } },
+          select: {
+            id: true,
+            projectId: true,
+            project: { select: { customerSpaceId: true } },
+          },
+        }),
+      ]);
+      for (const user of users) {
+        await publishEvent(tx, {
+          type: "PLUGIN_RUN_UPDATED",
+          userId: user.id,
+          payload: {
+            pluginKey,
+            change: "PLUGIN_INSTALLATION_UPDATED",
+            scope: "GLOBAL",
+          },
+        });
+      }
+      for (const request of externalRequests) {
+        await publishEvent(tx, {
+          type: "PLUGIN_RUN_UPDATED",
+          customerSpaceId: request.project.customerSpaceId,
+          projectId: request.projectId,
+          serviceRequestId: request.id,
+          payload: {
+            pluginKey,
+            change: "PLUGIN_INSTALLATION_UPDATED",
+            audience: "EXTERNAL_EMBED",
+          },
+        });
+      }
+    } else {
+      await publishEvent(tx, {
+        type: "PLUGIN_RUN_UPDATED",
+        payload: {
+          pluginKey,
+          change: "PLUGIN_INSTALLATION_UPDATED",
+        },
+      });
+    }
   });
   return getPluginView(actor, pluginKey);
 }
@@ -294,7 +340,11 @@ export async function runPluginHealthCheck(
     secretCandidate,
   );
   const missingRequiredSecretKeys = registered.manifest.settings
-    .filter((field) => field.type === "secret-url" && field.required)
+    .filter(
+      (field) =>
+        (field.type === "secret-url" || field.type === "secret-text") &&
+        field.required,
+    )
     .map((field) => field.key)
     .filter(
       (key) =>
@@ -352,8 +402,56 @@ export async function runPluginHealthCheck(
         updatedById: actor.id,
       },
     });
-    if (shouldDisableForInvalidConfig) {
+    if (
+      shouldDisableForInvalidConfig ||
+      (pluginKey === CONTENT_CONTACT_RISK_PLUGIN_KEY &&
+        installation.enabled &&
+        healthStatus === "ERROR")
+    ) {
       await applyPluginDisableSideEffects(tx, pluginKey);
+    }
+    if (pluginKey === CONTENT_CONTACT_RISK_PLUGIN_KEY) {
+      const currentRuntime = await tx.contentRiskRuntimeState.findUnique({
+        where: { pluginKey },
+        select: { bypassedAt: true },
+      });
+      const unsupportedMimeTypes = [
+        ["imageCapability", "image/png"],
+        ["pdfCapability", "application/pdf"],
+        [
+          "officeCapability",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ],
+        ["animationCapability", "image/gif"],
+      ].flatMap(([key, mimeType]) =>
+        detail[key]?.startsWith("UNSUPPORTED:") ? [mimeType] : [],
+      );
+      const capabilityReport = {
+        ...detail,
+        unsupportedMimeTypes,
+        checkedAt: checkedAt.toISOString(),
+      } as Prisma.InputJsonValue;
+      await tx.contentRiskRuntimeState.upsert({
+        where: { pluginKey },
+        create: {
+          pluginKey,
+          activationId: randomUUID(),
+          enabledAt: checkedAt,
+          capabilityReport,
+          bypassedAt:
+            healthStatus === "ERROR" && installation.enabled
+              ? checkedAt
+              : null,
+        },
+        update: { capabilityReport },
+      });
+      if (
+        healthStatus === "READY" &&
+        installation.enabled &&
+        (currentRuntime?.bypassedAt || !currentRuntime)
+      ) {
+        await applyPluginEnableSideEffects(tx, pluginKey);
+      }
     }
     await writeAuditLog(tx, actor, {
       action: "PLUGIN_HEALTH_CHECKED",

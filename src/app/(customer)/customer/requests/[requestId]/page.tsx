@@ -1,4 +1,5 @@
 import { Container } from "@mui/material";
+import { redirect } from "next/navigation";
 import type { ServiceRequestDetail } from "@/components/customer/customer-types";
 import { RequestDetail } from "@/components/customer/request-detail";
 import { requireUserWithAccess } from "@/lib/session";
@@ -15,6 +16,9 @@ export default async function CustomerRequestDetailPage({
   const { actor } = await requireUserWithAccess();
   const { requestId } = await params;
   const query = await searchParams;
+  if (query.created !== undefined) {
+    redirect(`/customer/requests/${requestId}`);
+  }
   const request = await getRequest(actor, requestId);
   const project = await getProject(actor, request.projectId);
 
@@ -38,12 +42,14 @@ export default async function CustomerRequestDetailPage({
       request.createdBy?.name ??
       request.createdByExternalContact?.displayName ??
       "原提交人已不可用",
+    contentRiskUiEnabled: request.contentRiskUiEnabled,
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),
+      contentRiskStatus: attachment.contentRiskStatus,
     })),
     messages: request.messages.map((message) => ({
       id: message.id,
@@ -87,7 +93,12 @@ export default async function CustomerRequestDetailPage({
         mimeType: attachment.mimeType,
         size: attachment.size,
         createdAt: attachment.createdAt.toISOString(),
+        contentRiskStatus: attachment.contentRiskStatus,
       })),
+      contentRiskStatus: message.contentRiskStatus,
+      contentRiskReason: message.contentRiskReason,
+      reeditBody: message.reeditBody,
+      reeditAttachmentCount: message.reeditAttachmentCount,
     })),
   };
 
@@ -96,15 +107,7 @@ export default async function CustomerRequestDetailPage({
       maxWidth={false}
       sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
     >
-      <RequestDetail
-        request={requestView}
-        currentUserId={actor.id}
-        created={
-          (Array.isArray(query.created)
-            ? query.created[0]
-            : query.created) === "1"
-        }
-      />
+      <RequestDetail request={requestView} currentUserId={actor.id} />
     </Container>
   );
 }

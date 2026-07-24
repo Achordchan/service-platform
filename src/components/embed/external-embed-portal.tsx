@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   AppBar,
-  Badge,
   Box,
   Button,
   Chip,
@@ -30,16 +29,19 @@ import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 import SendOutlinedIcon from "@mui/icons-material/SendOutlined";
-import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
+import { RequestPresenceIndicator } from "@/components/shared/request-presence-indicator";
 import type {
   ChatAttachment,
   ChatMessage,
+  ChatReeditDraft,
   ChatReplyTarget,
 } from "@/components/shared/request-chat-types";
 import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import { UnreadCountPill } from "@/components/shared/tab-badge-label";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import { createEmbedTheme } from "@/theme/theme";
 
@@ -78,6 +80,7 @@ type RequestListView = {
   project: { id: string; title: string; status: ProjectStatus; writable: boolean };
   categories: Array<{ id: string; name: string }>;
   requests: RequestSummary[];
+  contentRiskUiEnabled: boolean;
 };
 
 type ApiAuthor = {
@@ -95,6 +98,7 @@ type ApiAuthor = {
 type RequestDetailView = RequestSummary & {
   writable: boolean;
   project: { id: string; title: string; status: ProjectStatus };
+  contentRiskUiEnabled: boolean;
   messages: Array<{
     id: string;
     body: string;
@@ -106,6 +110,10 @@ type RequestDetailView = RequestSummary & {
     createdAt: string;
     author: ApiAuthor;
     attachments: ChatAttachment[];
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
+    contentRiskReason?: string | null;
+    reeditBody?: string | null;
+    reeditAttachmentCount?: number;
     replyTo: null | {
       id: string;
       body: string;
@@ -155,7 +163,11 @@ function ExternalEmbedPortal({
   const [error, setError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
-  const [counterpartOnline, setCounterpartOnline] = useState(false);
+  const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
+  const [counterpartPresence, setCounterpartPresence] = useState<{
+    requestId: string;
+    online: boolean;
+  } | null>(null);
   const [counterpartTyping, setCounterpartTyping] = useState(false);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
   const tokenRef = useRef("");
@@ -419,10 +431,19 @@ function ExternalEmbedPortal({
                 continue;
               }
               if (eventType === "REQUEST_PRESENCE_CHANGED" && requestId === detailIdRef.current && payload.group === "STAFF") {
-                setCounterpartOnline(payload.online === true);
+                setCounterpartPresence({
+                  requestId,
+                  online: payload.online === true,
+                });
                 continue;
               }
-              if (eventType.startsWith("REQUEST_")) scheduleListRefresh();
+              if (
+                eventType.startsWith("REQUEST_") ||
+                eventType === "CONTENT_RISK_REVIEW_UPDATED" ||
+                eventType === "PLUGIN_RUN_UPDATED"
+              ) {
+                scheduleListRefresh();
+              }
             }
           }
           // Server closed the stream cleanly; wait before reconnecting.
@@ -475,7 +496,11 @@ function ExternalEmbedPortal({
         await loadList();
       } catch (listError) {
         if (!cancelled) {
-          setError(listError instanceof Error ? listError.message : "工单列表加载失败");
+          setError(
+            listError instanceof Error
+              ? listError.message
+              : "服务请求列表加载失败",
+          );
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -567,7 +592,10 @@ function ExternalEmbedPortal({
     ).then(async (response) => {
       if (action === "heartbeat" && response.ok) {
         const payload = await response.json() as { data?: { counterpartOnline?: boolean } };
-        setCounterpartOnline(payload.data?.counterpartOnline === true);
+        setCounterpartPresence({
+          requestId,
+          online: payload.data?.counterpartOnline === true,
+        });
       }
     }).catch(() => undefined);
     const refreshHeartbeat = () => void report("heartbeat");
@@ -626,6 +654,10 @@ function ExternalEmbedPortal({
       attachments: message.replyTo.attachments,
     } : null,
     attachments: message.attachments,
+    contentRiskStatus: message.contentRiskStatus,
+    contentRiskReason: message.contentRiskReason,
+    reeditBody: message.reeditBody,
+    reeditAttachmentCount: message.reeditAttachmentCount,
   })) ?? [], [detail]);
 
   if (loading) {
@@ -654,7 +686,7 @@ function ExternalEmbedPortal({
       <AppBar position="sticky" elevation={0} color="inherit" sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
         <Toolbar sx={{ gap: 1.5 }}>
           {detail ? (
-            <Tooltip title="返回工单列表">
+            <Tooltip title="返回服务请求列表">
               <IconButton onClick={() => { setDetail(null); detailIdRef.current = null; setReplyTarget(null); }}>
                 <ArrowBackOutlinedIcon />
               </IconButton>
@@ -681,6 +713,13 @@ function ExternalEmbedPortal({
               </Box>
               <Stack direction="row" spacing={1} sx={{ alignSelf: { xs: "flex-start", sm: "center" }, alignItems: "center" }}>
                 <Chip label={statusLabels[detail.status]} />
+                <RequestPresenceIndicator
+                  online={
+                    counterpartPresence?.requestId === detail.id &&
+                    counterpartPresence.online
+                  }
+                  label="服务人员在线"
+                />
                 {detail.status === "RESOLVED" && detail.writable ? (
                   <Button
                     size="small"
@@ -699,7 +738,6 @@ function ExternalEmbedPortal({
                 ) : null}
               </Stack>
             </Stack>
-            <RequestChatHeading counterpartOnline={counterpartOnline} counterpartLabel="服务人员" />
             <RequestChatThread
               messages={messages}
               currentUserId={session.contact.id}
@@ -708,14 +746,42 @@ function ExternalEmbedPortal({
               attachmentUrl={(file) => attachmentUrls[file.id] || "about:blank"}
               onAttachmentDownload={downloadAttachment}
               locale={locale}
+              contentRiskEnabled={detail.contentRiskUiEnabled}
+              onReedit={
+                detail.writable
+                  ? (message) => {
+                      if (!message.reeditBody) return;
+                      setReplyTarget(null);
+                      setReeditDraft((current) => ({
+                        version: (current?.version ?? 0) + 1,
+                        requestId: detail.id,
+                        messageId: message.id,
+                        body: message.reeditBody!,
+                        attachmentCount: message.reeditAttachmentCount ?? 0,
+                      }));
+                      requestAnimationFrame(() => {
+                        document
+                          .getElementById("request-reply-composer")
+                          ?.scrollIntoView({
+                            behavior: "smooth",
+                            block: "center",
+                          });
+                      });
+                    }
+                  : undefined
+              }
             />
             {detail.writable ? (
               <EmbedReplyComposer
+                key={`${detail.id}:${reeditDraft?.requestId === detail.id ? reeditDraft.version : 0}`}
                 requestId={detail.id}
                 token={session.token}
                 replyTarget={replyTarget}
                 onCancelReply={() => setReplyTarget(null)}
-                onSent={() => loadDetail(detail.id)}
+                onSent={async () => {
+                  setReeditDraft(null);
+                  return loadDetail(detail.id);
+                }}
                 onTyping={(typing) => {
                   const store = (window as unknown as {
                     __achordTyping?: Record<string, { active: boolean; sentAt: number }>;
@@ -737,9 +803,20 @@ function ExternalEmbedPortal({
                     body: JSON.stringify({ action: "typing", sessionId: sessionIdRef.current, typing }),
                   }).catch(() => undefined);
                 }}
+                contentRiskEnabled={detail.contentRiskUiEnabled}
+                initialBody={
+                  reeditDraft?.requestId === detail.id
+                    ? reeditDraft.body
+                    : undefined
+                }
+                restoredAttachmentCount={
+                  reeditDraft?.requestId === detail.id
+                    ? reeditDraft.attachmentCount
+                    : 0
+                }
               />
             ) : (
-              <Alert severity="info">当前项目或工单只允许查看历史内容。</Alert>
+              <Alert severity="info">当前项目或服务请求只允许查看历史内容。</Alert>
             )}
           </Stack>
         ) : (
@@ -752,11 +829,11 @@ function ExternalEmbedPortal({
                   onClick={() => setCreateOpen(true)}
                   sx={{ width: { xs: "100%", sm: "auto" } }}
                 >
-                  新建工单
+                  新建服务请求
                 </Button>
               </Box>
             ) : null}
-            {!list.project.writable ? <Alert severity="info">当前项目只允许查看历史工单。</Alert> : null}
+            {!list.project.writable ? <Alert severity="info">当前项目只允许查看历史服务请求。</Alert> : null}
             {list.requests.map((request) => (
               <Paper
                 key={request.id}
@@ -767,18 +844,17 @@ function ExternalEmbedPortal({
                 sx={{ p: 2, textAlign: "left", cursor: "pointer", width: "100%", bgcolor: "background.paper" }}
               >
                 <Stack direction="row" spacing={1.5} sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <Box sx={{ minWidth: 0 }}>
-                    <Badge
-                      color="error"
-                      badgeContent={request.unreadCount}
-                      invisible={request.unreadCount === 0}
-                      max={99}
-                      sx={{ maxWidth: "100%" }}
+                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                    <Stack
+                      direction="row"
+                      spacing={0.75}
+                      sx={{ alignItems: "center", minWidth: 0 }}
                     >
-                      <Typography sx={{ fontWeight: 700, pr: request.unreadCount ? 2 : 0 }} noWrap>
+                      <Typography sx={{ fontWeight: 700, minWidth: 0 }} noWrap>
                         {request.title}
                       </Typography>
-                    </Badge>
+                      <UnreadCountPill count={request.unreadCount} />
+                    </Stack>
                     <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                       {request.number} · {request.category.name}
                     </Typography>
@@ -787,7 +863,7 @@ function ExternalEmbedPortal({
                 </Stack>
               </Paper>
             ))}
-            {list.requests.length === 0 ? <Alert severity="info">暂无工单。</Alert> : null}
+            {list.requests.length === 0 ? <Alert severity="info">暂无服务请求。</Alert> : null}
           </Stack>
         )}
       </Container>
@@ -796,6 +872,7 @@ function ExternalEmbedPortal({
         onClose={() => setCreateOpen(false)}
         categories={list.categories}
         token={session.token}
+        contentRiskEnabled={list.contentRiskUiEnabled}
         onCreated={async (requestId, options) => {
           await loadList();
           await loadDetail(requestId);
@@ -822,6 +899,9 @@ function EmbedReplyComposer({
   onCancelReply,
   onSent,
   onTyping,
+  contentRiskEnabled,
+  initialBody = "",
+  restoredAttachmentCount = 0,
 }: {
   requestId: string;
   token: string;
@@ -829,8 +909,11 @@ function EmbedReplyComposer({
   onCancelReply: () => void;
   onSent: () => Promise<unknown>;
   onTyping: (typing: boolean) => void;
+  contentRiskEnabled: boolean;
+  initialBody?: string;
+  restoredAttachmentCount?: number;
 }) {
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [files, setFiles] = useState<File[]>([]);
   const [editorVersion, setEditorVersion] = useState(0);
   const [sending, setSending] = useState(false);
@@ -904,10 +987,17 @@ function EmbedReplyComposer({
     }
   }
   return (
-    <Paper component="form" variant="outlined" onSubmit={submit} sx={{ overflow: "hidden" }}>
+    <Paper id="request-reply-composer" component="form" variant="outlined" onSubmit={submit} sx={{ overflow: "hidden" }}>
       {sending ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: 2 }}>
         {error ? <Alert severity="error">{error}</Alert> : null}
+        {contentRiskEnabled ? <ContentRiskNotice audience="CUSTOMER" /> : null}
+        {restoredAttachmentCount > 0 ? (
+          <Alert severity="info">
+            已恢复撤回消息的正文；原消息包含 {restoredAttachmentCount}
+            个附件，请重新添加后再发送。
+          </Alert>
+        ) : null}
         {replyTarget ? <RequestReplyPreview target={replyTarget} onCancel={onCancelReply} /> : null}
         <RichTextEditor
           key={editorVersion}
@@ -944,11 +1034,13 @@ function CreateRequestDialog({
   categories,
   token,
   onCreated,
+  contentRiskEnabled,
 }: {
   open: boolean;
   onClose: () => void;
   categories: Array<{ id: string; name: string }>;
   token: string;
+  contentRiskEnabled: boolean;
   onCreated: (
     requestId: string,
     options?: { keepOpen?: boolean },
@@ -993,7 +1085,9 @@ function CreateRequestDialog({
           }),
         });
         const payload = await response.json() as { data?: { id: string; initialMessageId: string }; error?: { message?: string } };
-        if (!response.ok || !payload.data) throw new Error(payload.error?.message || "工单创建失败");
+        if (!response.ok || !payload.data) {
+          throw new Error(payload.error?.message || "服务请求创建失败");
+        }
         requestId = payload.data.id;
         initialMessageId = payload.data.initialMessageId;
         setCreatedRequest({ id: requestId, initialMessageId });
@@ -1031,7 +1125,7 @@ function CreateRequestDialog({
           // Parent refresh failure must not forget the created request id.
         }
         setError(
-          `工单已创建，但附件上传失败：${failedDrafts.map((item) => item.file.name).join("、")}。请重试剩余附件，或关闭后到工单详情补传。`,
+          `服务请求已创建，但附件上传失败：${failedDrafts.map((item) => item.file.name).join("、")}。请重试剩余附件，或关闭后到服务请求详情补传。`,
         );
         return;
       }
@@ -1044,12 +1138,16 @@ function CreateRequestDialog({
       } catch (refreshError) {
         setError(
           refreshError instanceof Error
-            ? `工单已创建，但页面刷新失败：${refreshError.message}`
-            : "工单已创建，但页面刷新失败",
+            ? `服务请求已创建，但页面刷新失败：${refreshError.message}`
+            : "服务请求已创建，但页面刷新失败",
         );
       }
     } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "工单创建失败");
+      setError(
+        createError instanceof Error
+          ? createError.message
+          : "服务请求创建失败",
+      );
     } finally {
       setSaving(false);
     }
@@ -1060,7 +1158,7 @@ function CreateRequestDialog({
         {saving ? <LinearProgress /> : null}
         <DialogTitle>
           <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
-            新建工单
+            新建服务请求
             <IconButton onClick={handleClose} disabled={saving}><CloseOutlinedIcon /></IconButton>
           </Stack>
         </DialogTitle>
@@ -1069,7 +1167,7 @@ function CreateRequestDialog({
             {error ? <Alert severity="error">{error}</Alert> : null}
             {createdRequest ? (
               <Alert severity="info">
-                工单已创建。当前只会重试失败附件，不会再次创建新工单。
+                服务请求已创建。当前只会重试失败附件，不会再次创建新的服务请求。
               </Alert>
             ) : null}
             <TextField name="title" label="标题" required fullWidth disabled={Boolean(createdRequest) || saving} />
@@ -1082,6 +1180,9 @@ function CreateRequestDialog({
               <MenuItem value="HIGH">高</MenuItem>
               <MenuItem value="URGENT">紧急</MenuItem>
             </TextField>
+            {contentRiskEnabled && !createdRequest ? (
+              <ContentRiskNotice audience="CUSTOMER" />
+            ) : null}
             <TextField name="description" label="问题详情" multiline minRows={5} required fullWidth disabled={Boolean(createdRequest) || saving} />
             <Button component="label" variant="outlined" startIcon={<AttachFileOutlinedIcon />} disabled={saving}>
               添加附件

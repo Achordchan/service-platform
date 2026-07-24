@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Box,
   Button,
   InputAdornment,
@@ -22,6 +21,7 @@ import FilterAltOffOutlinedIcon from "@mui/icons-material/FilterAltOffOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import { useToast } from "@/components/shared/toast-provider";
 import { CreateProjectDialog } from "@/components/staff/create-project-dialog";
 import { StaffStatus } from "@/components/staff/staff-status";
 import type {
@@ -67,12 +67,12 @@ export function ProjectTable({
   externalConnectors?: ProjectOption[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState("ALL");
   const [serviceTypeId, setServiceTypeId] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [createOpen, setCreateOpen] = useState(false);
-  const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] =
     useState<ProjectListItem | null>(null);
   const serviceOptions = useMemo(
@@ -229,11 +229,6 @@ export function ProjectTable({
 
   return (
     <Stack spacing={2}>
-      {error ? (
-        <Alert severity="error" onClose={() => setError("")}>
-          {error}
-        </Alert>
-      ) : null}
       <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 } }}>
         <Stack
           direction={{ xs: "column", lg: "row" }}
@@ -453,7 +448,7 @@ export function ProjectTable({
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
           setDeleteTarget(null);
-          setError("");
+          toast.success("项目已删除");
           router.refresh();
         }}
       />

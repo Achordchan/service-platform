@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -16,6 +15,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { MailTemplateView } from "@/components/staff/platform-settings-types";
 
@@ -328,12 +328,9 @@ export function MailTemplateManager({
   currentAdminEmail: string;
   embedded?: boolean;
 }) {
+  const toast = useToast();
   const [templates, setTemplates] = useState(initialTemplates);
   const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<{
-    type: "success" | "error";
-    text: string;
-  } | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selectedTemplate =
     templates.find((template) => template.key === selectedKey) ?? null;
@@ -346,14 +343,6 @@ export function MailTemplateManager({
             {templates.length} 个模板
           </Typography>
         </Box>
-      ) : null}
-      {message ? (
-        <Alert
-          severity={message.type}
-          sx={{ mx: 2, mt: embedded ? 2 : 0, mb: 2 }}
-        >
-          {message.text}
-        </Alert>
       ) : null}
       {!embedded ? <Divider /> : null}
       {templates.map((template, index) => (
@@ -435,7 +424,9 @@ export function MailTemplateManager({
               busy={busy}
               onBusy={setBusy}
               onTemplatesChange={setTemplates}
-              onMessage={setMessage}
+              onMessage={(message) =>
+                toast.show(message.text, { severity: message.type })
+              }
             />
           ) : null}
         </DialogContent>

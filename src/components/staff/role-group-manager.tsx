@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Alert,
   Box,
   Button,
   Checkbox,
@@ -28,6 +27,7 @@ import {
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { ROLE_PERMISSION_OPTIONS } from "@/modules/users/role-permissions";
 
@@ -64,12 +64,11 @@ export function RoleGroupManager({
   embedded?: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RoleGroupView | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
   const [deleteTarget, setDeleteTarget] =
     useState<RoleGroupView | null>(null);
 
@@ -92,7 +91,6 @@ export function RoleGroupManager({
   function openCreate() {
     setEditing(null);
     setForm(emptyForm);
-    setError("");
     setOpen(true);
   }
 
@@ -107,7 +105,6 @@ export function RoleGroupManager({
       active: group.active,
       sortOrder: group.sortOrder,
     });
-    setError("");
     setOpen(true);
   }
 
@@ -125,8 +122,6 @@ export function RoleGroupManager({
 
   async function save() {
     setSubmitting(true);
-    setError("");
-    setSuccess("");
     try {
       if (editing) {
         await staffApi(
@@ -141,7 +136,7 @@ export function RoleGroupManager({
             sortOrder: form.sortOrder,
           }),
         );
-        setSuccess("角色组已更新");
+        toast.success("角色组已更新");
       } else {
         await staffApi(
           "/api/v1/admin/role-groups",
@@ -155,13 +150,13 @@ export function RoleGroupManager({
             sortOrder: form.sortOrder,
           }),
         );
-        setSuccess("角色组已创建");
+        toast.success("角色组已创建");
       }
       setOpen(false);
       setEditing(null);
       router.refresh();
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
+      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
     } finally {
       setSubmitting(false);
     }
@@ -173,8 +168,6 @@ export function RoleGroupManager({
 
   return (
     <Stack spacing={2}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? <Alert severity="success">{success}</Alert> : null}
       <Paper
         variant="outlined"
         sx={{
@@ -274,7 +267,6 @@ export function RoleGroupManager({
         <DialogTitle>{editing ? "编辑角色组" : "新增角色组"}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
             <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
               <TextField
                 label="名称"
@@ -411,7 +403,7 @@ export function RoleGroupManager({
         }
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
-          setSuccess("角色组已删除");
+          toast.success("角色组已删除");
           setDeleteTarget(null);
           router.refresh();
         }}

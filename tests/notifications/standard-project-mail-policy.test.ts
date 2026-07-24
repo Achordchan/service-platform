@@ -10,21 +10,56 @@ describe("标准项目交付邮件发送前权限复核", () => {
       isStandardProjectRecipientRelevant({
         userId: "customer-1",
         platformRole: "CUSTOMER",
+        notificationType: "PROJECT_UPDATE",
         membershipUserIds: ["customer-1"],
+        projectManagerUserIds: [],
       }),
     ).toBe(true);
     expect(
       isStandardProjectRecipientRelevant({
         userId: "staff-1",
         platformRole: "TECHNICIAN",
+        notificationType: "PROJECT_UPDATE",
         membershipUserIds: ["staff-1"],
+        projectManagerUserIds: ["staff-1"],
       }),
     ).toBe(false);
     expect(
       isStandardProjectRecipientRelevant({
         userId: "customer-1",
         platformRole: "CUSTOMER",
+        notificationType: "PROJECT_UPDATE",
         membershipUserIds: [],
+        projectManagerUserIds: [],
+      }),
+    ).toBe(false);
+  });
+
+  it("新建项目允许所选项目负责人和客户成员接收", () => {
+    const base = {
+      notificationType: "PROJECT_CREATED" as const,
+      membershipUserIds: ["customer-1"],
+      projectManagerUserIds: ["manager-1"],
+    };
+    expect(
+      isStandardProjectRecipientRelevant({
+        ...base,
+        userId: "manager-1",
+        platformRole: "PROJECT_MANAGER",
+      }),
+    ).toBe(true);
+    expect(
+      isStandardProjectRecipientRelevant({
+        ...base,
+        userId: "customer-1",
+        platformRole: "CUSTOMER",
+      }),
+    ).toBe(true);
+    expect(
+      isStandardProjectRecipientRelevant({
+        ...base,
+        userId: "admin-1",
+        platformRole: "PLATFORM_ADMIN",
       }),
     ).toBe(false);
   });
@@ -36,6 +71,12 @@ describe("标准项目交付邮件发送前权限复核", () => {
       showMilestones: false,
       showProgress: false,
     };
+    expect(
+      canSendStandardProjectEmailForModule({
+        ...base,
+        notificationType: "PROJECT_CREATED",
+      }),
+    ).toBe(true);
     expect(
       canSendStandardProjectEmailForModule({
         ...base,

@@ -9,6 +9,8 @@ export type NotificationPersistenceInput = {
   customerSpaceId?: string;
   projectId?: string;
   serviceRequestId?: string;
+  sourceType?: string;
+  sourceId?: string;
   aggregationKey?: string;
   emailDueAt?: Date;
 };
@@ -25,6 +27,8 @@ export function toNotificationPersistenceInput(
     customerSpaceId: notification.customerSpaceId,
     projectId: notification.projectId,
     serviceRequestId: notification.serviceRequestId,
+    sourceType: notification.sourceType,
+    sourceId: notification.sourceId,
     aggregationKey: notification.aggregationKey,
     emailDueAt,
   };

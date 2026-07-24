@@ -25,7 +25,10 @@ function rule(
 }
 
 describe("后台通知规则", () => {
-  it("将项目和工单活动映射到固定场景", () => {
+  it("将项目和服务请求活动映射到固定场景", () => {
+    expect(ruleKeyForProjectNotification("PROJECT_CREATED")).toBe(
+      "PROJECT_CREATED",
+    );
     expect(ruleKeyForProjectNotification("PROJECT_STAGE")).toBe(
       "PROJECT_STAGE",
     );
@@ -47,12 +50,21 @@ describe("后台通知规则", () => {
     expect(
       ruleKeyForRequestActivity({ notificationType: "REQUEST_ARCHIVE" }),
     ).toBe("REQUEST_ARCHIVE");
+    expect(
+      ruleKeyForRequestActivity({ notificationType: "REQUEST_CLAIMED" }),
+    ).toBe("REQUEST_CLAIMED");
     expect(notificationTypesForEmailRule("REQUEST_PUBLIC_MESSAGE")).toEqual([
       "REQUEST_MESSAGE",
     ]);
     expect(notificationTypesForEmailRule("PROJECT_UPDATE")).toEqual([
       "PROJECT_UPDATE",
       "UPDATE_COMMENT",
+    ]);
+    expect(notificationTypesForEmailRule("PROJECT_CREATED")).toEqual([
+      "PROJECT_CREATED",
+    ]);
+    expect(notificationTypesForEmailRule("REQUEST_CLAIMED")).toEqual([
+      "REQUEST_CLAIMED",
     ]);
     expect(dingTalkEventTypesForRule("REQUEST_CREATED")).toEqual([
       "REQUEST_CREATED",
@@ -89,6 +101,12 @@ describe("后台通知规则", () => {
   });
 
   it("项目交付邮件支持显式开启，但默认保持关闭", () => {
+    expect(defaultNotificationDeliveryRuleState("PROJECT_CREATED")).toEqual({
+      notificationEnabled: true,
+      soundEnabled: true,
+      emailEnabled: false,
+      dingtalkEnabled: false,
+    });
     expect(defaultNotificationDeliveryRuleState("PROJECT_UPDATE")).toEqual({
       notificationEnabled: true,
       soundEnabled: true,
@@ -102,6 +120,12 @@ describe("后台通知规则", () => {
     ).toBeNull();
     expect(defaultNotificationDeliveryRuleState("REQUEST_CREATED").emailEnabled)
       .toBe(true);
+    expect(defaultNotificationDeliveryRuleState("REQUEST_CLAIMED")).toEqual({
+      notificationEnabled: true,
+      soundEnabled: true,
+      emailEnabled: true,
+      dingtalkEnabled: false,
+    });
   });
 
   it("邮件必须依赖未读通知，提示音规则不能被活动强制绕过", () => {

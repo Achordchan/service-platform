@@ -35,6 +35,7 @@ export function buildMailOutboxCandidateWhere(
 ): Prisma.MailMessageWhereInput {
   return {
     AND: [
+      { contentRiskReviewId: null },
       mailAttemptBudgetWhere(),
       {
         OR: [

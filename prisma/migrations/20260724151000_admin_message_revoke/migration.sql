@@ -1,0 +1,1 @@
+ALTER TYPE "ContentRiskDecisionSource" ADD VALUE IF NOT EXISTS 'ADMIN';

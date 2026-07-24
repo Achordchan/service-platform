@@ -14,6 +14,7 @@ import {
 } from "@mui/material";
 import ArrowForwardOutlinedIcon from "@mui/icons-material/ArrowForwardOutlined";
 import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
+import PersonOutlineOutlinedIcon from "@mui/icons-material/PersonOutlineOutlined";
 import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
 import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import type { ProjectSummary } from "@/components/customer/customer-types";
@@ -113,6 +114,30 @@ function ProjectCard({
           >
             {project.description || "暂无项目说明"}
           </Typography>
+
+          <Stack
+            direction="row"
+            spacing={0.75}
+            sx={{ mt: 1.75, alignItems: "center", minWidth: 0 }}
+          >
+            <PersonOutlineOutlinedIcon
+              sx={{ fontSize: 18, color: "text.secondary", flexShrink: 0 }}
+            />
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ flexShrink: 0 }}
+            >
+              项目负责人
+            </Typography>
+            <Typography
+              variant="body2"
+              title={project.managerNames.join("、") || "待分配"}
+              sx={{ fontWeight: 650, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            >
+              {project.managerNames.join("、") || "待分配"}
+            </Typography>
+          </Stack>
 
           {project.showProgress !== false ? (
             <Stack spacing={1.3} sx={{ mt: 3 }}>

@@ -10,7 +10,9 @@ export type PluginCapability =
   | "launch-ticket:issue"
   | "embed-session:issue"
   | "webhook:deliver"
-  | "mail:enqueue";
+  | "mail:enqueue"
+  | "content:moderate"
+  | "network:ai-provider";
 
 export type PlatformPluginKind = "UTILITY" | "EXTERNAL_CONNECTOR";
 
@@ -36,6 +38,22 @@ export type PluginSettingField =
       label: string;
       description: string;
       required?: boolean;
+    }
+  | {
+      key: string;
+      type: "url" | "text" | "secret-text";
+      label: string;
+      description: string;
+      required?: boolean;
+      placeholder?: string;
+    }
+  | {
+      key: string;
+      type: "dynamic-select";
+      label: string;
+      description: string;
+      required?: boolean;
+      actionKey: string;
     };
 
 export type PlatformPluginManifest<TConfig extends Record<string, unknown>> = {

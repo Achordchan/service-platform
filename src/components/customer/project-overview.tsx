@@ -53,7 +53,7 @@ export function ProjectOverview({
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(4, minmax(0, 1fr))",
+              lg: "repeat(5, minmax(0, 1fr))",
             },
             gap: 3,
             mt: 3,
@@ -73,6 +73,21 @@ export function ProjectOverview({
             </Typography>
             <Typography sx={{ mt: 0.75, fontWeight: 650 }}>
               {project.serviceType.name}
+            </Typography>
+          </Box>
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" color="text.secondary">
+              项目负责人
+            </Typography>
+            <Typography
+              title={project.managerNames.join("、") || "待分配"}
+              sx={{
+                mt: 0.75,
+                fontWeight: 650,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {project.managerNames.join("、") || "待分配"}
             </Typography>
           </Box>
           <Box>
@@ -132,7 +147,10 @@ export function ProjectOverview({
                 里程碑
               </Typography>
               {project.milestones.length > 0 ? (
-                <MilestoneTimeline milestones={project.milestones} />
+                <MilestoneTimeline
+                  milestones={project.milestones}
+                  contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+                />
               ) : (
                 <EmptyState
                   title="暂无里程碑"
@@ -168,7 +186,11 @@ export function ProjectOverview({
                   </Button>
                 ) : null}
               </Stack>
-              <ProjectUpdates updates={project.updates} compact />
+              <ProjectUpdates
+                updates={project.updates}
+                compact
+                contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+              />
             </Box>
           ) : null}
         </Box>

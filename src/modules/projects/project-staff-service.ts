@@ -7,9 +7,11 @@ import {
   publishDetachedProjectChange,
   publishProjectChange,
 } from "@/modules/notifications/notification-service";
-import { assertCanViewProject } from "@/modules/projects/project-access";
 import {
-  assertAllowed,
+  assertCanManageProjectStaff,
+  assertCanViewProject,
+} from "@/modules/projects/project-access";
+import {
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
@@ -68,15 +70,15 @@ export function addProjectStaff(
   projectId: string,
   input: AddProjectStaffInput,
 ) {
-  assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertCanManageProjectStaff(tx, actor, projectId);
     const project = await tx.project.findUnique({
       where: { id: projectId },
       select: { id: true, customerSpaceId: true },
     });
     const user = await tx.user.findUnique({
       where: { id: input.userId },
-      select: { id: true, platformRole: true },
+      select: { id: true, platformRole: true, deletedAt: true },
     });
     const duplicate = await tx.projectStaff.findUnique({
       where: {
@@ -89,6 +91,9 @@ export function addProjectStaff(
     });
     assertFound(project, "项目不存在");
     assertFound(user, "用户不存在");
+    if (user.deletedAt) {
+      throw new DomainError("USER_NOT_FOUND", "用户不存在", 404);
+    }
     if (duplicate) {
       throw new DomainError(
         "PROJECT_STAFF_EXISTS",
@@ -126,16 +131,19 @@ export function updateProjectStaff(
   projectStaffId: string,
   input: UpdateProjectStaffInput,
 ) {
-  assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertCanManageProjectStaff(tx, actor, projectId);
     const staff = await tx.projectStaff.findFirst({
       where: { id: projectStaffId, projectId },
       include: {
         project: { select: { customerSpaceId: true } },
-        user: { select: { platformRole: true } },
+        user: { select: { platformRole: true, deletedAt: true } },
       },
     });
     assertFound(staff, "项目人员不存在");
+    if (staff.user.deletedAt) {
+      throw new DomainError("PROJECT_STAFF_DELETED", "该项目成员已删除", 409);
+    }
     assertRoleMatches(staff.user.platformRole, input.role);
 
     const updated = await tx.projectStaff.update({
@@ -166,8 +174,8 @@ export function removeProjectStaff(
   projectId: string,
   projectStaffId: string,
 ) {
-  assertAllowed(actor.isPlatformAdmin);
   return withActorDb(actor, async (tx) => {
+    await assertCanManageProjectStaff(tx, actor, projectId);
     const staff = await tx.projectStaff.findFirst({
       where: { id: projectStaffId, projectId },
       include: {
@@ -176,6 +184,34 @@ export function removeProjectStaff(
     });
     assertFound(staff, "项目人员不存在");
 
+    const affectedRequests = await tx.serviceRequest.findMany({
+      where: {
+        projectId,
+        OR: [
+          { assigneeId: staff.userId },
+          { assignees: { some: { userId: staff.userId } } },
+        ],
+      },
+      select: { id: true, assigneeId: true },
+    });
+    await tx.requestAssignee.deleteMany({
+      where: {
+        userId: staff.userId,
+        serviceRequest: { projectId },
+      },
+    });
+    for (const request of affectedRequests) {
+      if (request.assigneeId !== staff.userId) continue;
+      const nextAssignee = await tx.requestAssignee.findFirst({
+        where: { serviceRequestId: request.id },
+        select: { userId: true },
+        orderBy: { assignedAt: "asc" },
+      });
+      await tx.serviceRequest.update({
+        where: { id: request.id },
+        data: { assigneeId: nextAssignee?.userId ?? null },
+      });
+    }
     await tx.projectStaff.delete({ where: { id: projectStaffId } });
     await writeAuditLog(tx, actor, {
       action: "PROJECT_STAFF_REMOVED",
@@ -183,7 +219,11 @@ export function removeProjectStaff(
       resourceId: projectStaffId,
       customerSpaceId: staff.project.customerSpaceId,
       projectId,
-      metadata: { userId: staff.userId, role: staff.role },
+      metadata: {
+        userId: staff.userId,
+        role: staff.role,
+        clearedRequestAssignments: affectedRequests.length,
+      },
     });
     await publishProjectChange(tx, actor, {
       change: "PROJECT_STAFF_REMOVED",

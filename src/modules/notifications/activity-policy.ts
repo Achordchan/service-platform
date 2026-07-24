@@ -10,6 +10,7 @@ export const PROJECT_UPDATE_NOTIFICATION_TYPES: NotificationType[] = [
 ];
 
 export const PROJECT_DELIVERY_NOTIFICATION_TYPES: NotificationType[] = [
+  "PROJECT_CREATED",
   ...PROJECT_UPDATE_NOTIFICATION_TYPES,
   "PROJECT_STAGE",
   "PROJECT_MILESTONE",
@@ -19,6 +20,7 @@ export const PROJECT_DELIVERY_NOTIFICATION_TYPES: NotificationType[] = [
 export const REQUEST_NOTIFICATION_TYPES: NotificationType[] = [
   "REQUEST_CREATED",
   "REQUEST_ASSIGNED",
+  "REQUEST_CLAIMED",
   "REQUEST_MESSAGE",
   "REQUEST_STATUS",
   "REQUEST_ATTACHMENT",
@@ -31,6 +33,7 @@ const silentProjectChanges = new Set([
   "PROJECT_STAFF_UPDATED",
   "PROJECT_STAFF_REMOVED",
   "PROJECT_ACCESS_REVOKED",
+  "PROJECT_UPDATE_DELETED",
   "ATTACHMENT_OPTIMIZED",
 ]);
 
@@ -68,6 +71,7 @@ export function planStandardRequestEmailRecipientIds(input: {
   actorId: string;
   actorPlatformRole: string;
   eventType: EventType;
+  notificationType?: NotificationType;
   visibility?: string;
   status?: string;
   includeCustomers: boolean;
@@ -84,7 +88,10 @@ export function planStandardRequestEmailRecipientIds(input: {
       ...input.platformAdminUserIds,
     ];
   } else if (input.eventType === "REQUEST_ASSIGNED") {
-    recipients = input.emailWorkerUserIds ?? [];
+    recipients =
+      input.notificationType === "REQUEST_CLAIMED"
+        ? input.platformAdminUserIds
+        : input.emailWorkerUserIds ?? [];
   } else if (
     input.eventType === "REQUEST_MESSAGE_CREATED" &&
     input.visibility === "CUSTOMER_VISIBLE"
@@ -121,6 +128,7 @@ export function planDingTalkRequestEvent(input: {
   visibility?: string;
   customerActor: boolean;
   actorName: string;
+  contentSummary?: string;
   occurredAt?: string;
 }) {
   if (!input.enabled) return null;
@@ -147,6 +155,7 @@ export function planDingTalkRequestEvent(input: {
     eventType: "REQUEST_CUSTOMER_REPLIED" as const,
     requestId: input.requestId,
     actorName: input.actorName,
+    contentSummary: input.contentSummary,
     occurredAt,
   };
 }

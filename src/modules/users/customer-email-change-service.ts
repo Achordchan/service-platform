@@ -152,13 +152,17 @@ export async function requestUserEmailChange(
     return { change, mailMessage };
   });
 
-  await dispatchQueuedMailMessage(
+  const jobId = await dispatchQueuedMailMessage(
     result.mailMessage.id,
     result.mailMessage.deliveryMode,
     result.mailMessage.sendAfter,
   );
 
-  return publicChange(result.change, result.mailMessage.status);
+  return publicChange(
+    result.change,
+    result.mailMessage.status,
+    jobId ? undefined : "initial_enqueue_failed",
+  );
 }
 
 export async function resendCustomerEmailChange(
@@ -251,12 +255,16 @@ export async function resendUserEmailChange(actor: Actor, userId: string) {
     };
   });
 
-  await dispatchQueuedMailMessage(
+  const jobId = await dispatchQueuedMailMessage(
     result.mailMessage.id,
     result.mailMessage.deliveryMode,
     result.mailMessage.sendAfter,
   );
-  return publicChange(result.change, result.mailMessage.status);
+  return publicChange(
+    result.change,
+    result.mailMessage.status,
+    jobId ? undefined : "initial_enqueue_failed",
+  );
 }
 
 export function cancelCustomerEmailChange(actor: Actor, userId: string) {
@@ -334,10 +342,10 @@ export function getPendingUserEmailChange(actor: Actor, userId: string) {
         sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
         sourceId: change.id,
       },
-      select: { status: true },
+      select: { status: true, errorMessage: true },
       orderBy: { createdAt: "desc" },
     });
-    return publicChange(change, message?.status);
+    return publicChange(change, message?.status, message?.errorMessage);
   });
 }
 
@@ -668,7 +676,7 @@ function publicChange(change: {
   status: string;
   expiresAt: Date;
   lastSentAt: Date;
-}, mailStatus?: string) {
+}, mailStatus?: string, mailErrorMessage?: string | null) {
   return {
     id: change.id,
     oldEmail: change.oldEmail,
@@ -677,5 +685,7 @@ function publicChange(change: {
     expiresAt: change.expiresAt.toISOString(),
     lastSentAt: change.lastSentAt.toISOString(),
     mailStatus: mailStatus ?? null,
+    mailDispatchFailed:
+      mailStatus === "QUEUED" && Boolean(mailErrorMessage),
   };
 }

@@ -43,6 +43,7 @@ export function AccountEmailChangeDialog({
       <DialogContent dividers>
         {target ? (
           <EmailChangeControl
+            key={`${target.id}:${target.pendingEmailChange?.lastSentAt ?? "none"}:${target.pendingEmailChange?.mailStatus ?? "none"}:${target.pendingEmailChange?.mailDispatchFailed ?? false}`}
             currentEmail={target.email}
             initialPending={target.pendingEmailChange}
             apiBase={`/api/v1/admin/users/${target.id}/email-change`}

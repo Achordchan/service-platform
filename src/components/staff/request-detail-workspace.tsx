@@ -14,17 +14,27 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   LinearProgress,
   Paper,
   Stack,
   TextField,
   Typography,
 } from "@mui/material";
-import { RequestChatHeading } from "@/components/shared/request-chat-heading";
 import { RequestChatThread } from "@/components/shared/request-chat-thread";
 import { RequestArchivePanel } from "@/components/shared/request-archive-panel";
-import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
+import { RequestPresenceIndicator } from "@/components/shared/request-presence-indicator";
+import type {
+  ChatMessage,
+  ChatReeditDraft,
+  ChatReplyTarget,
+} from "@/components/shared/request-chat-types";
+import { useToast } from "@/components/shared/toast-provider";
 import { RequestReplyComposer } from "@/components/staff/request-reply-composer";
+import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import {
   PriorityChip,
@@ -36,6 +46,7 @@ import type {
   RequestDetail,
   RequestStatus,
 } from "@/components/staff/staff-types";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -68,22 +79,38 @@ function DetailField({ label, value }: { label: string; value: React.ReactNode }
 export function RequestDetailWorkspace({
   request,
   projectStaff,
-  canManage,
+  canReply,
+  canChangeStatus,
+  canArchive,
   canAssign,
   currentUserId,
   claimRequired,
+  contentRiskNoticeEnabled,
+  headingDescription,
+  canViewRevokedContent,
+  canModerateMessages,
 }: {
   request: RequestDetail;
   projectStaff: ProjectStaffMember[];
-  canManage: boolean;
+  canReply: boolean;
+  canChangeStatus: boolean;
+  canArchive: boolean;
   canAssign: boolean;
   currentUserId: string;
   claimRequired: boolean;
+  contentRiskNoticeEnabled: boolean;
+  headingDescription: string;
+  canViewRevokedContent: boolean;
+  canModerateMessages: boolean;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
+  const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<ChatMessage | null>(null);
+  const [revokeReason, setRevokeReason] = useState("");
+  const [revoking, setRevoking] = useState(false);
   const presence = useRequestPresence(request.id, "STAFF");
   useRequestRealtime(request.id, {
     currentUserId,
@@ -104,18 +131,21 @@ export function RequestDetailWorkspace({
 
   async function updateAssignees(members: ProjectStaffMember[]) {
     setSubmitting(true);
-    setError("");
     try {
-      await staffApi(
+      const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/requests/${request.id}/assignee`,
         jsonRequest("PATCH", {
           assigneeIds: members.map((member) => member.userId),
         }),
       );
+      toast.success(
+        members.length > 0 ? "处理人已更新" : "服务请求已取消分配",
+      );
+      toast.delivery(result.deliveryFeedback);
       markRequestLocalMutation();
       router.refresh();
     } catch (updateError) {
-      setError(
+      toast.error(
         updateError instanceof Error ? updateError.message : "分配失败",
       );
     } finally {
@@ -125,21 +155,50 @@ export function RequestDetailWorkspace({
 
   async function updateStatus(status: RequestStatus) {
     setSubmitting(true);
-    setError("");
     try {
-      await staffApi(
+      const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/requests/${request.id}/status`,
         jsonRequest("PATCH", { status }),
       );
+      toast.success(`服务请求状态已更新为${statusLabel(status)}`);
+      toast.delivery(result.deliveryFeedback);
       markRequestLocalMutation();
       router.refresh();
     } catch (updateError) {
-      setError(
+      toast.error(
         updateError instanceof Error ? updateError.message : "状态更新失败",
       );
     } finally {
       setSubmitting(false);
     }
+  }
+
+  async function revokeMessage() {
+    if (!revokeTarget || revokeReason.trim().length < 2) return;
+    setRevoking(true);
+    try {
+      await staffApi(
+        `/api/v1/requests/${request.id}/messages/${revokeTarget.id}/revoke`,
+        jsonRequest("POST", { reason: revokeReason.trim() }),
+      );
+      toast.success("消息已由系统撤回");
+      setRevokeTarget(null);
+      setRevokeReason("");
+      markRequestLocalMutation();
+      router.refresh();
+    } catch (revokeError) {
+      toast.error(
+        revokeError instanceof Error ? revokeError.message : "撤回消息失败",
+      );
+    } finally {
+      setRevoking(false);
+    }
+  }
+
+  function closeRevokeDialog() {
+    if (revoking) return;
+    setRevokeTarget(null);
+    setRevokeReason("");
   }
 
   const availableStatuses = nextStatuses[request.status];
@@ -150,8 +209,22 @@ export function RequestDetailWorkspace({
 
   return (
     <Stack spacing={3}>
+      <StaffPageHeading
+        backHref="/staff/requests"
+        backLabel="服务请求"
+        title={request.title}
+        description={headingDescription}
+        status={
+          <>
+            <StaffStatus value={request.status} />
+            <RequestPresenceIndicator
+              online={presence.counterpartOnline}
+              label="客户在线"
+            />
+          </>
+        }
+      />
       {submitting ? <LinearProgress /> : null}
-      {error ? <Alert severity="error">{error}</Alert> : null}
       <Box
         sx={{
           display: "grid",
@@ -161,33 +234,65 @@ export function RequestDetailWorkspace({
         }}
       >
         <Stack spacing={2.5}>
-          <Box>
-            <RequestChatHeading
-              counterpartOnline={presence.counterpartOnline}
-              counterpartLabel="客户"
-            />
-            <RequestChatThread
-              messages={request.messages}
-              currentUserId={currentUserId}
-              onReply={setReplyTarget}
-              counterpartTypingLabel={
-                presence.counterpartTyping ? "客户" : null
-              }
-            />
-          </Box>
+          <RequestChatThread
+            messages={request.messages}
+            currentUserId={currentUserId}
+            contentRiskEnabled={request.contentRiskUiEnabled}
+            canViewRevokedContent={canViewRevokedContent}
+            onReply={setReplyTarget}
+            onReedit={
+              canReply && !request.archivedAt && request.status !== "CLOSED"
+                ? (message) => {
+                    if (!message.reeditBody) return;
+                    setReplyTarget(null);
+                    setReeditDraft((current) => ({
+                      version: (current?.version ?? 0) + 1,
+                      requestId: request.id,
+                      messageId: message.id,
+                      body: message.reeditBody!,
+                      attachmentCount: message.reeditAttachmentCount ?? 0,
+                    }));
+                    requestAnimationFrame(() => {
+                      document
+                        .getElementById("request-reply-composer")
+                        ?.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                    });
+                  }
+                : undefined
+            }
+            onRevoke={
+              canModerateMessages
+                ? (message) => {
+                    setRevokeReason("");
+                    setRevokeTarget(message);
+                  }
+                : undefined
+            }
+            counterpartTypingLabel={
+              presence.counterpartTyping ? "客户" : null
+            }
+          />
 
           {request.archivedAt ? (
             <Alert severity="info">
               该服务请求已归档。恢复到常规列表后才能继续处理或回复。
             </Alert>
-          ) : canManage && request.status !== "CLOSED" ? (
+          ) : canReply && request.status !== "CLOSED" ? (
             <RequestReplyComposer
+              key={`${request.id}:${reeditDraft?.version ?? 0}`}
               requestId={request.id}
               replyTarget={replyTarget}
               onCancelReply={() => setReplyTarget(null)}
               claimRequired={claimRequired}
               onTypingActivity={presence.reportTypingActivity}
               onTypingStopped={presence.stopTyping}
+              contentRiskEnabled={contentRiskNoticeEnabled}
+              initialBody={reeditDraft?.body}
+              restoredAttachmentCount={reeditDraft?.attachmentCount ?? 0}
+              onSent={() => setReeditDraft(null)}
             />
           ) : request.status === "CLOSED" ? (
             <Alert severity="info">该服务请求已关闭，不能继续回复。</Alert>
@@ -197,7 +302,9 @@ export function RequestDetailWorkspace({
         </Stack>
 
         <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: 96 } }}>
-          {canManage && !request.archivedAt && availableStatuses.length > 0 ? (
+          {canChangeStatus &&
+          !request.archivedAt &&
+          availableStatuses.length > 0 ? (
             <Paper variant="outlined" sx={{ p: 2.5 }}>
               <Typography variant="h3">更新状态</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -257,11 +364,13 @@ export function RequestDetailWorkspace({
             </Stack>
           </Paper>
 
-          <RequestArchivePanel
-            requestId={request.id}
-            status={request.status}
-            archivedAt={request.archivedAt}
-          />
+          {canArchive ? (
+            <RequestArchivePanel
+              requestId={request.id}
+              status={request.status}
+              archivedAt={request.archivedAt}
+            />
+          ) : null}
 
           {canAssign ? (
             <Paper variant="outlined" sx={{ p: 2.5 }}>
@@ -294,6 +403,53 @@ export function RequestDetailWorkspace({
           ) : null}
         </Stack>
       </Box>
+      <Dialog
+        open={Boolean(revokeTarget)}
+        onClose={revoking ? undefined : closeRevokeDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>撤回消息</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <Alert severity="warning">
+              撤回后，客户和普通后台人员将无法查看原文；平台管理员仍可在当前气泡和风控历史中审计。
+            </Alert>
+            {revokeTarget ? (
+              <Typography variant="body2" color="text.secondary">
+                消息发送人：{revokeTarget.authorName}
+              </Typography>
+            ) : null}
+            <TextField
+              label="撤回原因"
+              value={revokeReason}
+              onChange={(event) => setRevokeReason(event.target.value)}
+              required
+              multiline
+              minRows={3}
+              autoFocus
+              helperText={`${revokeReason.length}/200，原因会显示在撤回提示中`}
+              slotProps={{ htmlInput: { maxLength: 200 } }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={closeRevokeDialog}
+            disabled={revoking}
+          >
+            取消
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void revokeMessage()}
+            disabled={revoking || revokeReason.trim().length < 2}
+          >
+            {revoking ? "撤回中" : "确认撤回"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Stack>
   );
 }

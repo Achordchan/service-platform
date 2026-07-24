@@ -34,6 +34,7 @@
   "dependencies": {
     "@achord/platform-plugin-sdk": "workspace:*",
     "@achord/plugin-dingtalk-robot": "workspace:*",
+    "@achord/plugin-content-contact-risk": "workspace:*",
     "@achord/plugin-image-webp": "workspace:*",
     "@achord/plugin-sub2api-connector": "workspace:*",
     "@achord/plugin-universal-embed-connector": "workspace:*",

@@ -5,6 +5,7 @@ export const DINGTALK_ROBOT_KEYWORD = "工单通知";
 export const DINGTALK_ROBOT_EVENT_TYPES = [
   "REQUEST_CREATED",
   "REQUEST_CUSTOMER_REPLIED",
+  "CONTENT_RISK_ALERT",
 ] as const;
 
 export type DingTalkRobotEventType =
@@ -20,34 +21,42 @@ export type DingTalkRobotConfig = {
 };
 
 export const DINGTALK_ROBOT_TEMPLATE_VARIABLES = [
-  { key: "requestNumber", label: "工单编号", sample: "REQ-1001" },
-  { key: "requestTitle", label: "工单标题", sample: "无法连接 VPN" },
+  { key: "requestNumber", label: "服务请求编号", sample: "REQ-1001" },
+  { key: "requestTitle", label: "服务请求主题", sample: "无法连接 VPN" },
   { key: "customerName", label: "客户", sample: "示例客户" },
   { key: "projectName", label: "项目", sample: "企业 VPN 服务" },
   { key: "priorityLabel", label: "优先级", sample: "高" },
   { key: "actorName", label: "操作人", sample: "张三" },
+  { key: "contentSummary", label: "内容摘要", sample: "登录后页面持续提示连接失败" },
   { key: "occurredAt", label: "发生时间", sample: "2026/07/23 10:30" },
+  { key: "targetLabel", label: "内容位置", sample: "项目进度" },
+  { key: "riskSummary", label: "脱敏告警摘要", sample: "系统已撤回疑似包含站外联系引导的公开内容" },
 ] as const;
 
 export const DINGTALK_ROBOT_TEMPLATE_DEFINITIONS = [
   {
     key: "REQUEST_CREATED",
     name: "新建服务请求",
-    description: "客户或后台人员创建新工单后发送。",
+    description: "客户或后台人员创建新的服务请求后发送。",
   },
   {
     key: "REQUEST_CUSTOMER_REPLIED",
     name: "客户公开回复",
-    description: "客户或外部联系人公开回复工单后发送。",
+    description: "客户或外部联系人公开回复服务请求后发送。",
+  },
+  {
+    key: "CONTENT_RISK_ALERT",
+    name: "内容风控告警",
+    description: "联系方式、站外交易风险或风控插件异常时发送脱敏告警。",
   },
 ] as const;
 
 export const DINGTALK_ROBOT_DEFAULT_CONFIG: DingTalkRobotConfig = {
   templates: {
     REQUEST_CREATED: {
-      title: "新工单待处理",
+      title: "新服务请求待处理",
       body: [
-        "- **工单**：{{requestNumber}} {{requestTitle}}",
+        "- **服务请求**：{{requestNumber}} {{requestTitle}}",
         "- **客户**：{{customerName}}",
         "- **项目**：{{projectName}}",
         "- **优先级**：{{priorityLabel}}",
@@ -58,13 +67,52 @@ export const DINGTALK_ROBOT_DEFAULT_CONFIG: DingTalkRobotConfig = {
     REQUEST_CUSTOMER_REPLIED: {
       title: "客户有新回复",
       body: [
-        "- **工单**：{{requestNumber}} {{requestTitle}}",
+        "- **服务请求**：{{requestNumber}} {{requestTitle}}",
         "- **客户**：{{customerName}}",
         "- **项目**：{{projectName}}",
         "- **回复人**：{{actorName}}",
+        "- **回复摘要**：{{contentSummary}}",
         "- **时间**：{{occurredAt}}",
       ].join("\n"),
     },
+    CONTENT_RISK_ALERT: {
+      title: "内容风控告警",
+      body: [
+        "- **发送人**：{{actorName}}",
+        "- **项目**：{{projectName}}",
+        "- **服务请求**：{{requestNumber}} {{requestTitle}}",
+        "- **位置**：{{targetLabel}}",
+        "- **摘要**：{{riskSummary}}",
+        "- **时间**：{{occurredAt}}",
+        "",
+        "原始内容仅可在平台受限风控记录中查看。",
+      ].join("\n"),
+    },
+  },
+};
+
+const LEGACY_DEFAULT_TEMPLATES: Partial<
+  Record<DingTalkRobotEventType, DingTalkRobotTemplate>
+> = {
+  REQUEST_CUSTOMER_REPLIED: {
+    title: "客户有新回复",
+    body: [
+      "- **服务请求**：{{requestNumber}} {{requestTitle}}",
+      "- **客户**：{{customerName}}",
+      "- **项目**：{{projectName}}",
+      "- **回复人**：{{actorName}}",
+      "- **时间**：{{occurredAt}}",
+    ].join("\n"),
+  },
+  CONTENT_RISK_ALERT: {
+    title: "内容风控告警",
+    body: [
+      "- **位置**：{{targetLabel}}",
+      "- **摘要**：{{riskSummary}}",
+      "- **时间**：{{occurredAt}}",
+      "",
+      "原始内容仅可在平台受限风控记录中查看。",
+    ].join("\n"),
   },
 };
 
@@ -102,8 +150,15 @@ const dingTalkRobotConfigSchema = z
   .object({
     templates: z
       .object({
-        REQUEST_CREATED: dingTalkRobotTemplateSchema,
-        REQUEST_CUSTOMER_REPLIED: dingTalkRobotTemplateSchema,
+        REQUEST_CREATED: dingTalkRobotTemplateSchema.default(
+          DINGTALK_ROBOT_DEFAULT_CONFIG.templates.REQUEST_CREATED,
+        ),
+        REQUEST_CUSTOMER_REPLIED: dingTalkRobotTemplateSchema.default(
+          DINGTALK_ROBOT_DEFAULT_CONFIG.templates.REQUEST_CUSTOMER_REPLIED,
+        ),
+        CONTENT_RISK_ALERT: dingTalkRobotTemplateSchema.default(
+          DINGTALK_ROBOT_DEFAULT_CONFIG.templates.CONTENT_RISK_ALERT,
+        ),
       })
       .strict()
       .default(DINGTALK_ROBOT_DEFAULT_CONFIG.templates),
@@ -126,10 +181,22 @@ export function parseDingTalkRobotConfig(value: unknown): DingTalkRobotConfig {
   if (!parsed.success) {
     throw new DingTalkRobotConfigError("钉钉通知模板配置无效");
   }
-  for (const template of Object.values(parsed.data.templates)) {
+  const templates = Object.fromEntries(
+    DINGTALK_ROBOT_EVENT_TYPES.map((eventType) => {
+      const template = parsed.data.templates[eventType];
+      const legacyDefault = LEGACY_DEFAULT_TEMPLATES[eventType];
+      return [
+        eventType,
+        legacyDefault && templatesMatch(template, legacyDefault)
+          ? DINGTALK_ROBOT_DEFAULT_CONFIG.templates[eventType]
+          : template,
+      ];
+    }),
+  ) as DingTalkRobotConfig["templates"];
+  for (const template of Object.values(templates)) {
     validateTemplateVariables(template);
   }
-  return parsed.data;
+  return { templates };
 }
 
 export function parseDingTalkRobotTemplate(
@@ -165,6 +232,13 @@ function validateTemplateVariables(template: DingTalkRobotTemplate) {
       }
     }
   }
+}
+
+function templatesMatch(
+  left: DingTalkRobotTemplate,
+  right: DingTalkRobotTemplate,
+) {
+  return left.title === right.title && left.body === right.body;
 }
 
 export function validateDingTalkRobotWebhookUrl(value: string) {

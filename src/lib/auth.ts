@@ -1,10 +1,14 @@
 import "server-only";
 
-import { betterAuth } from "better-auth";
+import { betterAuth, type BetterAuthPlugin } from "better-auth";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { prismaAdapter } from "better-auth/adapters/prisma";
+import { emailOTP } from "better-auth/plugins";
 import { prisma } from "@/lib/db";
 import { enqueueMail } from "@/lib/jobs";
 import { env } from "@/lib/runtime-env";
+import { assertEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
+import { hasActiveLoginAccount } from "@/modules/users/login-account-service";
 
 function trustedOrigins() {
   const origins = new Set([env.APP_URL, env.BETTER_AUTH_URL]);
@@ -20,6 +24,35 @@ function trustedOrigins() {
     origins.add(`${url.protocol}//127.0.0.1${port}`);
   }
   return [...origins];
+}
+
+function emailOtpAccountGuard(): BetterAuthPlugin {
+  return {
+    id: "email-otp-account-guard",
+    hooks: {
+      before: [
+        {
+          matcher: (context) =>
+            context.path === "/email-otp/send-verification-otp",
+          handler: createAuthMiddleware(async (context) => {
+            const body = context.body as {
+              email?: unknown;
+              type?: unknown;
+            };
+            if (body.type !== "sign-in" || typeof body.email !== "string") {
+              return;
+            }
+            if (!(await hasActiveLoginAccount(body.email))) {
+              throw new APIError("BAD_REQUEST", {
+                code: "EMAIL_NOT_FOUND",
+                message: "邮箱不存在",
+              });
+            }
+          }),
+        },
+      ],
+    },
+  };
 }
 
 export const auth = betterAuth({
@@ -59,5 +92,31 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
   },
+  plugins: [
+    emailOtpAccountGuard(),
+    emailOTP({
+      disableSignUp: true,
+      otpLength: 6,
+      expiresIn: 60 * 5,
+      allowedAttempts: 3,
+      storeOTP: "hashed",
+      rateLimit: { window: 60, max: 3 },
+      sendVerificationOTP: async ({ email, otp, type }) => {
+        if (type !== "sign-in") return;
+        await assertEmailOtpLoginAvailable();
+        await enqueueMail({
+          to: email,
+          templateKey: "LOGIN_EMAIL_OTP",
+          variables: {
+            recipientEmail: email,
+            otp,
+            expiresIn: "5 分钟",
+          },
+          sourceType: "LOGIN_EMAIL_OTP",
+          sourceId: email.toLowerCase(),
+        });
+      },
+    }),
+  ],
   trustedOrigins: trustedOrigins(),
 });

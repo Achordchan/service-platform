@@ -8,6 +8,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useToast } from "@/components/shared/toast-provider";
 
 export type PendingEmailChange = {
   id: string;
@@ -15,13 +16,20 @@ export type PendingEmailChange = {
   expiresAt: string;
   lastSentAt: string;
   mailStatus: string | null;
+  mailDispatchFailed: boolean;
 };
 
-function mailStatusMessage(status: string | null) {
+function mailStatusMessage(status: string | null, dispatchFailed: boolean) {
   if (status === "QUEUED") {
+    if (dispatchFailed) {
+      return {
+        severity: "warning" as const,
+        text: "验证邮件暂未进入发送队列，系统会自动重试。",
+      };
+    }
     return {
-      severity: "info" as const,
-      text: "验证邮件正在排队，队列恢复后会自动补投。",
+      severity: "success" as const,
+      text: "验证邮件已进入发件箱，系统正在发送。",
     };
   }
   if (status === "PROCESSING") {
@@ -92,22 +100,19 @@ export function EmailChangeControl({
   onChanged?: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const toast = useToast();
   const [newEmail, setNewEmail] = useState("");
   const [pending, setPending] = useState(initialPending);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   async function run(action: () => Promise<void>) {
     setBusy(true);
     onBusyChange?.(true);
-    setError("");
-    setSuccess("");
     try {
       await action();
       onChanged?.();
     } catch (actionError) {
-      setError(
+      toast.error(
         actionError instanceof Error ? actionError.message : "邮箱变更操作失败",
       );
     } finally {
@@ -125,7 +130,7 @@ export function EmailChangeControl({
       );
       setPending(result);
       setNewEmail("");
-      setSuccess(`验证邮件已加入发件箱：${result.newEmail}`);
+      toast.success("验证邮件已加入发件箱，请前往新邮箱确认");
     });
   }
 
@@ -136,7 +141,7 @@ export function EmailChangeControl({
         "POST",
       );
       setPending(result);
-      setSuccess(`新的验证邮件已加入发件箱：${result.newEmail}`);
+      toast.success("新的验证邮件已加入发件箱");
     });
   }
 
@@ -144,15 +149,13 @@ export function EmailChangeControl({
     return run(async () => {
       await emailChangeApi<null>(apiBase, "DELETE");
       setPending(null);
-      setSuccess("待验证的邮箱变更已取消");
+      toast.success("待验证的邮箱变更已取消");
     });
   }
 
   return (
     <Stack spacing={2.25}>
       <Alert severity="warning">{warning}</Alert>
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      {success ? <Alert severity="success">{success}</Alert> : null}
       <TextField
         label="当前登录邮箱"
         value={currentEmail}
@@ -179,8 +182,20 @@ export function EmailChangeControl({
               timeStyle: "short",
             }).format(new Date(pending.expiresAt))}
           </Typography>
-          <Alert severity={mailStatusMessage(pending.mailStatus).severity}>
-            {mailStatusMessage(pending.mailStatus).text}
+          <Alert
+            severity={
+              mailStatusMessage(
+                pending.mailStatus,
+                pending.mailDispatchFailed,
+              ).severity
+            }
+          >
+            {
+              mailStatusMessage(
+                pending.mailStatus,
+                pending.mailDispatchFailed,
+              ).text
+            }
           </Alert>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             <Button

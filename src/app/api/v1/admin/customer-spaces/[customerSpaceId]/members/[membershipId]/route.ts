@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
-import { removeCustomerSpaceMember } from "@/modules/customer-spaces/customer-member-service";
 import {
+  removeCustomerSpaceMember,
+  updateCustomerSpaceMember,
+} from "@/modules/customer-spaces/customer-member-service";
+import { updateCustomerSpaceMemberSchema } from "@/modules/customer-spaces/schemas";
+import {
+  readJson,
   requireApiActor,
   routeError,
 } from "@/modules/projects/api-utils";
@@ -12,19 +17,44 @@ type RouteContext = {
   }>;
 };
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function PATCH(request: Request, context: RouteContext) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
   try {
     const { customerSpaceId, membershipId } = await context.params;
-    await removeCustomerSpaceMember(
+    const input = updateCustomerSpaceMemberSchema.parse(await readJson(request));
+    const user = await updateCustomerSpaceMember(
+      auth.actor,
+      customerSpaceId,
+      membershipId,
+      input,
+    );
+    return NextResponse.json({ data: user });
+  } catch (error) {
+    return routeError(error, {
+      request,
+      operation: "customer_space.member.update",
+    });
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const { customerSpaceId, membershipId } = await context.params;
+    const result = await removeCustomerSpaceMember(
       auth.actor,
       customerSpaceId,
       membershipId,
     );
-    return new NextResponse(null, { status: 204 });
+    return NextResponse.json({ data: result });
   } catch (error) {
-    return routeError(error);
+    return routeError(error, {
+      request,
+      operation: "customer_space.member.delete",
+    });
   }
 }

@@ -18,6 +18,8 @@ import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attach
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
+import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import { useToast } from "@/components/shared/toast-provider";
 import { SupportReplyAssistant } from "@/components/staff/support-reply-assistant";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
@@ -27,6 +29,7 @@ import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 export function RequestReplyComposer({
   requestId,
@@ -35,6 +38,10 @@ export function RequestReplyComposer({
   claimRequired = false,
   onTypingActivity,
   onTypingStopped,
+  contentRiskEnabled = false,
+  initialBody = "",
+  restoredAttachmentCount = 0,
+  onSent,
 }: {
   requestId: string;
   replyTarget?: ChatReplyTarget | null;
@@ -44,15 +51,19 @@ export function RequestReplyComposer({
     visibility: "CUSTOMER_VISIBLE" | "INTERNAL",
   ) => void;
   onTypingStopped?: () => void;
+  contentRiskEnabled?: boolean;
+  initialBody?: string;
+  restoredAttachmentCount?: number;
+  onSent?: () => void;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const { policy, validateFiles } = useAttachmentPolicy();
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [internal, setInternal] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const [editorVersion, setEditorVersion] = useState(0);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const internalReplyLocked = replyTarget?.visibility === "INTERNAL";
   const effectiveInternal = internalReplyLocked || internal;
@@ -70,18 +81,19 @@ export function RequestReplyComposer({
 
   function addFiles(next: File[]) {
     const { accepted, error: validateError } = validateFiles(next, files.length);
-    if (validateError) setError(validateError);
+    if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      if (!validateError) setError("");
       setFiles((current) => [...current, ...accepted]);
     }
   }
 
   async function sendSupportPlaybook(playbookKey: string) {
     setSubmitting(true);
-    setError("");
     try {
-      await staffApi(`/api/v1/requests/${requestId}/messages`,
+      const result = await staffApi<{
+        message: { id: string };
+        deliveryFeedback: DeliveryFeedback;
+      }>(`/api/v1/requests/${requestId}/messages`,
         jsonRequest("POST", {
           body: "",
           visibility: "CUSTOMER_VISIBLE",
@@ -89,13 +101,16 @@ export function RequestReplyComposer({
           supportPlaybookKey: playbookKey,
         }),
       );
+      toast.success("处理指南已发送");
+      toast.delivery(result.deliveryFeedback);
       onCancelReply?.();
+      onSent?.();
       markRequestLocalMutation();
       router.refresh();
     } catch (sendError) {
       const message =
         sendError instanceof Error ? sendError.message : "处理指南发送失败";
-      setError(message);
+      toast.error(message);
       throw new Error(message);
     } finally {
       setSubmitting(false);
@@ -106,10 +121,12 @@ export function RequestReplyComposer({
     event.preventDefault();
     if (!hasMeaningfulHtml(body) && files.length === 0) return;
     setSubmitting(true);
-    setError("");
     onTypingStopped?.();
     try {
-      const result = await staffApi<{ message: { id: string } }>(
+      const result = await staffApi<{
+        message: { id: string };
+        deliveryFeedback: DeliveryFeedback;
+      }>(
         `/api/v1/requests/${requestId}/messages`,
         jsonRequest("POST", {
           body: hasMeaningfulHtml(body)
@@ -137,11 +154,14 @@ export function RequestReplyComposer({
       setEditorVersion((version) => version + 1);
       setFiles([]);
       setInternal(false);
+      toast.success(effectiveInternal ? "内部备注已保存" : "回复已发送");
+      toast.delivery(result.deliveryFeedback);
       onCancelReply?.();
+      onSent?.();
       markRequestLocalMutation();
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "回复发送失败",
       );
     } finally {
@@ -151,6 +171,7 @@ export function RequestReplyComposer({
 
   return (
     <Paper
+      id="request-reply-composer"
       component="form"
       variant="outlined"
       onSubmit={submit}
@@ -158,7 +179,6 @@ export function RequestReplyComposer({
     >
       {submitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: { xs: 2, md: 2.5 } }}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
         {replyTarget ? (
           <RequestReplyPreview
             target={replyTarget}
@@ -203,6 +223,14 @@ export function RequestReplyComposer({
         </Stack>
         {effectiveInternal ? (
           <Alert severity="warning">内部备注不会发送给客户。</Alert>
+        ) : contentRiskEnabled ? (
+          <ContentRiskNotice audience="STAFF" />
+        ) : null}
+        {restoredAttachmentCount > 0 ? (
+          <Alert severity="info">
+            已恢复撤回消息的正文；原消息包含 {restoredAttachmentCount}
+            个附件，请重新添加后再发送。
+          </Alert>
         ) : null}
         <RichTextEditor
           key={editorVersion}

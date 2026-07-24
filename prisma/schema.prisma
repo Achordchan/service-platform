@@ -86,6 +86,7 @@ enum ContentVisibility {
 
 enum NotificationType {
   INVITATION
+  PROJECT_CREATED
   PROJECT_UPDATE
   UPDATE_COMMENT
   PROJECT_STAGE
@@ -93,10 +94,12 @@ enum NotificationType {
   PROJECT_FILE
   REQUEST_CREATED
   REQUEST_ASSIGNED
+  REQUEST_CLAIMED
   REQUEST_MESSAGE
   REQUEST_STATUS
   REQUEST_ATTACHMENT
   REQUEST_ARCHIVE
+  CONTENT_RISK
 }
 
 enum EventType {
@@ -111,6 +114,40 @@ enum EventType {
   REQUEST_PRESENCE_CHANGED
   PLUGIN_RUN_UPDATED
   NOTIFICATION_CREATED
+  CONTENT_RISK_DETECTED
+  CONTENT_RISK_REVIEW_UPDATED
+  CONTENT_RISK_PLUGIN_FAILED
+}
+
+enum ContentRiskTargetType {
+  SERVICE_REQUEST
+  REQUEST_MESSAGE
+  PROJECT_UPDATE
+  UPDATE_COMMENT
+  MILESTONE
+  ATTACHMENT
+}
+
+enum ContentRiskReviewStatus {
+  QUEUED
+  PROCESSING
+  PASSED
+  VIOLATION
+  UNCERTAIN
+  SKIPPED_UNSUPPORTED
+  CANCELLED
+  FAILED
+}
+
+enum ContentRiskDecisionSource {
+  RULE
+  AI
+  ADMIN
+}
+
+enum ContentRiskDisplayState {
+  VISIBLE
+  REVOKED
 }
 
 enum MailDeliveryMode {
@@ -198,6 +235,7 @@ model User {
   roleGroupId             String?
   soundNotificationsEnabled Boolean         @default(true)
   requestEmailNotificationsEnabled Boolean  @default(true)
+  deletedAt               DateTime?
   createdAt               DateTime          @default(now())
   platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
   updatedAt               DateTime          @updatedAt
@@ -231,6 +269,7 @@ model User {
   pluginRunsRequested        PluginRun[]            @relation("PluginRunRequester")
 
   @@index([roleGroupId])
+  @@index([deletedAt, platformRole])
 }
 
 model Session {
@@ -653,6 +692,13 @@ model Notification {
   customerSpaceId  String?
   projectId        String?
   serviceRequestId String?
+  sourceType       String?
+  sourceId         String?
+  contentRiskReviewId String?
+  contentRiskEmailDueAt DateTime?
+  contentRiskReadAtBeforeSuppression DateTime?
+  contentRiskBodyBeforeSuppression String?
+  contentRiskSuppressed Boolean @default(false)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @default(now())
 
@@ -665,6 +711,8 @@ model Notification {
   @@unique([userId, aggregationKey])
   @@index([userId, readAt, createdAt])
   @@index([emailDueAt, readAt])
+  @@index([sourceType, sourceId])
+  @@index([contentRiskReviewId])
 }
 
 model NotificationDeliveryRule {
@@ -773,6 +821,7 @@ model PlatformSetting {
   attachmentAllowedExtensions     String           @default("jpg,jpeg,png,gif,webp,pdf,docx,xlsx,pptx,txt,log,csv,json")
   customerReplyAttachmentsEnabled Boolean          @default(true)
   standardRequestEmailEnabled     Boolean          @default(false)
+  emailOtpLoginEnabled            Boolean          @default(false)
   updatedAt                       DateTime         @updatedAt
   updatedById                     String?
   updatedBy                       User?            @relation("PlatformSettingUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
@@ -820,11 +869,84 @@ model PluginInstallation {
   projectBindings ProjectPluginBinding[]
 }
 
+model ContentRiskRuntimeState {
+  pluginKey                String   @id
+  activationId            String
+  enabledAt               DateTime
+  bypassedAt              DateTime?
+  capabilityReport        Json?
+  unsupportedNotified     Json?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([activationId])
+}
+
+model ContentRiskState {
+  id                            String                  @id @default(cuid())
+  targetType                    ContentRiskTargetType
+  targetId                      String
+  revision                      Int                     @default(1)
+  approvedRevision              Int                     @default(0)
+  displayState                  ContentRiskDisplayState @default(VISIBLE)
+  latestReviewId                String?
+  lastApprovedSnapshotEncrypted String?
+  revokedAt                     DateTime?
+  restoredAt                    DateTime?
+  updatedAt                     DateTime                @updatedAt
+  createdAt                     DateTime                @default(now())
+
+  @@unique([targetType, targetId])
+  @@index([latestReviewId])
+  @@index([displayState, updatedAt])
+}
+
+model ContentRiskReview {
+  id                        String                    @id @default(cuid())
+  activationId              String
+  targetType                ContentRiskTargetType
+  targetId                  String
+  revision                  Int
+  actorId                   String?
+  customerSpaceId           String?
+  projectId                 String?
+  serviceRequestId          String?
+  source                    ContentRiskDecisionSource
+  status                    ContentRiskReviewStatus   @default(QUEUED)
+  decision                  String?
+  riskCategories            Json?
+  decisionReason            String?
+  actorName                 String?
+  contentSnapshotEncrypted  String
+  previousSnapshotEncrypted String?
+  providerModel             String?
+  providerRequestId         String?
+  attemptCount              Int                       @default(0)
+  nextAttemptAt             DateTime?
+  lastAttemptAt             DateTime?
+  lastError                 String?
+  completedAt               DateTime?
+  revokedAt                 DateTime?
+  restoredAt                DateTime?
+  restoredById              String?
+  restoreReason             String?
+  createdAt                 DateTime                  @default(now())
+  updatedAt                 DateTime                  @updatedAt
+
+  @@unique([activationId, targetType, targetId, revision])
+  @@index([status, nextAttemptAt, createdAt])
+  @@index([targetType, targetId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([projectId, createdAt])
+  @@index([serviceRequestId, createdAt])
+}
+
 model DingTalkRobotDelivery {
   id            String         @id
   eventKey      String         @unique
   eventType     String
-  requestId     String
+  requestId     String?
+  contentRiskReviewId String?
   payload       Json
   status        String         @default("PENDING")
   attemptCount  Int            @default(0)
@@ -834,10 +956,11 @@ model DingTalkRobotDelivery {
   deliveredAt   DateTime?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  request       ServiceRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  request       ServiceRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@index([status, nextAttemptAt])
   @@index([requestId, createdAt])
+  @@index([contentRiskReviewId])
 }
 
 model ProjectPluginBinding {
@@ -1103,6 +1226,7 @@ model MailMessage {
   notificationOccurrenceCount Int?
   sourceType     String?
   sourceId       String?
+  contentRiskReviewId String?
   deliveryMode   MailDeliveryMode    @default(LOCAL_OUTBOX)
   status         MailMessageStatus   @default(QUEUED)
   attemptCount   Int                 @default(0)
@@ -1122,6 +1246,7 @@ model MailMessage {
   @@index([providerId])
   @@index([notificationId, notificationOccurrenceCount])
   @@index([sourceType, sourceId, createdAt])
+  @@index([contentRiskReviewId])
 }
 
 model MailTemplateOverride {

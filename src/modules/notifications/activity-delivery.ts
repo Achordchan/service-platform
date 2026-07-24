@@ -29,6 +29,8 @@ export type ActivityNotification = {
   customerSpaceId?: string;
   projectId?: string;
   serviceRequestId?: string;
+  sourceType?: string;
+  sourceId?: string;
   aggregationKey?: string;
   emailEligible?: boolean;
 };
@@ -49,6 +51,7 @@ type ProjectActivityInput = {
   eventPayload: Prisma.InputJsonValue;
   notificationType: Extract<
     NotificationType,
+    | "PROJECT_CREATED"
     | "PROJECT_UPDATE"
     | "UPDATE_COMMENT"
     | "PROJECT_STAGE"
@@ -60,6 +63,7 @@ type ProjectActivityInput = {
   customerSpaceId: string;
   projectId: string;
   emailRecipientUserIds?: string[];
+  staffAudience?: "ALL_PROJECT_STAFF" | "PROJECT_MANAGERS";
 };
 
 type RequestActivityInput = {
@@ -70,6 +74,7 @@ type RequestActivityInput = {
   notifyProjectManagers: boolean;
   notifyPlatformAdmins: boolean;
   createNotifications?: boolean;
+  eventAudience?: "DEFAULT" | "NOTIFICATION_RECIPIENTS";
   eventType: Extract<
     EventType,
     | "REQUEST_CREATED"
@@ -83,6 +88,7 @@ type RequestActivityInput = {
     NotificationType,
     | "REQUEST_CREATED"
     | "REQUEST_ASSIGNED"
+    | "REQUEST_CLAIMED"
     | "REQUEST_MESSAGE"
     | "REQUEST_STATUS"
     | "REQUEST_ATTACHMENT"
@@ -93,16 +99,21 @@ type RequestActivityInput = {
   customerSpaceId: string;
   projectId: string;
   serviceRequestId: string;
+  sourceType?: string;
+  sourceId?: string;
   emailRecipientUserIds?: string[];
 };
 
 export function planProjectActivity(
   input: ProjectActivityInput,
 ): ActivityDelivery {
-  const staffUserIds = unique([
-    ...input.audience.projectStaffUserIds,
-    ...input.audience.platformAdminUserIds,
-  ]);
+  const staffUserIds =
+    input.staffAudience === "PROJECT_MANAGERS"
+      ? unique(input.audience.projectManagerUserIds)
+      : unique([
+          ...input.audience.projectStaffUserIds,
+          ...input.audience.platformAdminUserIds,
+        ]);
   const recipientUserIds = unique([
     ...(input.visibility === "CUSTOMER_VISIBLE"
       ? input.audience.customerUserIds
@@ -164,13 +175,16 @@ export function planRequestActivity(
     unique(input.emailRecipientUserIds ?? []),
   );
 
-  const eventUserIds = unique([
-    ...(input.includeCustomers ? input.audience.customerUserIds : []),
-    ...input.audience.projectManagerUserIds,
-    ...input.audience.platformAdminUserIds,
-    ...(input.relevantWorkerUserIds ?? []),
-    input.actorId,
-  ]);
+  const eventUserIds =
+    input.eventAudience === "NOTIFICATION_RECIPIENTS"
+      ? unique([...notificationUserIds, input.actorId])
+      : unique([
+          ...(input.includeCustomers ? input.audience.customerUserIds : []),
+          ...input.audience.projectManagerUserIds,
+          ...input.audience.platformAdminUserIds,
+          ...(input.relevantWorkerUserIds ?? []),
+          input.actorId,
+        ]);
 
   return {
     events: eventUserIds.map((userId) => ({
@@ -192,6 +206,8 @@ export function planRequestActivity(
             customerSpaceId: input.customerSpaceId,
             projectId: input.projectId,
             serviceRequestId: input.serviceRequestId,
+            sourceType: input.sourceType,
+            sourceId: input.sourceId,
             emailEligible: emailRecipientUserIds.has(userId),
             aggregationKey: requestAggregationKey(
               input.serviceRequestId,

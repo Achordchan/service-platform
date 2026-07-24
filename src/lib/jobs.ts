@@ -1,7 +1,11 @@
 import { PgBoss, type JobWithMetadata } from "pg-boss";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import type { MailDeliveryMode, Prisma } from "@/generated/prisma/client";
+import type {
+  MailDeliveryMode,
+  MailMessageStatus,
+  Prisma,
+} from "@/generated/prisma/client";
 import { processMailMessage } from "@/lib/mail";
 import {
   buildMailOutboxCandidateWhere,
@@ -31,6 +35,10 @@ import {
   processDingTalkRobotDelivery,
 } from "@/modules/plugins/dingtalk-robot-service";
 import {
+  listDueContentRiskReviews,
+  processContentRiskReview,
+} from "@/modules/plugins/content-risk-review-service";
+import {
   cleanupExpiredUniversalLaunchTickets,
 } from "@/modules/integrations/universal/ticket-service";
 import { cleanupAbandonedInlineAttachments } from "@/modules/attachments/inline-attachment-service";
@@ -57,6 +65,8 @@ export const MAIL_OUTBOX_SWEEP_JOB = "mail-outbox-sweep";
 export const DINGTALK_ROBOT_JOB = "plugin-dingtalk-robot-delivery";
 export const DINGTALK_ROBOT_SWEEP_JOB = "plugin-dingtalk-robot-sweep";
 export const REQUEST_AUTO_CLOSE_SWEEP_JOB = "request-auto-close-sweep";
+export const CONTENT_RISK_REVIEW_JOB = "plugin-content-risk-review";
+export const CONTENT_RISK_SWEEP_JOB = "plugin-content-risk-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -76,6 +86,7 @@ type ImageWebpJobData =
 
 type UniversalWebhookJobData = { deliveryId: string };
 type DingTalkRobotJobData = { deliveryId: string };
+type ContentRiskReviewJobData = { reviewId: string };
 
 export type EnqueueMailInput = {
   to: string;
@@ -89,6 +100,7 @@ export type EnqueueMailInput = {
   notificationOccurrenceCount?: number;
   sourceType?: string;
   sourceId?: string;
+  contentRiskReviewId?: string;
 };
 
 const globalForBoss = globalThis as unknown as {
@@ -117,6 +129,8 @@ async function startBoss() {
   await boss.createQueue(DINGTALK_ROBOT_JOB);
   await boss.createQueue(DINGTALK_ROBOT_SWEEP_JOB);
   await boss.createQueue(REQUEST_AUTO_CLOSE_SWEEP_JOB);
+  await boss.createQueue(CONTENT_RISK_REVIEW_JOB);
+  await boss.createQueue(CONTENT_RISK_SWEEP_JOB);
   return boss;
 }
 
@@ -181,9 +195,30 @@ export async function queueMailMessage(
 }
 
 export async function enqueueMail(input: EnqueueMailInput) {
-  const message = await withSystemDb((tx) =>
-    createMailMessageInTx(tx, input),
-  );
+  const message = await withSystemDb(async (tx) => {
+    if (!input.contentRiskReviewId) {
+      return createMailMessageInTx(tx, input);
+    }
+    const disposition = await resolveContentRiskMailDisposition(
+      tx,
+      input.contentRiskReviewId,
+    );
+    if (!disposition.create) return null;
+    return createMailMessageInTx(
+      tx,
+      {
+        ...input,
+        contentRiskReviewId: disposition.keepReviewId
+          ? input.contentRiskReviewId
+          : undefined,
+      },
+      disposition.status,
+    );
+  });
+  if (!message) return { jobId: null, mailMessageId: null };
+  if (message.status !== "QUEUED" || message.contentRiskReviewId) {
+    return { jobId: null, mailMessageId: message.id };
+  }
   const jobId = await dispatchQueuedMailMessage(
     message.id,
     message.deliveryMode,
@@ -195,13 +230,14 @@ export async function enqueueMail(input: EnqueueMailInput) {
 export async function createMailMessageInTx(
   tx: Prisma.TransactionClient,
   input: EnqueueMailInput,
+  initialStatus: Extract<MailMessageStatus, "QUEUED" | "CANCELLED"> = "QUEUED",
 ) {
   const template = await buildTemplateMailInTx(tx, {
     key: input.templateKey,
     variables: input.variables ?? {},
     actionUrl: input.actionUrl,
   });
-  return createPreparedMailMessageInTx(tx, input, template);
+  return createPreparedMailMessageInTx(tx, input, template, initialStatus);
 }
 
 export function prepareMailMessageTemplate(input: EnqueueMailInput) {
@@ -218,6 +254,7 @@ export async function createPreparedMailMessageInTx(
   tx: Prisma.TransactionClient,
   input: EnqueueMailInput,
   template: Awaited<ReturnType<typeof prepareMailMessageTemplate>>,
+  initialStatus: Extract<MailMessageStatus, "QUEUED" | "CANCELLED"> = "QUEUED",
 ) {
   const deliveryMode = await resolveLockedMailDeliveryMode(
     tx,
@@ -244,6 +281,7 @@ export async function createPreparedMailMessageInTx(
       "notificationOccurrenceCount",
       "sourceType",
       "sourceId",
+      "contentRiskReviewId",
       "deliveryMode",
       status,
       "createdAt",
@@ -265,8 +303,9 @@ export async function createPreparedMailMessageInTx(
       ${input.notificationOccurrenceCount ?? null},
       ${input.sourceType ?? null},
       ${input.sourceId ?? null},
+      ${input.contentRiskReviewId ?? null},
       ${deliveryMode}::"MailDeliveryMode",
-      'QUEUED',
+      ${initialStatus}::"MailMessageStatus",
       ${createdAt},
       ${createdAt}
     )
@@ -288,9 +327,76 @@ export async function createPreparedMailMessageInTx(
       input.notificationOccurrenceCount ?? null,
     sourceType: input.sourceType ?? null,
     sourceId: input.sourceId ?? null,
+    contentRiskReviewId: input.contentRiskReviewId ?? null,
     deliveryMode,
-    status: "QUEUED" as const,
+    status: initialStatus,
   };
+}
+
+async function resolveContentRiskMailDisposition(
+  tx: Prisma.TransactionClient,
+  reviewId: string,
+) {
+  const target = await tx.contentRiskReview.findUnique({
+    where: { id: reviewId },
+    select: { targetType: true, targetId: true },
+  });
+  if (!target) return { create: false as const };
+  await tx.$executeRaw`
+    SELECT pg_advisory_xact_lock(
+      hashtext(${`${target.targetType}:${target.targetId}`})
+    )
+  `;
+  const [review, state, runtime] = await Promise.all([
+    tx.contentRiskReview.findUnique({ where: { id: reviewId } }),
+    tx.contentRiskState.findUnique({
+      where: {
+        targetType_targetId: {
+          targetType: target.targetType,
+          targetId: target.targetId,
+        },
+      },
+      select: { latestReviewId: true, revision: true },
+    }),
+    tx.contentRiskRuntimeState.findUnique({
+      where: { pluginKey: "content-contact-risk" },
+      select: { bypassedAt: true },
+    }),
+  ]);
+  if (
+    !review ||
+    state?.latestReviewId !== review.id ||
+    state.revision !== review.revision
+  ) {
+    return { create: false as const };
+  }
+  if (review.status === "QUEUED" || review.status === "PROCESSING") {
+    return {
+      create: true as const,
+      status: "QUEUED" as const,
+      keepReviewId: true,
+    };
+  }
+  if (review.status === "VIOLATION") {
+    return {
+      create: true as const,
+      status: "CANCELLED" as const,
+      keepReviewId: true,
+    };
+  }
+  if (
+    review.status === "PASSED" ||
+    review.status === "UNCERTAIN" ||
+    review.status === "SKIPPED_UNSUPPORTED" ||
+    (review.status === "CANCELLED" && Boolean(runtime?.bypassedAt))
+  ) {
+    return {
+      create: true as const,
+      status: "QUEUED" as const,
+      keepReviewId: false,
+    };
+  }
+  return { create: false as const };
 }
 
 export async function dispatchQueuedMailMessage(
@@ -524,6 +630,26 @@ async function queueDueDingTalkRobotDeliveries() {
   }
 }
 
+export async function queueContentRiskReview(reviewId: string) {
+  const boss = await getBoss();
+  return boss.send(
+    CONTENT_RISK_REVIEW_JOB,
+    { reviewId },
+    {
+      retryLimit: 0,
+      singletonKey: reviewId,
+      singletonSeconds: 30,
+    },
+  );
+}
+
+async function queueDueContentRiskReviews() {
+  const reviews = await listDueContentRiskReviews();
+  for (const review of reviews) {
+    await queueContentRiskReview(review.id);
+  }
+}
+
 function scheduleDatabaseListenerReconnect() {
   if (
     globalForBoss.databaseListenerReconnectTimer ||
@@ -552,6 +678,7 @@ async function startDatabaseListener() {
       await client.query("LISTEN service_platform_webhook_deliveries");
       await client.query("LISTEN service_platform_mail_outbox");
       await client.query("LISTEN service_platform_dingtalk_deliveries");
+      await client.query("LISTEN service_platform_content_risk");
     } catch (error) {
       await client.end().catch(() => undefined);
       throw error;
@@ -577,6 +704,12 @@ async function startDatabaseListener() {
         const deliveryId = message.payload?.trim();
         if (!deliveryId) return;
         void queueDingTalkRobotDelivery(deliveryId).catch(() => undefined);
+        return;
+      }
+      if (message.channel === "service_platform_content_risk") {
+        const reviewId = message.payload?.trim();
+        if (!reviewId) return;
+        void queueContentRiskReview(reviewId).catch(() => undefined);
       }
     });
     const handleDisconnect = () => {
@@ -615,6 +748,7 @@ export async function startMailWorker() {
     await boss.schedule(MAIL_OUTBOX_SWEEP_JOB, "* * * * *");
     await boss.schedule(DINGTALK_ROBOT_SWEEP_JOB, "* * * * *");
     await boss.schedule(REQUEST_AUTO_CLOSE_SWEEP_JOB, "7 * * * *");
+    await boss.schedule(CONTENT_RISK_SWEEP_JOB, "* * * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -696,6 +830,15 @@ export async function startMailWorker() {
         }
       },
     );
+    await boss.work<ContentRiskReviewJobData>(
+      CONTENT_RISK_REVIEW_JOB,
+      { batchSize: 1, localConcurrency: 2 },
+      async (jobs) => {
+        for (const job of jobs) {
+          await processContentRiskReview(job.data.reviewId);
+        }
+      },
+    );
     await boss.work(
       UNIVERSAL_WEBHOOK_SWEEP_JOB,
       { batchSize: 1, localConcurrency: 1 },
@@ -738,8 +881,16 @@ export async function startMailWorker() {
         await closeResolvedRequestsDue();
       },
     );
+    await boss.work(
+      CONTENT_RISK_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await queueDueContentRiskReviews();
+      },
+    );
     await queueDueUniversalWebhooks();
     await queueDueDingTalkRobotDeliveries();
+    await queueDueContentRiskReviews();
     await wakeMailOutbox();
     await closeResolvedRequestsDue().catch((error) => {
       console.error(

@@ -12,6 +12,7 @@ export const REALTIME_EVENT_TYPES = [
   "REQUEST_PRESENCE_CHANGED",
   "REQUEST_TYPING_CHANGED",
   "PLUGIN_RUN_UPDATED",
+  "CONTENT_RISK_REVIEW_UPDATED",
   "NOTIFICATION_CREATED",
 ] as const;
 
@@ -170,6 +171,7 @@ export function matchesRealtimeScope(
   payload: RealtimeEventPayload,
   scope: { projectId?: string; requestId?: string },
 ) {
+  if (payload.scope === "GLOBAL") return true;
   if (scope.requestId) {
     return (
       payload.requestId === scope.requestId ||
@@ -180,6 +182,17 @@ export function matchesRealtimeScope(
     return payload.projectId === scope.projectId;
   }
   return true;
+}
+
+export function isProjectDeletedRealtimeEvent(
+  event: RealtimeEvent,
+  projectId?: string,
+) {
+  return (
+    event.type === "PROJECT_UPDATED" &&
+    event.payload.change === "PROJECT_DELETED" &&
+    (!projectId || event.payload.projectId === projectId)
+  );
 }
 
 export function resetRealtimeClientForTests() {

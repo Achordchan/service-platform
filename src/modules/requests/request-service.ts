@@ -2,9 +2,19 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { dispatchRequestActivity } from "@/modules/notifications/notification-service";
+import {
+  createContentRiskReview,
+  enforceActorPublicContentRules,
+} from "@/modules/plugins/content-risk-service";
+import {
+  contentRiskReasonFor,
+  contentRiskStatusFor,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
 import { badRequest, notFound } from "@/modules/requests/errors";
 import { generateRequestNumber } from "@/modules/requests/request-number";
 import type { CreateRequestInput } from "@/modules/requests/request-schemas";
@@ -14,9 +24,16 @@ import {
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
-import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import {
+  sanitizeMessageHtml,
+  sanitizeReeditableMessageHtml,
+} from "@/lib/sanitize-html";
 import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
+import {
+  canViewProjectRequests,
+  canViewRequest,
+} from "@/modules/requests/request-permissions";
 
 const userBriefSelect = {
   id: true,
@@ -163,11 +180,30 @@ async function hydrateRequestSummaries(
   }));
 }
 
-export function createRequest(
+export async function createRequest(
   actor: Actor,
   projectId: string,
   input: CreateRequestInput,
 ) {
+  const preflightProject = await withActorDb(actor, (tx) =>
+    tx.project.findUnique({
+      where: { id: projectId },
+      select: { id: true, customerSpaceId: true },
+    }),
+  );
+  if (preflightProject) {
+    await enforceActorPublicContentRules(actor, {
+      targetType: "SERVICE_REQUEST",
+      customerSpaceId: preflightProject.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        title: input.title,
+        body: input.description,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+    });
+  }
   return withActorDb(actor, async (tx) => {
     const project = await tx.project.findUnique({
       where: { id: projectId },
@@ -248,6 +284,23 @@ export function createRequest(
         visibility: "CUSTOMER_VISIBLE",
       },
     );
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "SERVICE_REQUEST",
+      targetId: request.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: project.customerSpaceId,
+      projectId,
+      serviceRequestId: request.id,
+      snapshot: {
+        title: input.title,
+        body: sanitizedDescription,
+        visibility: "CUSTOMER_VISIBLE",
+        attachmentIds: extractInlineAttachmentIds(sanitizedDescription),
+      },
+    });
 
     await writeAuditLog(tx, actor, {
       action: "REQUEST_CREATED",
@@ -262,7 +315,7 @@ export function createRequest(
         priority: request.priority,
       },
     });
-    await dispatchRequestActivity(tx, actor, {
+    const delivery = await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_CREATED",
       eventPayload: {
         projectId,
@@ -273,18 +326,21 @@ export function createRequest(
       },
       notificationType: "REQUEST_CREATED",
       notificationTitle: `${actor.name} 提交了请求 ${request.number}`,
-      notificationBody: `${request.title}：${buildMessagePreview(
-        sanitizedDescription,
-      )}`,
+      notificationBody: buildMessagePreview(sanitizedDescription),
       includeCustomers: true,
       notifyProjectManagers: true,
       notifyPlatformAdmins: true,
       customerSpaceId: project.customerSpaceId,
       projectId,
       serviceRequestId: request.id,
+      contentRiskReviewId: contentRiskReview?.id,
     });
     const [summary] = await hydrateRequestSummaries(tx, [request]);
-    return { ...summary, initialMessageId: initialMessage.id };
+    return {
+      ...summary,
+      initialMessageId: initialMessage.id,
+      deliveryFeedback: delivery.feedback,
+    };
   });
 }
 
@@ -300,11 +356,28 @@ export function listProjectRequests(actor: Actor, projectId: string) {
     if (!actor.isStaff && !project.customerRequestsEnabled) {
       return [];
     }
+    const projectAssignment = actor.isStaff
+      ? await tx.projectStaff.findUnique({
+          where: { projectId_userId: { projectId, userId: actor.id } },
+          select: { role: true },
+        })
+      : null;
+    if (
+      actor.isStaff &&
+      !canViewProjectRequests(actor, projectAssignment?.role ?? null)
+    ) {
+      return [];
+    }
+
+    const restrictToAssigned =
+      actor.isStaff &&
+      !actor.isPlatformAdmin &&
+      !hasRolePermission(actor, "request.view_project");
 
     const requests = await tx.serviceRequest.findMany({
       where: {
         projectId,
-        ...(actor.platformRole === "TECHNICIAN"
+        ...(restrictToAssigned
           ? {
               OR: [
                 { assigneeId: actor.id },
@@ -348,6 +421,32 @@ export function getRequest(actor: Actor, requestId: string) {
     });
     if (!actor.isStaff && !project.customerRequestsEnabled) {
       throw notFound();
+    }
+    if (actor.isStaff && !actor.isPlatformAdmin) {
+      const [projectAssignment, assignees] = await Promise.all([
+        tx.projectStaff.findUnique({
+          where: {
+            projectId_userId: {
+              projectId: request.projectId,
+              userId: actor.id,
+            },
+          },
+          select: { role: true },
+        }),
+        tx.requestAssignee.findMany({
+          where: { serviceRequestId: request.id },
+          select: { userId: true },
+        }),
+      ]);
+      if (
+        !canViewRequest(actor, {
+          assigneeId: request.assigneeId,
+          assigneeIds: assignees.map((item) => item.userId),
+          projectRole: projectAssignment?.role ?? null,
+        })
+      ) {
+        throw notFound();
+      }
     }
     const [summary] = await hydrateRequestSummaries(tx, [request]);
     const messages = await tx.requestMessage.findMany({
@@ -409,6 +508,7 @@ export function getRequest(actor: Actor, requestId: string) {
         size: true,
         inline: true,
         visibility: true,
+        uploadedById: true,
         createdAt: true,
       },
       orderBy: { createdAt: "asc" },
@@ -425,6 +525,55 @@ export function getRequest(actor: Actor, requestId: string) {
       }
     }
     const messageById = new Map(messages.map((message) => [message.id, message]));
+    const contentRisk = await loadContentRiskPageState(
+      [
+        { targetType: "SERVICE_REQUEST", targetId: request.id },
+        ...messages.map((message) => ({
+          targetType: "REQUEST_MESSAGE" as const,
+          targetId: message.id,
+        })),
+        ...attachments.map((attachment) => ({
+          targetType: "ATTACHMENT" as const,
+          targetId: attachment.id,
+        })),
+      ],
+      tx,
+    );
+    const riskState = (
+      targetType: "SERVICE_REQUEST" | "REQUEST_MESSAGE" | "ATTACHMENT",
+      targetId: string,
+    ) => contentRisk.states.get(`${targetType}:${targetId}`);
+    const requestRiskStatus = actor.isPlatformAdmin
+      ? null
+      : contentRiskStatusFor(riskState("SERVICE_REQUEST", request.id), {
+          pluginEnabled: contentRisk.enabled,
+          showPending: false,
+        });
+    const messageRiskState = (message: (typeof messages)[number]) =>
+      message.isInitial
+        ? riskState("SERVICE_REQUEST", request.id)
+        : riskState("REQUEST_MESSAGE", message.id);
+    const messageRiskStatus = (message: (typeof messages)[number]) =>
+      contentRiskStatusFor(messageRiskState(message),
+        {
+          pluginEnabled: contentRisk.enabled,
+          showPending:
+            !actor.isPlatformAdmin &&
+            (message.authorId === actor.id ||
+              message.externalAuthorId === actor.id),
+        },
+      );
+    const attachmentRiskStatus = (
+      attachment: (typeof attachments)[number],
+      parentStatus?: "PENDING" | "REVOKED" | null,
+    ) => {
+      if (actor.isPlatformAdmin) return null;
+      if (parentStatus === "REVOKED") return "REVOKED" as const;
+      return contentRiskStatusFor(riskState("ATTACHMENT", attachment.id), {
+        pluginEnabled: contentRisk.enabled,
+        showPending: attachment.uploadedById === actor.id,
+      });
+    };
     const authorFor = (message: (typeof messages)[number]) => ({
       author: message.authorId ? userById.get(message.authorId) ?? null : null,
       externalAuthor: message.externalAuthorId
@@ -434,26 +583,55 @@ export function getRequest(actor: Actor, requestId: string) {
     return {
       ...summary,
       project,
+      description:
+        requestRiskStatus === "REVOKED"
+          ? "该内容已撤回"
+          : summary.description,
+      contentRiskUiEnabled: contentRisk.enabled,
       messages: messages.map((message) => {
+        const contentRiskStatus = messageRiskStatus(message);
+        const contentRiskReason = contentRiskReasonFor(
+          messageRiskState(message),
+        );
+        const canReeditRevokedMessage =
+          contentRiskStatus === "REVOKED" &&
+          (message.authorId === actor.id ||
+            message.externalAuthorId === actor.id);
         const replyTo = message.replyToMessageId
           ? messageById.get(message.replyToMessageId)
           : null;
+        const replyToRiskStatus = replyTo ? messageRiskStatus(replyTo) : null;
         return {
           ...message,
-          supportPlaybook: parseSupportPlaybookSnapshot(
-            message.supportPlaybookSnapshot,
-          ),
+          body:
+            !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
+              ? "该内容已撤回"
+              : message.body,
+          contentRiskStatus,
+          contentRiskReason,
+          reeditBody: canReeditRevokedMessage
+            ? sanitizeReeditableMessageHtml(message.body)
+            : null,
+          reeditAttachmentCount: canReeditRevokedMessage
+            ? (attachmentsByMessageId.get(message.id) ?? []).length
+            : 0,
+          supportPlaybook:
+            !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
+              ? null
+              : parseSupportPlaybookSnapshot(message.supportPlaybookSnapshot),
           author: authorFor(message).author,
           externalAuthor: authorFor(message).externalAuthor,
-          attachments: [
-            ...(attachmentsByMessageId.get(message.id) ?? []),
-            ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
-              .map((id) => attachmentById.get(id))
-              .filter(
-                (value): value is (typeof attachments)[number] =>
-                  Boolean(value),
-              ),
-          ].map(
+          attachments: (!actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
+            ? []
+            : [
+                ...(attachmentsByMessageId.get(message.id) ?? []),
+                ...(playbookAssetIdsByMessageId.get(message.id) ?? [])
+                  .map((id) => attachmentById.get(id))
+                  .filter(
+                    (value): value is (typeof attachments)[number] =>
+                      Boolean(value),
+                  ),
+              ]).map(
             (attachment) => ({
               id: attachment.id,
               originalName: attachment.originalName,
@@ -462,12 +640,19 @@ export function getRequest(actor: Actor, requestId: string) {
               inline: attachment.inline,
               visibility: attachment.visibility,
               createdAt: attachment.createdAt,
+              contentRiskStatus: attachmentRiskStatus(
+                attachment,
+                contentRiskStatus,
+              ),
             }),
           ),
           replyTo: replyTo
             ? {
                 id: replyTo.id,
-                body: replyTo.body,
+                body:
+                  !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
+                    ? "该内容已撤回"
+                    : replyTo.body,
                 visibility: replyTo.visibility,
                 isSystem: replyTo.isSystem,
                 authorId: replyTo.authorId,
@@ -479,18 +664,21 @@ export function getRequest(actor: Actor, requestId: string) {
                     }
                   : null,
                 externalAuthor: authorFor(replyTo).externalAuthor,
-                attachments: (attachmentsByMessageId.get(replyTo.id) ?? []).map(
-                  (attachment) => ({
-                    id: attachment.id,
-                    originalName: attachment.originalName,
-                    inline: attachment.inline,
-                  }),
-                ),
+                attachments:
+                  !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
+                    ? []
+                    : (attachmentsByMessageId.get(replyTo.id) ?? []).map(
+                        (attachment) => ({
+                          id: attachment.id,
+                          originalName: attachment.originalName,
+                          inline: attachment.inline,
+                        }),
+                      ),
               }
             : null,
         };
       }),
-      attachments: attachments
+      attachments: (requestRiskStatus === "REVOKED" ? [] : attachments)
         .filter(
           (attachment) => !attachment.requestMessageId && !attachment.inline,
         )
@@ -501,6 +689,7 @@ export function getRequest(actor: Actor, requestId: string) {
           size: attachment.size,
           visibility: attachment.visibility,
           createdAt: attachment.createdAt,
+          contentRiskStatus: attachmentRiskStatus(attachment),
         })),
     };
   });

@@ -106,14 +106,22 @@ describe("mail message controls", () => {
   });
 
   it("requeues failed mail with the currently active delivery mode", async () => {
+    const modeResult = await ownerPool.query<{
+      mailMode: "LOCAL_OUTBOX" | "RESEND" | "SMTP";
+    }>(
+      `SELECT "mailMode"::text AS "mailMode"
+         FROM "PlatformSetting" WHERE id = 1`,
+    );
+    const activeMode = modeResult.rows[0]?.mailMode;
+    if (!activeMode) throw new Error("活动邮件通道不存在");
     const queued = await retryMailMessage(admin, fixture.failedId);
 
     expect(queued.status).toBe("QUEUED");
-    expect(queued.deliveryMode).toBe("LOCAL_OUTBOX");
+    expect(queued.deliveryMode).toBe(activeMode);
     expect(queued.attemptCount).toBe(0);
     expect(queueMailMessage).toHaveBeenCalledWith(
       fixture.failedId,
-      "LOCAL_OUTBOX",
+      activeMode,
     );
   });
 

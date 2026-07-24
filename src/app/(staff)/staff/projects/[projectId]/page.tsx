@@ -1,4 +1,5 @@
 import { Box, Container } from "@mui/material";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { ProjectDeliveryActions } from "@/components/staff/project-delivery-actions";
 import { ProjectDetailWorkspace } from "@/components/staff/project-detail-workspace";
 import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
@@ -11,7 +12,7 @@ import type {
 import { requireUserWithAccess } from "@/lib/session";
 import { getProject } from "@/modules/projects/project-service";
 import { listProjectRequests } from "@/modules/requests/request-service";
-import { listUsers } from "@/modules/users/user-service";
+import { listAssignableProjectStaff } from "@/modules/users/user-service";
 import { getRegisteredPlugin } from "@/modules/plugins/plugin-registry";
 
 export default async function StaffProjectDetailPage({
@@ -32,15 +33,12 @@ export default async function StaffProjectDetailPage({
   const externalConnectorLabel = externalConnectorKey
     ? getRegisteredPlugin(externalConnectorKey).manifest.name
     : null;
-  const staffCandidates = actor.isPlatformAdmin
-    ? (
-        await Promise.all([
-          listUsers(actor, { role: "PLATFORM_ADMIN", limit: 200 }),
-          listUsers(actor, { role: "PROJECT_MANAGER", limit: 200 }),
-          listUsers(actor, { role: "TECHNICIAN", limit: 200 }),
-        ])
-      )
-        .flat()
+  const canManageStaff =
+    actor.isPlatformAdmin ||
+    (currentAssignment?.role === "PROJECT_MANAGER" &&
+      hasRolePermission(actor, "project.manage_staff"));
+  const staffCandidates = canManageStaff
+    ? (await listAssignableProjectStaff(actor, projectId))
         .map((user) => ({
           id: user.id,
           name: user.name,
@@ -77,6 +75,7 @@ export default async function StaffProjectDetailPage({
       .filter((member) => member.role === "PROJECT_MANAGER")
       .map((member) => member.user.name),
     requestCount: requests.length,
+    contentRiskUiEnabled: project.contentRiskUiEnabled,
     externalConnectorKey,
     externalConnectorLabel,
     staff: project.staff.map((member) => ({
@@ -97,6 +96,7 @@ export default async function StaffProjectDetailPage({
       startDate: milestone.startDate?.toISOString() ?? null,
       endDate: milestone.endDate?.toISOString() ?? null,
       createdAt: milestone.createdAt.toISOString(),
+      contentRiskStatus: milestone.contentRiskStatus,
     })),
     updates: project.updates.map((update) => ({
       id: update.id,
@@ -105,12 +105,14 @@ export default async function StaffProjectDetailPage({
       visibility: update.visibility,
       authorName: update.author.name,
       createdAt: update.createdAt.toISOString(),
+      contentRiskStatus: update.contentRiskStatus,
       comments: update.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
         visibility: comment.visibility,
         authorName: comment.author.name,
         createdAt: comment.createdAt.toISOString(),
+        contentRiskStatus: comment.contentRiskStatus,
       })),
     })),
     attachments: project.attachments.map((attachment) => ({
@@ -120,6 +122,7 @@ export default async function StaffProjectDetailPage({
       size: attachment.size,
       visibility: attachment.visibility,
       createdAt: attachment.createdAt.toISOString(),
+      contentRiskStatus: attachment.contentRiskStatus,
     })),
   };
   const requestRows: RequestListItem[] = requests.map((request) => {
@@ -168,8 +171,17 @@ export default async function StaffProjectDetailPage({
     };
   });
 
-  const canManage =
-    actor.isPlatformAdmin || currentAssignment?.role === "PROJECT_MANAGER";
+  const isProjectManager = currentAssignment?.role === "PROJECT_MANAGER";
+  const canManageDelivery =
+    actor.isPlatformAdmin ||
+    (isProjectManager &&
+      hasRolePermission(actor, "project.manage_delivery"));
+  const canPublishUpdate =
+    actor.isPlatformAdmin ||
+    (isProjectManager && hasRolePermission(actor, "update.publish"));
+  const canUploadFiles =
+    actor.isPlatformAdmin ||
+    (isProjectManager && hasRolePermission(actor, "file.upload"));
   const canEditProject = actor.isPlatformAdmin;
 
   return (
@@ -182,7 +194,11 @@ export default async function StaffProjectDetailPage({
         py: { xs: 3, md: 4 },
       }}
     >
-      <RealtimeRouteRefresh mode="project-detail" projectId={project.id} />
+      <RealtimeRouteRefresh
+        mode="project-detail"
+        projectId={project.id}
+        projectDeletedRedirect="/staff/projects"
+      />
       <StaffPageHeading
         backHref="/staff/projects"
         backLabel="项目"
@@ -192,8 +208,12 @@ export default async function StaffProjectDetailPage({
         action={
           <ProjectDeliveryActions
             project={projectView}
-            canManage={canManage}
+            canManageDelivery={canManageDelivery}
+            canPublishUpdate={canPublishUpdate}
             canEditProject={canEditProject}
+            contentRiskNoticeEnabled={
+              project.contentRiskUiEnabled && !actor.isPlatformAdmin
+            }
           />
         }
       />
@@ -201,9 +221,15 @@ export default async function StaffProjectDetailPage({
         <ProjectDetailWorkspace
           project={projectView}
           requests={requestRows}
-          canManage={canManage}
+          canManageDelivery={canManageDelivery}
+          canPublishUpdate={canPublishUpdate}
+          canManageStaff={canManageStaff}
+          canUploadFiles={canUploadFiles}
           canEditProject={canEditProject}
           staffCandidates={staffCandidates}
+          contentRiskNoticeEnabled={
+            project.contentRiskUiEnabled && !actor.isPlatformAdmin
+          }
         />
       </Box>
     </Container>

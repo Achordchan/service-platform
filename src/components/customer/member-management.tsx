@@ -19,6 +19,7 @@ import {
   Typography,
 } from "@mui/material";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { useToast } from "@/components/shared/toast-provider";
 import {
   jsonRequest,
   staffApi,
@@ -36,46 +37,57 @@ type SpaceMembers = {
   }>;
 };
 
+type DeleteTarget = {
+  spaceId: string;
+  member: SpaceMembers["members"][number];
+};
+
 export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
   const router = useRouter();
+  const toast = useToast();
   const [activeSpace, setActiveSpace] = useState<SpaceMembers | null>(null);
   const [email, setEmail] = useState("");
-  const [state, setState] = useState<
-    "idle" | "sending" | "success" | "error"
-  >("idle");
-  const [invitationError, setInvitationError] = useState("");
-  const [memberError, setMemberError] = useState("");
+  const [sending, setSending] = useState(false);
   const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   async function sendInvitation() {
     if (!activeSpace) return;
-    setState("sending");
-    setInvitationError("");
+    setSending(true);
     try {
       await staffApi(
         `/api/v1/admin/customer-spaces/${activeSpace.id}/invitations`,
         jsonRequest("POST", { email }),
       );
-      setState("success");
+      toast.success("邀请邮件已加入发送队列");
+      setActiveSpace(null);
+      setEmail("");
     } catch (error) {
-      setInvitationError(
+      toast.error(
         error instanceof Error ? error.message : "邀请发送失败",
       );
-      setState("error");
+    } finally {
+      setSending(false);
     }
   }
 
-  async function removeMember(spaceId: string, membershipId: string) {
-    setMemberError("");
-    setRemovingMemberId(membershipId);
+  async function removeMember() {
+    if (!deleteTarget) return;
+    setRemovingMemberId(deleteTarget.member.id);
     try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${spaceId}/members/${membershipId}`,
+      const result = await staffApi<{ accountDeleted: boolean }>(
+        `/api/v1/admin/customer-spaces/${deleteTarget.spaceId}/members/${deleteTarget.member.id}`,
         { method: "DELETE" },
+      );
+      setDeleteTarget(null);
+      toast.success(
+        result.accountDeleted
+          ? "成员账号已删除并退出登录"
+          : "成员已从当前客户移除",
       );
       router.refresh();
     } catch (error) {
-      setMemberError(
+      toast.error(
         error instanceof Error ? error.message : "成员移除失败",
       );
     } finally {
@@ -89,11 +101,6 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
 
   return (
     <Stack spacing={3}>
-      {memberError ? (
-        <Alert severity="error" onClose={() => setMemberError("")}>
-          {memberError}
-        </Alert>
-      ) : null}
       {spaces.map((space) => {
         const isFull = space.members.length >= space.memberLimit;
         return (
@@ -125,8 +132,6 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                 onClick={() => {
                   setActiveSpace(space);
                   setEmail("");
-                  setState("idle");
-                  setInvitationError("");
                 }}
               >
                 邀请成员
@@ -144,9 +149,11 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                         color="inherit"
                         size="small"
                         disabled={removingMemberId !== null}
-                        onClick={() => removeMember(space.id, member.id)}
+                        onClick={() =>
+                          setDeleteTarget({ spaceId: space.id, member })
+                        }
                       >
-                        {removingMemberId === member.id ? "移除中" : "移除"}
+                        {removingMemberId === member.id ? "删除中" : "删除账号"}
                       </Button>
                     ) : null
                   }
@@ -174,20 +181,12 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
         <DialogTitle>邀请成员</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {state === "success" ? (
-              <Alert severity="success">邀请邮件已加入发送队列。</Alert>
-            ) : null}
-            {state === "error" ? (
-              <Alert severity="error">
-                {invitationError || "邀请发送失败"}
-              </Alert>
-            ) : null}
             <TextField
               label="成员邮箱"
               type="email"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              disabled={state === "sending" || state === "success"}
+              disabled={sending}
               autoFocus
               fullWidth
             />
@@ -204,10 +203,42 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
             variant="contained"
             onClick={sendInvitation}
             disabled={
-              !email.trim() || state === "sending" || state === "success"
+              !email.trim() || sending
             }
           >
-            {state === "sending" ? "正在发送" : "发送邀请"}
+            {sending ? "正在发送" : "发送邀请"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={
+          removingMemberId ? undefined : () => setDeleteTarget(null)
+        }
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>删除成员账号</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary">
+            确认删除“{deleteTarget?.member.name}”？该成员将从当前客户移除；若没有其他客户归属，其登录账号和现有会话也会一并清除。
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button
+            onClick={() => setDeleteTarget(null)}
+            disabled={Boolean(removingMemberId)}
+          >
+            取消
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void removeMember()}
+            disabled={Boolean(removingMemberId)}
+          >
+            确认删除
           </Button>
         </DialogActions>
       </Dialog>

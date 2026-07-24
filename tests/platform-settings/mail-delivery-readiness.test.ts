@@ -24,6 +24,7 @@ const readySettings: RuntimeMailSettings = {
   smtpLastCheckedAt: new Date(),
   smtpLastError: null,
   standardEmailUnreadDelayEnabled: false,
+  emailOtpLoginEnabled: false,
 };
 
 describe("mail delivery readiness", () => {

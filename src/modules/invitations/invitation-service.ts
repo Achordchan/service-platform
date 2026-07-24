@@ -101,10 +101,24 @@ export async function acceptInvitation(
 
     let user = await tx.user.findUnique({
       where: { email: invitation.email },
-      include: { accounts: true },
+      include: {
+        accounts: true,
+        memberships: {
+          where: { customerSpace: { kind: "STANDARD" } },
+          select: { customerSpaceId: true },
+        },
+      },
     });
-    if (user && user.platformRole !== "CUSTOMER") {
+    if (user && (user.platformRole !== "CUSTOMER" || user.deletedAt)) {
       throw new Error("INVITATION_INVALID");
+    }
+    if (
+      user?.memberships.some(
+        (membership) =>
+          membership.customerSpaceId !== invitation.customerSpaceId,
+      )
+    ) {
+      throw new Error("CUSTOMER_ACCOUNT_ALREADY_ASSIGNED");
     }
 
     const existingMembership = user
@@ -152,7 +166,13 @@ export async function acceptInvitation(
           emailVerified: true,
           platformRole: "CUSTOMER",
         },
-        include: { accounts: true },
+        include: {
+          accounts: true,
+          memberships: {
+            where: { customerSpace: { kind: "STANDARD" } },
+            select: { customerSpaceId: true },
+          },
+        },
       });
       await tx.account.create({
         data: {
@@ -180,17 +200,20 @@ export async function acceptInvitation(
       accountExists = false;
     }
 
+    if (!user) throw new Error("INVITATION_INVALID");
+    const acceptedUser = user;
+
     await tx.membership.upsert({
       where: {
         customerSpaceId_userId: {
           customerSpaceId: invitation.customerSpaceId,
-          userId: user.id,
+          userId: acceptedUser.id,
         },
       },
       update: {},
       create: {
         customerSpaceId: invitation.customerSpaceId,
-        userId: user.id,
+        userId: acceptedUser.id,
         role: invitation.role,
       },
     });
@@ -211,7 +234,7 @@ export async function acceptInvitation(
         customerSpaceId: invitation.customerSpaceId,
         metadata: {
           email: invitation.email,
-          userId: user.id,
+          userId: acceptedUser.id,
         },
       },
     );

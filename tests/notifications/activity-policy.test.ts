@@ -10,16 +10,19 @@ import {
 } from "@/modules/notifications/activity-policy";
 
 describe("统一活动投递策略", () => {
-  it("覆盖新增的项目与工单红点类型", () => {
+  it("覆盖新增的项目与服务请求红点类型", () => {
+    expect(isProjectDeliveryNotification("PROJECT_CREATED")).toBe(true);
     expect(isProjectDeliveryNotification("PROJECT_STAGE")).toBe(true);
     expect(isProjectDeliveryNotification("PROJECT_MILESTONE")).toBe(true);
     expect(isProjectDeliveryNotification("PROJECT_FILE")).toBe(true);
     expect(isRequestNotification("REQUEST_ATTACHMENT")).toBe(true);
     expect(isRequestNotification("REQUEST_ARCHIVE")).toBe(true);
+    expect(isRequestNotification("REQUEST_CLAIMED")).toBe(true);
   });
 
   it("技术处理和权限配置事件保持静音", () => {
     expect(isProjectChangeAudible("PROJECT_UPDATED")).toBe(false);
+    expect(isProjectChangeAudible("PROJECT_UPDATE_DELETED")).toBe(false);
     expect(isProjectChangeAudible("ATTACHMENT_OPTIMIZED")).toBe(false);
     expect(isRequestChangeAudible("ATTACHMENT_OPTIMIZED")).toBe(false);
     expect(isRequestChangeAudible("REQUEST_MESSAGE_CREATED")).toBe(true);
@@ -33,7 +36,7 @@ describe("统一活动投递策略", () => {
     expect(isCustomerStatusEmailEligible("IN_PROGRESS")).toBe(false);
   });
 
-  it("按责任关系规划标准工单邮件收件人", () => {
+  it("按责任关系规划标准服务请求邮件收件人", () => {
     const base = {
       actorId: "customer-1",
       actorPlatformRole: "CUSTOMER",
@@ -80,6 +83,15 @@ describe("统一活动投递策略", () => {
         eventType: "REQUEST_ASSIGNED",
       }),
     ).toEqual(["tech-2"]);
+    expect(
+      planStandardRequestEmailRecipientIds({
+        ...base,
+        actorId: "manager-1",
+        actorPlatformRole: "PROJECT_MANAGER",
+        eventType: "REQUEST_ASSIGNED",
+        notificationType: "REQUEST_CLAIMED",
+      }),
+    ).toEqual(["admin-1"]);
   });
 
   it("内部备注、自动处理中状态和客户关闭动作不产生标准邮件", () => {
@@ -139,10 +151,12 @@ describe("统一活动投递策略", () => {
         eventType: "REQUEST_MESSAGE_CREATED",
         messageId: "message-1",
         visibility: "CUSTOMER_VISIBLE",
+        contentSummary: "客户补充了错误截图",
       }),
     ).toMatchObject({
       eventKey: "customer-replied:message-1",
       eventType: "REQUEST_CUSTOMER_REPLIED",
+      contentSummary: "客户补充了错误截图",
     });
     expect(
       planDingTalkRequestEvent({

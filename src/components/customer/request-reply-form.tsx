@@ -26,6 +26,8 @@ import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import type { RequestStatus } from "@/components/customer/customer-types";
 import { shouldShowResolvedReplyGate } from "@/components/customer/request-resolution-state";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
+import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import { useToast } from "@/components/shared/toast-provider";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
@@ -38,9 +40,11 @@ import {
   readApiJson,
   type ApiResponsePayload,
 } from "@/lib/api-client-error";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
 type ApiPayload = ApiResponsePayload<{
   message?: { id: string };
+  deliveryFeedback?: DeliveryFeedback;
 }>;
 
 function subscribeToClientReady() {
@@ -55,6 +59,10 @@ export function RequestReplyForm({
   onCancelReply,
   onTypingActivity,
   onTypingStopped,
+  contentRiskEnabled = false,
+  initialBody = "",
+  restoredAttachmentCount = 0,
+  onSent,
 }: {
   requestId: string;
   status: RequestStatus;
@@ -63,17 +71,21 @@ export function RequestReplyForm({
   onCancelReply?: () => void;
   onTypingActivity?: () => void;
   onTypingStopped?: () => void;
+  contentRiskEnabled?: boolean;
+  initialBody?: string;
+  restoredAttachmentCount?: number;
+  onSent?: () => void;
 }) {
   const router = useRouter();
+  const toast = useToast();
   const { policy, loading: attachmentPolicyLoading, validateFiles } =
     useAttachmentPolicy();
-  const [body, setBody] = useState("");
+  const [body, setBody] = useState(initialBody);
   const [files, setFiles] = useState<File[]>([]);
   const [editorVersion, setEditorVersion] = useState(0);
-  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
-  const [continueReply, setContinueReply] = useState(false);
+  const [continueReply, setContinueReply] = useState(Boolean(initialBody));
   const interactive = useSyncExternalStore(
     subscribeToClientReady,
     () => true,
@@ -91,20 +103,23 @@ export function RequestReplyForm({
 
   async function confirmClose() {
     setClosing(true);
-    setError("");
     try {
       const response = await fetch(`/api/v1/requests/${requestId}/close`, {
         method: "POST",
       });
-      const payload = await readApiJson<ApiResponsePayload>(response);
+      const payload = await readApiJson<
+        ApiResponsePayload<{ deliveryFeedback?: DeliveryFeedback }>
+      >(response);
       if (!response.ok) {
         throw new Error(apiErrorMessage(response, payload, "确认关闭失败"));
       }
       setCloseDialogOpen(false);
+      toast.success("服务请求已确认关闭");
+      toast.delivery(payload?.data?.deliveryFeedback, "summary");
       markRequestLocalMutation();
       router.refresh();
     } catch (closeError) {
-      setError(
+      toast.error(
         closeError instanceof Error ? closeError.message : "确认关闭失败",
       );
     } finally {
@@ -114,9 +129,8 @@ export function RequestReplyForm({
 
   function addFiles(next: File[]) {
     const { accepted, error: validateError } = validateFiles(next, files.length);
-    if (validateError) setError(validateError);
+    if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      if (!validateError) setError("");
       setFiles((current) => [...current, ...accepted]);
     }
   }
@@ -126,7 +140,6 @@ export function RequestReplyForm({
     if (!hasMeaningfulHtml(body) && files.length === 0) return;
 
     setSubmitting(true);
-    setError("");
     onTypingStopped?.();
     try {
       const response = await fetch(`/api/v1/requests/${requestId}/messages`, {
@@ -170,11 +183,14 @@ export function RequestReplyForm({
       setBody("");
       setEditorVersion((version) => version + 1);
       setFiles([]);
+      toast.success("回复已发送");
+      toast.delivery(payload.data.deliveryFeedback, "summary");
       onCancelReply?.();
+      onSent?.();
       markRequestLocalMutation();
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error
           ? submitError.message
           : "回复发送失败，请稍后重试",
@@ -190,6 +206,7 @@ export function RequestReplyForm({
 
   return (
     <Paper
+      id="request-reply-composer"
       component="form"
       variant="outlined"
       onSubmit={submitReply}
@@ -197,7 +214,13 @@ export function RequestReplyForm({
     >
       {submitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: 2 }}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
+        {contentRiskEnabled ? <ContentRiskNotice audience="CUSTOMER" /> : null}
+        {restoredAttachmentCount > 0 ? (
+          <Alert severity="info">
+            已恢复撤回消息的正文；原消息包含 {restoredAttachmentCount}
+            个附件，请重新添加后再发送。
+          </Alert>
+        ) : null}
         {replyTarget ? (
           <RequestReplyPreview
             target={replyTarget}
@@ -269,7 +292,6 @@ export function RequestReplyForm({
                   startIcon={<CheckCircleOutlineOutlinedIcon />}
                   disabled={!interactive}
                   onClick={() => {
-                    setError("");
                     setCloseDialogOpen(true);
                   }}
                 >
@@ -355,11 +377,6 @@ export function RequestReplyForm({
           <Typography color="text.secondary">
             关闭后不能继续回复。如问题仍未解决，请取消并选择“继续反馈”。
           </Typography>
-          {error ? (
-            <Alert severity="error" sx={{ mt: 2 }}>
-              {error}
-            </Alert>
-          ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
           <Button onClick={() => setCloseDialogOpen(false)} disabled={closing}>

@@ -90,6 +90,7 @@ export function listInternalUsers(actor: Actor) {
     });
     const users = await tx.user.findMany({
       where: {
+        deletedAt: null,
         platformRole: {
           in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"],
         },
@@ -149,21 +150,30 @@ export function listInternalUsers(actor: Actor) {
               sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
               sourceId: { in: changeIds },
             },
-            select: { sourceId: true, status: true },
+            select: { sourceId: true, status: true, errorMessage: true },
             orderBy: { createdAt: "desc" },
           })
         : [];
-    const latestStatusByChangeId = new Map<string, string>();
+    const latestMailByChangeId = new Map<
+      string,
+      { status: string; dispatchFailed: boolean }
+    >();
     for (const message of messages) {
-      if (message.sourceId && !latestStatusByChangeId.has(message.sourceId)) {
-        latestStatusByChangeId.set(message.sourceId, message.status);
+      if (message.sourceId && !latestMailByChangeId.has(message.sourceId)) {
+        latestMailByChangeId.set(message.sourceId, {
+          status: message.status,
+          dispatchFailed:
+            message.status === "QUEUED" && Boolean(message.errorMessage),
+        });
       }
     }
     return users.map((user) => ({
       ...user,
       emailChanges: user.emailChanges.map((change) => ({
         ...change,
-        mailStatus: latestStatusByChangeId.get(change.id) ?? null,
+        mailStatus: latestMailByChangeId.get(change.id)?.status ?? null,
+        mailDispatchFailed:
+          latestMailByChangeId.get(change.id)?.dispatchFailed ?? false,
       })),
     }));
   });
@@ -371,10 +381,14 @@ export function updateStaffProfile(
       select: {
         id: true,
         platformRole: true,
+        deletedAt: true,
         roleGroupId: true,
       },
     });
     assertFound(user, "用户不存在");
+    if (user.deletedAt) {
+      throw new DomainError("STAFF_USER_DELETED", "该协作成员已删除", 404);
+    }
     if (user.platformRole === "CUSTOMER") {
       throw new DomainError(
         "NOT_INTERNAL_USER",
@@ -460,6 +474,7 @@ export function deactivateStaffUser(actor: Actor, userId: string) {
         name: true,
         email: true,
         platformRole: true,
+        deletedAt: true,
         _count: {
           select: {
             projectAssignments: true,
@@ -478,18 +493,56 @@ export function deactivateStaffUser(actor: Actor, userId: string) {
       },
     });
     assertFound(user, "用户不存在");
+    if (user.deletedAt) {
+      throw new DomainError("STAFF_USER_DELETED", "该协作成员已删除", 404);
+    }
+    const emailChanges = await tx.userEmailChange.findMany({
+      where: { userId },
+      select: { id: true },
+    });
     await tx.session.deleteMany({ where: { userId } });
     await tx.account.deleteMany({ where: { userId } });
     await tx.staffInvitation.deleteMany({ where: { email: user.email } });
-    await tx.user.delete({ where: { id: userId } });
+    await tx.notification.deleteMany({ where: { userId } });
+    await tx.requestPresence.deleteMany({ where: { userId } });
+    await tx.membership.deleteMany({ where: { userId } });
+    if (emailChanges.length > 0) {
+      await tx.mailMessage.deleteMany({
+        where: {
+          sourceType: "CUSTOMER_EMAIL_CHANGE_VERIFY",
+          sourceId: { in: emailChanges.map((change) => change.id) },
+        },
+      });
+      await tx.userEmailChange.deleteMany({ where: { userId } });
+    }
+    await tx.user.update({
+      where: { id: userId },
+      data: {
+        name: "已删除成员",
+        email: `deleted-${userId}@deleted.invalid`,
+        emailVerified: false,
+        image: null,
+        phone: null,
+        company: null,
+        jobTitle: null,
+        wechat: null,
+        website: null,
+        location: null,
+        contactNotes: null,
+        roleGroupId: null,
+        soundNotificationsEnabled: false,
+        requestEmailNotificationsEnabled: false,
+        deletedAt: new Date(),
+      },
+    });
     await writeAuditLog(tx, actor, {
       action: "STAFF_USER_DELETED",
       resourceType: "User",
       resourceId: user.id,
       metadata: {
-        email: user.email,
         name: user.name,
         platformRole: user.platformRole,
+        historyPreserved: true,
       },
     });
   });

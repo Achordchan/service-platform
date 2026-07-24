@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   sendDingTalkTicketNotification,
   type DingTalkTicketEventType,
@@ -28,18 +28,71 @@ const PROCESSING_STALE_MS = 10 * 60_000;
 const EVENT_TYPES = new Set<DingTalkTicketEventType>([
   "REQUEST_CREATED",
   "REQUEST_CUSTOMER_REPLIED",
+  "CONTENT_RISK_ALERT",
 ]);
 
 const DELIVERY_RULE_KEYS: Record<DingTalkTicketEventType, string> = {
   REQUEST_CREATED: "REQUEST_CREATED",
   REQUEST_CUSTOMER_REPLIED: "REQUEST_PUBLIC_MESSAGE",
+  CONTENT_RISK_ALERT: "CONTENT_RISK_ALERT",
 };
 
 type DeliveryPayload = {
   actorName?: string | null;
+  contentSummary?: string | null;
   occurredAt: string;
   template?: DingTalkRobotTemplate;
+  targetLabel?: string | null;
+  riskSummary?: string | null;
+  actionUrl?: string | null;
 };
+
+export async function recordDingTalkContentRiskAlert(
+  tx: Prisma.TransactionClient,
+  input: {
+    reviewId: string;
+    requestId?: string | null;
+    actorName?: string | null;
+    targetLabel: string;
+    riskSummary: string;
+  },
+) {
+  const rule = await tx.notificationDeliveryRule.findUnique({
+    where: { key: "CONTENT_RISK_ALERT" },
+    select: { dingtalkEnabled: true },
+  });
+  if (!rule?.dingtalkEnabled) return null;
+  const id = randomUUID();
+  const payload = JSON.stringify({
+    actorName: input.actorName ?? null,
+    targetLabel: input.targetLabel,
+    riskSummary: input.riskSummary,
+    actionUrl: `${env.APP_URL.replace(/\/$/, "")}/staff/plugins`,
+    occurredAt: new Date().toISOString(),
+  });
+  const [result] = await tx.$queryRaw<
+    Array<{
+      deliveryId: string | null;
+      outcome: string;
+      errorCode: string | null;
+    }>
+  >`
+    SELECT * FROM app_enqueue_dingtalk_robot_delivery(
+      ${id},
+      ${`content-risk:${input.reviewId}:${createHash("sha256").update(`${input.targetLabel}:${input.riskSummary}`).digest("hex").slice(0, 16)}`},
+      ${"CONTENT_RISK_ALERT"},
+      ${input.requestId ?? null},
+      ${payload}::jsonb
+    )
+  `;
+  if (result?.outcome === "ERROR") {
+    console.error("ACHORD_CONTENT_RISK_DINGTALK_ENQUEUE_FAILED", {
+      reviewId: input.reviewId,
+      errorCode: result.errorCode,
+    });
+  }
+  return result?.deliveryId ?? null;
+}
 
 export async function recordDingTalkRobotDelivery(
   tx: Prisma.TransactionClient,
@@ -48,11 +101,14 @@ export async function recordDingTalkRobotDelivery(
     eventType: DingTalkTicketEventType;
     requestId: string;
     actorName?: string | null;
+    contentSummary?: string | null;
     occurredAt?: Date;
+    contentRiskReviewId?: string;
   },
 ) {
   const payload = JSON.stringify({
     actorName: input.actorName ?? null,
+    contentSummary: input.contentSummary ?? null,
     occurredAt: (input.occurredAt ?? new Date()).toISOString(),
   });
   const [result] = await tx.$queryRaw<
@@ -86,6 +142,15 @@ export async function recordDingTalkRobotDelivery(
         errorCode: result?.errorCode ?? "NO_RESULT",
       }),
     );
+  }
+  if (result?.deliveryId && input.contentRiskReviewId) {
+    const [held] = await tx.$queryRaw<Array<{ held: boolean }>>`
+      SELECT app_hold_dingtalk_delivery_for_content_risk(
+        ${result.deliveryId},
+        ${input.contentRiskReviewId}
+      ) AS held
+    `;
+    if (!held?.held) throw new Error("风控钉钉通知暂缓失败");
   }
   return result?.deliveryId ?? null;
 }
@@ -175,21 +240,23 @@ export async function processDingTalkRobotDelivery(
         secretConfigEncrypted: true,
       },
     });
-    const request = await tx.serviceRequest.findUnique({
-      where: { id: claimed.requestId },
-      select: {
-        id: true,
-        number: true,
-        title: true,
-        priority: true,
-        project: {
+    const request = claimed.requestId
+      ? await tx.serviceRequest.findUnique({
+          where: { id: claimed.requestId },
           select: {
+            id: true,
+            number: true,
             title: true,
-            customerSpace: { select: { name: true } },
+            priority: true,
+            project: {
+              select: {
+                title: true,
+                customerSpace: { select: { name: true } },
+              },
+            },
           },
-        },
-      },
-    });
+        })
+      : null;
     const deliveryRule = eventType
       ? await tx.notificationDeliveryRule.findUnique({
           where: { key: DELIVERY_RULE_KEYS[eventType] },
@@ -206,12 +273,12 @@ export async function processDingTalkRobotDelivery(
     context.installation.healthStatus !== "READY" ||
     !context.installation.healthConfigFingerprint ||
     !context.installation.secretConfigEncrypted ||
-    !context.request
+    (context.eventType !== "CONTENT_RISK_ALERT" && !context.request)
   ) {
     await finishDelivery(
       deliveryId,
       attemptAt,
-      "钉钉规则已关闭、插件配置失效或工单不存在",
+      "钉钉规则已关闭、插件配置失效或服务请求不存在",
     );
     return { id: deliveryId, skipped: true };
   }
@@ -245,18 +312,27 @@ export async function processDingTalkRobotDelivery(
       HIGH: "高",
       URGENT: "紧急",
     } as const;
+    const request = context.request;
+    const contentRiskAlert = context.eventType === "CONTENT_RISK_ALERT";
     await (options.send ?? sendDingTalkTicketNotification)(
       binding,
       {
         type: context.eventType,
-        requestId: context.request.id,
-        requestNumber: context.request.number,
-        title: context.request.title,
-        requestUrl: `${env.APP_URL.replace(/\/$/, "")}/staff/requests/${context.request.id}`,
-        customerName: context.request.project.customerSpace.name,
-        projectName: context.request.project.title,
-        priorityLabel: priorityLabels[context.request.priority],
+        requestId: request?.id,
+        requestNumber: request?.number,
+        title: request?.title,
+        requestUrl:
+          payload.actionUrl ||
+          (request
+            ? `${env.APP_URL.replace(/\/$/, "")}/staff/requests/${request.id}`
+            : `${env.APP_URL.replace(/\/$/, "")}/staff/plugins`),
+        customerName: request?.project.customerSpace.name,
+        projectName: request?.project.title,
+        priorityLabel: request ? priorityLabels[request.priority] : null,
         actorName: payload.actorName,
+        contentSummary: contentRiskAlert ? null : payload.contentSummary,
+        targetLabel: contentRiskAlert ? payload.targetLabel : null,
+        riskSummary: contentRiskAlert ? payload.riskSummary : null,
         occurredAt: payload.occurredAt,
       },
       { template: payload.template },
@@ -315,11 +391,18 @@ function parseDeliveryPayload(value: Prisma.JsonValue): DeliveryPayload {
   return {
     actorName:
       typeof value.actorName === "string" ? value.actorName : null,
+    contentSummary:
+      typeof value.contentSummary === "string" ? value.contentSummary : null,
     occurredAt:
       typeof value.occurredAt === "string"
         ? value.occurredAt
         : new Date().toISOString(),
     template: parsePayloadTemplate(value.template),
+    targetLabel:
+      typeof value.targetLabel === "string" ? value.targetLabel : null,
+    riskSummary:
+      typeof value.riskSummary === "string" ? value.riskSummary : null,
+    actionUrl: typeof value.actionUrl === "string" ? value.actionUrl : null,
   };
 }
 

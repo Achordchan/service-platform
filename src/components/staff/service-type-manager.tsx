@@ -27,6 +27,7 @@ import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { ServiceTypeItem } from "@/components/staff/staff-types";
 
@@ -48,6 +49,7 @@ export function ServiceTypeManager({
   serviceTypes: ServiceTypeItem[];
 }) {
   const router = useRouter();
+  const toast = useToast();
   const [dialog, setDialog] = useState<DialogState>(null);
   const [editingService, setEditingService] = useState<ServiceTypeItem | null>(null);
   const [editingCategory, setEditingCategory] = useState<{
@@ -55,24 +57,24 @@ export function ServiceTypeManager({
     category: ServiceTypeItem["categories"][number];
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
 
   async function execute(
     url: string,
     method: "POST" | "PATCH",
     body?: unknown,
+    successMessage = "保存成功",
   ) {
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(url, jsonRequest(method, body));
       setDialog(null);
       setEditingService(null);
       setEditingCategory(null);
+      toast.success(successMessage);
       router.refresh();
     } catch (submitError) {
-      setError(
+      toast.error(
         submitError instanceof Error ? submitError.message : "保存失败",
       );
     } finally {
@@ -83,12 +85,17 @@ export function ServiceTypeManager({
   async function createService(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    await execute("/api/v1/admin/service-types", "POST", {
-      key: String(data.get("key") ?? "").trim(),
-      name: String(data.get("name") ?? "").trim(),
-      description: String(data.get("description") ?? "").trim() || null,
-      active: true,
-    });
+    await execute(
+      "/api/v1/admin/service-types",
+      "POST",
+      {
+        key: String(data.get("key") ?? "").trim(),
+        name: String(data.get("name") ?? "").trim(),
+        description: String(data.get("description") ?? "").trim() || null,
+        active: true,
+      },
+      "服务类型已创建",
+    );
   }
 
   async function createCategory(event: React.FormEvent<HTMLFormElement>) {
@@ -103,20 +110,21 @@ export function ServiceTypeManager({
         description: String(data.get("description") ?? "").trim() || null,
         active: true,
       },
+      "请求分类已创建",
     );
   }
 
   async function toggleService(serviceType: ServiceTypeItem) {
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/admin/service-types/${serviceType.id}`,
         jsonRequest("PATCH", { active: !serviceType.active }),
       );
+      toast.success(serviceType.active ? "服务类型已停用" : "服务类型已启用");
       router.refresh();
     } catch (toggleError) {
-      setError(
+      toast.error(
         toggleError instanceof Error ? toggleError.message : "状态更新失败",
       );
     } finally {
@@ -129,15 +137,15 @@ export function ServiceTypeManager({
     category: ServiceTypeItem["categories"][number],
   ) {
     setSubmitting(true);
-    setError("");
     try {
       await staffApi(
         `/api/v1/admin/service-types/${serviceType.id}/request-categories/${category.id}`,
         jsonRequest("PATCH", { active: !category.active }),
       );
+      toast.success(category.active ? "请求分类已停用" : "请求分类已启用");
       router.refresh();
     } catch (toggleError) {
-      setError(
+      toast.error(
         toggleError instanceof Error ? toggleError.message : "分类状态更新失败",
       );
     } finally {
@@ -150,11 +158,16 @@ export function ServiceTypeManager({
     event.preventDefault();
     if (!editingService) return;
     const data = new FormData(event.currentTarget);
-    await execute(`/api/v1/admin/service-types/${editingService.id}`, "PATCH", {
-      name: String(data.get("name") ?? "").trim(),
-      description: String(data.get("description") ?? "").trim() || null,
-      active: data.get("active") === "on",
-    });
+    await execute(
+      `/api/v1/admin/service-types/${editingService.id}`,
+      "PATCH",
+      {
+        name: String(data.get("name") ?? "").trim(),
+        description: String(data.get("description") ?? "").trim() || null,
+        active: data.get("active") === "on",
+      },
+      "服务类型已更新",
+    );
   }
 
   async function updateCategory(event: React.FormEvent<HTMLFormElement>) {
@@ -169,6 +182,7 @@ export function ServiceTypeManager({
         description: String(data.get("description") ?? "").trim() || null,
         active: data.get("active") === "on",
       },
+      "请求分类已更新",
     );
   }
 
@@ -203,7 +217,6 @@ export function ServiceTypeManager({
       >
         新建服务类型
       </Button>
-      {error ? <Alert severity="error">{error}</Alert> : null}
       {submitting ? <LinearProgress /> : null}
       <Stack spacing={1.5}>
         {serviceTypes.map((serviceType) => (
@@ -380,7 +393,6 @@ export function ServiceTypeManager({
           <DialogTitle>新建服务类型</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
               <TextField name="name" label="服务类型名称" required />
               <TextField
                 name="key"
@@ -423,7 +435,6 @@ export function ServiceTypeManager({
           </DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              {error ? <Alert severity="error">{error}</Alert> : null}
               <TextField name="name" label="分类名称" required />
               <TextField
                 name="description"
@@ -548,6 +559,11 @@ export function ServiceTypeManager({
         deleteUrl={deleteTarget?.deleteUrl ?? null}
         onClose={() => setDeleteTarget(null)}
         onDeleted={() => {
+          toast.success(
+            deleteTarget?.resourceType === "SERVICE_TYPE"
+              ? "服务类型已删除"
+              : "请求分类已删除",
+          );
           setDeleteTarget(null);
           router.refresh();
         }}

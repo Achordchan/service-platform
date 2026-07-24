@@ -49,6 +49,19 @@ describe("matchesNotificationLocalUpdate", () => {
     ).toBe(false);
   });
 
+  it("项目概览会清除新建项目通知", () => {
+    expect(
+      matchesNotificationLocalUpdate(
+        {
+          id: "created-1",
+          type: "PROJECT_CREATED",
+          projectId: "project-1",
+        },
+        { projectId: "project-1", projectScope: "overview" },
+      ),
+    ).toBe(true);
+  });
+
   it("matches every notification for all-read updates", () => {
     expect(
       matchesNotificationLocalUpdate(requestNotification, { all: true }),

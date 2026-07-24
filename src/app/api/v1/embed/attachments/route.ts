@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     if (!(file instanceof File) || !serviceRequestId) {
       throw new DomainError(
         "ATTACHMENT_INPUT_INVALID",
-        "请选择附件并指定工单",
+        "请选择附件并指定服务请求",
         422,
       );
     }

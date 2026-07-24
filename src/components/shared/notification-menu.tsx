@@ -173,7 +173,9 @@ export function NotificationMenu({
       }
     }
     setAnchor(null);
-    if (item.serviceRequestId) {
+    if (staff && item.type === "CONTENT_RISK") {
+      router.push("/staff/plugins");
+    } else if (item.serviceRequestId) {
       router.push(
         staff
           ? `/staff/requests/${item.serviceRequestId}`

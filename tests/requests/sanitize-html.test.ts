@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { hasMeaningfulHtml } from "../../src/lib/message-content";
-import { sanitizeMessageHtml } from "../../src/lib/sanitize-html";
+import {
+  sanitizeMessageHtml,
+  sanitizeReeditableMessageHtml,
+} from "../../src/lib/sanitize-html";
 
 describe("消息富文本消毒", () => {
   it("保留基础排版并移除脚本", () => {
@@ -34,5 +37,15 @@ describe("消息富文本消毒", () => {
       'data-attachment-id="cmriy2wf0000hdn5ughz329jp"',
     );
     expect(html).not.toContain("tracker.example");
+  });
+
+  it("恢复撤回草稿时保留排版但移除旧内联图片", () => {
+    const html = sanitizeReeditableMessageHtml(
+      '<p><strong>重要说明</strong></p><img src="attachment://image-1" data-attachment-id="image-1"><ul><li>第一项</li></ul>',
+    );
+    expect(html).toContain("<strong>重要说明</strong>");
+    expect(html).toContain("<li>第一项</li>");
+    expect(html).not.toContain("<img");
+    expect(html).not.toContain("attachment://image-1");
   });
 });

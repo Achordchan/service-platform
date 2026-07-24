@@ -22,6 +22,14 @@ import {
   parseUniversalEmbedConnectorConfig,
   universalEmbedConnectorManifest,
 } from "@achord/plugin-universal-embed-connector";
+import {
+  CONTENT_CONTACT_RISK_PLUGIN_KEY,
+  contentContactRiskManifest,
+} from "@achord/plugin-content-contact-risk";
+import {
+  parseContentContactRiskConfig,
+  parseContentContactRiskSecrets,
+} from "@achord/plugin-content-contact-risk/config";
 import { DomainError } from "@/modules/projects/errors";
 
 
@@ -60,6 +68,27 @@ export type RegisteredPlugin = {
 };
 
 const registeredPlugins: readonly RegisteredPlugin[] = [
+  {
+    manifest:
+      contentContactRiskManifest as PlatformPluginManifest<
+        Record<string, unknown>
+      >,
+    parseConfig: (value) => parseContentContactRiskConfig(value),
+    parseSecretConfig: (value) => parseContentContactRiskSecrets(value),
+    healthConfig: (config) => ({
+      baseUrl: config.baseUrl,
+      model: config.model,
+    }),
+    healthCheck: async ({ config, secrets }) => {
+      const { getContentContactRiskRuntimeHealth } = await import(
+        "@achord/plugin-content-contact-risk/runtime"
+      );
+      return getContentContactRiskRuntimeHealth(
+        parseContentContactRiskConfig(config),
+        parseContentContactRiskSecrets(secrets),
+      );
+    },
+  },
   {
     manifest:
       dingTalkRobotManifest as PlatformPluginManifest<Record<string, unknown>>,
@@ -113,6 +142,7 @@ const registeredPlugins: readonly RegisteredPlugin[] = [
 ];
 
 export {
+  CONTENT_CONTACT_RISK_PLUGIN_KEY,
   DINGTALK_ROBOT_PLUGIN_KEY,
   IMAGE_WEBP_PLUGIN_KEY,
   SUB2API_CONNECTOR_PLUGIN_KEY,
@@ -174,7 +204,10 @@ export function normalizeRegisteredPluginConfig(
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const secretKeys = new Set(
       getRegisteredPlugin(pluginKey).manifest.settings
-        .filter((field) => field.type === "secret-url")
+        .filter(
+          (field) =>
+            field.type === "secret-url" || field.type === "secret-text",
+        )
         .map((field) => field.key),
     );
     return Object.fromEntries(

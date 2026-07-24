@@ -11,6 +11,7 @@ import {
 } from "@/lib/message-content";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { canArchiveRequestStatus } from "@/lib/request-archive";
+import type { DeliveryFeedback } from "@/lib/operation-feedback";
 import {
   buildSupportPlaybookMessageBody,
   snapshotSupportReplyPlaybook,
@@ -25,6 +26,10 @@ import {
   requestStatusLabel,
 } from "@/modules/notifications/notification-service";
 import {
+  createContentRiskReview,
+  enforceActorPublicContentRules,
+} from "@/modules/plugins/content-risk-service";
+import {
   badRequest,
   conflict,
   forbidden,
@@ -37,9 +42,11 @@ import {
 } from "@/modules/requests/request-context";
 import {
   canConfirmRequestClosed,
+  canClaimUnassignedRequest,
+  canChangeRequestStatus,
   canManageRequestArchive,
   canManageRequestAssignment,
-  canWorkOnRequest,
+  canReplyToRequest,
   canWriteInternalNote,
 } from "@/modules/requests/request-permissions";
 import type {
@@ -59,17 +66,42 @@ type ExternalRequestMail = {
   templateKey: MailTemplateKey;
   variables: Record<string, string>;
   actionUrl: string;
+  sourceType?: string;
+  sourceId?: string;
+  contentRiskReviewId?: string;
 };
 
+function mergeDeliveryFeedback(
+  first: DeliveryFeedback | null,
+  second: DeliveryFeedback,
+): DeliveryFeedback {
+  if (!first) return second;
+  const emailTiming =
+    first.emailTiming === "IMMEDIATE" || second.emailTiming === "IMMEDIATE"
+      ? "IMMEDIATE"
+      : first.emailTiming === "DELAYED" || second.emailTiming === "DELAYED"
+        ? "DELAYED"
+        : null;
+  return {
+    notificationCount:
+      first.notificationCount + second.notificationCount,
+    emailCount: first.emailCount + second.emailCount,
+    emailTiming,
+    dingtalkQueued: first.dingtalkQueued || second.dingtalkQueued,
+  };
+}
+
 async function enqueueExternalRequestMail(mail: ExternalRequestMail | null) {
-  if (!mail) return;
+  if (!mail) return false;
   try {
     await enqueueMail(mail);
+    return true;
   } catch (error) {
     console.error("EXTERNAL_REQUEST_MAIL_QUEUE_FAILED", {
       templateKey: mail.templateKey,
       error: error instanceof Error ? error.message : "unknown",
     });
+    return false;
   }
 }
 
@@ -296,7 +328,7 @@ async function claimRequestOnFirstPublicReply(
     getProjectRole(request) === null ||
     hasAssignedWorkers(request)
   ) {
-    return { request, claimed: false };
+    return { request, claimed: false, deliveryFeedback: null };
   }
 
   const locked = await tx.$queryRaw<Array<{ id: string }>>`
@@ -315,7 +347,7 @@ async function claimRequestOnFirstPublicReply(
   const current = await findRequestContext(tx, request.id, actor.id);
   if (!current) throw notFound();
   if (hasAssignedWorkers(current)) {
-    return { request: current, claimed: false };
+    return { request: current, claimed: false, deliveryFeedback: null };
   }
 
   await tx.serviceRequest.update({
@@ -344,9 +376,9 @@ async function claimRequestOnFirstPublicReply(
     tx,
     current,
     actor,
-    `${actor.name} 已接手此请求`,
+    `${actor.name} 已接手此服务请求`,
   );
-  await dispatchRequestActivity(tx, actor, {
+  const delivery = await dispatchRequestActivity(tx, actor, {
     eventType: "REQUEST_ASSIGNED",
     eventPayload: {
       requestId: current.id,
@@ -356,16 +388,14 @@ async function claimRequestOnFirstPublicReply(
       actorId: actor.id,
       source: "FIRST_PUBLIC_REPLY",
     },
-    notificationType: "REQUEST_ASSIGNED",
-    notificationTitle: `${actor.name} 已接手请求 ${current.number}`,
-    notificationBody: current.title,
-    includeCustomers: includeCustomerMembers(current),
-    includeExternalContact: Boolean(current.createdByExternalContactId),
+    notificationType: "REQUEST_CLAIMED",
+    notificationTitle: `${actor.name} 已接手服务请求 ${current.number}`,
+    notificationBody: `“${current.title}”已由项目人员开始处理。`,
+    includeCustomers: false,
     relevantWorkerUserIds: [actor.id],
     notifyProjectManagers: false,
-    notifyPlatformAdmins: false,
-    createNotifications: false,
-    audible: false,
+    notifyPlatformAdmins: true,
+    eventAudience: "NOTIFICATION_RECIPIENTS",
     customerSpaceId: current.project.customerSpaceId,
     projectId: current.projectId,
     serviceRequestId: current.id,
@@ -373,7 +403,11 @@ async function claimRequestOnFirstPublicReply(
 
   const claimedRequest = await findRequestContext(tx, current.id, actor.id);
   if (!claimedRequest) throw notFound();
-  return { request: claimedRequest, claimed: true };
+  return {
+    request: claimedRequest,
+    claimed: true,
+    deliveryFeedback: delivery.feedback,
+  };
 }
 
 async function validateReplyTarget(
@@ -518,7 +552,7 @@ export function assignRequest(
       })),
     );
 
-    await dispatchRequestActivity(tx, actor, {
+    const delivery = await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_ASSIGNED",
       eventPayload: {
         requestId: request.id,
@@ -542,7 +576,7 @@ export function assignRequest(
       projectId: request.projectId,
       serviceRequestId: request.id,
     });
-    return updated;
+    return { ...updated, deliveryFeedback: delivery.feedback };
   });
 }
 
@@ -555,7 +589,7 @@ export async function changeRequestStatus(
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     assertRequestNotArchived(request);
-    if (!canWorkOnRequest(actor, accessContext(request))) {
+    if (!canChangeRequestStatus(actor, accessContext(request))) {
       throw forbidden("只有请求处理人、项目经理或平台管理员可以变更状态");
     }
     if (targetStatus === "CLOSED") {
@@ -593,7 +627,7 @@ export async function changeRequestStatus(
       targetStatus,
       "STAFF_ACTION",
     );
-    await dispatchStatusActivity(
+    const delivery = await dispatchStatusActivity(
       tx,
       actor,
       request,
@@ -601,10 +635,23 @@ export async function changeRequestStatus(
       targetStatus,
       true,
     );
-    return { updated, externalMail: statusMail(request, targetStatus) };
+    return {
+      updated,
+      externalMail: statusMail(request, targetStatus),
+      deliveryFeedback: delivery.feedback,
+    };
   });
-  await enqueueExternalRequestMail(result.externalMail);
-  return result.updated;
+  const externalMailQueued = await enqueueExternalRequestMail(result.externalMail);
+  return {
+    ...result.updated,
+    deliveryFeedback: externalMailQueued
+      ? {
+          ...result.deliveryFeedback,
+          emailCount: result.deliveryFeedback.emailCount + 1,
+          emailTiming: "IMMEDIATE" as const,
+        }
+      : result.deliveryFeedback,
+  };
 }
 
 export async function changeRequestArchive(
@@ -627,7 +674,7 @@ export async function changeRequestArchive(
       );
     }
     if (Boolean(request.archivedAt) === archived) {
-      return tx.serviceRequest.findUniqueOrThrow({
+      const unchanged = await tx.serviceRequest.findUniqueOrThrow({
         where: { id: requestId },
         select: {
           id: true,
@@ -637,6 +684,7 @@ export async function changeRequestArchive(
           updatedAt: true,
         },
       });
+      return { ...unchanged, deliveryFeedback: null };
     }
 
     const archivedAt = archived ? new Date() : null;
@@ -665,7 +713,7 @@ export async function changeRequestArchive(
       serviceRequestId: request.id,
       metadata: { number: request.number, status: request.status },
     });
-    await dispatchRequestActivity(tx, actor, {
+    const delivery = await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_UPDATED",
       eventPayload: {
         change: archived ? "REQUEST_ARCHIVED" : "REQUEST_RESTORED",
@@ -688,7 +736,7 @@ export async function changeRequestArchive(
       projectId: request.projectId,
       serviceRequestId: request.id,
     });
-    return updated;
+    return { ...updated, deliveryFeedback: delivery.feedback };
   });
 }
 
@@ -697,8 +745,32 @@ export async function addRequestMessage(
   requestId: string,
   input: CreateRequestMessageInput,
 ) {
+  if (input.visibility === "CUSTOMER_VISIBLE") {
+    const preflight = await withActorDb(actor, async (tx) => ({
+      request: await findRequestContext(tx, requestId, actor.id),
+      supportPlaybook: input.supportPlaybookKey
+        ? await findActiveSupportPlaybook(tx, input.supportPlaybookKey)
+        : null,
+    }));
+    const preflightRequest = preflight.request;
+    if (preflightRequest && canAccessCustomerRequestModule(actor, preflightRequest)) {
+      await enforceActorPublicContentRules(actor, {
+        targetType: "REQUEST_MESSAGE",
+        customerSpaceId: preflightRequest.project.customerSpaceId,
+        projectId: preflightRequest.projectId,
+        serviceRequestId: preflightRequest.id,
+        snapshot: {
+          body: preflight.supportPlaybook
+            ? buildSupportPlaybookMessageBody(preflight.supportPlaybook)
+            : input.body,
+          visibility: "CUSTOMER_VISIBLE",
+        },
+      });
+    }
+  }
   const result = await withActorDb(actor, async (tx) => {
     let request = await findRequestContext(tx, requestId, actor.id);
+    let claimDeliveryFeedback: DeliveryFeedback | null = null;
     if (!request) throw notFound();
     if (!canAccessCustomerRequestModule(actor, request)) throw notFound();
     assertRequestNotArchived(request);
@@ -708,8 +780,16 @@ export async function addRequestMessage(
 
     const isCustomer = actor.platformRole === "CUSTOMER";
     if (!isCustomer && input.visibility === "CUSTOMER_VISIBLE") {
+      const initialContext = accessContext(request);
+      if (
+        !canReplyToRequest(actor, initialContext) &&
+        !canClaimUnassignedRequest(actor, initialContext)
+      ) {
+        throw forbidden("当前角色无权回复该服务请求");
+      }
       const claimed = await claimRequestOnFirstPublicReply(tx, actor, request);
       request = claimed.request;
+      claimDeliveryFeedback = claimed.deliveryFeedback;
     }
 
     const context = accessContext(request);
@@ -717,7 +797,7 @@ export async function addRequestMessage(
       if (!canWriteInternalNote(actor, context)) {
         throw forbidden("只有请求处理人员可以添加内部备注");
       }
-    } else if (!isCustomer && !canWorkOnRequest(actor, context)) {
+    } else if (!isCustomer && !canReplyToRequest(actor, context)) {
       throw forbidden("只有请求处理人员或客户可以回复");
     }
 
@@ -790,6 +870,22 @@ export async function addRequestMessage(
         visibility: input.visibility,
       },
     );
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "REQUEST_MESSAGE",
+      targetId: message.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.projectId,
+      serviceRequestId: request.id,
+      snapshot: {
+        body: sanitizedBody,
+        visibility: input.visibility,
+        attachmentIds: inlineAttachmentIds,
+      },
+    });
 
     await writeAuditLog(tx, actor, {
       action:
@@ -810,7 +906,7 @@ export async function addRequestMessage(
     const assignedWorkers = workerIdsFromRequest(request);
     const requestIsUnassigned = assignedWorkers.length === 0;
     const isInternal = input.visibility === "INTERNAL";
-    await dispatchRequestActivity(tx, actor, {
+    const delivery = await dispatchRequestActivity(tx, actor, {
       eventType: "REQUEST_MESSAGE_CREATED",
       eventPayload: {
         requestId: request.id,
@@ -824,7 +920,7 @@ export async function addRequestMessage(
       notificationTitle:
         isInternal
           ? `${actor.name} 添加了内部备注`
-          : `${actor.name} 回复了请求 ${request.number}`,
+          : `${actor.name} 回复了服务请求 ${request.number}`,
       notificationBody: buildMessagePreview(sanitizedBody),
       includeCustomers: !isInternal && includeCustomerMembers(request),
       includeExternalContact:
@@ -835,6 +931,9 @@ export async function addRequestMessage(
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
+      sourceType: "REQUEST_MESSAGE",
+      sourceId: message.id,
+      contentRiskReviewId: contentRiskReview?.id,
     });
     const nextStatus = isCustomer
       ? statusAfterCustomerReply(request.status)
@@ -890,12 +989,33 @@ export async function addRequestMessage(
               messagePreview: buildMessagePreview(sanitizedBody),
               projectName: request.project.title,
             },
+            sourceType: "REQUEST_MESSAGE",
+            sourceId: message.id,
+            contentRiskReviewId: contentRiskReview?.id,
           }
         : null;
-    return { message, requestStatus: nextStatus, externalMail };
+    return {
+      message,
+      requestStatus: nextStatus,
+      externalMail,
+      deliveryFeedback: mergeDeliveryFeedback(
+        claimDeliveryFeedback,
+        delivery.feedback,
+      ),
+    };
   });
-  await enqueueExternalRequestMail(result.externalMail);
-  return { message: result.message, requestStatus: result.requestStatus };
+  const externalMailQueued = await enqueueExternalRequestMail(result.externalMail);
+  return {
+    message: result.message,
+    requestStatus: result.requestStatus,
+    deliveryFeedback: externalMailQueued
+      ? {
+          ...result.deliveryFeedback,
+          emailCount: result.deliveryFeedback.emailCount + 1,
+          emailTiming: "IMMEDIATE" as const,
+        }
+      : result.deliveryFeedback,
+  };
 }
 
 export async function confirmRequestClosed(actor: Actor, requestId: string) {
@@ -937,7 +1057,7 @@ export async function confirmRequestClosed(actor: Actor, requestId: string) {
       "CLOSED",
       "CUSTOMER_CONFIRMATION",
     );
-    await dispatchStatusActivity(
+    const delivery = await dispatchStatusActivity(
       tx,
       actor,
       request,
@@ -948,12 +1068,24 @@ export async function confirmRequestClosed(actor: Actor, requestId: string) {
     return {
       updated,
       notifyExternalContact: Boolean(request.createdByExternalContactId),
+      deliveryFeedback: delivery.feedback,
     };
   });
+  let externalMailQueued = false;
   if (result.notifyExternalContact) {
     await enqueueExternalRequestStatusMail(requestId, "CLOSED");
+    externalMailQueued = true;
   }
-  return result.updated;
+  return {
+    ...result.updated,
+    deliveryFeedback: externalMailQueued
+      ? {
+          ...result.deliveryFeedback,
+          emailCount: result.deliveryFeedback.emailCount + 1,
+          emailTiming: "IMMEDIATE" as const,
+        }
+      : result.deliveryFeedback,
+  };
 }
 
 async function writeStatusAudit(
@@ -983,7 +1115,7 @@ async function dispatchStatusActivity(
   status: RequestStatus,
   createNotifications: boolean,
 ) {
-  await dispatchRequestActivity(tx, actor, {
+  return dispatchRequestActivity(tx, actor, {
     eventType: "REQUEST_STATUS_CHANGED",
     eventPayload: {
       requestId: request.id,

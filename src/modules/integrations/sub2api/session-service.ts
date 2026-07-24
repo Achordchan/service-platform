@@ -54,7 +54,7 @@ export async function exchangeSub2ApiIdentity(
   ) {
     throw new DomainError(
       "SUB2API_CONNECTION_UNAVAILABLE",
-      "当前外部工单入口不可用",
+      "当前外部服务请求入口不可用",
       403,
     );
   }

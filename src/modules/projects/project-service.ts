@@ -4,10 +4,12 @@ import { randomUUID } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
+import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { assertDeletionAllowedInTx } from "@/modules/deletion/deletion-service";
 import {
+  dispatchProjectCreatedActivity,
   publishProjectChange,
   publishProjectDeleted,
 } from "@/modules/notifications/notification-service";
@@ -39,7 +41,7 @@ function auditMetadata(value: unknown) {
 
 function connectorSpaceLabel(pluginKey: string) {
   return getRegisteredPlugin(pluginKey).manifest.name.replace(
-    /\s*工单连接器$/,
+    /\s*(?:工单|服务请求)连接器$/,
     "",
   );
 }
@@ -101,6 +103,9 @@ function projectWhereFor(actor: Actor): Prisma.ProjectWhereInput {
 
 export function listProjects(actor: Actor) {
   return withActorDb(actor, async (tx) => {
+    if (actor.isStaff && !hasRolePermission(actor, "project.view")) {
+      return [];
+    }
     const projects = await tx.project.findMany({
       where: projectWhereFor(actor),
       select: projectBaseSelect,
@@ -234,9 +239,9 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
     for (const userId of selectedManagerIds) {
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { id: true, platformRole: true },
+        select: { id: true, platformRole: true, deletedAt: true },
       });
-      if (!user) {
+      if (!user || user.deletedAt) {
         throw new DomainError("USER_NOT_FOUND", "项目负责人不存在", 404);
       }
       if (
@@ -272,10 +277,11 @@ export async function createProject(actor: Actor, input: CreateProjectInput) {
         managerUserIds: selectedManagerIds,
       }),
     });
-    await publishProjectChange(tx, actor, {
-      change: "PROJECT_CREATED",
+    await dispatchProjectCreatedActivity(tx, actor, {
       customerSpaceId: project.customerSpaceId,
       projectId: project.id,
+      projectTitle: project.title,
+      standardProject: kind === "STANDARD",
     });
 
     const [result] = await hydrateProjectSummaries(tx, [project], actor);
@@ -500,6 +506,7 @@ export function updateProject(
               in: [
                 "REQUEST_CREATED",
                 "REQUEST_ASSIGNED",
+                "REQUEST_CLAIMED",
                 "REQUEST_MESSAGE",
                 "REQUEST_STATUS",
                 "REQUEST_ATTACHMENT",

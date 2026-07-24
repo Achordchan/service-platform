@@ -5,13 +5,16 @@ import {
   Alert,
   Chip,
   Divider,
+  FormControlLabel,
   Paper,
   Stack,
+  Switch,
   Tab,
   Tabs,
   Typography,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { useToast } from "@/components/shared/toast-provider";
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
 import { ResendProviderSettings } from "@/components/staff/resend-provider-settings";
 import { SmtpSettings } from "@/components/staff/smtp-settings";
@@ -35,6 +38,7 @@ export function MailSettingsPanel({
   onSettingsChange: (settings: PlatformSettingsView) => void;
   embedded?: boolean;
 }) {
+  const toast = useToast();
   const [providerTab, setProviderTab] = useState<ProviderTab>(
     settings.mailMode === "SMTP" ||
       (settings.mailMode === "LOCAL_OUTBOX" &&
@@ -46,14 +50,23 @@ export function MailSettingsPanel({
   const [apiKey, setApiKey] = useState("");
   const [testEmail, setTestEmail] = useState(currentAdminEmail);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const domainVerified = settings.resendDomainStatus === "verified";
   const webhookReady =
     settings.resendWebhookStatus === "enabled" &&
     settings.hasResendWebhookSecret;
   const resendReady =
     settings.hasResendApiKey && domainVerified && webhookReady;
+  const smtpReady = Boolean(
+    settings.smtpHost &&
+      settings.smtpPort &&
+      settings.smtpUser &&
+      settings.hasStoredPassword &&
+      settings.smtpFrom &&
+      settings.smtpHealthStatus === "healthy",
+  );
+  const activeMailReady =
+    (settings.mailMode === "RESEND" && resendReady) ||
+    (settings.mailMode === "SMTP" && smtpReady);
   const [showResendSetup, setShowResendSetup] = useState(!resendReady);
 
   async function run<T>(
@@ -62,14 +75,12 @@ export function MailSettingsPanel({
     message: string,
   ) {
     setBusy(action);
-    setError(null);
-    setSuccess(null);
     try {
       const result = await callback();
-      setSuccess(message);
+      toast.success(message);
       return result;
     } catch (actionError) {
-      setError(
+      toast.error(
         actionError instanceof Error
           ? actionError.message
           : "操作失败，请稍后重试",
@@ -218,12 +229,43 @@ export function MailSettingsPanel({
           />
         </Stack>
 
-        {error ? <Alert severity="error">{error}</Alert> : null}
-        {success ? <Alert severity="success">{success}</Alert> : null}
         {settings.mailMode === "LOCAL_OUTBOX" ? (
           <Alert severity="warning">
             当前未启用真实邮件通道，邀请、密码重置和业务提醒不会对外发送。
           </Alert>
+        ) : null}
+        {activeMailReady ? (
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.5}
+            sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+          >
+            <div>
+              <Typography sx={{ fontWeight: 700 }}>邮箱验证码登录</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
+                开启后，登录页允许使用 6 位邮箱验证码登录；密码登录仍为默认方式。
+              </Typography>
+            </div>
+            <FormControlLabel
+              label={settings.emailOtpLoginEnabled ? "已开启" : "已关闭"}
+              labelPlacement="start"
+              control={
+                <Switch
+                  checked={settings.emailOtpLoginEnabled}
+                  disabled={busy !== null}
+                  onChange={(_, checked) => {
+                    void saveSettings(
+                      { emailOtpLoginEnabled: checked },
+                      checked
+                        ? "邮箱验证码登录已开启"
+                        : "邮箱验证码登录已关闭",
+                    );
+                  }}
+                />
+              }
+              sx={{ m: 0, flexShrink: 0 }}
+            />
+          </Stack>
         ) : null}
         <Divider />
 
@@ -260,9 +302,9 @@ export function MailSettingsPanel({
             onCopy={async (value) => {
               try {
                 await navigator.clipboard.writeText(value);
-                setSuccess("DNS 记录值已复制");
+                toast.success("DNS 记录值已复制");
               } catch {
-                setError("复制失败，请手动选择记录值");
+                toast.error("复制失败，请手动选择记录值");
               }
             }}
             onTest={() => sendTestMail("RESEND")}

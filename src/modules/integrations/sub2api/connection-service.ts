@@ -89,7 +89,7 @@ async function assertPluginReady(tx: Prisma.TransactionClient) {
   if (!installation.enabled) {
     throw new DomainError(
       "SUB2API_PLUGIN_DISABLED",
-      "请先在插件中心启用 Sub2API 工单连接器",
+      "请先在插件中心启用 Sub2API 服务请求连接器",
       409,
     );
   }
