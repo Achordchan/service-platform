@@ -360,7 +360,7 @@ describe("Achord Connect 集成", () => {
       expect.objectContaining({
         externalUserId: "external-a",
         sourceKey: UNIVERSAL_PLUGIN_KEY,
-        sourceLabel: "通用工单连接器",
+        sourceLabel: "通用服务请求连接器",
         avatarUrl: "https://cdn.example.test/avatar-a.png",
         profileAttributes: { level: 3 },
       }),

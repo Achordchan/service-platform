@@ -574,7 +574,7 @@ describe("请求聊天生产流程", () => {
     ).rejects.toThrow();
   });
 
-  it("自动状态变化不写系统消息，通知按请求聚合", async () => {
+  it("自动状态变化不写系统消息，公开回复通知保留消息级来源", async () => {
     const created = await createFixtureRequest("通知聚合");
     await addRequestMessage(technician, created.id, {
       body: "<p>先接手并回复客户</p>",
@@ -600,21 +600,17 @@ describe("请求聊天生产流程", () => {
 
     const result = await ownerPool.query<{
       notification_count: string;
-      occurrence_count: number;
-      body: string;
+      source_count: string;
+      bodies: string[];
+      max_occurrence_count: number;
       status_system_count: string;
     }>(
       `
         SELECT
-          (
-            SELECT COUNT(*)
-            FROM "Notification"
-            WHERE "userId" = $1
-              AND "serviceRequestId" = $2
-              AND "readAt" IS NULL
-          )::text AS notification_count,
-          notification."occurrenceCount" AS occurrence_count,
-          notification.body,
+          COUNT(*)::text AS notification_count,
+          COUNT(DISTINCT notification."sourceId")::text AS source_count,
+          ARRAY_AGG(notification.body ORDER BY notification."createdAt") AS bodies,
+          MAX(notification."occurrenceCount") AS max_occurrence_count,
           (
             SELECT COUNT(*)
             FROM "RequestMessage"
@@ -626,14 +622,14 @@ describe("请求聊天生产流程", () => {
         WHERE notification."userId" = $1
           AND notification."serviceRequestId" = $2
           AND notification."readAt" IS NULL
-        LIMIT 1
       `,
       [technician.id, created.id],
     );
     expect(result.rows[0]).toEqual({
-      notification_count: "1",
-      occurrence_count: 2,
-      body: "第二条客户补充内容",
+      notification_count: "2",
+      source_count: "2",
+      bodies: ["第一条客户补充内容", "第二条客户补充内容"],
+      max_occurrence_count: 1,
       status_system_count: "0",
     });
   });

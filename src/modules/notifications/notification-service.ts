@@ -268,7 +268,7 @@ export async function createNotification(
           serviceRequestId: input.serviceRequestId,
           sourceType: input.sourceType,
           sourceId: input.sourceId,
-          aggregationKey: input.aggregationKey,
+          aggregationKey: input.sourceId ? undefined : input.aggregationKey,
           emailDueAt: input.emailDueAt,
         },
       ],

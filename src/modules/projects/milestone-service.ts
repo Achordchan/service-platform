@@ -109,6 +109,27 @@ export function getProjectProgress(actor: Actor, projectId: string) {
       projectId,
       "progress",
     );
+    if (!actor.isStaff && !context.customerFeatures.milestones) {
+      const [progress] = await tx.$queryRaw<
+        Array<{
+          total: number;
+          not_started: number;
+          in_progress: number;
+          completed: number;
+          percentage: number;
+        }>
+      >`SELECT * FROM app_project_milestone_progress(${projectId})`;
+      return {
+        percentage: progress?.percentage ?? 0,
+        counts: {
+          total: progress?.total ?? 0,
+          notStarted: progress?.not_started ?? 0,
+          inProgress: progress?.in_progress ?? 0,
+          completed: progress?.completed ?? 0,
+        },
+        milestones: [],
+      };
+    }
     const milestones = await tx.milestone.findMany({
       where: { projectId },
       select: {
@@ -136,10 +157,7 @@ export function getProjectProgress(actor: Actor, projectId: string) {
     );
     return {
       ...calculateProjectProgress(visibleMilestones),
-      milestones:
-        actor.isStaff || context.customerFeatures.milestones
-          ? visibleMilestones
-          : [],
+      milestones: visibleMilestones,
     };
   });
 }
