@@ -830,7 +830,10 @@ test.describe("主流程冒烟", () => {
 
     await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible();
     await expect(
-      customerPage.getByText("李工程师 已接手此请求"),
+      customerPage
+        .getByText("处理人", { exact: true })
+        .locator("..")
+        .getByText("李工程师", { exact: true }),
     ).toBeVisible();
 
     const staffMessage = customerPage.getByText("E2E 后台公开回复");

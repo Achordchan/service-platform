@@ -93,7 +93,7 @@ for (const viewport of [
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
 
-    await page.getByRole("button", { name: "新建工单" }).click();
+    await page.getByRole("button", { name: "新建服务请求" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

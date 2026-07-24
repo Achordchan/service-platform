@@ -76,9 +76,11 @@ test("插件设置与外部项目客户选择保持隔离", async ({ page }) => 
   await page.waitForURL(/\/staff\//);
 
   await page.goto("/staff/plugins");
-  await page.getByRole("button", { name: "管理Sub2API 工单连接器" }).click();
+  await page
+    .getByRole("button", { name: "管理Sub2API 服务请求连接器" })
+    .click();
   const pluginDialog = page.getByRole("dialog");
-  await expect(pluginDialog.getByText("Sub2API 工单连接器")).toBeVisible();
+  await expect(pluginDialog.getByText("Sub2API 服务请求连接器")).toBeVisible();
   await expect(pluginDialog.getByText("插件设置")).toHaveCount(0);
   await expect(pluginDialog.getByText("历史图片迁移")).toHaveCount(0);
   await expect(pluginDialog.getByText("WebP 质量")).toHaveCount(0);
