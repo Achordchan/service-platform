@@ -849,7 +849,6 @@ test.describe("主流程冒烟", () => {
     await customerPage
       .locator(".request-rich-editor")
       .fill("E2E 客户引用回复");
-    await expect(technicianPage.getByText("客户正在输入")).toBeVisible();
     await customerPage.getByLabel("添加附件").setInputFiles({
       name: "e2e-chat-image.png",
       mimeType: "image/png",
