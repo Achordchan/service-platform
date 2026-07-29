@@ -328,9 +328,6 @@ test.describe("主流程冒烟", () => {
     const mailTemplates = adminPage.getByRole("button", {
       name: /邮件模板/,
     });
-    const roleGroups = adminPage.getByRole("button", {
-      name: /角色与权限/,
-    });
     const mailMode = await ownerPool.query<{ mailMode: string }>(
       `SELECT "mailMode" FROM "PlatformSetting" WHERE id = 1`,
     );
@@ -340,7 +337,9 @@ test.describe("主流程冒烟", () => {
     } else {
       await expect(mailTemplates).toHaveCount(0);
     }
-    await expect(roleGroups).toHaveAttribute("aria-expanded", "false");
+    await expect(
+      adminPage.getByRole("tab", { name: "平台设置", exact: true }),
+    ).toHaveAttribute("aria-selected", "true");
     await expect(
       adminPage.getByRole("button", { name: "编辑" }),
     ).not.toBeVisible();
@@ -357,12 +356,27 @@ test.describe("主流程冒烟", () => {
       await mailTemplates.click();
     }
 
-    await roleGroups.click();
-    await expect(roleGroups).toHaveAttribute("aria-expanded", "true");
+    await adminPage.goto("/staff/service-types");
+    await expect(adminPage).toHaveURL(/\/staff\/settings\?tab=services$/);
+    await expect(
+      adminPage.getByRole("tab", {
+        name: "服务类型与分类",
+        exact: true,
+      }),
+    ).toHaveAttribute("aria-selected", "true");
+    await expect(
+      adminPage.getByRole("button", { name: "新建服务类型" }),
+    ).toBeVisible();
+
+    await adminPage.goto("/staff/team");
+    const roleGroupsTab = adminPage.getByRole("tab", {
+      name: /角色与权限/,
+    });
+    await expect(roleGroupsTab).toBeVisible();
+    await roleGroupsTab.click();
     await expect(
       adminPage.getByRole("button", { name: "新增角色组" }),
     ).toBeVisible();
-    await roleGroups.click();
 
     await adminPage.setViewportSize({ width: 390, height: 844 });
     const hasHorizontalOverflow = await adminPage.evaluate(
@@ -376,12 +390,14 @@ test.describe("主流程冒烟", () => {
     await expect(
       technicianPage.getByRole("heading", { name: "个人设置" }),
     ).toBeVisible();
-    await expect(
-      technicianPage.getByText("登录邮箱", { exact: true }),
-    ).toBeVisible();
-    await expect(
-      technicianPage.getByLabel("当前登录邮箱"),
-    ).toHaveValue("tech@local.test");
+    const technicianLoginEmail = technicianPage
+      .getByRole("textbox", { name: "登录邮箱", exact: true })
+      .filter({ visible: true });
+    await expect(technicianLoginEmail).toHaveValue("tech@local.test");
+    const technicianEmailChangeButton = technicianPage
+      .getByRole("button", { name: "修改邮箱", exact: true })
+      .filter({ visible: true });
+    await technicianEmailChangeButton.click();
     await expect(
       technicianPage.getByLabel("新的登录邮箱"),
     ).toBeVisible();
@@ -872,26 +888,27 @@ test.describe("主流程冒烟", () => {
     await expect
       .poll(() => technicianPage.title())
       .toMatch(/^【新消息】/);
+    await technicianPage.bringToFront();
     await simulatePageVisibility(technicianPage, "visible");
     await expect
       .poll(() => technicianPage.title())
       .not.toMatch(/^【新消息】/);
 
-    const unreadForRequest = await technicianPage.evaluate(
-      async (requestId) => {
-        const response = await fetch("/api/v1/notifications/summary", {
-          cache: "no-store",
-        });
-        const payload = (await response.json()) as {
-          data: {
-            requestUnreadCounts: Record<string, { count: number }>;
+    await expect
+      .poll(() =>
+        technicianPage.evaluate(async (requestId) => {
+          const response = await fetch("/api/v1/notifications/summary", {
+            cache: "no-store",
+          });
+          const payload = (await response.json()) as {
+            data: {
+              requestUnreadCounts: Record<string, { count: number }>;
+            };
           };
-        };
-        return payload.data.requestUnreadCounts[requestId]?.count ?? 0;
-      },
-      created.id,
-    );
-    expect(unreadForRequest).toBe(0);
+          return payload.data.requestUnreadCounts[requestId]?.count ?? 0;
+        }, created.id),
+      )
+      .toBe(0);
 
     await customerPage.setViewportSize({ width: 390, height: 844 });
     await expect(customerPage.getByText("服务人员在线")).toBeVisible();
