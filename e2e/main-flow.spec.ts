@@ -533,7 +533,9 @@ test.describe("主流程冒烟", () => {
 
     try {
       await customerPage.goto(`/customer/requests/${created.id}`);
-      await expect(customerPage.getByText("服务人员已标记解决")).toBeVisible();
+      await expect(
+        customerPage.getByRole("main").getByText("服务人员已标记解决"),
+      ).toBeVisible();
       await expect(
         customerPage.getByRole("button", { name: "继续反馈" }),
       ).toBeVisible();
@@ -548,7 +550,9 @@ test.describe("主流程冒烟", () => {
 
       await customerPage.setViewportSize({ width: 390, height: 844 });
       await customerPage.reload();
-      await expect(customerPage.getByText("服务人员已标记解决")).toBeVisible();
+      await expect(
+        customerPage.getByRole("main").getByText("服务人员已标记解决"),
+      ).toBeVisible();
       await expect(
         customerPage.getByRole("button", { name: "继续反馈" }),
       ).toBeVisible();
@@ -640,7 +644,9 @@ test.describe("主流程冒烟", () => {
 
       await customerPage.setViewportSize({ width: 390, height: 844 });
       await customerPage.goto(`/customer/projects/${project.id}?tab=updates`);
-      await expect(customerPage.getByText("交付概况")).toBeVisible();
+      await expect(
+        customerPage.getByRole("heading", { name: "交付概况" }),
+      ).toBeVisible();
       await expect(
         customerPage.getByRole("tab", { name: /进度动态/ }),
       ).not.toBeVisible();

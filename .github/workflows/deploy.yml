@@ -5,111 +5,27 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  build-release:
+    name: Build release
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: service_platform_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d service_platform_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
+    timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
-      - name: Setup Node.js 24
-        uses: actions/setup-node@v4
-        with:
-          node-version: 24
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11.7.0
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: 1.24.x
-
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Typecheck
-        run: pnpm typecheck
-
-      - name: Unit tests
-        run: pnpm test
-
-      - name: DingTalk plugin checks
-        run: |
-          pnpm typecheck:plugin:dingtalk
-          pnpm test:plugin:dingtalk
-
-      - name: Go SDK tests
-        run: pnpm test:sdk:go
-
-      - name: PHP SDK tests
-        run: pnpm test:sdk:php
-
-      - name: Prepare integration database roles
-        run: |
-          set -euo pipefail
-          docker exec -i "${{ job.services.postgres.id }}" \
-            psql -U postgres -d service_platform_test -v ON_ERROR_STOP=1 <<'SQL'
-          CREATE ROLE service_platform_app LOGIN PASSWORD 'app-test-password';
-          CREATE ROLE service_platform_jobs LOGIN PASSWORD 'jobs-test-password';
-          SQL
-
-      - name: Write disposable test environment
-        run: |
-          set -euo pipefail
-          cat > .env.integration <<'EOF'
-          DATABASE_URL="postgresql://service_platform_app:app-test-password@127.0.0.1:5432/service_platform_test?schema=public"
-          DATABASE_MIGRATION_URL="postgresql://postgres:postgres@127.0.0.1:5432/service_platform_test?schema=public"
-          JOB_DATABASE_URL="postgresql://service_platform_jobs:jobs-test-password@127.0.0.1:5432/service_platform_test"
-          MAIL_INLINE_WORKER="true"
-          BETTER_AUTH_SECRET="github-actions-integration-secret-at-least-32-characters"
-          BETTER_AUTH_URL="http://127.0.0.1:3000"
-          APP_URL="http://127.0.0.1:3000"
-          UPLOAD_DIR=".data/test-uploads"
-          PLATFORM_SECRET_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
-          EOF
-
-      - name: Migrate and seed integration database
-        run: pnpm test:integration:prepare
-
-      - name: Integration tests
-        env:
-          NODE_OPTIONS: --trace-deprecation
-        run: pnpm test:integration
-
-      - name: Install Playwright Chromium
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: End-to-end tests
-        run: pnpm test:e2e
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
 
       - name: Build app
         env:
-          # Build-time placeholders; runtime uses VPS /etc/service-platform/app.env
           DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=public
           JOB_DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
           BETTER_AUTH_SECRET: github-actions-build-secret-at-least-32-chars
@@ -121,6 +37,46 @@ jobs:
 
       - name: Verify runtime dependencies
         run: pnpm verify:runtime-deps
+
+      - name: Package release
+        run: |
+          set -euo pipefail
+          tar \
+            --exclude='./.git' \
+            --exclude='./.env' \
+            --exclude='./.env.*' \
+            --exclude='./node_modules' \
+            --exclude='./.next/cache' \
+            --exclude='./.next/dev' \
+            --exclude='./.data' \
+            --exclude='./public/uploads' \
+            --exclude='./test-results' \
+            --exclude='./playwright-report' \
+            --exclude='./coverage' \
+            --exclude='./.DS_Store' \
+            --exclude='./tsconfig.tsbuildinfo' \
+            -czf "${RUNNER_TEMP}/service-platform-release.tar.gz" .
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: service-platform-release-${{ github.sha }}
+          path: ${{ runner.temp }}/service-platform-release.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  deploy:
+    name: Deploy and health check
+    needs: build-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: service-platform-release-${{ github.sha }}
+          path: ${{ runner.temp }}/release
 
       - name: Prepare SSH
         env:
@@ -150,26 +106,18 @@ jobs:
           PORT="${VPS_PORT:-22}"
           STAMP="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA:0:7}"
           REMOTE_DIR="/home/${USER_NAME}/releases/${STAMP}"
+          ARCHIVE="${RUNNER_TEMP}/release/service-platform-release.tar.gz"
 
+          test -f "${ARCHIVE}"
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
             "${USER_NAME}@${VPS_HOST}" "mkdir -p '${REMOTE_DIR}'"
 
-          rsync -az --delete \
-            -e "ssh -i ~/.ssh/id_ed25519 -p ${PORT} -o IdentitiesOnly=yes" \
-            --exclude '.git/' \
-            --exclude '.env' \
-            --exclude '.env.*' \
-            --exclude '/node_modules/' \
-            --exclude '.next/dev/' \
-            --exclude '.next/cache/' \
-            --exclude '.data/' \
-            --exclude 'public/uploads/' \
-            --exclude 'test-results/' \
-            --exclude 'playwright-report/' \
-            --exclude 'coverage/' \
-            --exclude '.DS_Store' \
-            --exclude 'tsconfig.tsbuildinfo' \
-            ./ "${USER_NAME}@${VPS_HOST}:${REMOTE_DIR}/"
+          scp -i ~/.ssh/id_ed25519 -P "${PORT}" -o IdentitiesOnly=yes \
+            "${ARCHIVE}" "${USER_NAME}@${VPS_HOST}:${REMOTE_DIR}/release.tar.gz"
+
+          ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
+            "${USER_NAME}@${VPS_HOST}" \
+            "tar -xzf '${REMOTE_DIR}/release.tar.gz' -C '${REMOTE_DIR}' && rm '${REMOTE_DIR}/release.tar.gz'"
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
             "${USER_NAME}@${VPS_HOST}" "
@@ -181,7 +129,8 @@ jobs:
             "
 
           ssh -i ~/.ssh/id_ed25519 -p "${PORT}" -o IdentitiesOnly=yes \
-            "${USER_NAME}@${VPS_HOST}" "ls -1dt /home/${USER_NAME}/releases/* 2>/dev/null | tail -n +4 | xargs -r rm -rf"
+            "${USER_NAME}@${VPS_HOST}" \
+            "ls -1dt /home/${USER_NAME}/releases/* 2>/dev/null | tail -n +4 | xargs -r rm -rf"
 
       - name: Health check
         env:

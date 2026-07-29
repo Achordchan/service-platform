@@ -1,0 +1,42 @@
+name: Prepare test database
+description: Create disposable database roles, write the CI environment, then migrate and seed.
+
+inputs:
+  postgres-container-id:
+    description: GitHub Actions PostgreSQL service container ID.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Create database roles
+      shell: bash
+      env:
+        POSTGRES_CONTAINER_ID: ${{ inputs.postgres-container-id }}
+      run: |
+        set -euo pipefail
+        docker exec -i "${POSTGRES_CONTAINER_ID}" \
+          psql -U postgres -d service_platform_test -v ON_ERROR_STOP=1 <<'SQL'
+        CREATE ROLE service_platform_app LOGIN PASSWORD 'app-test-password';
+        CREATE ROLE service_platform_jobs LOGIN PASSWORD 'jobs-test-password';
+        SQL
+
+    - name: Write disposable test environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        cat > .env.integration <<'EOF'
+        DATABASE_URL="postgresql://service_platform_app:app-test-password@127.0.0.1:5432/service_platform_test?schema=public"
+        DATABASE_MIGRATION_URL="postgresql://postgres:postgres@127.0.0.1:5432/service_platform_test?schema=public"
+        JOB_DATABASE_URL="postgresql://service_platform_jobs:jobs-test-password@127.0.0.1:5432/service_platform_test"
+        MAIL_INLINE_WORKER="true"
+        BETTER_AUTH_SECRET="github-actions-integration-secret-at-least-32-characters"
+        BETTER_AUTH_URL="http://127.0.0.1:3000"
+        APP_URL="http://127.0.0.1:3000"
+        UPLOAD_DIR=".data/test-uploads"
+        PLATFORM_SECRET_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        EOF
+
+    - name: Migrate and seed database
+      shell: bash
+      run: pnpm test:integration:prepare

@@ -1,0 +1,187 @@
+name: Pull request checks
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: 1.24.x
+          cache: false
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: DingTalk plugin checks
+        run: |
+          pnpm typecheck:plugin:dingtalk
+          pnpm test:plugin:dingtalk
+
+      - name: Go SDK tests
+        run: pnpm test:sdk:go
+
+      - name: PHP SDK tests
+        run: pnpm test:sdk:php
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: service_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d service_platform_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Prepare test database
+        uses: ./.github/actions/prepare-test-database
+        with:
+          postgres-container-id: ${{ job.services.postgres.id }}
+
+      - name: Integration tests
+        env:
+          NODE_OPTIONS: --trace-deprecation
+        run: pnpm test:integration
+
+  e2e-main:
+    name: E2E main flow
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: service_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d service_platform_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Prepare test database
+        uses: ./.github/actions/prepare-test-database
+        with:
+          postgres-container-id: ${{ job.services.postgres.id }}
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Main flow end-to-end tests
+        run: pnpm exec playwright test e2e/main-flow.spec.ts
+
+  e2e-embeds:
+    name: E2E embeds and isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: service_platform_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d service_platform_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Prepare test database
+        uses: ./.github/actions/prepare-test-database
+        with:
+          postgres-container-id: ${{ job.services.postgres.id }}
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Embed and isolation end-to-end tests
+        run: >-
+          pnpm exec playwright test
+          e2e/plugin-project-isolation.spec.ts
+          e2e/sub2api-embed.spec.ts
+          e2e/universal-embed.spec.ts
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js and pnpm
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Build app
+        env:
+          DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build?schema=public
+          JOB_DATABASE_URL: postgresql://build:build@127.0.0.1:5432/build
+          BETTER_AUTH_SECRET: github-actions-build-secret-at-least-32-chars
+          BETTER_AUTH_URL: https://support.achord.cn
+          APP_URL: https://support.achord.cn
+          NEXT_PUBLIC_APP_URL: https://support.achord.cn
+          NODE_ENV: production
+        run: pnpm build
+
+      - name: Verify runtime dependencies
+        run: pnpm verify:runtime-deps
