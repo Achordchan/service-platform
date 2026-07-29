@@ -1,7 +1,7 @@
 @layer reset {
   :root {
-    --background: #ffffff;
-    --foreground: #1d1d1f;
+    --background: var(--mui-palette-background-default, #ffffff);
+    --foreground: var(--mui-palette-text-primary, #1d1d1f);
   }
 
   html {

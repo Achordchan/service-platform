@@ -59,7 +59,7 @@ export function ProjectUpdates({
                   width: 8,
                   height: 8,
                   borderRadius: "50%",
-                  bgcolor: index < 2 ? "primary.main" : "#d0d5dd",
+                  bgcolor: index < 2 ? "primary.main" : "text.disabled",
                   mt: 1,
                   flex: "0 0 auto",
                 }}
@@ -97,7 +97,7 @@ export function ProjectUpdates({
                 sx={{
                   width: 38,
                   height: 38,
-                  bgcolor: "#eaf3ff",
+                  bgcolor: "action.selected",
                   color: "primary.main",
                   fontSize: 15,
                 }}
@@ -160,7 +160,7 @@ export function ProjectUpdates({
                           sx={{
                             p: 1.75,
                             borderRadius: 1.5,
-                            bgcolor: "#f8fafc",
+                            bgcolor: "action.hover",
                           }}
                         >
                           <Typography variant="body2" sx={{ fontWeight: 650 }}>

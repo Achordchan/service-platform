@@ -1,4 +1,3 @@
-import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
 import {
   type MailMessageView,
@@ -6,11 +5,11 @@ import {
   type MailTemplateView,
   type PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
-import { PlatformSettingsHub } from "@/components/staff/platform-settings-hub";
+import { SettingsWorkspace } from "@/components/staff/settings-workspace";
 import type { NotificationDeliveryRuleView } from "@/modules/notifications/notification-delivery-rules";
-import type { RoleGroupView } from "@/components/staff/role-group-manager";
+import type { ServiceTypeItem } from "@/components/staff/staff-types";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
-import { requireUserWithAccess } from "@/lib/session";
+import { requirePlatformAdmin } from "@/lib/session";
 import {
   getPlatformSettings,
   getMailOutboxSummary,
@@ -19,26 +18,25 @@ import {
 import { listMailTemplates } from "@/modules/platform-settings/mail-template-service";
 import { listNotificationDeliveryRules } from "@/modules/notifications/notification-delivery-rule-service";
 import { listPluginViews } from "@/modules/plugins/plugin-service";
-import { listRoleGroups } from "@/modules/users/role-group-service";
+import { listServiceTypes } from "@/modules/projects/service-type-service";
+import { listSupportPlaybooksForAdmin } from "@/modules/requests/support-playbook-service";
 
 export const metadata = {
   title: "设置",
 };
 
 export default async function StaffSettingsPage() {
-  const { actor } = await requireUserWithAccess();
-  if (!actor.isPlatformAdmin) {
-    redirect("/staff/projects");
-  }
+  const { actor } = await requirePlatformAdmin();
 
-  const [settings, messages, mailSummary, notificationRules, roleGroups, templates, plugins] = await Promise.all([
+  const [settings, messages, mailSummary, notificationRules, templates, plugins, serviceTypesRaw, playbooks] = await Promise.all([
     getPlatformSettings(actor),
     listMailMessages(actor, 50),
     getMailOutboxSummary(actor),
     listNotificationDeliveryRules(actor),
-    listRoleGroups(actor),
     listMailTemplates(actor),
     listPluginViews(actor),
+    listServiceTypes(actor),
+    listSupportPlaybooksForAdmin(actor),
   ]);
   const dingTalkPlugin = plugins.find((plugin) => plugin.key === "dingtalk-robot");
 
@@ -103,20 +101,19 @@ export default async function StaffSettingsPage() {
   const mailOutboxSummary: MailOutboxSummary = mailSummary;
   const notificationRuleViews: NotificationDeliveryRuleView[] = notificationRules;
   const templateViews: MailTemplateView[] = templates;
-
-  const roleGroupViews: RoleGroupView[] = roleGroups.map((group) => ({
-    id: group.id,
-    key: group.key,
-    name: group.name,
-    description: group.description,
-    accessLevel: group.accessLevel,
-    permissions: group.permissions,
-    isSystem: group.isSystem,
-    active: group.active,
-    sortOrder: group.sortOrder,
-    userCount: group._count.users,
-    invitationCount: group._count.invitations,
-    updatedAt: group.updatedAt.toISOString(),
+  const serviceTypes: ServiceTypeItem[] = serviceTypesRaw.map((serviceType) => ({
+    id: serviceType.id,
+    key: serviceType.key,
+    name: serviceType.name,
+    description: serviceType.description,
+    active: serviceType.active,
+    updatedAt: serviceType.updatedAt.toISOString(),
+    categories: serviceType.requestCategories.map((category) => ({
+      id: category.id,
+      name: category.name,
+      description: category.description,
+      active: category.active,
+    })),
   }));
 
   return (
@@ -126,16 +123,17 @@ export default async function StaffSettingsPage() {
     >
       <Stack spacing={3}>
         <StaffPageHeading title="设置" />
-        <PlatformSettingsHub
+        <SettingsWorkspace
           initialSettings={settingsView}
           initialMessages={messageViews}
           initialMailOutboxSummary={mailOutboxSummary}
           initialNotificationRules={notificationRuleViews}
           initialTemplates={templateViews}
-          roleGroups={roleGroupViews}
           currentAdminEmail={actor.email}
           dingTalkPluginEnabled={dingTalkPlugin?.enabled === true}
           dingTalkPluginReady={dingTalkPlugin?.healthStatus === "READY"}
+          serviceTypes={serviceTypes}
+          playbooks={playbooks}
         />
       </Stack>
     </Container>

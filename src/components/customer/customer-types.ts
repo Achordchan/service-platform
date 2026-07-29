@@ -31,6 +31,7 @@ export type CustomerUser = {
   email: string;
   image?: string | null;
   soundNotificationsEnabled: boolean;
+  themePreference: import("@/theme/theme-mode").ThemePreference;
 };
 
 export type ProjectSummary = {

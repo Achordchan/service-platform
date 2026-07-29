@@ -23,12 +23,13 @@ import {
 } from "@mui/material";
 import ApartmentOutlinedIcon from "@mui/icons-material/ApartmentOutlined";
 import BusinessCenterOutlinedIcon from "@mui/icons-material/BusinessCenterOutlined";
-import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
 import ChevronLeftOutlinedIcon from "@mui/icons-material/ChevronLeftOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
+import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
 import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
+import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
@@ -39,6 +40,7 @@ import { authClient } from "@/lib/auth-client";
 import { NotificationMenu } from "@/components/shared/notification-menu";
 import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
 import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
+import { ThemeModeMenu } from "@/components/shared/theme-mode-menu";
 import {
   EMPTY_NAVIGATION_UNREAD,
   type NavigationUnreadState,
@@ -71,9 +73,9 @@ const adminNavigation = [
     icon: <GroupOutlinedIcon fontSize="small" />,
   },
   {
-    href: "/staff/service-types",
-    label: "服务配置",
-    icon: <CategoryOutlinedIcon fontSize="small" />,
+    href: "/staff/content-review",
+    label: "内容审核",
+    icon: <GppMaybeOutlinedIcon fontSize="small" />,
   },
   {
     href: "/staff/plugins",
@@ -95,9 +97,11 @@ const roleLabels = {
 
 export function StaffShell({
   user,
+  contentReviewEnabled,
   children,
 }: {
   user: StaffUser;
+  contentReviewEnabled?: boolean;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -107,10 +111,12 @@ export function StaffShell({
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [navigationUnread, setNavigationUnread] =
     useState<NavigationUnreadState>(EMPTY_NAVIGATION_UNREAD);
-  const navigation =
-    user.role === "PLATFORM_ADMIN"
-      ? [...primaryNavigation, ...adminNavigation]
-      : primaryNavigation;
+  const adminNav = user.role === "PLATFORM_ADMIN"
+    ? adminNavigation.filter(
+        (item) => item.href !== "/staff/content-review" || contentReviewEnabled,
+      )
+    : [];
+  const navigation = [...primaryNavigation, ...adminNav];
   const currentWidth = collapsed ? 76 : drawerWidth;
 
   const navigationList = (
@@ -171,7 +177,7 @@ export function StaffShell({
                   borderRadius: 1.5,
                   justifyContent: collapsed ? "center" : "flex-start",
                   "&.Mui-selected": {
-                    bgcolor: "#eaf2ff",
+                    bgcolor: "action.selected",
                     color: "primary.main",
                   },
                 }}
@@ -300,6 +306,7 @@ export function StaffShell({
               spacing={{ xs: 0.5, sm: 1.5 }}
               sx={{ ml: "auto", alignItems: "center" }}
             >
+              <ThemeModeMenu initialPreference={user.themePreference} />
               <NotificationMenu
                 staff
                 onUnreadStateChange={setNavigationUnread}
@@ -325,8 +332,8 @@ export function StaffShell({
                   sx={{
                     width: 36,
                     height: 36,
-                    bgcolor: "#dbeafe",
-                    color: "#1769d2",
+                    bgcolor: "action.selected",
+                    color: "primary.main",
                   }}
                 >
                   {user.name.slice(0, 1)}
@@ -364,13 +371,41 @@ export function StaffShell({
         onClose={() => setAccountAnchor(null)}
         anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
         transformOrigin={{ horizontal: "right", vertical: "top" }}
+        slotProps={{ paper: { sx: { minWidth: 280 } } }}
       >
-        <MenuItem disabled>{user.email}</MenuItem>
+        <Box sx={{ px: 2, py: 1.75, maxWidth: 320 }}>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+            <Avatar
+              src={resolveAvatarSrc(user.image, user.name, user.id)}
+              alt={user.name}
+              sx={{
+                width: 40,
+                height: 40,
+                bgcolor: "action.selected",
+                color: "primary.main",
+              }}
+            >
+              {user.name.slice(0, 1)}
+            </Avatar>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography sx={{ fontWeight: 700 }} noWrap>
+                {user.name}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
+                {user.email}
+              </Typography>
+            </Box>
+          </Stack>
+        </Box>
+        <Divider />
         <MenuItem
           component={Link}
           href="/staff/account"
           onClick={() => setAccountAnchor(null)}
         >
+          <ListItemIcon>
+            <ManageAccountsOutlinedIcon fontSize="small" />
+          </ListItemIcon>
           个人设置
         </MenuItem>
         <Divider />

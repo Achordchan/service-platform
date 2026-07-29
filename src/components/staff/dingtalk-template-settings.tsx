@@ -212,7 +212,7 @@ export function DingTalkTemplateSettings({
             />
             <Paper
               variant="outlined"
-              sx={{ p: { xs: 2, sm: 2.5 }, bgcolor: "#f7f8fa" }}
+              sx={{ p: { xs: 2, sm: 2.5 }, bgcolor: "action.hover" }}
             >
               <Typography variant="overline" color="text.secondary">
                 消息预览

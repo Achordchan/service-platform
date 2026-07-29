@@ -28,7 +28,7 @@ export function RequestChatHeading({
           aria-live="polite"
           sx={{
             alignItems: "center",
-            color: "#15803d",
+            color: "success.main",
             fontWeight: 650,
             whiteSpace: "nowrap",
           }}
@@ -38,7 +38,7 @@ export function RequestChatHeading({
               width: 8,
               height: 8,
               borderRadius: "50%",
-              bgcolor: "#22c55e",
+              bgcolor: "success.main",
               boxShadow: "0 0 0 3px rgba(34,197,94,0.14)",
             }}
           />

@@ -1,3 +1,5 @@
+"use client";
+
 import Image from "next/image";
 import { Box, Paper, Stack, Typography } from "@mui/material";
 
@@ -15,19 +17,23 @@ export function AuthShell({
   return (
     <Box
       component="main"
-      sx={{
+      sx={(theme) => ({
         minHeight: "100dvh",
         display: "grid",
         placeItems: "center",
         px: { xs: 2, md: 3 },
         py: { xs: 4, md: 6 },
-        bgcolor: "#eef2f7",
+        bgcolor: "background.default",
         backgroundImage:
           "radial-gradient(circle at top left, rgba(37,99,235,0.08), transparent 34%), radial-gradient(circle at bottom right, rgba(15,23,42,0.05), transparent 40%)",
-      }}
+        ...theme.applyStyles("dark", {
+          backgroundImage:
+            "radial-gradient(circle at top left, rgba(90,162,255,0.12), transparent 34%), radial-gradient(circle at bottom right, rgba(255,255,255,0.04), transparent 40%)",
+        }),
+      })}
     >
       <Box
-        sx={{
+        sx={(theme) => ({
           width: "100%",
           maxWidth: brandSide ? 980 : 440,
           display: "grid",
@@ -40,7 +46,10 @@ export function AuthShell({
           borderColor: "divider",
           bgcolor: "background.paper",
           boxShadow: "0 24px 80px rgba(15, 23, 40, 0.08)",
-        }}
+          ...theme.applyStyles("dark", {
+            boxShadow: "0 24px 80px rgba(0, 0, 0, 0.36)",
+          }),
+        })}
       >
         {brandSide ? (
           <Box

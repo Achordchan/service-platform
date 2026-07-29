@@ -35,15 +35,8 @@ export function canViewRequest(
   return assignedToActor || unassigned;
 }
 
-export function canManageRequestAssignment(
-  actor: Actor,
-  context: RequestAccessContext,
-) {
-  return (
-    actor.isPlatformAdmin ||
-    (context.projectRole === "PROJECT_MANAGER" &&
-      hasRolePermission(actor, "request.assign"))
-  );
+export function canManageRequestAssignment(actor: Actor) {
+  return actor.isPlatformAdmin;
 }
 
 export function canWorkOnRequest(

@@ -92,6 +92,7 @@ export function EmailChangeControl({
   warning,
   onChanged,
   onBusyChange,
+  showCurrentEmail = true,
 }: {
   currentEmail: string;
   initialPending: PendingEmailChange | null;
@@ -99,6 +100,7 @@ export function EmailChangeControl({
   warning: string;
   onChanged?: () => void;
   onBusyChange?: (busy: boolean) => void;
+  showCurrentEmail?: boolean;
 }) {
   const toast = useToast();
   const [newEmail, setNewEmail] = useState("");
@@ -156,12 +158,14 @@ export function EmailChangeControl({
   return (
     <Stack spacing={2.25}>
       <Alert severity="warning">{warning}</Alert>
-      <TextField
-        label="当前登录邮箱"
-        value={currentEmail}
-        disabled
-        fullWidth
-      />
+      {showCurrentEmail ? (
+        <TextField
+          label="当前登录邮箱"
+          value={currentEmail}
+          disabled
+          fullWidth
+        />
+      ) : null}
       {pending ? (
         <Stack
           spacing={1}

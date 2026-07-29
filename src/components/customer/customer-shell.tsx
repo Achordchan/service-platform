@@ -37,6 +37,7 @@ import { authClient } from "@/lib/auth-client";
 import { NotificationMenu } from "@/components/shared/notification-menu";
 import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
 import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
+import { ThemeModeMenu } from "@/components/shared/theme-mode-menu";
 import {
   EMPTY_NAVIGATION_UNREAD,
   type NavigationUnreadState,
@@ -159,6 +160,7 @@ export function CustomerShell({
               spacing={{ xs: 0.75, md: 1.25 }}
               sx={{ ml: "auto", alignItems: "center" }}
             >
+              <ThemeModeMenu initialPreference={user.themePreference} />
               <NotificationMenu
                 staff={false}
                 onUnreadStateChange={setNavigationUnread}
@@ -181,7 +183,7 @@ export function CustomerShell({
                 <Avatar
                   src={resolveAvatarSrc(user.image, user.name, user.id)}
                   alt={user.name}
-                  sx={{ width: 36, height: 36, bgcolor: "#e5e7eb" }}
+                  sx={{ width: 36, height: 36, bgcolor: "action.selected" }}
                 >
                   {user.name.slice(0, 1)}
                 </Avatar>
@@ -261,7 +263,7 @@ export function CustomerShell({
             <Avatar
               src={resolveAvatarSrc(user.image, user.name, user.id)}
               alt={user.name}
-              sx={{ width: 40, height: 40, bgcolor: "#e5e7eb" }}
+              sx={{ width: 40, height: 40, bgcolor: "action.selected" }}
             >
               {user.name.slice(0, 1)}
             </Avatar>
@@ -281,6 +283,9 @@ export function CustomerShell({
           href="/customer/account"
           onClick={() => setAccountAnchor(null)}
         >
+          <ListItemIcon>
+            <ManageAccountsOutlinedIcon fontSize="small" />
+          </ListItemIcon>
           个人设置
         </MenuItem>
         <Divider />

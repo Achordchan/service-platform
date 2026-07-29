@@ -274,7 +274,7 @@ export function NotificationMenu({
               sx={{
                 alignItems: "flex-start",
                 py: 1.5,
-                bgcolor: item.readAt ? "transparent" : "#f5f9ff",
+                bgcolor: item.readAt ? "transparent" : "action.selected",
               }}
             >
               <ListItemText

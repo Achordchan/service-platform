@@ -350,8 +350,7 @@ export function RequestReplyForm({
         ) : null}
         {attachmentsEnabled && !resolvedGateVisible ? (
           <Typography variant="body2" color="text.secondary">
-            支持粘贴图片；单文件不超过 {policy.maxSizeMb}MB；格式：
-            {policy.allowedExtensions.join("、")}
+            可粘贴图片，单个附件最大 {policy.maxSizeMb}MB。
           </Typography>
         ) : null}
         {!resolvedGateVisible ? (

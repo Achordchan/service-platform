@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -9,6 +10,7 @@ import {
   useState,
 } from "react";
 import {
+  alpha,
   Avatar,
   Box,
   Button,
@@ -33,8 +35,45 @@ import { SupportPlaybookMessageCard } from "@/components/shared/support-playbook
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { resolveInlineAttachmentHtml } from "@/lib/message-content";
 
-const INITIAL_VISIBLE = 12;
-const LOAD_MORE_STEP = 12;
+const INITIAL_VISIBLE = 30;
+const LOAD_MORE_STEP = 30;
+
+function RequestDateSeparator({ label }: { label: string }) {
+  return (
+    <Box
+      role="separator"
+      aria-label={label}
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1.5,
+        px: { xs: 1, sm: 5 },
+        py: 0.5,
+      }}
+    >
+      <Box
+        sx={(theme) => ({
+          flex: 1,
+          height: "1px",
+          bgcolor: alpha(theme.palette.divider, 0.7),
+        })}
+      />
+      <Typography
+        variant="caption"
+        sx={{ color: "text.disabled", lineHeight: 1, flexShrink: 0 }}
+      >
+        {label}
+      </Typography>
+      <Box
+        sx={(theme) => ({
+          flex: 1,
+          height: "1px",
+          bgcolor: alpha(theme.palette.divider, 0.7),
+        })}
+      />
+    </Box>
+  );
+}
 
 function looksLikeHtml(body: string) {
   return /<\/?[a-z][\s\S]*>/i.test(body);
@@ -54,7 +93,7 @@ function RequestTypingBubble({ label }: { label: string }) {
           width: 34,
           height: 34,
           fontSize: 14,
-          bgcolor: "#e5e7eb",
+          bgcolor: "action.selected",
           color: "text.secondary",
         }}
       >
@@ -142,6 +181,15 @@ export function RequestChatThread({
         hour: "2-digit",
         minute: "2-digit",
         hour12: false,
+      }),
+    [locale],
+  );
+  const dateSeparatorFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale, {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
       }),
     [locale],
   );
@@ -274,7 +322,7 @@ export function RequestChatThread({
             loadEarlier();
           }
         }}
-        sx={{
+        sx={(theme) => ({
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
@@ -282,10 +330,12 @@ export function RequestChatThread({
           overscrollBehavior: "contain",
           px: { xs: 1.5, md: 2 },
           py: 2,
-          bgcolor: (theme) =>
-            theme.palette.mode === "dark" ? "#12161c" : "#f7f8fa",
+          bgcolor: "#f7f8fa",
+          ...theme.applyStyles("dark", {
+            bgcolor: "#12161c",
+          }),
           touchAction: "pan-y",
-        }}
+        })}
         onWheel={(event) => {
           const node = event.currentTarget;
           const delta = event.deltaY;
@@ -299,37 +349,53 @@ export function RequestChatThread({
         }}
       >
         <Stack spacing={1.5}>
-          {visibleMessages.map((message) => {
+          {visibleMessages.map((message, index) => {
+            const messageDate = new Date(message.createdAt);
+            const previousMessage = visibleMessages[index - 1];
+            const showDateSeparator =
+              !previousMessage ||
+              dateSeparatorFormatter.format(messageDate) !==
+                dateSeparatorFormatter.format(
+                  new Date(previousMessage.createdAt),
+                );
+            const dateSeparator = showDateSeparator ? (
+              <RequestDateSeparator
+                label={dateSeparatorFormatter.format(messageDate)}
+              />
+            ) : null;
+
             if (message.isSystem) {
               return (
-                <Box
-                  key={message.id}
-                  sx={{
-                    display: "flex",
-                    justifyContent: "center",
-                    px: 1,
-                  }}
-                >
-                  <Typography
-                    variant="caption"
+                <Fragment key={message.id}>
+                  {dateSeparator}
+                  <Box
                     sx={{
-                      color: "text.secondary",
-                      bgcolor: "rgba(15, 23, 42, 0.04)",
-                      borderRadius: 999,
-                      px: 1.5,
-                      py: 0.5,
-                      maxWidth: "90%",
-                      textAlign: "center",
-                      lineHeight: 1.5,
+                      display: "flex",
+                      justifyContent: "center",
+                      px: 1,
                     }}
                   >
-                    {message.body}
-                    <Box component="span" sx={{ opacity: 0.75 }}>
-                      {" · "}
-                      {dateFormatter.format(new Date(message.createdAt))}
-                    </Box>
-                  </Typography>
-                </Box>
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        color: "text.secondary",
+                        bgcolor: "action.hover",
+                        borderRadius: 999,
+                        px: 1.5,
+                        py: 0.5,
+                        maxWidth: "90%",
+                        textAlign: "center",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {message.body}
+                      <Box component="span" sx={{ opacity: 0.75 }}>
+                        {" · "}
+                        {dateFormatter.format(messageDate)}
+                      </Box>
+                    </Typography>
+                  </Box>
+                </Fragment>
               );
             }
             const isSelf = message.authorId === currentUserId;
@@ -351,12 +417,13 @@ export function RequestChatThread({
             );
 
             return (
-              <Stack
-                key={message.id}
-                direction={isSelf ? "row-reverse" : "row"}
-                spacing={1.25}
-                sx={{ alignItems: "flex-end" }}
-              >
+              <Fragment key={message.id}>
+                {dateSeparator}
+                <Stack
+                  direction={isSelf ? "row-reverse" : "row"}
+                  spacing={1.25}
+                  sx={{ alignItems: "flex-end" }}
+                >
                 <Avatar
                   src={avatarSrc}
                   alt={message.authorName}
@@ -365,14 +432,14 @@ export function RequestChatThread({
                     height: 34,
                     fontSize: 14,
                     bgcolor: isInternal
-                      ? "#fef3c7"
+                      ? (theme) => alpha(theme.palette.warning.main, 0.16)
                       : isAdmin
                         ? "#111827"
                         : isSelf
                           ? "primary.main"
-                          : "#e5e7eb",
+                          : "action.selected",
                     color: isInternal
-                      ? "#b54708"
+                      ? "warning.main"
                       : isAdmin || isSelf
                         ? "common.white"
                         : "text.secondary",
@@ -493,9 +560,9 @@ export function RequestChatThread({
                         ? "18px 18px 6px 18px"
                         : "18px 18px 18px 6px",
                       bgcolor: showRevokedPlaceholder
-                        ? "rgba(239, 68, 68, 0.06)"
+                        ? (theme) => alpha(theme.palette.error.main, 0.08)
                         : isInternal
-                          ? "#fffbeb"
+                          ? (theme) => alpha(theme.palette.warning.main, 0.12)
                           : isSelf
                             ? "primary.main"
                             : isAdmin
@@ -508,9 +575,9 @@ export function RequestChatThread({
                           : "text.primary",
                       border: "1px solid",
                       borderColor: showRevokedPlaceholder
-                        ? "rgba(239, 68, 68, 0.28)"
+                        ? (theme) => alpha(theme.palette.error.main, 0.32)
                         : isInternal
-                          ? "#fcd34d"
+                          ? "warning.main"
                           : isSelf
                             ? "primary.main"
                             : isAdmin
@@ -691,7 +758,8 @@ export function RequestChatThread({
                     </Typography>
                   ) : null}
                 </Box>
-              </Stack>
+                </Stack>
+              </Fragment>
             );
           })}
           {counterpartTypingLabel ? (

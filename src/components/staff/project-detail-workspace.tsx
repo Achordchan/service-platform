@@ -396,7 +396,15 @@ export function ProjectDetailWorkspace({
                 <CollapsibleText text={update.body} maxLines={16} />
               ) : null}
               {update.contentRiskStatus !== "REVOKED" && update.comments.length > 0 ? (
-                <Stack spacing={1.5} sx={{ mt: 2.5, pl: 2, borderLeft: "2px solid #e5e7eb" }}>
+                <Stack
+                  spacing={1.5}
+                  sx={{
+                    mt: 2.5,
+                    pl: 2,
+                    borderLeft: "2px solid",
+                    borderColor: "divider",
+                  }}
+                >
                   {update.comments.map((comment) => (
                     <Box key={comment.id}>
                       <Typography variant="body2" sx={{ fontWeight: 650 }}>

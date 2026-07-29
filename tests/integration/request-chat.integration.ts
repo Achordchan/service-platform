@@ -4,6 +4,7 @@ import { Client, Pool } from "pg";
 import type { Actor } from "@/lib/actor";
 import {
   addRequestMessage,
+  assignRequest,
   changeRequestStatus,
 } from "@/modules/requests/request-command-service";
 import { revokeRequestMessageByAdmin } from "@/modules/plugins/content-risk-review-service";
@@ -139,6 +140,25 @@ afterAll(async () => {
 });
 
 describe("请求聊天生产流程", () => {
+  it("只有平台管理员可以手工分配服务请求", async () => {
+    const created = await createFixtureRequest("管理员手工分配");
+
+    await expect(
+      assignRequest(manager, created.id, { assigneeIds: [technician.id] }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(await requestAssignment(created.id)).toEqual({
+      assignee_id: null,
+      system_count: "0",
+    });
+
+    await expect(
+      assignRequest(admin, created.id, { assigneeIds: [technician.id] }),
+    ).resolves.toMatchObject({
+      assigneeId: technician.id,
+      assignees: [{ userId: technician.id }],
+    });
+  });
+
   it("平台管理员可以填写原因人工撤回客户公开消息", async () => {
     const created = await createFixtureRequest("管理员人工撤回");
     const reply = await addRequestMessage(customer, created.id, {

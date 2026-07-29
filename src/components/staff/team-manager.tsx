@@ -92,10 +92,12 @@ export function TeamManager({
   members,
   invitations,
   roleGroups,
+  onManageRoleGroups,
 }: {
   members: TeamMemberView[];
   invitations: StaffInviteView[];
   roleGroups: RoleGroupOption[];
+  onManageRoleGroups?: () => void;
 }) {
   const router = useRouter();
   const toast = useToast();
@@ -223,6 +225,26 @@ export function TeamManager({
     <Stack spacing={3}>
 
       <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
+        {activeRoleGroups.length === 0 ? (
+          <Alert
+            severity="info"
+            sx={{ mb: 2 }}
+            action={
+              onManageRoleGroups ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={onManageRoleGroups}
+                >
+                  去创建
+                </Button>
+              ) : undefined
+            }
+          >
+            还没有启用的角色组，无法邀请成员。请先在「角色与权限」中创建一个角色组。
+          </Alert>
+        ) : null}
+
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1.5}

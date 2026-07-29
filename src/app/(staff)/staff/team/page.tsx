@@ -1,13 +1,13 @@
-import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
-import {
-  TeamManager,
-  type RoleGroupOption,
-  type StaffInviteView,
-  type TeamMemberView,
+import type {
+  RoleGroupOption,
+  StaffInviteView,
+  TeamMemberView,
 } from "@/components/staff/team-manager";
+import type { RoleGroupView } from "@/components/staff/role-group-manager";
+import { TeamWorkspace } from "@/components/staff/team-workspace";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
-import { requireUserWithAccess } from "@/lib/session";
+import { requirePlatformAdmin } from "@/lib/session";
 import { listRoleGroups } from "@/modules/users/role-group-service";
 import {
   listInternalUsers,
@@ -19,15 +19,12 @@ export const metadata = {
 };
 
 export default async function StaffTeamPage() {
-  const { actor } = await requireUserWithAccess();
-  if (!actor.isPlatformAdmin) {
-    redirect("/staff/projects");
-  }
+  const { actor } = await requirePlatformAdmin();
 
   const [users, invitations, roleGroups] = await Promise.all([
     listInternalUsers(actor),
     listStaffInvitations(actor),
-    listRoleGroups(actor, { activeOnly: true }),
+    listRoleGroups(actor),
   ]);
 
   const members: TeamMemberView[] = users.map((user) => ({
@@ -84,6 +81,21 @@ export default async function StaffTeamPage() {
     active: group.active,
   }));
 
+  const roleGroupViews: RoleGroupView[] = roleGroups.map((group) => ({
+    id: group.id,
+    key: group.key,
+    name: group.name,
+    description: group.description,
+    accessLevel: group.accessLevel,
+    permissions: group.permissions,
+    isSystem: group.isSystem,
+    active: group.active,
+    sortOrder: group.sortOrder,
+    userCount: group._count.users,
+    invitationCount: group._count.invitations,
+    updatedAt: group.updatedAt.toISOString(),
+  }));
+
   return (
     <Container
       maxWidth={false}
@@ -91,10 +103,11 @@ export default async function StaffTeamPage() {
     >
       <Stack spacing={3}>
         <StaffPageHeading title="团队" />
-        <TeamManager
+        <TeamWorkspace
           members={members}
           invitations={invitationViews}
-          roleGroups={roleGroupOptions}
+          roleGroupOptions={roleGroupOptions}
+          roleGroups={roleGroupViews}
         />
       </Stack>
     </Container>

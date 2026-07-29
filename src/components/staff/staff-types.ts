@@ -34,6 +34,7 @@ export type StaffUser = {
   image?: string | null;
   role: StaffRole;
   soundNotificationsEnabled: boolean;
+  themePreference: import("@/theme/theme-mode").ThemePreference;
 };
 
 export type ProjectListItem = {

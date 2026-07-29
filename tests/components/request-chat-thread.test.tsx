@@ -17,6 +17,76 @@ const message: ChatMessage = {
 
 afterEach(cleanup);
 
+function messages(count: number): ChatMessage[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...message,
+    id: `message-${index + 1}`,
+    body: `消息 ${index + 1}`,
+    createdAt: new Date(
+      Date.parse("2026-07-24T07:00:00.000Z") + index * 1_000,
+    ).toISOString(),
+  }));
+}
+
+describe("服务请求历史消息加载", () => {
+  it("跨自然日时显示淡化日期分隔", () => {
+    render(
+      <RequestChatThread
+        messages={[
+          {
+            ...message,
+            id: "day-one-first",
+            body: "第一天第一条",
+            createdAt: "2026-07-24T12:00:00.000Z",
+          },
+          {
+            ...message,
+            id: "day-one-second",
+            body: "第一天第二条",
+            createdAt: "2026-07-24T13:00:00.000Z",
+          },
+          {
+            ...message,
+            id: "day-two-first",
+            body: "第二天第一条",
+            createdAt: "2026-07-25T12:00:00.000Z",
+          },
+        ]}
+        currentUserId="admin-1"
+      />,
+    );
+
+    expect(
+      screen.getByRole("separator", { name: "2026年7月24日" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("separator", { name: "2026年7月25日" }),
+    ).toBeTruthy();
+    expect(screen.getAllByRole("separator")).toHaveLength(2);
+  });
+
+  it("不超过 30 条时直接展示，不提前显示历史入口", () => {
+    render(
+      <RequestChatThread messages={messages(30)} currentUserId="admin-1" />,
+    );
+
+    expect(screen.queryByText(/加载更早的消息/)).toBeNull();
+    expect(screen.getByText("消息 1")).toBeTruthy();
+  });
+
+  it("超过 30 条时才显示剩余历史数量", () => {
+    render(
+      <RequestChatThread messages={messages(31)} currentUserId="admin-1" />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "加载更早的消息（还有 1 条）" }),
+    ).toBeTruthy();
+    expect(screen.queryByText("消息 1")).toBeNull();
+    expect(screen.getByText("消息 2")).toBeTruthy();
+  });
+});
+
 describe("服务请求消息人工撤回", () => {
   it("平台管理员操作区显示撤回按钮", () => {
     const onRevoke = vi.fn();

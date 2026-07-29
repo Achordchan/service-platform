@@ -19,10 +19,7 @@ export default async function StaffRequestDetailPage({
   const currentAssignment = project.staff.find(
     (member) => member.user.id === actor.id,
   );
-  const canAssign =
-    actor.isPlatformAdmin ||
-    (currentAssignment?.role === "PROJECT_MANAGER" &&
-      hasRolePermission(actor, "request.assign"));
+  const canAssign = actor.isPlatformAdmin;
   const assigneeIds = [
     ...(request.assigneeId ? [request.assigneeId] : []),
     ...request.assignees.map((item) => item.userId),
