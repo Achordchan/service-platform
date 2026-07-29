@@ -7,7 +7,7 @@ import {
 } from "@mui/material/styles";
 import type {} from "@mui/x-data-grid/themeAugmentation";
 
-const commonThemeOptions = {
+const commonThemeOptions: ThemeOptions = {
   shape: {
     borderRadius: 10,
   },
@@ -44,26 +44,29 @@ const commonThemeOptions = {
     },
     MuiDialog: {
       styleOverrides: {
-        paper: {
+        paper: ({ theme }) => ({
           borderRadius: 14,
-          border: "1px solid #e5e7eb",
+          border: `1px solid ${theme.palette.divider}`,
           boxShadow: "0 24px 80px rgba(16, 24, 40, 0.14)",
-        },
+          ...theme.applyStyles("dark", {
+            boxShadow: "0 24px 80px rgba(0, 0, 0, 0.42)",
+          }),
+        }),
       },
     },
     MuiDataGrid: {
       styleOverrides: {
-        root: {
-          borderColor: "#e5e7eb",
-          "--DataGrid-rowBorderColor": "#eef0f3",
-        },
-        columnHeaders: {
-          backgroundColor: "#fafbfc",
-        },
+        root: ({ theme }) => ({
+          borderColor: theme.palette.divider,
+          "--DataGrid-rowBorderColor": theme.palette.divider,
+        }),
+        columnHeaders: ({ theme }) => ({
+          backgroundColor: theme.palette.action.hover,
+        }),
       },
     },
   },
-} satisfies ThemeOptions;
+};
 
 const lightPalette: PaletteOptions = {
   mode: "light",
@@ -108,9 +111,14 @@ const darkPalette: PaletteOptions = {
 };
 
 export const appTheme = createTheme({
-  cssVariables: true,
+  cssVariables: {
+    colorSchemeSelector: "data-mui-color-scheme",
+  },
   ...commonThemeOptions,
-  palette: lightPalette,
+  colorSchemes: {
+    light: { palette: lightPalette },
+    dark: { palette: darkPalette },
+  },
 });
 
 export function createEmbedTheme(mode: "light" | "dark") {

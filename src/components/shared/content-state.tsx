@@ -35,7 +35,7 @@ export function EmptyState({
         border: "1px dashed",
         borderColor: "divider",
         borderRadius: 2,
-        bgcolor: "#fcfcfd",
+        bgcolor: "background.paper",
       }}
     >
       <Box
@@ -46,7 +46,7 @@ export function EmptyState({
           height: 48,
           borderRadius: "50%",
           color: "text.secondary",
-          bgcolor: "#f2f4f7",
+          bgcolor: "action.hover",
         }}
       >
         <InboxOutlinedIcon />

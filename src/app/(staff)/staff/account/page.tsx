@@ -1,6 +1,5 @@
 import { Container, Stack } from "@mui/material";
 import { ProfileSettingsForm } from "@/components/shared/profile-settings-form";
-import { EmailChangeSettingsForm } from "@/components/shared/email-change-settings-form";
 import { NotificationPreferencesForm } from "@/components/shared/notification-preferences-form";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { prisma } from "@/lib/db";
@@ -33,16 +32,14 @@ export default async function StaffAccountPage() {
       <Stack spacing={3}>
         <StaffPageHeading title="个人设置" />
         <ProfileSettingsForm
+          key={pendingEmailChange?.id ?? "no-pending-email-change"}
           user={{
             id: actor.id,
             name: profile?.name ?? actor.name,
             email: actor.email,
             image: profile?.image ?? session.user.image,
           }}
-        />
-        <EmailChangeSettingsForm
-          currentEmail={actor.email}
-          initialPending={pendingEmailChange}
+          initialPendingEmailChange={pendingEmailChange}
         />
         <NotificationPreferencesForm
           initialPreferences={{

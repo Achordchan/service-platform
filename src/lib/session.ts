@@ -27,3 +27,11 @@ export async function requireUserWithAccess() {
   }
   return { session, actor };
 }
+
+export async function requirePlatformAdmin() {
+  const { session, actor } = await requireUserWithAccess();
+  if (!actor.isPlatformAdmin) {
+    redirect("/staff/projects");
+  }
+  return { session, actor };
+}

@@ -65,7 +65,7 @@ export function ProjectFiles({
               width: 40,
               height: 40,
               borderRadius: 1.5,
-              bgcolor: "#f2f4f7",
+              bgcolor: "action.hover",
               color: "text.secondary",
             }}
           >

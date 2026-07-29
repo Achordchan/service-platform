@@ -19,6 +19,12 @@ enum PlatformRole {
   PLATFORM_ADMIN
 }
 
+enum ThemePreference {
+  SYSTEM
+  LIGHT
+  DARK
+}
+
 enum RoleAccessLevel {
   PROJECT_MANAGER
   TECHNICIAN
@@ -235,6 +241,7 @@ model User {
   roleGroupId             String?
   soundNotificationsEnabled Boolean         @default(true)
   requestEmailNotificationsEnabled Boolean  @default(true)
+  themePreference         ThemePreference    @default(SYSTEM)
   deletedAt               DateTime?
   createdAt               DateTime          @default(now())
   platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")

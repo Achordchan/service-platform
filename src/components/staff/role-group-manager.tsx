@@ -79,7 +79,6 @@ export function RoleGroupManager({
           ![
             "project.manage_delivery",
             "project.manage_staff",
-            "request.assign",
             "request.view_project",
             "update.publish",
           ].includes(item.key),

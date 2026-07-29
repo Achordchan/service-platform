@@ -11,7 +11,6 @@ import {
 } from "@mui/material";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
-import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import type { ChatAttachment } from "@/components/shared/request-chat-types";
 
@@ -40,12 +39,12 @@ function attachmentColors(tone: AttachmentTone) {
     background: inverted
       ? "rgba(255,255,255,0.16)"
       : tone === "internal"
-        ? "#fff7ed"
-        : "#f8fafc",
+        ? "warning.light"
+        : "action.hover",
     border: inverted
       ? "rgba(255,255,255,0.22)"
       : tone === "internal"
-        ? "#fed7aa"
+        ? "warning.main"
         : "divider",
     primary: inverted ? "common.white" : "text.primary",
     secondary: inverted ? "rgba(255,255,255,0.78)" : "text.secondary",
@@ -54,14 +53,11 @@ function attachmentColors(tone: AttachmentTone) {
 
 function MessageImage({
   file,
-  tone,
   resolveUrl,
 }: {
   file: ChatAttachment;
-  tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
 }) {
-  const colors = attachmentColors(tone);
   const inlineUrl = resolveUrl
     ? resolveUrl(file, true)
     : `/api/v1/attachments/${file.id}?disposition=inline`;
@@ -75,10 +71,7 @@ function MessageImage({
         display: "block",
         minWidth: 0,
         overflow: "hidden",
-        border: "1px solid",
-        borderColor: colors.border,
         borderRadius: 1.5,
-        bgcolor: colors.background,
         color: "inherit",
         textDecoration: "none",
       }}
@@ -96,25 +89,6 @@ function MessageImage({
           bgcolor: "rgba(15,23,42,0.06)",
         }}
       />
-      <Stack
-        direction="row"
-        spacing={1}
-        sx={{ alignItems: "center", px: 1.1, py: 0.85 }}
-      >
-        <ImageOutlinedIcon sx={{ fontSize: 17, color: colors.secondary }} />
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography
-            variant="caption"
-            noWrap
-            sx={{ display: "block", fontWeight: 650, color: colors.primary }}
-          >
-            {file.originalName}
-          </Typography>
-          <Typography variant="caption" sx={{ color: colors.secondary }}>
-            {formatSize(file.size)}
-          </Typography>
-        </Box>
-      </Stack>
     </Box>
   );
 }
@@ -208,7 +182,7 @@ export function RequestMessageAttachments({
           }}
         >
           {images.map((file) => (
-            <MessageImage key={file.id} file={file} tone={tone} resolveUrl={resolveUrl} />
+            <MessageImage key={file.id} file={file} resolveUrl={resolveUrl} />
           ))}
         </Box>
       ) : null}
@@ -310,7 +284,7 @@ export function RequestAttachmentDrafts({
                   placeItems: "center",
                   overflow: "hidden",
                   borderRadius: 1,
-                  bgcolor: "#f1f5f9",
+                  bgcolor: "action.hover",
                 }}
               >
                 <DraftThumbnail file={file} />

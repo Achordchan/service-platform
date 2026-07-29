@@ -322,8 +322,7 @@ export function NewRequestForm({
             />
           </Button>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            最多 5 个附件，单文件不超过 {policy.maxSizeMb}MB；支持粘贴图片；格式：
-            {policy.allowedExtensions.join("、")}
+            最多 5 个附件，单个附件最大 {policy.maxSizeMb}MB，可粘贴图片。
           </Typography>
           <Box sx={{ mt: files.length > 0 ? 1.5 : 0 }}>
             <RequestAttachmentDrafts

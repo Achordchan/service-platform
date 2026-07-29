@@ -1,8 +1,7 @@
-import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
 import { PluginCenter } from "@/components/staff/plugin-center";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
-import { requireUserWithAccess } from "@/lib/session";
+import { requirePlatformAdmin } from "@/lib/session";
 import { listPluginViews } from "@/modules/plugins/plugin-service";
 
 export const metadata = {
@@ -10,10 +9,7 @@ export const metadata = {
 };
 
 export default async function StaffPluginsPage() {
-  const { actor } = await requireUserWithAccess();
-  if (!actor.isPlatformAdmin) {
-    redirect("/staff/projects");
-  }
+  const { actor } = await requirePlatformAdmin();
   const plugins = await listPluginViews(actor);
 
   return (

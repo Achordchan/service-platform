@@ -256,7 +256,7 @@ export function RichTextEditor({
           py: 0.5,
           borderBottom: "1px solid",
           borderColor: "divider",
-          bgcolor: "#fafbfc",
+          bgcolor: "action.hover",
           flexWrap: "wrap",
         }}
       >

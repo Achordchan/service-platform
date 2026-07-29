@@ -35,11 +35,6 @@ export const ROLE_PERMISSION_OPTIONS = [
     description: "仅查看自己被分配的服务请求",
   },
   {
-    key: "request.assign",
-    label: "分配服务请求",
-    description: "将请求指派给技术人员",
-  },
-  {
     key: "request.reply",
     label: "回复服务请求",
     description: "在服务请求中发送消息",
@@ -68,7 +63,6 @@ export const DEFAULT_PERMISSIONS_BY_LEVEL: Record<
     "project.manage_delivery",
     "project.manage_staff",
     "request.view_project",
-    "request.assign",
     "request.reply",
     "request.change_status",
     "file.upload",
@@ -103,7 +97,6 @@ export function sanitizePermissions(
       (item) =>
         item !== "project.manage_delivery" &&
         item !== "project.manage_staff" &&
-        item !== "request.assign" &&
         item !== "request.view_project" &&
         item !== "update.publish",
     );

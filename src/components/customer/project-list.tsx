@@ -49,14 +49,19 @@ function ProjectCard({
   return (
     <Card
       variant="outlined"
-      sx={{
+      sx={(theme) => ({
         height: "100%",
         transition: "border-color 160ms ease, box-shadow 160ms ease",
         "&:hover": {
-          borderColor: "#b9d5ff",
+          borderColor: "primary.main",
           boxShadow: "0 14px 36px rgba(16, 24, 40, 0.07)",
         },
-      }}
+        ...theme.applyStyles("dark", {
+          "&:hover": {
+            boxShadow: "0 14px 36px rgba(0, 0, 0, 0.28)",
+          },
+        }),
+      })}
     >
       <CardActionArea
         component={Link}
@@ -85,8 +90,8 @@ function ProjectCard({
                 size="small"
                 sx={{
                   mb: 2,
-                  bgcolor: "#f2f6ff",
-                  color: "#175cd3",
+                  bgcolor: "action.selected",
+                  color: "primary.main",
                   fontWeight: 600,
                 }}
               />
@@ -155,7 +160,7 @@ function ProjectCard({
                 sx={{
                   height: 6,
                   borderRadius: 999,
-                  bgcolor: "#eef1f5",
+                  bgcolor: "action.hover",
                   "& .MuiLinearProgress-bar": { borderRadius: 999 },
                 }}
               />

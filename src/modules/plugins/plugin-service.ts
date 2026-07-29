@@ -731,7 +731,7 @@ export async function controlPluginRun(
   return serializeRun(run);
 }
 
-async function getPluginView(actor: Actor, pluginKey: string) {
+export async function getPluginView(actor: Actor, pluginKey: string) {
   const plugins = await listPluginViews(actor);
   const plugin = plugins.find((item) => item.key === pluginKey);
   assertFound(plugin, "插件不存在");

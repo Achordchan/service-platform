@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { updatePluginInstallation } from "@/modules/plugins/plugin-service";
+import {
+  getPluginView,
+  updatePluginInstallation,
+} from "@/modules/plugins/plugin-service";
 import {
   readJson,
   requireApiActor,
@@ -16,6 +19,21 @@ const schema = z
   .refine((value) => Object.keys(value).length > 0, {
     message: "至少提交一个插件配置",
   });
+
+export async function GET(
+  _request: Request,
+  context: { params: Promise<{ pluginKey: string }> },
+) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+  try {
+    const { pluginKey } = await context.params;
+    const plugin = await getPluginView(auth.actor, pluginKey);
+    return NextResponse.json({ data: plugin });
+  } catch (error) {
+    return routeError(error);
+  }
+}
 
 export async function PATCH(
   request: Request,

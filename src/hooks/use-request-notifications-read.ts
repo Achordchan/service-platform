@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import {
   subscribeRealtime,
   subscribeRealtimeReady,
@@ -19,19 +19,25 @@ const liveTypes: readonly RealtimeEventType[] = [
  * Also re-marks after live request events so "I'm already here" stays caught up.
  */
 export function useRequestNotificationsRead(requestId: string) {
-  const lastMarkedAtRef = useRef(0);
-
   useEffect(() => {
     if (!requestId) return;
 
     let cancelled = false;
     let pendingCatchup = false;
+    let lastMarkedAt = 0;
+    let markTimer: number | null = null;
+
+    function isActivelyViewingRequest() {
+      return document.visibilityState === "visible" && document.hasFocus();
+    }
 
     async function markRead() {
-      const now = Date.now();
-      // Debounce bursts from SSE + initial mount.
-      if (now - lastMarkedAtRef.current < 400) return;
-      lastMarkedAtRef.current = now;
+      if (!isActivelyViewingRequest()) {
+        pendingCatchup = true;
+        return;
+      }
+      pendingCatchup = false;
+      lastMarkedAt = Date.now();
       try {
         const response = await fetch("/api/v1/notifications", {
           method: "PATCH",
@@ -49,7 +55,27 @@ export function useRequestNotificationsRead(requestId: string) {
       }
     }
 
-    void markRead();
+    function scheduleMarkRead(delay = 0) {
+      const debounceDelay = Math.max(0, 400 - (Date.now() - lastMarkedAt));
+      const wait = Math.max(delay, debounceDelay);
+      if (markTimer !== null) window.clearTimeout(markTimer);
+      markTimer = window.setTimeout(() => {
+        markTimer = null;
+        if (!cancelled) void markRead();
+      }, wait);
+    }
+
+    function catchUpWhenActive() {
+      if (!pendingCatchup || !isActivelyViewingRequest()) return;
+      pendingCatchup = false;
+      scheduleMarkRead();
+    }
+
+    if (isActivelyViewingRequest()) {
+      scheduleMarkRead();
+    } else {
+      pendingCatchup = true;
+    }
 
     const unsubscribeEvents = subscribeRealtime(liveTypes, (event) => {
       const payload = event.payload;
@@ -63,20 +89,25 @@ export function useRequestNotificationsRead(requestId: string) {
         pendingCatchup = true;
         return;
       }
-      window.setTimeout(() => {
-        if (!cancelled) void markRead();
-      }, 250);
+      if (!isActivelyViewingRequest()) {
+        pendingCatchup = true;
+        return;
+      }
+      scheduleMarkRead(250);
     });
     const unsubscribeReady = subscribeRealtimeReady(() => {
-      if (!pendingCatchup) return;
-      pendingCatchup = false;
-      void markRead();
+      catchUpWhenActive();
     });
+    document.addEventListener("visibilitychange", catchUpWhenActive);
+    window.addEventListener("focus", catchUpWhenActive);
 
     return () => {
       cancelled = true;
+      if (markTimer !== null) window.clearTimeout(markTimer);
       unsubscribeEvents();
       unsubscribeReady();
+      document.removeEventListener("visibilitychange", catchUpWhenActive);
+      window.removeEventListener("focus", catchUpWhenActive);
     };
   }, [requestId]);
 }

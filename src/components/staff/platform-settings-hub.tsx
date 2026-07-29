@@ -31,13 +31,8 @@ import type {
   MailTemplateView,
   PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
-import {
-  RoleGroupManager,
-  type RoleGroupView,
-} from "@/components/staff/role-group-manager";
 
 type SettingsDialog = "mail" | "notifications" | "attachments" | "outbox" | null;
-type DisclosureSection = "templates" | "roles";
 
 function SettingsRow({
   title,
@@ -150,7 +145,6 @@ export function PlatformSettingsHub({
   initialMailOutboxSummary,
   initialNotificationRules,
   initialTemplates,
-  roleGroups,
   currentAdminEmail,
   dingTalkPluginEnabled,
   dingTalkPluginReady,
@@ -160,7 +154,6 @@ export function PlatformSettingsHub({
   initialMailOutboxSummary: MailOutboxSummary;
   initialNotificationRules: NotificationDeliveryRuleView[];
   initialTemplates: MailTemplateView[];
-  roleGroups: RoleGroupView[];
   currentAdminEmail: string;
   dingTalkPluginEnabled: boolean;
   dingTalkPluginReady: boolean;
@@ -173,12 +166,7 @@ export function PlatformSettingsHub({
     initialNotificationRules,
   );
   const [dialog, setDialog] = useState<SettingsDialog>(null);
-  const [expandedSections, setExpandedSections] = useState<
-    Record<DisclosureSection, boolean>
-  >({
-    templates: false,
-    roles: false,
-  });
+  const [expandedTemplates, setExpandedTemplates] = useState(false);
   const resendReady =
     settings.hasResendApiKey &&
     settings.resendDomainStatus === "verified" &&
@@ -197,15 +185,6 @@ export function PlatformSettingsHub({
     attachments: "附件",
     outbox: "发件箱",
   } as const;
-  const setSectionExpanded = (
-    section: DisclosureSection,
-    expanded: boolean,
-  ) => {
-    setExpandedSections((current) => ({
-      ...current,
-      [section]: expanded,
-    }));
-  };
 
   return (
     <Stack spacing={3}>
@@ -276,8 +255,8 @@ export function PlatformSettingsHub({
         <SettingsDisclosure
           title="邮件模板"
           summary={`${initialTemplates.length} 个模板`}
-          expanded={expandedSections.templates}
-          onChange={(expanded) => setSectionExpanded("templates", expanded)}
+          expanded={expandedTemplates}
+          onChange={setExpandedTemplates}
         >
           <MailTemplateManager
             initialTemplates={initialTemplates}
@@ -286,16 +265,6 @@ export function PlatformSettingsHub({
           />
         </SettingsDisclosure>
       ) : null}
-
-      <SettingsDisclosure
-        title="角色与权限"
-        summary={`${roleGroups.length} 个角色组`}
-        expanded={expandedSections.roles}
-        padded
-        onChange={(expanded) => setSectionExpanded("roles", expanded)}
-      >
-        <RoleGroupManager roleGroups={roleGroups} embedded />
-      </SettingsDisclosure>
 
       <Dialog
         open={dialog !== null}

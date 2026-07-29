@@ -1,9 +1,8 @@
-import { redirect } from "next/navigation";
 import { Container, Stack } from "@mui/material";
 import { CustomerSpaceTable } from "@/components/staff/customer-space-table";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
-import { requireUserWithAccess } from "@/lib/session";
+import { requirePlatformAdmin } from "@/lib/session";
 import { listCustomerSpaces } from "@/modules/customer-spaces/customer-space-service";
 
 export const metadata = {
@@ -11,10 +10,7 @@ export const metadata = {
 };
 
 export default async function StaffCustomersPage() {
-  const { actor } = await requireUserWithAccess();
-  if (!actor.isPlatformAdmin) {
-    redirect("/staff/projects");
-  }
+  const { actor } = await requirePlatformAdmin();
   const result = await listCustomerSpaces(actor);
   const spaces: CustomerSpaceItem[] = result.map((space) => ({
     id: space.id,

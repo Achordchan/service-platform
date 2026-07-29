@@ -453,8 +453,8 @@ export function assignRequest(
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     assertRequestNotArchived(request);
-    if (!canManageRequestAssignment(actor, accessContext(request))) {
-      throw forbidden("只有平台管理员或项目经理可以分配服务请求");
+    if (!canManageRequestAssignment(actor)) {
+      throw forbidden("只有平台管理员可以分配服务请求");
     }
     if (request.status === "CLOSED") {
       throw conflict("REQUEST_CLOSED", "已关闭的请求不能重新分配");

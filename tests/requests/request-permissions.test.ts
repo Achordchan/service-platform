@@ -22,47 +22,34 @@ const manager = actor("manager", "PROJECT_MANAGER");
 const platformAdmin = actor("admin", "PLATFORM_ADMIN");
 
 describe("服务请求权限", () => {
-  it("只有平台管理员或项目经理可以分配", () => {
+  it("只有平台管理员可以手工分配服务请求", () => {
     expect(
-      canManageRequestAssignment(platformAdmin, {
-        assigneeId: null,
-        projectRole: null,
-      }),
+      canManageRequestAssignment(platformAdmin),
     ).toBe(true);
     expect(
-      canManageRequestAssignment(manager, {
-        assigneeId: null,
-        projectRole: "PROJECT_MANAGER",
-      }),
-    ).toBe(true);
-    expect(
-      canManageRequestAssignment(technician, {
-        assigneeId: "technician",
-        projectRole: "TECHNICIAN",
-      }),
+      canManageRequestAssignment(manager),
     ).toBe(false);
     expect(
-      canManageRequestAssignment(customer, {
-        assigneeId: null,
-        projectRole: null,
-      }),
+      canManageRequestAssignment(technician),
+    ).toBe(false);
+    expect(
+      canManageRequestAssignment(customer),
     ).toBe(false);
   });
 
-  it("项目负责人被关闭分配权限后，前后端授权结果必须拒绝", () => {
-    const restrictedManager = actor("restricted-manager", "PROJECT_MANAGER", [
+  it("项目负责人即使残留旧分配权限也必须拒绝", () => {
+    const legacyManager = actor("legacy-manager", "PROJECT_MANAGER");
+    legacyManager.permissions = [
       "project.view",
       "request.reply",
-    ]);
+      "request.assign",
+    ] as unknown as Actor["permissions"];
     expect(
-      canManageRequestAssignment(restrictedManager, {
-        assigneeId: null,
-        projectRole: "PROJECT_MANAGER",
-      }),
+      canManageRequestAssignment(legacyManager),
     ).toBe(false);
   });
 
-  it("工单回复、状态和附件分别服从角色组权限", () => {
+  it("服务请求回复、状态和附件分别服从角色组权限", () => {
     const replyOnly = actor("reply-only", "TECHNICIAN", [
       "project.view",
       "request.view_assigned",
@@ -78,7 +65,7 @@ describe("服务请求权限", () => {
     expect(canUploadRequestFile(replyOnly, context)).toBe(false);
   });
 
-  it("有回复权限的项目人员可以接手未分配工单", () => {
+  it("有回复权限的项目人员可以接手未分配服务请求", () => {
     expect(
       canClaimUnassignedRequest(technician, {
         assigneeId: null,
