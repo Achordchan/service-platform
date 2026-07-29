@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Box, Tab, Tabs } from "@mui/material";
 import { DingTalkTemplateWorkspace } from "@/components/staff/dingtalk-template-workspace";
 import { PlatformSettingsHub } from "@/components/staff/platform-settings-hub";
@@ -29,14 +29,47 @@ export type SettingsWorkspaceProps = {
   playbooks: SupportReplyPlaybookView[];
 };
 
-type SettingsTab = "platform" | "services" | "playbooks" | "dingtalk";
+export type SettingsTab =
+  | "platform"
+  | "services"
+  | "playbooks"
+  | "dingtalk";
+
+export function resolveSettingsTab(
+  value: string | null,
+  dingTalkPluginEnabled: boolean,
+): SettingsTab {
+  if (value === "services" || value === "playbooks") return value;
+  if (value === "dingtalk" && dingTalkPluginEnabled) return value;
+  return "platform";
+}
 
 export function SettingsWorkspace(props: SettingsWorkspaceProps) {
-  const [tab, setTab] = useState<SettingsTab>("platform");
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const tab = resolveSettingsTab(
+    searchParams.get("tab"),
+    props.dingTalkPluginEnabled,
+  );
+
+  function selectTab(next: SettingsTab) {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    if (next === "platform") {
+      nextParams.delete("tab");
+    } else {
+      nextParams.set("tab", next);
+    }
+    const query = nextParams.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
 
   return (
     <>
-      <Tabs value={tab} onChange={(_event, value) => setTab(value)}>
+      <Tabs
+        value={tab}
+        onChange={(_event, value: SettingsTab) => selectTab(value)}
+      >
         <Tab value="platform" label="平台设置" />
         <Tab value="services" label="服务类型与分类" />
         <Tab value="playbooks" label="回复助手" />

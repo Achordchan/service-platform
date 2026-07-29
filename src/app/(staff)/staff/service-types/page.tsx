@@ -5,5 +5,5 @@ export const metadata = {
 };
 
 export default function StaffServiceTypesPage() {
-  redirect("/staff/settings");
+  redirect("/staff/settings?tab=services");
 }
