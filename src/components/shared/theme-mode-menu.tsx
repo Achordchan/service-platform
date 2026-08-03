@@ -16,6 +16,7 @@ import {
 } from "@mui/material";
 import { useColorScheme } from "@mui/material/styles";
 import { useToast } from "@/components/shared/toast-provider";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 import {
   themePreferenceToMode,
   type ThemePreference,
@@ -71,20 +72,13 @@ export function ThemeModeMenu({
     setMode(themePreferenceToMode(next));
     setSaving(true);
     try {
-      const response = await fetch("/api/v1/me/appearance-preference", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ themePreference: next }),
-      });
-      const result = (await response.json()) as {
-        data?: { themePreference: ThemePreference };
-        error?: { message?: string };
-      };
-      if (!response.ok || !result.data) {
-        throw new Error(result.error?.message || "外观设置保存失败");
-      }
-      setPreference(result.data.themePreference);
-      setMode(themePreferenceToMode(result.data.themePreference));
+      const result = await apiRequest<{ themePreference: ThemePreference }>(
+        "/api/v1/me/appearance-preference",
+        jsonRequest("PATCH", { themePreference: next }),
+        "外观设置保存失败",
+      );
+      setPreference(result.themePreference);
+      setMode(themePreferenceToMode(result.themePreference));
     } catch (error) {
       setPreference(previous);
       setMode(themePreferenceToMode(previous));

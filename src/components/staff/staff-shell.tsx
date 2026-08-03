@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AppBar,
   Avatar,
@@ -106,6 +107,7 @@ export function StaffShell({
 }) {
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
@@ -412,6 +414,7 @@ export function StaffShell({
         <MenuItem
           onClick={async () => {
             await authClient.signOut();
+            queryClient.clear();
             router.replace("/login");
             router.refresh();
           }}

@@ -33,6 +33,7 @@ import {
   countProjectRequestUnread,
   countProjectScopeUnread,
   countProjectUpdateUnread,
+  useMarkNotificationsRead,
   useUnreadNotifications,
 } from "@/hooks/use-unread-notifications";
 import { RequestTable } from "@/components/staff/request-table";
@@ -113,7 +114,8 @@ export function ProjectDetailWorkspace({
   const [deleting, setDeleting] = useState(false);
   const activeTab = tab;
   const deliveryActive = isProjectDeliveryActive(project.status);
-  const { unread, refresh } = useUnreadNotifications();
+  const { unread } = useUnreadNotifications();
+  const { mutate: markRead } = useMarkNotificationsRead();
   const requestIdSet = new Set(requests.map((item) => item.id));
   const updateUnread = countProjectUpdateUnread(unread, project.id);
   const requestUnread = countProjectRequestUnread(
@@ -135,33 +137,8 @@ export function ProjectDetailWorkspace({
     if (!(activeTab in projectScopeCounts)) return;
     const scope = activeTab as keyof typeof projectScopeCounts;
     if (projectScopeCounts[scope] === 0) return;
-    let cancelled = false;
-    async function markProjectScope() {
-      try {
-        const response = await fetch("/api/v1/notifications", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId: project.id,
-            projectScope: scope,
-          }),
-        });
-        if (!response.ok || cancelled) return;
-        window.dispatchEvent(
-          new CustomEvent("notifications-updated", {
-            detail: { projectId: project.id, projectScope: scope },
-          }),
-        );
-        await refresh();
-      } catch {
-        // ignore
-      }
-    }
-    void markProjectScope();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, project.id, projectScopeCounts, refresh]);
+    markRead({ projectId: project.id, projectScope: scope });
+  }, [activeTab, markRead, project.id, projectScopeCounts]);
 
   async function confirmDeleteUpdate() {
     if (!deleteTarget) return;

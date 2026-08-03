@@ -21,6 +21,11 @@ import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
+import {
+  FilePickerIconButton,
+  IMAGE_FILE_ACCEPT,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 
 const InlineAttachmentImage = Image.extend({
   addAttributes() {
@@ -341,27 +346,23 @@ export function RichTextEditor({
         {uploadImage ? (
           <Tooltip title="插入图片">
             <span>
-              <IconButton
-                component="label"
+              <FilePickerIconButton
+                aria-label="插入图片"
                 size="small"
                 disabled={disabled || uploadingImages > 0}
+                accept={IMAGE_FILE_ACCEPT}
+                multiple
+                onFiles={(files) => void insertImages(files)}
+                onRejected={(rejections) =>
+                  setImageError(firstFileRejectionMessage(rejections))
+                }
               >
                 {uploadingImages > 0 ? (
                   <CircularProgress size={18} />
                 ) : (
                   <ImageOutlinedIcon fontSize="small" />
                 )}
-                <input
-                  hidden
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  multiple
-                  onChange={(event) => {
-                    void insertImages(Array.from(event.target.files ?? []));
-                    event.target.value = "";
-                  }}
-                />
-              </IconButton>
+              </FilePickerIconButton>
             </span>
           </Tooltip>
         ) : null}

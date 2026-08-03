@@ -1,6 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { useMutation } from "@tanstack/react-query";
+import { z } from "zod";
 import {
   Alert,
   Button,
@@ -9,6 +13,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useToast } from "@/components/shared/toast-provider";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 export type PendingEmailChange = {
   id: string;
@@ -18,6 +23,12 @@ export type PendingEmailChange = {
   mailStatus: string | null;
   mailDispatchFailed: boolean;
 };
+
+const emailChangeFormSchema = z.object({
+  newEmail: z.string().trim().email("请输入有效邮箱"),
+});
+
+type EmailChangeFormValues = z.infer<typeof emailChangeFormSchema>;
 
 function mailStatusMessage(status: string | null, dispatchFailed: boolean) {
   if (status === "QUEUED") {
@@ -69,20 +80,11 @@ async function emailChangeApi<T>(
   method: "POST" | "DELETE",
   body?: Record<string, string>,
 ) {
-  const response = await fetch(url, {
-    method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (response.status === 204) return null as T;
-  const payload = (await response.json()) as {
-    data?: T;
-    error?: { message?: string };
-  };
-  if (!response.ok || payload.data === undefined) {
-    throw new Error(payload.error?.message || "邮箱变更操作失败");
-  }
-  return payload.data;
+  return apiRequest<T>(
+    url,
+    jsonRequest(method, body),
+    "邮箱变更操作失败",
+  );
 }
 
 export function EmailChangeControl({
@@ -103,60 +105,74 @@ export function EmailChangeControl({
   showCurrentEmail?: boolean;
 }) {
   const toast = useToast();
-  const [newEmail, setNewEmail] = useState("");
   const [pending, setPending] = useState(initialPending);
-  const [busy, setBusy] = useState(false);
+  const form = useForm<EmailChangeFormValues>({
+    resolver: zodResolver(emailChangeFormSchema),
+    defaultValues: { newEmail: "" },
+    mode: "onChange",
+  });
+  const actionMutation = useMutation({
+    mutationFn: ({
+      url,
+      method,
+      body,
+    }: {
+      url: string;
+      method: "POST" | "DELETE";
+      body?: Record<string, string>;
+    }) => emailChangeApi<PendingEmailChange | null>(url, method, body),
+  });
+  const busy = actionMutation.isPending;
 
-  async function run(action: () => Promise<void>) {
-    setBusy(true);
-    onBusyChange?.(true);
+  useEffect(() => {
+    onBusyChange?.(busy);
+  }, [busy, onBusyChange]);
+
+  async function run<T>(
+    url: string,
+    method: "POST" | "DELETE",
+    body?: Record<string, string>,
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     try {
-      await action();
+      const result = await actionMutation.mutateAsync({ url, method, body });
       onChanged?.();
+      return { ok: true, value: result as T };
     } catch (actionError) {
       toast.error(
         actionError instanceof Error ? actionError.message : "邮箱变更操作失败",
       );
-    } finally {
-      setBusy(false);
-      onBusyChange?.(false);
+      return { ok: false };
     }
   }
 
-  function requestChange() {
-    return run(async () => {
-      const result = await emailChangeApi<PendingEmailChange>(
-        apiBase,
-        "POST",
-        { newEmail },
-      );
-      setPending(result);
-      setNewEmail("");
-      toast.success("验证邮件已加入发件箱，请前往新邮箱确认");
-    });
+  const requestChange = form.handleSubmit(async ({ newEmail }) => {
+    if (newEmail.toLowerCase() === currentEmail.trim().toLowerCase()) {
+      form.setError("newEmail", { message: "新邮箱不能与当前邮箱相同" });
+      return;
+    }
+    const result = await run<PendingEmailChange>(apiBase, "POST", { newEmail });
+    if (!result.ok) return;
+    setPending(result.value);
+    form.reset({ newEmail: "" });
+    toast.success("验证邮件已加入发件箱，请前往新邮箱确认");
+  });
+
+  async function resend() {
+    const result = await run<PendingEmailChange>(`${apiBase}/resend`, "POST");
+    if (!result.ok) return;
+    setPending(result.value);
+    toast.success("新的验证邮件已加入发件箱");
   }
 
-  function resend() {
-    return run(async () => {
-      const result = await emailChangeApi<PendingEmailChange>(
-        `${apiBase}/resend`,
-        "POST",
-      );
-      setPending(result);
-      toast.success("新的验证邮件已加入发件箱");
-    });
-  }
-
-  function cancel() {
-    return run(async () => {
-      await emailChangeApi<null>(apiBase, "DELETE");
-      setPending(null);
-      toast.success("待验证的邮箱变更已取消");
-    });
+  async function cancel() {
+    const result = await run<null>(apiBase, "DELETE");
+    if (!result.ok) return;
+    setPending(null);
+    toast.success("待验证的邮箱变更已取消");
   }
 
   return (
-    <Stack spacing={2.25}>
+    <Stack component="form" noValidate spacing={2.25} onSubmit={requestChange}>
       <Alert severity="warning">{warning}</Alert>
       {showCurrentEmail ? (
         <TextField
@@ -220,29 +236,32 @@ export function EmailChangeControl({
         </Stack>
       ) : (
         <>
-          <TextField
-            label="新的登录邮箱"
-            type="email"
-            value={newEmail}
-            onChange={(event) =>
-              setNewEmail(event.target.value.trim().toLowerCase())
-            }
-            autoComplete="off"
-            helperText="新邮箱验证成功前，当前邮箱和登录状态不会改变。"
-            disabled={busy}
-            fullWidth
+          <Controller
+            name="newEmail"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <TextField
+                {...field}
+                label="新的登录邮箱"
+                type="email"
+                autoComplete="off"
+                helperText={
+                  fieldState.error?.message ??
+                  "新邮箱验证成功前，当前邮箱和登录状态不会改变。"
+                }
+                error={Boolean(fieldState.error)}
+                disabled={busy}
+                fullWidth
+              />
+            )}
           />
           <Typography variant="body2" color="text.secondary">
             系统会向新邮箱发送一次性确认链接，有效期为 24 小时。
           </Typography>
           <Button
+            type="submit"
             variant="contained"
-            onClick={() => void requestChange()}
-            disabled={
-              busy ||
-              !newEmail ||
-              newEmail === currentEmail.trim().toLowerCase()
-            }
+            disabled={busy || !form.formState.isValid}
             sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
           >
             发送验证邮件

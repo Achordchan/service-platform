@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ThemeProvider } from "@mui/material/styles";
 import { afterEach, describe, expect, it } from "vitest";
 import { ToastProvider, useToast } from "@/components/shared/toast-provider";
@@ -51,22 +51,30 @@ function renderProvider() {
 }
 
 describe("ToastProvider", () => {
-  it("stacks operation and delivery feedback at the same time", () => {
+  it("stacks operation and delivery feedback at the same time", async () => {
     renderProvider();
     fireEvent.click(screen.getByRole("button", { name: "显示两条" }));
 
-    const alerts = screen.getAllByRole("alert");
-    expect(alerts).toHaveLength(2);
+    await waitFor(() => {
+      expect(screen.getAllByRole("alert")).toHaveLength(2);
+    });
     expect(screen.getByText("操作成功")).toBeTruthy();
     expect(screen.getByText(/钉钉机器人消息已进入发送队列/)).toBeTruthy();
   });
 
-  it("keeps the latest four messages to avoid covering the page", () => {
+  it("only keeps the latest four messages visible to avoid covering the page", async () => {
     renderProvider();
     fireEvent.click(screen.getByRole("button", { name: "显示五条" }));
 
-    expect(screen.getAllByRole("alert")).toHaveLength(4);
-    expect(screen.queryByText("消息 1")).toBeNull();
-    expect(screen.getByText("消息 5")).toBeTruthy();
+    await screen.findByText("消息 5");
+    const firstToast = screen.getByText("消息 1").closest("[data-sonner-toast]");
+    const latestToast = screen.getByText("消息 5").closest("[data-sonner-toast]");
+    const visibleToasts = document.querySelectorAll(
+      '[data-sonner-toast][data-visible="true"]',
+    );
+
+    expect(visibleToasts).toHaveLength(4);
+    expect(firstToast?.getAttribute("data-visible")).toBe("false");
+    expect(latestToast?.getAttribute("data-visible")).toBe("true");
   });
 });

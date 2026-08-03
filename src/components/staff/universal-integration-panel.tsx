@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -30,6 +31,7 @@ import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useToast } from "@/components/shared/toast-provider";
+import { queryKeys } from "@/lib/query-keys";
 import {
   UniversalIntegrationGuideDialog,
   type UniversalGuideStage,
@@ -107,7 +109,34 @@ type DeliveryView = {
   createdAt: string;
 };
 
+type ConnectionDraft = {
+  name: string;
+  origins: string;
+  profileFields: ProfileField[];
+  webhookUrl: string;
+  webhookEvents: WebhookEventType[];
+  emailNotifications: boolean;
+  customerNotifications: boolean;
+};
+
 const steps = ["连接配置", "接入凭据", "Webhook", "检测并激活"];
+
+function connectionDraftFrom(
+  connection: ConnectionView | null | undefined,
+  fallbackName?: string,
+): ConnectionDraft {
+  return {
+    name: connection?.name ?? fallbackName ?? "",
+    origins: connection?.allowedOrigins.join("\n") ?? "",
+    profileFields: connection?.profileFields ?? [],
+    webhookUrl: connection?.webhookUrl ?? "",
+    webhookEvents:
+      connection?.webhookEvents ?? webhookEventOptions.map((item) => item.value),
+    emailNotifications: connection?.emailNotificationsEnabled ?? true,
+    customerNotifications:
+      connection?.customerMemberNotificationsEnabled ?? false,
+  };
+}
 
 export function UniversalIntegrationPanel({
   projectId,
@@ -117,19 +146,8 @@ export function UniversalIntegrationPanel({
   canEdit: boolean;
 }) {
   const toast = useToast();
-  const [view, setView] = useState<IntegrationView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [name, setName] = useState("");
-  const [origins, setOrigins] = useState("");
-  const [profileFields, setProfileFields] = useState<ProfileField[]>([]);
-  const [webhookUrl, setWebhookUrl] = useState("");
-  const [webhookEvents, setWebhookEvents] = useState<WebhookEventType[]>(
-    webhookEventOptions.map((item) => item.value),
-  );
-  const [emailNotifications, setEmailNotifications] = useState(true);
-  const [customerNotifications, setCustomerNotifications] = useState(false);
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<ConnectionDraft | null>(null);
   const [secret, setSecret] = useState<{
     title: string;
     clientId?: string;
@@ -138,59 +156,82 @@ export function UniversalIntegrationPanel({
   const [deliveryOpen, setDeliveryOpen] = useState(false);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [guideOpen, setGuideOpen] = useState(false);
-  const [deliveries, setDeliveries] = useState<DeliveryView[]>([]);
+  const integrationKey = queryKeys.universal.integration(projectId);
+  const integrationQuery = useQuery({
+    queryKey: integrationKey,
+    queryFn: ({ signal }) =>
+      staffApi<IntegrationView>(
+        `/api/v1/projects/${projectId}/integrations/universal`,
+        { signal },
+      ),
+  });
+  const deliveriesQuery = useQuery({
+    queryKey: queryKeys.universal.deliveries(projectId),
+    queryFn: ({ signal }) =>
+      staffApi<DeliveryView[]>(
+        `/api/v1/projects/${projectId}/integrations/universal/webhook-deliveries`,
+        { signal },
+      ),
+    enabled: deliveryOpen && Boolean(integrationQuery.data?.connection),
+  });
+  const actionMutation = useMutation({
+    mutationFn: (action: () => Promise<void>) => action(),
+  });
+  const view = integrationQuery.data;
+  const deliveries = deliveriesQuery.data ?? [];
+  const busy = actionMutation.isPending;
+  const draftValues =
+    draft ?? connectionDraftFrom(view?.connection, view?.project.title);
+  const {
+    name,
+    origins,
+    profileFields,
+    webhookUrl,
+    webhookEvents,
+    emailNotifications,
+    customerNotifications,
+  } = draftValues;
 
-  const applyConnection = useCallback(
-    (connection: ConnectionView | null, fallbackName?: string) => {
-      setName(connection?.name ?? fallbackName ?? "");
-      setOrigins(connection?.allowedOrigins.join("\n") ?? "");
-      setProfileFields(connection?.profileFields ?? []);
-      setWebhookUrl(connection?.webhookUrl ?? "");
-      setWebhookEvents(
-        connection?.webhookEvents ?? webhookEventOptions.map((item) => item.value),
-      );
-      setEmailNotifications(connection?.emailNotificationsEnabled ?? true);
-      setCustomerNotifications(
-        connection?.customerMemberNotificationsEnabled ?? false,
-      );
-    },
-    [],
-  );
-
-  const load = useCallback(async () => {
-    const next = await staffApi<IntegrationView>(
-      `/api/v1/projects/${projectId}/integrations/universal`,
+  function updateDraft(
+    updater: (current: ConnectionDraft) => ConnectionDraft,
+  ) {
+    setDraft((current) =>
+      updater(
+        current ?? connectionDraftFrom(view?.connection, view?.project.title),
+      ),
     );
-    setView(next);
-    setError("");
-    applyConnection(next.connection, next.project.title);
-    return next;
-  }, [applyConnection, projectId]);
+  }
 
-  useEffect(() => {
-    let active = true;
-    async function initialize() {
-      try {
-        const next = await staffApi<IntegrationView>(
-          `/api/v1/projects/${projectId}/integrations/universal`,
-        );
-        if (!active) return;
-        setView(next);
-        applyConnection(next.connection, next.project.title);
-      } catch (loadError) {
-        if (!active) return;
-        setError(
-          loadError instanceof Error ? loadError.message : "连接信息加载失败",
-        );
-      } finally {
-        if (active) setLoading(false);
-      }
+  function invalidateIntegration() {
+    void queryClient.invalidateQueries({ queryKey: integrationKey });
+  }
+
+  function replaceCachedConnection(connection: ConnectionView) {
+    setDraft(null);
+    queryClient.setQueryData<IntegrationView>(integrationKey, (current) =>
+      current ? { ...current, connection } : current,
+    );
+    invalidateIntegration();
+  }
+
+  function updateCachedConnection(
+    updater: (connection: ConnectionView) => ConnectionView,
+  ) {
+    queryClient.setQueryData<IntegrationView>(integrationKey, (current) =>
+      current?.connection
+        ? { ...current, connection: updater(current.connection) }
+        : current,
+    );
+    invalidateIntegration();
+  }
+
+  async function runAction(action: () => Promise<void>, fallbackError: string) {
+    try {
+      await actionMutation.mutateAsync(action);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : fallbackError);
     }
-    void initialize();
-    return () => {
-      active = false;
-    };
-  }, [applyConnection, projectId]);
+  }
 
   const visibleCredentials = useMemo(
     () => view?.connection?.credentials.filter((item) => !item.revokedAt) ?? [],
@@ -245,8 +286,7 @@ export function UniversalIntegrationPanel({
     rotateWebhookSecret?: boolean;
     activate?: boolean;
   }) {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       const result = await staffApi<{
         connection: ConnectionView;
         webhookSecret: string | null;
@@ -257,21 +297,19 @@ export function UniversalIntegrationPanel({
       if (result.webhookSecret) {
         setSecret({ title: "Webhook 签名密钥", value: result.webhookSecret });
       }
-      await load();
+      replaceCachedConnection(result.connection);
       toast.success(options?.activate ? "连接已激活" : "配置已保存");
-    } catch (saveError) {
-      toast.error(saveError instanceof Error ? saveError.message : "配置保存失败");
-    } finally {
-      setBusy(false);
-    }
+    }, "配置保存失败");
   }
 
   async function createCredential() {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       const created = await staffApi<{
+        id: string;
         clientId: string;
         clientSecret: string;
+        secretPrefix: string;
+        createdAt: string;
       }>(
         `/api/v1/projects/${projectId}/integrations/universal/credentials`,
         { method: "POST" },
@@ -281,113 +319,121 @@ export function UniversalIntegrationPanel({
         clientId: created.clientId,
         value: created.clientSecret,
       });
-      await load();
+      updateCachedConnection((connection) => ({
+        ...connection,
+        activeCredentialCount: connection.activeCredentialCount + 1,
+        credentials: [
+          ...connection.credentials,
+          {
+            id: created.id,
+            clientId: created.clientId,
+            secretPrefix: created.secretPrefix,
+            lastUsedAt: null,
+            revokedAt: null,
+            createdAt: created.createdAt,
+          },
+        ],
+      }));
       toast.success("接入凭据已生成");
-    } catch (credentialError) {
-      toast.error(
-        credentialError instanceof Error
-          ? credentialError.message
-          : "凭据生成失败",
-      );
-    } finally {
-      setBusy(false);
-    }
+    }, "凭据生成失败");
   }
 
   async function revokeCredential(credentialId: string) {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/credentials/${credentialId}`,
         { method: "DELETE" },
       );
-      await load();
+      const revokedAt = new Date().toISOString();
+      updateCachedConnection((connection) => ({
+        ...connection,
+        activeCredentialCount: Math.max(
+          0,
+          connection.activeCredentialCount - 1,
+        ),
+        credentials: connection.credentials.map((credential) =>
+          credential.id === credentialId
+            ? { ...credential, revokedAt }
+            : credential,
+        ),
+      }));
       toast.success("接入凭据已撤销");
-    } catch (revokeError) {
-      toast.error(
-        revokeError instanceof Error ? revokeError.message : "凭据撤销失败",
-      );
-    } finally {
-      setBusy(false);
-    }
+    }, "凭据撤销失败");
   }
 
   async function checkConnection() {
-    setBusy(true);
-    try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/integrations/universal/check`,
-        { method: "POST" },
-      );
-      await load();
-      toast.success("连接检测通过");
-    } catch (checkError) {
-      toast.error(checkError instanceof Error ? checkError.message : "连接检测失败");
-      await load().catch(() => undefined);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function loadDeliveries() {
-    const next = await staffApi<DeliveryView[]>(
-      `/api/v1/projects/${projectId}/integrations/universal/webhook-deliveries`,
-    );
-    setDeliveries(next);
+    await runAction(async () => {
+      try {
+        const connection = await staffApi<ConnectionView>(
+          `/api/v1/projects/${projectId}/integrations/universal/check`,
+          { method: "POST" },
+        );
+        replaceCachedConnection(connection);
+        toast.success("连接检测通过");
+      } catch (error) {
+        invalidateIntegration();
+        throw error;
+      }
+    }, "连接检测失败");
   }
 
   async function testWebhook() {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/webhook/test`,
         { method: "POST" },
       );
       toast.success("Webhook 测试已加入投递队列");
-      if (deliveryOpen) await loadDeliveries();
-    } catch (testError) {
-      toast.error(testError instanceof Error ? testError.message : "Webhook 测试失败");
-    } finally {
-      setBusy(false);
-    }
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.universal.deliveries(projectId),
+      });
+    }, "Webhook 测试失败");
   }
 
   async function retryDelivery(deliveryId: string) {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/webhook-deliveries/${deliveryId}/retry`,
         { method: "POST" },
       );
-      await loadDeliveries();
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.universal.deliveries(projectId),
+      });
       toast.success("Webhook 已重新加入投递队列");
-    } catch (retryError) {
-      toast.error(retryError instanceof Error ? retryError.message : "重新投递失败");
-    } finally {
-      setBusy(false);
-    }
+    }, "重新投递失败");
   }
 
   async function archiveConnection() {
-    setBusy(true);
-    try {
+    await runAction(async () => {
       await staffApi(
         `/api/v1/projects/${projectId}/integrations/universal/archive`,
         { method: "POST" },
       );
       setArchiveOpen(false);
-      await load();
+      const archivedAt = new Date().toISOString();
+      updateCachedConnection((connection) => ({
+        ...connection,
+        bindingStatus: "ARCHIVED",
+        activeCredentialCount: 0,
+        credentials: connection.credentials.map((credential) => ({
+          ...credential,
+          revokedAt: credential.revokedAt ?? archivedAt,
+        })),
+      }));
       toast.success("连接已归档，现有凭据、票据和嵌入会话已失效");
-    } catch (archiveError) {
-      toast.error(
-        archiveError instanceof Error ? archiveError.message : "连接归档失败",
-      );
-    } finally {
-      setBusy(false);
-    }
+    }, "连接归档失败");
   }
 
-  if (loading) return <LinearProgress />;
+  if (integrationQuery.isPending) return <LinearProgress />;
+  if (!view) {
+    return (
+      <Alert severity="error">
+        {integrationQuery.error instanceof Error
+          ? integrationQuery.error.message
+          : "连接信息加载失败"}
+      </Alert>
+    );
+  }
   if (!view?.plugin?.enabled || view.plugin.healthStatus !== "READY") {
     return (
       <Stack spacing={2}>
@@ -439,7 +485,11 @@ export function UniversalIntegrationPanel({
         </Button>
       </Stack>
       {busy ? <LinearProgress /> : null}
-      {error ? <Alert severity="error" onClose={() => setError("")}>{error}</Alert> : null}
+      {integrationQuery.isError ? (
+        <Alert severity="warning">
+          连接状态刷新失败，当前显示最近一次已确认的数据。
+        </Alert>
+      ) : null}
       {connectionArchived ? (
         <Alert severity="info">
           连接已归档。历史服务请求和联系人仍保留，配置、凭据和嵌入入口不可再使用。
@@ -461,13 +511,23 @@ export function UniversalIntegrationPanel({
         <TextField
           label="连接名称"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) =>
+            updateDraft((current) => ({
+              ...current,
+              name: event.target.value,
+            }))
+          }
           disabled={!canModify || busy}
         />
         <TextField
           label="允许嵌入的 Origin"
           value={origins}
-          onChange={(event) => setOrigins(event.target.value)}
+          onChange={(event) =>
+            updateDraft((current) => ({
+              ...current,
+              origins: event.target.value,
+            }))
+          }
           multiline
           minRows={2}
           helperText="每行一个完整 Origin，例如 https://app.example.com"
@@ -481,10 +541,13 @@ export function UniversalIntegrationPanel({
                 size="small"
                 startIcon={<AddOutlinedIcon />}
                 onClick={() =>
-                  setProfileFields((current) => [
+                  updateDraft((current) => ({
                     ...current,
-                    { key: "", label: "", type: "text" },
-                  ])
+                    profileFields: [
+                      ...current.profileFields,
+                      { key: "", label: "", type: "text" },
+                    ],
+                  }))
                 }
               >
                 添加字段
@@ -505,11 +568,15 @@ export function UniversalIntegrationPanel({
                 label="字段 key"
                 value={field.key}
                 onChange={(event) =>
-                  setProfileFields((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index ? { ...item, key: event.target.value } : item,
+                  updateDraft((current) => ({
+                    ...current,
+                    profileFields: current.profileFields.map(
+                      (item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, key: event.target.value }
+                          : item,
                     ),
-                  )
+                  }))
                 }
                 disabled={!canModify || busy}
               />
@@ -517,11 +584,15 @@ export function UniversalIntegrationPanel({
                 label="显示名称"
                 value={field.label}
                 onChange={(event) =>
-                  setProfileFields((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index ? { ...item, label: event.target.value } : item,
+                  updateDraft((current) => ({
+                    ...current,
+                    profileFields: current.profileFields.map(
+                      (item, itemIndex) =>
+                        itemIndex === index
+                          ? { ...item, label: event.target.value }
+                          : item,
                     ),
-                  )
+                  }))
                 }
                 disabled={!canModify || busy}
               />
@@ -530,13 +601,18 @@ export function UniversalIntegrationPanel({
                 label="类型"
                 value={field.type}
                 onChange={(event) =>
-                  setProfileFields((current) =>
-                    current.map((item, itemIndex) =>
-                      itemIndex === index
-                        ? { ...item, type: event.target.value as ProfileField["type"] }
-                        : item,
+                  updateDraft((current) => ({
+                    ...current,
+                    profileFields: current.profileFields.map(
+                      (item, itemIndex) =>
+                        itemIndex === index
+                          ? {
+                              ...item,
+                              type: event.target.value as ProfileField["type"],
+                            }
+                          : item,
                     ),
-                  )
+                  }))
                 }
                 disabled={!canModify || busy}
               >
@@ -548,9 +624,12 @@ export function UniversalIntegrationPanel({
               <IconButton
                 aria-label="删除资料字段"
                 onClick={() =>
-                  setProfileFields((current) =>
-                    current.filter((_, itemIndex) => itemIndex !== index),
-                  )
+                  updateDraft((current) => ({
+                    ...current,
+                    profileFields: current.profileFields.filter(
+                      (_, itemIndex) => itemIndex !== index,
+                    ),
+                  }))
                 }
                 disabled={!canModify || busy}
               >
@@ -561,11 +640,31 @@ export function UniversalIntegrationPanel({
         </Stack>
         <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
           <FormControlLabel
-            control={<Switch checked={emailNotifications} onChange={(event) => setEmailNotifications(event.target.checked)} />}
+            control={
+              <Switch
+                checked={emailNotifications}
+                onChange={(event) =>
+                  updateDraft((current) => ({
+                    ...current,
+                    emailNotifications: event.target.checked,
+                  }))
+                }
+              />
+            }
             label="外部用户邮件通知"
           />
           <FormControlLabel
-            control={<Switch checked={customerNotifications} onChange={(event) => setCustomerNotifications(event.target.checked)} />}
+            control={
+              <Switch
+                checked={customerNotifications}
+                onChange={(event) =>
+                  updateDraft((current) => ({
+                    ...current,
+                    customerNotifications: event.target.checked,
+                  }))
+                }
+              />
+            }
             label="通知客户空间成员"
           />
         </Stack>
@@ -609,7 +708,12 @@ export function UniversalIntegrationPanel({
           <TextField
             label="Webhook 地址（可选）"
             value={webhookUrl}
-            onChange={(event) => setWebhookUrl(event.target.value)}
+            onChange={(event) =>
+              updateDraft((current) => ({
+                ...current,
+                webhookUrl: event.target.value,
+              }))
+            }
             disabled={!canModify || busy}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={0.5}>
@@ -620,11 +724,14 @@ export function UniversalIntegrationPanel({
                   <Checkbox
                     checked={webhookEvents.includes(option.value)}
                     onChange={(event) =>
-                      setWebhookEvents((current) =>
-                        event.target.checked
-                          ? [...current, option.value]
-                          : current.filter((item) => item !== option.value),
-                      )
+                      updateDraft((current) => ({
+                        ...current,
+                        webhookEvents: event.target.checked
+                          ? [...current.webhookEvents, option.value]
+                          : current.webhookEvents.filter(
+                              (item) => item !== option.value,
+                            ),
+                      }))
                     }
                     disabled={!canModify || busy || !webhookUrl.trim()}
                   />
@@ -650,16 +757,7 @@ export function UniversalIntegrationPanel({
               </>
             ) : null}
             <Button
-              onClick={() => {
-                setDeliveryOpen(true);
-                void loadDeliveries().catch((deliveryError) =>
-                  toast.error(
-                    deliveryError instanceof Error
-                      ? deliveryError.message
-                      : "投递记录加载失败",
-                  ),
-                );
-              }}
+              onClick={() => setDeliveryOpen(true)}
               disabled={busy}
             >
               投递历史
@@ -753,6 +851,14 @@ export function UniversalIntegrationPanel({
         <DialogTitle>Webhook 投递历史</DialogTitle>
         <DialogContent>
           <Stack spacing={1.25} sx={{ pt: 1 }}>
+            {deliveriesQuery.isPending ? <LinearProgress /> : null}
+            {deliveriesQuery.isError ? (
+              <Alert severity="error">
+                {deliveriesQuery.error instanceof Error
+                  ? deliveriesQuery.error.message
+                  : "投递记录加载失败"}
+              </Alert>
+            ) : null}
             {deliveries.map((delivery) => (
               <Box
                 key={delivery.id}
@@ -790,7 +896,7 @@ export function UniversalIntegrationPanel({
                 ) : null}
               </Box>
             ))}
-            {deliveries.length === 0 ? (
+            {deliveriesQuery.isSuccess && deliveries.length === 0 ? (
               <Alert severity="info">暂无 Webhook 投递记录。</Alert>
             ) : null}
           </Stack>

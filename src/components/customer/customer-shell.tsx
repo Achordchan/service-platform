@@ -4,6 +4,7 @@ import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   AppBar,
   Avatar,
@@ -67,6 +68,7 @@ export function CustomerShell({
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const router = useRouter();
+  const queryClient = useQueryClient();
   const pathname = usePathname();
   const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [navigationUnread, setNavigationUnread] =
@@ -292,6 +294,7 @@ export function CustomerShell({
         <MenuItem
           onClick={async () => {
             await authClient.signOut();
+            queryClient.clear();
             router.replace("/login");
             router.refresh();
           }}

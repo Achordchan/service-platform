@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Box, CircularProgress, Stack } from "@mui/material";
 import { DingTalkTemplateSettings } from "@/components/staff/dingtalk-template-settings";
 import { useToast } from "@/components/shared/toast-provider";
@@ -10,6 +10,7 @@ import type {
   DingTalkRobotEventType,
   DingTalkRobotTemplate,
 } from "@achord/plugin-dingtalk-robot/config";
+import { queryKeys } from "@/lib/query-keys";
 
 type PluginState = {
   enabled: boolean;
@@ -21,27 +22,52 @@ type PluginState = {
 
 export function DingTalkTemplateWorkspace() {
   const toast = useToast();
-  const [plugin, setPlugin] = useState<PluginState | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    staffApi<PluginState>("/api/v1/admin/plugins/dingtalk-robot")
-      .then(setPlugin)
-      .catch(() => setPlugin(null))
-      .finally(() => setLoading(false));
-  }, []);
+  const queryClient = useQueryClient();
+  const pluginQuery = useQuery({
+    queryKey: queryKeys.plugins.dingtalk,
+    queryFn: ({ signal }) =>
+      staffApi<PluginState>("/api/v1/admin/plugins/dingtalk-robot", {
+        signal,
+      }),
+  });
+  const saveMutation = useMutation({
+    mutationFn: (config: DingTalkRobotConfig) =>
+      staffApi<PluginState>(
+        "/api/v1/admin/plugins/dingtalk-robot",
+        jsonRequest("PATCH", { config }),
+      ),
+    onSuccess: (plugin) => {
+      queryClient.setQueryData(queryKeys.plugins.dingtalk, plugin);
+      toast.success("钉钉模板已保存");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+  const testMutation = useMutation({
+    mutationFn: ({
+      eventType,
+      template,
+    }: {
+      eventType: DingTalkRobotEventType;
+      template: DingTalkRobotTemplate;
+    }) =>
+      staffApi(
+        "/api/v1/admin/plugins/dingtalk-robot/test-message",
+        jsonRequest("POST", { eventType, template }),
+      ),
+    onSuccess: () => toast.success("测试消息已发送"),
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "发送失败");
+    },
+  });
+  const plugin = pluginQuery.data;
 
   async function handleSave(config: DingTalkRobotConfig) {
     try {
-      const result = await staffApi<PluginState>(
-        "/api/v1/admin/plugins/dingtalk-robot",
-        jsonRequest("PATCH", { config }),
-      );
-      setPlugin(result);
-      toast.success("钉钉模板已保存");
+      await saveMutation.mutateAsync(config);
       return true;
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "保存失败");
+    } catch {
       return false;
     }
   }
@@ -50,18 +76,12 @@ export function DingTalkTemplateWorkspace() {
     eventType: DingTalkRobotEventType,
     template: DingTalkRobotTemplate,
   ) {
-    try {
-      await staffApi(
-        "/api/v1/admin/plugins/dingtalk-robot/test-message",
-        jsonRequest("POST", { eventType, template }),
-      );
-      toast.success("测试消息已发送");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "发送失败");
-    }
+    await testMutation
+      .mutateAsync({ eventType, template })
+      .catch(() => undefined);
   }
 
-  if (loading) {
+  if (pluginQuery.isPending) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
         <CircularProgress />
@@ -79,9 +99,14 @@ export function DingTalkTemplateWorkspace() {
 
   return (
     <Stack spacing={2}>
+      {pluginQuery.isError ? (
+        <Alert severity="warning">
+          插件配置刷新失败，当前显示最近一次已确认的数据。
+        </Alert>
+      ) : null}
       <DingTalkTemplateSettings
         config={plugin.config}
-        busy={false}
+        busy={saveMutation.isPending || testMutation.isPending}
         canTest={plugin.secretConfigState === "VALID"}
         onSave={handleSave}
         onTest={handleTest}

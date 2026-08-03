@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   Accordion,
   AccordionDetails,
@@ -43,6 +46,20 @@ type DeleteTarget = {
   deleteUrl: string;
 };
 
+const serviceCreateFormSchema = z.object({
+  key: z.string().trim().min(2).max(50).regex(/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/, "唯一标识格式不正确"),
+  name: z.string().trim().min(1, "请填写服务类型名称").max(100),
+  description: z.string().trim().max(1000),
+});
+const editableTypeFormSchema = z.object({
+  name: z.string().trim().min(1, "请填写名称").max(100),
+  description: z.string().trim().max(1000),
+  active: z.boolean(),
+});
+
+type ServiceCreateFormValues = z.infer<typeof serviceCreateFormSchema>;
+type EditableTypeFormValues = z.infer<typeof editableTypeFormSchema>;
+
 export function ServiceTypeManager({
   serviceTypes,
 }: {
@@ -58,6 +75,22 @@ export function ServiceTypeManager({
   } | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const createServiceForm = useForm<ServiceCreateFormValues>({
+    resolver: zodResolver(serviceCreateFormSchema),
+    defaultValues: { key: "", name: "", description: "" },
+  });
+  const createCategoryForm = useForm<EditableTypeFormValues>({
+    resolver: zodResolver(editableTypeFormSchema),
+    defaultValues: { name: "", description: "", active: true },
+  });
+  const editServiceForm = useForm<EditableTypeFormValues>({
+    resolver: zodResolver(editableTypeFormSchema),
+    defaultValues: { name: "", description: "", active: true },
+  });
+  const editCategoryForm = useForm<EditableTypeFormValues>({
+    resolver: zodResolver(editableTypeFormSchema),
+    defaultValues: { name: "", description: "", active: true },
+  });
 
   async function execute(
     url: string,
@@ -82,37 +115,24 @@ export function ServiceTypeManager({
     }
   }
 
-  async function createService(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const createService = createServiceForm.handleSubmit(async (values) => {
     await execute(
       "/api/v1/admin/service-types",
       "POST",
-      {
-        key: String(data.get("key") ?? "").trim(),
-        name: String(data.get("name") ?? "").trim(),
-        description: String(data.get("description") ?? "").trim() || null,
-        active: true,
-      },
+      { ...values, description: values.description || null, active: true },
       "服务类型已创建",
     );
-  }
+  });
 
-  async function createCategory(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const createCategory = createCategoryForm.handleSubmit(async (values) => {
     if (dialog?.type !== "category") return;
-    const data = new FormData(event.currentTarget);
     await execute(
       `/api/v1/admin/service-types/${dialog.serviceType.id}/request-categories`,
       "POST",
-      {
-        name: String(data.get("name") ?? "").trim(),
-        description: String(data.get("description") ?? "").trim() || null,
-        active: true,
-      },
+      { ...values, description: values.description || null, active: true },
       "请求分类已创建",
     );
-  }
+  });
 
   async function toggleService(serviceType: ServiceTypeItem) {
     setSubmitting(true);
@@ -154,36 +174,55 @@ export function ServiceTypeManager({
   }
 
 
-  async function updateService(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const updateService = editServiceForm.handleSubmit(async (values) => {
     if (!editingService) return;
-    const data = new FormData(event.currentTarget);
     await execute(
       `/api/v1/admin/service-types/${editingService.id}`,
       "PATCH",
-      {
-        name: String(data.get("name") ?? "").trim(),
-        description: String(data.get("description") ?? "").trim() || null,
-        active: data.get("active") === "on",
-      },
+      { ...values, description: values.description || null },
       "服务类型已更新",
     );
-  }
+  });
 
-  async function updateCategory(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const updateCategory = editCategoryForm.handleSubmit(async (values) => {
     if (!editingCategory) return;
-    const data = new FormData(event.currentTarget);
     await execute(
       `/api/v1/admin/service-types/${editingCategory.serviceType.id}/request-categories/${editingCategory.category.id}`,
       "PATCH",
-      {
-        name: String(data.get("name") ?? "").trim(),
-        description: String(data.get("description") ?? "").trim() || null,
-        active: data.get("active") === "on",
-      },
+      { ...values, description: values.description || null },
       "请求分类已更新",
     );
+  });
+
+  function openCreateService() {
+    createServiceForm.reset();
+    setDialog({ type: "service" });
+  }
+
+  function openCreateCategory(serviceType: ServiceTypeItem) {
+    createCategoryForm.reset({ name: "", description: "", active: true });
+    setDialog({ type: "category", serviceType });
+  }
+
+  function openEditService(serviceType: ServiceTypeItem) {
+    editServiceForm.reset({
+      name: serviceType.name,
+      description: serviceType.description || "",
+      active: serviceType.active,
+    });
+    setEditingService(serviceType);
+  }
+
+  function openEditCategory(
+    serviceType: ServiceTypeItem,
+    category: ServiceTypeItem["categories"][number],
+  ) {
+    editCategoryForm.reset({
+      name: category.name,
+      description: category.description || "",
+      active: category.active,
+    });
+    setEditingCategory({ serviceType, category });
   }
 
   function removeService(serviceType: ServiceTypeItem) {
@@ -212,7 +251,7 @@ export function ServiceTypeManager({
       <Button
         variant="contained"
         startIcon={<AddOutlinedIcon />}
-        onClick={() => setDialog({ type: "service" })}
+        onClick={openCreateService}
         sx={{ alignSelf: { xs: "stretch", sm: "flex-end" } }}
       >
         新建服务类型
@@ -285,7 +324,7 @@ export function ServiceTypeManager({
                   <Button
                     size="small"
                     startIcon={<EditOutlinedIcon />}
-                    onClick={() => setEditingService(serviceType)}
+                    onClick={() => openEditService(serviceType)}
                   >
                     编辑
                   </Button>
@@ -302,7 +341,7 @@ export function ServiceTypeManager({
                     size="small"
                     variant="outlined"
                     startIcon={<AddOutlinedIcon />}
-                    onClick={() => setDialog({ type: "category", serviceType })}
+                    onClick={() => openCreateCategory(serviceType)}
                   >
                     新增分类
                   </Button>
@@ -346,7 +385,7 @@ export function ServiceTypeManager({
                         size="small"
                         startIcon={<EditOutlinedIcon />}
                         onClick={() =>
-                          setEditingCategory({ serviceType, category })
+                          openEditCategory(serviceType, category)
                         }
                       >
                         编辑
@@ -369,7 +408,7 @@ export function ServiceTypeManager({
               </Stack>
               <Button
                 startIcon={<AddOutlinedIcon />}
-                onClick={() => setDialog({ type: "category", serviceType })}
+                onClick={() => openCreateCategory(serviceType)}
                 sx={{ mt: 2 }}
               >
                 新增请求分类
@@ -393,20 +432,26 @@ export function ServiceTypeManager({
           <DialogTitle>新建服务类型</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              <TextField name="name" label="服务类型名称" required />
-              <TextField
-                name="key"
-                label="唯一标识"
-                placeholder="例如 seo-service"
-                helperText="仅支持小写字母、数字、连字符和下划线"
-                required
+              <Controller
+                name="name"
+                control={createServiceForm.control}
+                render={({ field }) => (
+                  <TextField {...field} label="服务类型名称" required error={Boolean(createServiceForm.formState.errors.name)} helperText={createServiceForm.formState.errors.name?.message} />
+                )}
               />
-              <TextField
+              <Controller
+                name="key"
+                control={createServiceForm.control}
+                render={({ field }) => (
+                  <TextField {...field} label="唯一标识" placeholder="例如 seo-service" required error={Boolean(createServiceForm.formState.errors.key)} helperText={createServiceForm.formState.errors.key?.message ?? "仅支持小写字母、数字、连字符和下划线"} />
+                )}
+              />
+              <Controller
                 name="description"
-                label="服务说明"
-                multiline
-                minRows={3}
-                slotProps={{ htmlInput: { maxLength: 1000 } }}
+                control={createServiceForm.control}
+                render={({ field }) => (
+                  <TextField {...field} label="服务说明" multiline minRows={3} error={Boolean(createServiceForm.formState.errors.description)} helperText={createServiceForm.formState.errors.description?.message} slotProps={{ htmlInput: { maxLength: 1000 } }} />
+                )}
               />
             </Stack>
           </DialogContent>
@@ -435,13 +480,19 @@ export function ServiceTypeManager({
           </DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              <TextField name="name" label="分类名称" required />
-              <TextField
+              <Controller
+                name="name"
+                control={createCategoryForm.control}
+                render={({ field }) => (
+                  <TextField {...field} label="分类名称" required error={Boolean(createCategoryForm.formState.errors.name)} helperText={createCategoryForm.formState.errors.name?.message} />
+                )}
+              />
+              <Controller
                 name="description"
-                label="分类说明"
-                multiline
-                minRows={3}
-                slotProps={{ htmlInput: { maxLength: 1000 } }}
+                control={createCategoryForm.control}
+                render={({ field }) => (
+                  <TextField {...field} label="分类说明" multiline minRows={3} error={Boolean(createCategoryForm.formState.errors.description)} helperText={createCategoryForm.formState.errors.description?.message} slotProps={{ htmlInput: { maxLength: 1000 } }} />
+                )}
               />
             </Stack>
           </DialogContent>
@@ -467,24 +518,26 @@ export function ServiceTypeManager({
             <DialogTitle>编辑服务类型</DialogTitle>
             <DialogContent>
               <Stack spacing={2} sx={{ pt: 1 }}>
-                <TextField
+                <Controller
                   name="name"
-                  label="名称"
-                  defaultValue={editingService.name}
-                  required
+                  control={editServiceForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="名称" required error={Boolean(editServiceForm.formState.errors.name)} helperText={editServiceForm.formState.errors.name?.message} />
+                  )}
                 />
-                <TextField
+                <Controller
                   name="description"
-                  label="说明"
-                  defaultValue={editingService.description || ""}
-                  multiline
-                  minRows={2}
+                  control={editServiceForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="说明" multiline minRows={2} error={Boolean(editServiceForm.formState.errors.description)} helperText={editServiceForm.formState.errors.description?.message} />
+                  )}
                 />
-                <FormControlLabel
-                  control={
-                    <Switch name="active" defaultChecked={editingService.active} />
-                  }
-                  label="启用服务"
+                <Controller
+                  name="active"
+                  control={editServiceForm.control}
+                  render={({ field }) => (
+                    <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="启用服务" />
+                  )}
                 />
               </Stack>
             </DialogContent>
@@ -511,27 +564,26 @@ export function ServiceTypeManager({
             <DialogTitle>编辑请求分类</DialogTitle>
             <DialogContent>
               <Stack spacing={2} sx={{ pt: 1 }}>
-                <TextField
+                <Controller
                   name="name"
-                  label="分类名称"
-                  defaultValue={editingCategory.category.name}
-                  required
+                  control={editCategoryForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="分类名称" required error={Boolean(editCategoryForm.formState.errors.name)} helperText={editCategoryForm.formState.errors.name?.message} />
+                  )}
                 />
-                <TextField
+                <Controller
                   name="description"
-                  label="说明"
-                  defaultValue={editingCategory.category.description || ""}
-                  multiline
-                  minRows={2}
+                  control={editCategoryForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="说明" multiline minRows={2} error={Boolean(editCategoryForm.formState.errors.description)} helperText={editCategoryForm.formState.errors.description?.message} />
+                  )}
                 />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      name="active"
-                      defaultChecked={editingCategory.category.active}
-                    />
-                  }
-                  label="启用分类"
+                <Controller
+                  name="active"
+                  control={editCategoryForm.control}
+                  render={({ field }) => (
+                    <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="启用分类" />
+                  )}
                 />
               </Stack>
             </DialogContent>

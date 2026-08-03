@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type InfiniteData,
+  useInfiniteQuery,
+  useMutation,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
   Badge,
@@ -23,11 +29,9 @@ import {
   type RealtimeEventType,
 } from "@/lib/realtime-client";
 import type { NavigationUnreadState } from "@/lib/notification-navigation";
-import {
-  matchesNotificationLocalUpdate,
-  type NotificationLocalUpdateDetail,
-} from "@/lib/notification-local-update";
 import { useUnreadNotifications } from "@/hooks/use-unread-notifications";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
 
 type NotificationItem = {
   id: string;
@@ -69,108 +73,111 @@ export function NotificationMenu({
   onUnreadStateChange?: (state: NavigationUnreadState) => void;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [anchor, setAnchor] = useState<HTMLElement | null>(null);
-  const [items, setItems] = useState<NotificationItem[]>([]);
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [markingAll, setMarkingAll] = useState(false);
-  const refreshSequenceRef = useRef(0);
   const { unread, refresh: refreshSummary } = useUnreadNotifications();
+  const notificationsQuery = useInfiniteQuery({
+    queryKey: queryKeys.notifications.list,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ limit: "30" });
+      if (pageParam) params.set("cursor", pageParam);
+      return apiRequest<NotificationPage>(
+        `/api/v1/notifications?${params}`,
+        { cache: "no-store", signal },
+        "通知加载失败",
+      );
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+  });
+  const markReadMutation = useMutation({
+    mutationFn: (variables: { id: string } | { all: true }) =>
+      apiRequest<void>(
+        "/api/v1/notifications",
+        jsonRequest("PATCH", variables),
+        "通知状态更新失败",
+      ),
+    onSuccess: async (_, variables) => {
+      const now = new Date().toISOString();
+      queryClient.setQueryData<InfiniteData<NotificationPage>>(
+        queryKeys.notifications.list,
+        (current) =>
+          current
+            ? {
+                ...current,
+                pages: current.pages.map((page) => ({
+                  ...page,
+                  items: page.items.map((item) =>
+                    "all" in variables || item.id === variables.id
+                      ? { ...item, readAt: item.readAt ?? now }
+                      : item,
+                  ),
+                })),
+              }
+            : current,
+      );
+      window.dispatchEvent(
+        new CustomEvent("notifications-updated", {
+          detail:
+            "all" in variables
+              ? { all: true }
+              : { notificationId: variables.id },
+        }),
+      );
+      await refreshSummary();
+    },
+  });
+  const items = useMemo(() => {
+    const known = new Set<string>();
+    return (notificationsQuery.data?.pages ?? []).flatMap((page) =>
+      page.items.filter((item) => {
+        if (known.has(item.id)) return false;
+        known.add(item.id);
+        return true;
+      }),
+    );
+  }, [notificationsQuery.data]);
+  const markingAll =
+    markReadMutation.isPending &&
+    Boolean(markReadMutation.variables && "all" in markReadMutation.variables);
 
   useEffect(() => {
     onUnreadStateChange?.(unread.navigation);
   }, [onUnreadStateChange, unread.navigation]);
 
   const refreshItems = useCallback(async () => {
-    const sequence = ++refreshSequenceRef.current;
-    try {
-      const response = await fetch("/api/v1/notifications?limit=30", {
-        cache: "no-store",
-      });
-      if (!response.ok || sequence !== refreshSequenceRef.current) return;
-      const result = (await response.json()) as { data: NotificationPage };
-      setItems(result.data.items);
-      setNextCursor(result.data.nextCursor);
-    } catch {
-      // Keep the current list during transient failures.
-    }
-  }, []);
+    queryClient.setQueryData<InfiniteData<NotificationPage>>(
+      queryKeys.notifications.list,
+      (current) =>
+        current
+          ? {
+              pages: current.pages.slice(0, 1),
+              pageParams: current.pageParams.slice(0, 1),
+            }
+          : current,
+    );
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.notifications.list,
+    });
+  }, [queryClient]);
 
   useEffect(() => {
-    const initialRefresh = window.setTimeout(() => void refreshItems(), 0);
     const unsubscribeEvents = subscribeRealtime(eventTypes, (event) => {
       if (event.live) void refreshItems();
     });
     const unsubscribeReady = subscribeRealtimeReady(() => void refreshItems());
-    const handleLocalUpdate = (event: Event) => {
-      const detail = (event as CustomEvent<NotificationLocalUpdateDetail>)
-        .detail;
-      if (detail) {
-        const now = new Date().toISOString();
-        setItems((current) =>
-          current.map((item) =>
-            !item.readAt && matchesNotificationLocalUpdate(item, detail)
-              ? { ...item, readAt: now }
-              : item,
-          ),
-        );
-      }
-      void refreshItems();
-    };
+    const handleLocalUpdate = () => void refreshItems();
     window.addEventListener("notifications-updated", handleLocalUpdate);
     return () => {
-      window.clearTimeout(initialRefresh);
       unsubscribeEvents();
       unsubscribeReady();
       window.removeEventListener("notifications-updated", handleLocalUpdate);
     };
   }, [refreshItems]);
 
-  async function loadMore() {
-    if (!nextCursor || loadingMore) return;
-    setLoadingMore(true);
-    try {
-      const response = await fetch(
-        `/api/v1/notifications?limit=30&cursor=${encodeURIComponent(nextCursor)}`,
-        { cache: "no-store" },
-      );
-      if (!response.ok) return;
-      const result = (await response.json()) as { data: NotificationPage };
-      setItems((current) => {
-        const known = new Set(current.map((item) => item.id));
-        return [
-          ...current,
-          ...result.data.items.filter((item) => !known.has(item.id)),
-        ];
-      });
-      setNextCursor(result.data.nextCursor);
-    } finally {
-      setLoadingMore(false);
-    }
-  }
-
   async function openNotification(item: NotificationItem) {
     if (!item.readAt) {
-      const response = await fetch("/api/v1/notifications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: item.id }),
-      });
-      if (response.ok) {
-        setItems((current) =>
-          current.map((notification) =>
-            notification.id === item.id
-              ? { ...notification, readAt: new Date().toISOString() }
-              : notification,
-          ),
-        );
-        window.dispatchEvent(
-          new CustomEvent("notifications-updated", {
-            detail: { notificationId: item.id },
-          }),
-        );
-        await refreshSummary();
-      }
+      await markReadMutation.mutateAsync({ id: item.id }).catch(() => undefined);
     }
     setAnchor(null);
     if (staff && item.type === "CONTENT_RISK") {
@@ -192,27 +199,7 @@ export function NotificationMenu({
 
   async function markAllRead() {
     if (unread.totalUnread === 0 || markingAll) return;
-    setMarkingAll(true);
-    try {
-      const response = await fetch("/api/v1/notifications", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ all: true }),
-      });
-      if (!response.ok) return;
-      const now = new Date().toISOString();
-      setItems((current) =>
-        current.map((item) =>
-          item.readAt ? item : { ...item, readAt: now },
-        ),
-      );
-      window.dispatchEvent(
-        new CustomEvent("notifications-updated", { detail: { all: true } }),
-      );
-      await refreshSummary();
-    } finally {
-      setMarkingAll(false);
-    }
+    await markReadMutation.mutateAsync({ all: true }).catch(() => undefined);
   }
 
   return (
@@ -316,14 +303,16 @@ export function NotificationMenu({
               />
             </ListItemButton>
           ))}
-          {nextCursor ? (
+          {notificationsQuery.hasNextPage ? (
             <Box sx={{ p: 1.5, textAlign: "center" }}>
               <Button
                 size="small"
-                onClick={() => void loadMore()}
-                disabled={loadingMore}
+                onClick={() => void notificationsQuery.fetchNextPage()}
+                disabled={notificationsQuery.isFetchingNextPage}
               >
-                {loadingMore ? "加载中" : "加载更早通知"}
+                {notificationsQuery.isFetchingNextPage
+                  ? "加载中"
+                  : "加载更早通知"}
               </Button>
             </Box>
           ) : null}

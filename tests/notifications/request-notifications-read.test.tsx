@@ -50,14 +50,15 @@ afterEach(() => {
 describe("request notification read sync", () => {
   it("survives the StrictMode mount-cleanup-remount cycle", async () => {
     const pendingResponses: Array<(response: Response) => void> = [];
+    const requestBodies: Array<Promise<unknown>> = [];
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
-      .mockImplementation(
-        () =>
-          new Promise<Response>((resolve) => {
-            pendingResponses.push(resolve);
-          }),
-      );
+      .mockImplementation((input) => {
+        requestBodies.push((input as Request).clone().json());
+        return new Promise<Response>((resolve) => {
+          pendingResponses.push(resolve);
+        });
+      });
     const dispatchSpy = vi.spyOn(window, "dispatchEvent");
 
     render(
@@ -68,7 +69,12 @@ describe("request notification read sync", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     for (const resolve of pendingResponses) {
-      resolve(new Response(null, { status: 200 }));
+      resolve(
+        new Response(JSON.stringify({ data: { read: true } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     }
 
     await waitFor(() => {
@@ -79,13 +85,12 @@ describe("request notification read sync", () => {
         }),
       );
     });
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "/api/v1/notifications",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ serviceRequestId: "request-1" }),
-      }),
-    );
+    const request = fetchMock.mock.calls.at(-1)?.[0] as Request;
+    expect(request.url).toBe("http://localhost:3000/api/v1/notifications");
+    expect(request.method).toBe("PATCH");
+    await expect(requestBodies.at(-1)).resolves.toEqual({
+      serviceRequestId: "request-1",
+    });
   });
 
   it("runs a trailing read after a live event inside the debounce window", async () => {

@@ -7,6 +7,7 @@ import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import UnarchiveOutlinedIcon from "@mui/icons-material/UnarchiveOutlined";
 import { useToast } from "@/components/shared/toast-provider";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 import { canArchiveRequestStatus } from "@/lib/request-archive";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
 
@@ -38,26 +39,17 @@ export function RequestArchivePanel({
   async function updateArchive() {
     setSubmitting(true);
     try {
-      const response = await fetch(`/api/v1/requests/${requestId}/archive`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archived: !archived }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        data?: { deliveryFeedback?: DeliveryFeedback | null };
-        error?: { message?: string } | string;
-      };
-      if (!response.ok) {
-        throw new Error(
-          typeof payload.error === "string"
-            ? payload.error
-            : payload.error?.message || "归档操作失败",
-        );
-      }
+      const result = await apiRequest<{
+        deliveryFeedback?: DeliveryFeedback | null;
+      }>(
+        `/api/v1/requests/${requestId}/archive`,
+        jsonRequest("PATCH", { archived: !archived }),
+        "归档操作失败",
+      );
       toast.success(
         archived ? "服务请求已恢复到常规列表" : "服务请求已归档",
       );
-      toast.delivery(payload.data?.deliveryFeedback);
+      toast.delivery(result.deliveryFeedback);
       markRequestLocalMutation();
       router.refresh();
     } catch (updateError) {

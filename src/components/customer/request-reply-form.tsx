@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useSyncExternalStore } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
   Box,
@@ -27,17 +30,21 @@ import type { RequestStatus } from "@/components/customer/customer-types";
 import { shouldShowResolvedReplyGate } from "@/components/customer/request-resolution-state";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 import { useToast } from "@/components/shared/toast-provider";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
+import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
 import {
-  apiErrorMessage,
-  readApiJson,
   type ApiResponsePayload,
 } from "@/lib/api-client-error";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
@@ -46,6 +53,18 @@ type ApiPayload = ApiResponsePayload<{
   message?: { id: string };
   deliveryFeedback?: DeliveryFeedback;
 }>;
+
+const requestReplySchema = z
+  .object({
+    body: z.string(),
+    files: z.array(z.custom<File>()),
+  })
+  .refine(
+    ({ body, files }) => hasMeaningfulHtml(body) || files.length > 0,
+    { path: ["body"], message: "请输入回复内容或添加附件" },
+  );
+
+type RequestReplyValues = z.infer<typeof requestReplySchema>;
 
 function subscribeToClientReady() {
   return () => undefined;
@@ -80,10 +99,7 @@ export function RequestReplyForm({
   const toast = useToast();
   const { policy, loading: attachmentPolicyLoading, validateFiles } =
     useAttachmentPolicy();
-  const [body, setBody] = useState(initialBody);
-  const [files, setFiles] = useState<File[]>([]);
   const [editorVersion, setEditorVersion] = useState(0);
-  const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const [continueReply, setContinueReply] = useState(Boolean(initialBody));
   const interactive = useSyncExternalStore(
@@ -93,6 +109,18 @@ export function RequestReplyForm({
   );
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [closing, setClosing] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<RequestReplyValues>({
+    resolver: zodResolver(requestReplySchema),
+    defaultValues: { body: initialBody, files: [] },
+  });
+  const body = useWatch({ control, name: "body" });
+  const files = useWatch({ control, name: "files" });
 
   const attachmentsEnabled =
     !attachmentPolicyLoading &&
@@ -104,18 +132,16 @@ export function RequestReplyForm({
   async function confirmClose() {
     setClosing(true);
     try {
-      const response = await fetch(`/api/v1/requests/${requestId}/close`, {
-        method: "POST",
-      });
-      const payload = await readApiJson<
-        ApiResponsePayload<{ deliveryFeedback?: DeliveryFeedback }>
-      >(response);
-      if (!response.ok) {
-        throw new Error(apiErrorMessage(response, payload, "确认关闭失败"));
-      }
+      const result = await apiRequest<{
+        deliveryFeedback?: DeliveryFeedback;
+      }>(
+        `/api/v1/requests/${requestId}/close`,
+        jsonRequest("POST"),
+        "确认关闭失败",
+      );
       setCloseDialogOpen(false);
       toast.success("服务请求已确认关闭");
-      toast.delivery(payload?.data?.deliveryFeedback, "summary");
+      toast.delivery(result.deliveryFeedback, "summary");
       markRequestLocalMutation();
       router.refresh();
     } catch (closeError) {
@@ -131,60 +157,60 @@ export function RequestReplyForm({
     const { accepted, error: validateError } = validateFiles(next, files.length);
     if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      setFiles((current) => [...current, ...accepted]);
+      setValue("files", [...files, ...accepted], {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
     }
   }
 
-  async function submitReply(event: React.FormEvent) {
-    event.preventDefault();
-    if (!hasMeaningfulHtml(body) && files.length === 0) return;
-
-    setSubmitting(true);
+  async function submitReply(values: RequestReplyValues) {
     onTypingStopped?.();
     try {
-      const response = await fetch(`/api/v1/requests/${requestId}/messages`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          body: hasMeaningfulHtml(body)
-            ? body
-            : buildAttachmentOnlyMessage(files.map((file) => file.name)),
+      const result = await apiRequest<NonNullable<ApiPayload["data"]>>(
+        `/api/v1/requests/${requestId}/messages`,
+        jsonRequest("POST", {
+          body: hasMeaningfulHtml(values.body)
+            ? values.body
+            : buildAttachmentOnlyMessage(values.files.map((file) => file.name)),
           visibility: "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
         }),
-      });
-      const payload = await readApiJson<ApiPayload>(response);
-      if (!response.ok || !payload?.data) {
-        throw new Error(apiErrorMessage(response, payload, "回复发送失败"));
-      }
-      const messageId = payload.data.message?.id;
-      if (attachmentsEnabled && files.length > 0) {
+        "回复发送失败",
+      );
+      const messageId = result.message?.id;
+      let failedFiles: File[] = [];
+      if (attachmentsEnabled && values.files.length > 0) {
         if (!messageId) {
-          throw new Error("回复已发送，但附件关联失败");
-        }
-        for (const file of files) {
-          const formData = new FormData();
-          formData.append("file", file);
-          formData.append("serviceRequestId", requestId);
-          formData.append("requestMessageId", messageId);
-          formData.append("visibility", "CUSTOMER_VISIBLE");
-          const uploadResponse = await fetch("/api/v1/attachments", {
-            method: "POST",
-            body: formData,
-          });
-          if (!uploadResponse.ok) {
-            const uploadPayload = await readApiJson<ApiPayload>(uploadResponse);
-            throw new Error(
-              apiErrorMessage(uploadResponse, uploadPayload, `${file.name} 上传失败`),
-            );
-          }
+          failedFiles = values.files;
+        } else {
+          failedFiles = await uploadFilesBestEffort(
+            values.files,
+            async (file) => {
+              const formData = new FormData();
+              formData.append("file", file);
+              formData.append("serviceRequestId", requestId);
+              formData.append("requestMessageId", messageId);
+              formData.append("visibility", "CUSTOMER_VISIBLE");
+              await apiRequest(
+                "/api/v1/attachments",
+                { method: "POST", body: formData },
+                `${file.name} 上传失败`,
+              );
+            },
+          );
         }
       }
-      setBody("");
+      reset({ body: "", files: [] });
       setEditorVersion((version) => version + 1);
-      setFiles([]);
-      toast.success("回复已发送");
-      toast.delivery(payload.data.deliveryFeedback, "summary");
+      if (failedFiles.length > 0) {
+        toast.warning(
+          `回复已发送，但附件上传失败：${fileNames(failedFiles)}。请重新添加附件。`,
+        );
+      } else {
+        toast.success("回复已发送");
+      }
+      toast.delivery(result.deliveryFeedback, "summary");
       onCancelReply?.();
       onSent?.();
       markRequestLocalMutation();
@@ -195,8 +221,6 @@ export function RequestReplyForm({
           ? submitError.message
           : "回复发送失败，请稍后重试",
       );
-    } finally {
-      setSubmitting(false);
     }
   }
 
@@ -208,11 +232,12 @@ export function RequestReplyForm({
     <Paper
       id="request-reply-composer"
       component="form"
+      noValidate
       variant="outlined"
-      onSubmit={submitReply}
+      onSubmit={handleSubmit(submitReply)}
       sx={{ overflow: "hidden" }}
     >
-      {submitting ? <LinearProgress /> : null}
+      {isSubmitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: 2 }}>
         {contentRiskEnabled ? <ContentRiskNotice audience="CUSTOMER" /> : null}
         {restoredAttachmentCount > 0 ? (
@@ -234,27 +259,38 @@ export function RequestReplyForm({
               pointerEvents: resolvedGateVisible ? "none" : "auto",
             }}
           >
-            <RichTextEditor
-              key={editorVersion}
-              value={body}
-              onChange={(value) => {
-                setBody(value);
-                if (hasMeaningfulHtml(value)) {
-                  onTypingActivity?.();
-                } else {
-                  onTypingStopped?.();
-                }
-              }}
-              disabled={submitting || resolvedGateVisible}
-              uploadImage={
-                attachmentsEnabled && !resolvedGateVisible
-                  ? uploadInlineImage
-                  : undefined
-              }
-              onImageUploadingChange={setInlineImageUploading}
-              minHeight={resolvedGateVisible ? 220 : undefined}
-              placeholder="补充信息或回复处理人员"
+            <Controller
+              name="body"
+              control={control}
+              render={({ field }) => (
+                <RichTextEditor
+                  key={editorVersion}
+                  value={field.value}
+                  onChange={(value) => {
+                    field.onChange(value);
+                    if (hasMeaningfulHtml(value)) {
+                      onTypingActivity?.();
+                    } else {
+                      onTypingStopped?.();
+                    }
+                  }}
+                  disabled={isSubmitting || resolvedGateVisible}
+                  uploadImage={
+                    attachmentsEnabled && !resolvedGateVisible
+                      ? uploadInlineImage
+                      : undefined
+                  }
+                  onImageUploadingChange={setInlineImageUploading}
+                  minHeight={resolvedGateVisible ? 220 : undefined}
+                  placeholder="补充信息或回复处理人员"
+                />
+              )}
             />
+            {errors.body?.message && !resolvedGateVisible ? (
+              <Typography variant="body2" color="error" sx={{ mt: 0.75 }}>
+                {errors.body.message}
+              </Typography>
+            ) : null}
           </Box>
           {resolvedGateVisible ? (
             <Stack
@@ -311,31 +347,27 @@ export function RequestReplyForm({
             }}
           >
             {attachmentsEnabled ? (
-              <Button
-                component="label"
+              <FilePickerButton
                 variant="outlined"
                 startIcon={<AttachFileOutlinedIcon />}
-                disabled={submitting}
+                disabled={isSubmitting}
+                multiple
+                accept={policy.accept}
+                maxSize={policy.maxSizeMb * 1024 * 1024}
+                onFiles={addFiles}
+                onRejected={(rejections) =>
+                  toast.warning(firstFileRejectionMessage(rejections))
+                }
               >
                 添加附件
-                <input
-                  hidden
-                  type="file"
-                  multiple
-                  accept={policy.accept}
-                  onChange={(event) => {
-                    addFiles(Array.from(event.target.files ?? []));
-                    event.target.value = "";
-                  }}
-                />
-              </Button>
+              </FilePickerButton>
             ) : null}
             <Button
               type="submit"
               variant="contained"
               endIcon={<SendOutlinedIcon />}
               disabled={
-                submitting ||
+                isSubmitting ||
                 inlineImageUploading ||
                 (!hasMeaningfulHtml(body) && files.length === 0)
               }
@@ -344,7 +376,7 @@ export function RequestReplyForm({
                 ml: { sm: "auto" },
               }}
             >
-              {submitting ? "正在发送" : "发送回复"}
+              {isSubmitting ? "正在发送" : "发送回复"}
             </Button>
           </Stack>
         ) : null}
@@ -357,8 +389,10 @@ export function RequestReplyForm({
           <RequestAttachmentDrafts
             files={files}
             onRemove={(index) =>
-              setFiles((current) =>
-                current.filter((_, fileIndex) => fileIndex !== index),
+              setValue(
+                "files",
+                files.filter((_, fileIndex) => fileIndex !== index),
+                { shouldDirty: true, shouldValidate: true },
               )
             }
           />

@@ -6,17 +6,12 @@ import {
   Box,
   Paper,
   Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   Typography,
 } from "@mui/material";
 import ChevronRightOutlinedIcon from "@mui/icons-material/ChevronRightOutlined";
 import type { ServiceRequestSummary } from "@/components/customer/customer-types";
 import { EmptyState } from "@/components/shared/content-state";
+import { ServiceRequestGrid } from "@/components/customer/service-request-grid";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -100,60 +95,18 @@ export function ServiceRequestTable({
       <Box sx={{ display: { xs: "block", md: "none" } }}>
         {requests.map((request) => (
           <MobileRequestRow key={request.id} request={request} />
-        ))}
+          ))}
       </Box>
-      <TableContainer sx={{ display: { xs: "none", md: "block" } }}>
-        <Table size={compact ? "small" : "medium"}>
-          <TableHead>
-            <TableRow>
-              <TableCell>请求编号</TableCell>
-              <TableCell>标题</TableCell>
-              {showProjectColumn ? <TableCell>所属项目</TableCell> : null}
-              <TableCell>请求分类</TableCell>
-              <TableCell>状态</TableCell>
-              <TableCell>更新时间</TableCell>
-              <TableCell>处理人</TableCell>
-              <TableCell width={48} />
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {requests.map((request) => (
-              <TableRow
-                key={request.id}
-                hover
-                onClick={() =>
-                  router.push(`/customer/requests/${request.id}`)
-                }
-                sx={{
-                  cursor: "pointer",
-                  "&:last-child td": { borderBottom: 0 },
-                }}
-              >
-                <TableCell sx={{ whiteSpace: "nowrap" }}>
-                  {request.number}
-                </TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{request.title}</TableCell>
-                {showProjectColumn ? (
-                  <TableCell>{request.projectTitle}</TableCell>
-                ) : null}
-                <TableCell>{request.category.name}</TableCell>
-                <TableCell sx={{ whiteSpace: "nowrap" }}>
-                  <StatusIndicator status={request.status} compact />
-                </TableCell>
-                <TableCell sx={{ whiteSpace: "nowrap" }}>
-                  {dateFormatter.format(new Date(request.updatedAt))}
-                </TableCell>
-                <TableCell sx={{ whiteSpace: "nowrap" }}>
-                  {request.assigneeName || "待分配"}
-                </TableCell>
-                <TableCell>
-                  <ChevronRightOutlinedIcon color="action" />
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      <Box sx={{ display: { xs: "none", md: "block" } }}>
+        <ServiceRequestGrid
+          rows={requests}
+          compact={compact}
+          hideProjectColumn={!showProjectColumn}
+          onOpen={(request) =>
+            router.push(`/customer/requests/${request.id}`)
+          }
+        />
+      </Box>
     </Paper>
   );
 }

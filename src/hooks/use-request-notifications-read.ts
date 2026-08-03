@@ -6,6 +6,7 @@ import {
   subscribeRealtimeReady,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 const liveTypes: readonly RealtimeEventType[] = [
   "REQUEST_MESSAGE_CREATED",
@@ -39,12 +40,12 @@ export function useRequestNotificationsRead(requestId: string) {
       pendingCatchup = false;
       lastMarkedAt = Date.now();
       try {
-        const response = await fetch("/api/v1/notifications", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serviceRequestId: requestId }),
-        });
-        if (!response.ok || cancelled) return;
+        await apiRequest<void>(
+          "/api/v1/notifications",
+          jsonRequest("PATCH", { serviceRequestId: requestId }),
+          "通知状态更新失败",
+        );
+        if (cancelled) return;
         window.dispatchEvent(
           new CustomEvent("notifications-updated", {
             detail: { serviceRequestId: requestId },

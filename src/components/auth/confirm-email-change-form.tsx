@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { Alert, Button, LinearProgress, Stack, Typography } from "@mui/material";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 export function ConfirmEmailChangeForm({
   token,
@@ -23,19 +24,12 @@ export function ConfirmEmailChangeForm({
     setSubmitting(true);
     setError("");
     try {
-      const response = await fetch("/api/v1/email-changes/confirm", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        data?: { newEmail: string };
-        error?: { message?: string };
-      };
-      if (!response.ok || !payload.data) {
-        throw new Error(payload.error?.message || "邮箱修改失败");
-      }
-      setCompletedEmail(payload.data.newEmail);
+      const result = await apiRequest<{ newEmail: string }>(
+        "/api/v1/email-changes/confirm",
+        jsonRequest("POST", { token }),
+        "邮箱修改失败",
+      );
+      setCompletedEmail(result.newEmail);
     } catch (confirmError) {
       setError(
         confirmError instanceof Error ? confirmError.message : "邮箱修改失败",

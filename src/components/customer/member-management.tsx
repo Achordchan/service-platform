@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { useMutation } from "@tanstack/react-query";
+import { z } from "zod";
 import {
   Alert,
   Button,
@@ -42,43 +46,65 @@ type DeleteTarget = {
   member: SpaceMembers["members"][number];
 };
 
+const invitationFormSchema = z.object({
+  email: z.string().trim().email("请输入有效的成员邮箱"),
+});
+
+type InvitationFormValues = z.infer<typeof invitationFormSchema>;
+
 export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
   const router = useRouter();
   const toast = useToast();
   const [activeSpace, setActiveSpace] = useState<SpaceMembers | null>(null);
-  const [email, setEmail] = useState("");
-  const [sending, setSending] = useState(false);
-  const [removingMemberId, setRemovingMemberId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
-
-  async function sendInvitation() {
-    if (!activeSpace) return;
-    setSending(true);
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${activeSpace.id}/invitations`,
+  const invitationForm = useForm<InvitationFormValues>({
+    resolver: zodResolver(invitationFormSchema),
+    defaultValues: { email: "" },
+    mode: "onChange",
+  });
+  const invitationMutation = useMutation({
+    mutationFn: ({ spaceId, email }: { spaceId: string; email: string }) =>
+      staffApi(
+        `/api/v1/admin/customer-spaces/${spaceId}/invitations`,
         jsonRequest("POST", { email }),
-      );
+      ),
+  });
+  const removeMutation = useMutation({
+    mutationFn: ({ spaceId, memberId }: { spaceId: string; memberId: string }) =>
+      staffApi<{ accountDeleted: boolean }>(
+        `/api/v1/admin/customer-spaces/${spaceId}/members/${memberId}`,
+        { method: "DELETE" },
+      ),
+  });
+  const sending = invitationMutation.isPending;
+  const removingMemberId = removeMutation.isPending
+    ? (removeMutation.variables?.memberId ?? null)
+    : null;
+
+  const sendInvitation = invitationForm.handleSubmit(async ({ email }) => {
+    if (!activeSpace) return;
+    try {
+      await invitationMutation.mutateAsync({
+        spaceId: activeSpace.id,
+        email: email.trim(),
+      });
       toast.success("邀请邮件已加入发送队列");
       setActiveSpace(null);
-      setEmail("");
+      invitationForm.reset({ email: "" });
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : "邀请发送失败",
       );
-    } finally {
-      setSending(false);
     }
-  }
+  });
 
   async function removeMember() {
     if (!deleteTarget) return;
-    setRemovingMemberId(deleteTarget.member.id);
     try {
-      const result = await staffApi<{ accountDeleted: boolean }>(
-        `/api/v1/admin/customer-spaces/${deleteTarget.spaceId}/members/${deleteTarget.member.id}`,
-        { method: "DELETE" },
-      );
+      const result = await removeMutation.mutateAsync({
+        spaceId: deleteTarget.spaceId,
+        memberId: deleteTarget.member.id,
+      });
       setDeleteTarget(null);
       toast.success(
         result.accountDeleted
@@ -90,8 +116,6 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
       toast.error(
         error instanceof Error ? error.message : "成员移除失败",
       );
-    } finally {
-      setRemovingMemberId(null);
     }
   }
 
@@ -131,7 +155,7 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
                 disabled={isFull}
                 onClick={() => {
                   setActiveSpace(space);
-                  setEmail("");
+                  invitationForm.reset({ email: "" });
                 }}
               >
                 邀请成员
@@ -174,21 +198,35 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
 
       <Dialog
         open={Boolean(activeSpace)}
-        onClose={() => setActiveSpace(null)}
+        onClose={sending ? undefined : () => setActiveSpace(null)}
         fullWidth
         maxWidth="sm"
       >
         <DialogTitle>邀请成员</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField
-              label="成员邮箱"
-              type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-              disabled={sending}
-              autoFocus
-              fullWidth
+          <Stack
+            id="member-invite-form"
+            component="form"
+            noValidate
+            spacing={2}
+            sx={{ pt: 1 }}
+            onSubmit={sendInvitation}
+          >
+            <Controller
+              name="email"
+              control={invitationForm.control}
+              render={({ field, fieldState }) => (
+                <TextField
+                  {...field}
+                  label="成员邮箱"
+                  type="email"
+                  disabled={sending}
+                  autoFocus
+                  fullWidth
+                  error={Boolean(fieldState.error)}
+                  helperText={fieldState.error?.message}
+                />
+              )}
             />
             <Typography variant="body2" color="text.secondary">
               邀请链接将在 24 小时后失效。
@@ -196,15 +234,18 @@ export function MemberManagement({ spaces }: { spaces: SpaceMembers[] }) {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button color="inherit" onClick={() => setActiveSpace(null)}>
+          <Button
+            color="inherit"
+            onClick={() => setActiveSpace(null)}
+            disabled={sending}
+          >
             关闭
           </Button>
           <Button
+            type="submit"
+            form="member-invite-form"
             variant="contained"
-            onClick={sendInvitation}
-            disabled={
-              !email.trim() || sending
-            }
+            disabled={sending || !invitationForm.formState.isValid}
           >
             {sending ? "正在发送" : "发送邀请"}
           </Button>

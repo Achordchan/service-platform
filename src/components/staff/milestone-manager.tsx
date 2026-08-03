@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Button,
   Dialog,
@@ -18,6 +21,7 @@ import {
 } from "@mui/material";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
+import { DateStringPicker } from "@/components/shared/date-string-picker";
 import { MilestoneList } from "@/components/shared/milestone-list";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
@@ -34,6 +38,22 @@ import type { DeliveryFeedback } from "@/lib/operation-feedback";
 function dateInput(value?: string | null) {
   return value ? value.slice(0, 10) : "";
 }
+
+const milestoneEditFormSchema = z
+  .object({
+    title: z.string().trim().min(1, "请填写里程碑名称").max(200),
+    description: z.string(),
+    status: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED"]),
+    startDate: z.string(),
+    endDate: z.string(),
+  })
+  .refine(
+    (values) =>
+      !values.startDate || !values.endDate || values.endDate >= values.startDate,
+    { path: ["endDate"], message: "结束日期不能早于开始日期" },
+  );
+
+type MilestoneEditFormValues = z.infer<typeof milestoneEditFormSchema>;
 
 export function MilestoneManager({
   projectId,
@@ -52,9 +72,20 @@ export function MilestoneManager({
   const toast = useToast();
   const [editing, setEditing] = useState<ProjectMilestone | null>(null);
   const [deleting, setDeleting] = useState<ProjectMilestone | null>(null);
-  const [description, setDescription] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const [actionId, setActionId] = useState("");
+  const editForm = useForm<MilestoneEditFormValues>({
+    resolver: zodResolver(milestoneEditFormSchema),
+    defaultValues: {
+      title: "",
+      description: "",
+      status: "NOT_STARTED",
+      startDate: "",
+      endDate: "",
+    },
+  });
+  const startDate = useWatch({ control: editForm.control, name: "startDate" });
+  const endDate = useWatch({ control: editForm.control, name: "endDate" });
   const uploadImage = useInlineImageUpload({
     projectId,
     context: "MILESTONE",
@@ -83,7 +114,13 @@ export function MilestoneManager({
   }
 
   function openEdit(milestone: ProjectMilestone) {
-    setDescription(milestone.description ?? "");
+    editForm.reset({
+      title: milestone.title,
+      description: milestone.description ?? "",
+      status: milestone.status,
+      startDate: dateInput(milestone.startDate),
+      endDate: dateInput(milestone.endDate),
+    });
     setInlineImageUploading(false);
     setEditing(milestone);
   }
@@ -92,23 +129,23 @@ export function MilestoneManager({
     setDeleting(milestone);
   }
 
-  async function submitEdit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const submitEdit = editForm.handleSubmit(async (values) => {
     if (!editing) return;
-    const data = new FormData(event.currentTarget);
     setActionId(editing.id);
     try {
       const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/projects/${projectId}/milestones/${editing.id}`,
         jsonRequest("PATCH", {
-          title: String(data.get("title") ?? "").trim(),
-          description: hasMeaningfulHtml(description) ? description : null,
-          status: String(data.get("status") ?? editing.status),
-          startDate: data.get("startDate")
-            ? new Date(String(data.get("startDate"))).toISOString()
+          title: values.title,
+          description: hasMeaningfulHtml(values.description)
+            ? values.description
             : null,
-          endDate: data.get("endDate")
-            ? new Date(String(data.get("endDate"))).toISOString()
+          status: values.status,
+          startDate: values.startDate
+            ? new Date(values.startDate).toISOString()
+            : null,
+          endDate: values.endDate
+            ? new Date(values.endDate).toISOString()
             : null,
         }),
       );
@@ -123,7 +160,7 @@ export function MilestoneManager({
     } finally {
       setActionId("");
     }
-  }
+  });
 
   async function confirmDelete() {
     if (!deleting) return;
@@ -238,53 +275,76 @@ export function MilestoneManager({
                 {contentRiskNoticeEnabled ? (
                   <ContentRiskNotice audience="STAFF" />
                 ) : null}
-                <TextField
+                <Controller
                   name="title"
-                  label="里程碑名称"
-                  defaultValue={editing.title}
-                  required
-                  slotProps={{ htmlInput: { maxLength: 200 } }}
+                  control={editForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="里程碑名称" required error={Boolean(editForm.formState.errors.title)} helperText={editForm.formState.errors.title?.message} slotProps={{ htmlInput: { maxLength: 200 } }} />
+                  )}
                 />
-                <TextField
+                <Controller
                   name="status"
-                  label="状态"
-                  select
-                  defaultValue={editing.status}
-                >
-                  <MenuItem value="NOT_STARTED">未开始</MenuItem>
-                  <MenuItem value="IN_PROGRESS">进行中</MenuItem>
-                  <MenuItem value="COMPLETED">已完成</MenuItem>
-                </TextField>
+                  control={editForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="状态" select>
+                      <MenuItem value="NOT_STARTED">未开始</MenuItem>
+                      <MenuItem value="IN_PROGRESS">进行中</MenuItem>
+                      <MenuItem value="COMPLETED">已完成</MenuItem>
+                    </TextField>
+                  )}
+                />
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                  <TextField
+                  <Controller
                     name="startDate"
-                    label="开始日期"
-                    type="date"
-                    defaultValue={dateInput(editing.startDate)}
-                    fullWidth
-                    slotProps={{ inputLabel: { shrink: true } }}
+                    control={editForm.control}
+                    render={({ field }) => (
+                      <DateStringPicker
+                        label="开始日期"
+                        value={field.value}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        inputRef={field.ref}
+                        maxDate={endDate}
+                      />
+                    )}
                   />
-                  <TextField
+                  <Controller
                     name="endDate"
-                    label="结束日期"
-                    type="date"
-                    defaultValue={dateInput(editing.endDate)}
-                    fullWidth
-                    slotProps={{ inputLabel: { shrink: true } }}
+                    control={editForm.control}
+                    render={({ field }) => (
+                      <DateStringPicker
+                        label="结束日期"
+                        value={field.value}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        name={field.name}
+                        inputRef={field.ref}
+                        minDate={startDate}
+                        error={Boolean(editForm.formState.errors.endDate)}
+                        helperText={editForm.formState.errors.endDate?.message}
+                      />
+                    )}
                   />
                 </Stack>
                 <Stack spacing={1}>
                   <Typography sx={{ fontWeight: 650 }}>说明</Typography>
-                  <RichTextEditor
-                    key={editing.id}
-                    value={description}
-                    onChange={setDescription}
-                    placeholder="说明里程碑目标、交付内容或验收标准"
-                    disabled={actionId === editing.id}
-                    minHeight={150}
-                    maxHeight={300}
-                    uploadImage={uploadImage}
-                    onImageUploadingChange={setInlineImageUploading}
+                  <Controller
+                    name="description"
+                    control={editForm.control}
+                    render={({ field }) => (
+                      <RichTextEditor
+                        key={editing.id}
+                        value={field.value}
+                        onChange={field.onChange}
+                        placeholder="说明里程碑目标、交付内容或验收标准"
+                        disabled={actionId === editing.id}
+                        minHeight={150}
+                        maxHeight={300}
+                        uploadImage={uploadImage}
+                        onImageUploadingChange={setInlineImageUploading}
+                      />
+                    )}
                   />
                 </Stack>
               </Stack>

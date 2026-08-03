@@ -1,7 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Button,
   Dialog,
@@ -20,6 +23,7 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import CampaignOutlinedIcon from "@mui/icons-material/CampaignOutlined";
 import RouteOutlinedIcon from "@mui/icons-material/RouteOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
+import { DateStringPicker } from "@/components/shared/date-string-picker";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
 import { useToast } from "@/components/shared/toast-provider";
@@ -46,6 +50,39 @@ function dateInput(value?: string | null) {
   return value ? value.slice(0, 10) : "";
 }
 
+const datedFormFields = {
+  startDate: z.string(),
+  endDate: z.string(),
+};
+const milestoneFormSchema = z.object({
+  title: z.string().trim().min(1, "请填写里程碑名称").max(200),
+  description: z.string(),
+  status: z.enum(["NOT_STARTED", "IN_PROGRESS", "COMPLETED"]),
+  ...datedFormFields,
+}).refine((value) => !value.startDate || !value.endDate || value.endDate >= value.startDate, { path: ["endDate"], message: "结束日期不能早于开始日期" });
+const updateFormSchema = z.object({
+  title: z.string().trim().min(1, "请填写动态标题").max(200),
+  body: z.string().refine(hasMeaningfulHtml, "请填写进度说明"),
+  internal: z.boolean(),
+});
+const stageFormSchema = z.object({ stage: z.string().trim().max(120) });
+const projectFormSchema = z.object({
+  title: z.string().trim().min(1, "请填写项目名称").max(200),
+  status: z.enum(["DRAFT", "ACTIVE", "PAUSED", "COMPLETED", "EXPIRED"]),
+  description: z.string().trim().max(5000),
+  showProgress: z.boolean(),
+  showMilestones: z.boolean(),
+  customerUpdatesEnabled: z.boolean(),
+  customerRequestsEnabled: z.boolean(),
+  customerFilesEnabled: z.boolean(),
+  ...datedFormFields,
+}).refine((value) => !value.startDate || !value.endDate || value.endDate >= value.startDate, { path: ["endDate"], message: "结束日期不能早于开始日期" });
+
+type MilestoneFormValues = z.infer<typeof milestoneFormSchema>;
+type UpdateFormValues = z.infer<typeof updateFormSchema>;
+type StageFormValues = z.infer<typeof stageFormSchema>;
+type ProjectFormValues = z.infer<typeof projectFormSchema>;
+
 export function ProjectDeliveryActions({
   project,
   canManageDelivery,
@@ -63,24 +100,33 @@ export function ProjectDeliveryActions({
   const toast = useToast();
   const [dialog, setDialog] = useState<DialogName>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [milestoneDescription, setMilestoneDescription] = useState("");
-  const [updateBody, setUpdateBody] = useState("");
-  const [updateInternal, setUpdateInternal] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
-  const [stageValue, setStageValue] = useState(project.currentStage ?? "");
-  const [showProgress, setShowProgress] = useState(project.showProgress !== false);
-  const [showMilestones, setShowMilestones] = useState(
-    project.showMilestones !== false,
-  );
-  const [customerUpdatesEnabled, setCustomerUpdatesEnabled] = useState(
-    project.customerUpdatesEnabled !== false,
-  );
-  const [customerRequestsEnabled, setCustomerRequestsEnabled] = useState(
-    project.customerRequestsEnabled !== false,
-  );
-  const [customerFilesEnabled, setCustomerFilesEnabled] = useState(
-    project.customerFilesEnabled !== false,
-  );
+  const milestoneForm = useForm<MilestoneFormValues>({ resolver: zodResolver(milestoneFormSchema), defaultValues: { title: "", description: "", status: "NOT_STARTED", startDate: "", endDate: "" } });
+  const updateForm = useForm<UpdateFormValues>({ resolver: zodResolver(updateFormSchema), defaultValues: { title: "", body: "", internal: false } });
+  const stageForm = useForm<StageFormValues>({ resolver: zodResolver(stageFormSchema), defaultValues: { stage: project.currentStage ?? "" } });
+  const projectForm = useForm<ProjectFormValues>({ resolver: zodResolver(projectFormSchema), defaultValues: {
+    title: project.title, status: project.status, description: project.description ?? "", startDate: dateInput(project.startDate), endDate: dateInput(project.endDate),
+    showProgress: project.showProgress !== false, showMilestones: project.showMilestones !== false,
+    customerUpdatesEnabled: project.customerUpdatesEnabled !== false, customerRequestsEnabled: project.customerRequestsEnabled !== false, customerFilesEnabled: project.customerFilesEnabled !== false,
+  } });
+  const updateInternal = useWatch({ control: updateForm.control, name: "internal" });
+  const updateBody = useWatch({ control: updateForm.control, name: "body" });
+  const milestoneStartDate = useWatch({
+    control: milestoneForm.control,
+    name: "startDate",
+  });
+  const milestoneEndDate = useWatch({
+    control: milestoneForm.control,
+    name: "endDate",
+  });
+  const projectStartDate = useWatch({
+    control: projectForm.control,
+    name: "startDate",
+  });
+  const projectEndDate = useWatch({
+    control: projectForm.control,
+    name: "endDate",
+  });
   const uploadInlineImage = useInlineImageUpload({
     projectId: project.id,
     context: "PROJECT_UPDATE",
@@ -101,9 +147,8 @@ export function ProjectDeliveryActions({
     setSubmitting(true);
     try {
       const result = await staffApi<T>(url, jsonRequest("POST", body));
-      setMilestoneDescription("");
-      setUpdateBody("");
-      setUpdateInternal(false);
+      milestoneForm.reset();
+      updateForm.reset();
       setInlineImageUploading(false);
       setDialog(null);
       toast.success(successMessage);
@@ -118,72 +163,62 @@ export function ProjectDeliveryActions({
     }
   }
 
-  async function submitMilestone(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const submitMilestone = milestoneForm.handleSubmit(async (values) => {
     await execute<{ deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/milestones`,
       {
-        title: String(data.get("title") ?? "").trim(),
-        description: hasMeaningfulHtml(milestoneDescription)
-          ? milestoneDescription
+        title: values.title,
+        description: hasMeaningfulHtml(values.description)
+          ? values.description
           : null,
-        status: String(data.get("status") ?? "NOT_STARTED"),
-        startDate: data.get("startDate")
-          ? new Date(String(data.get("startDate"))).toISOString()
+        status: values.status,
+        startDate: values.startDate
+          ? new Date(values.startDate).toISOString()
           : null,
-        endDate: data.get("endDate")
-          ? new Date(String(data.get("endDate"))).toISOString()
+        endDate: values.endDate
+          ? new Date(values.endDate).toISOString()
           : null,
         sortOrder: project.milestones.length,
       },
       "里程碑已创建",
       (result) => result.deliveryFeedback,
     );
-  }
+  });
 
-  async function submitUpdate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    if (!hasMeaningfulHtml(updateBody)) {
-      toast.warning("请填写进度说明");
-      return;
-    }
+  const submitUpdate = updateForm.handleSubmit(async (values) => {
     await execute<{ deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/updates`,
       {
-        title: String(data.get("title") ?? "").trim(),
-        body: updateBody,
-        visibility: updateInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        title: values.title,
+        body: values.body,
+        visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
       },
-      updateInternal ? "内部进度已发布" : "客户进度已发布",
+      values.internal ? "内部进度已发布" : "客户进度已发布",
       (result) => result.deliveryFeedback,
     );
-  }
+  });
 
-  async function submitProject(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const submitProject = projectForm.handleSubmit(async (values) => {
     setSubmitting(true);
     try {
       await staffApi(
         `/api/v1/projects/${project.id}`,
         jsonRequest("PATCH", {
-          title: String(data.get("title") ?? "").trim(),
-          description: String(data.get("description") ?? "").trim() || null,
+          title: values.title,
+          description: values.description || null,
           ...(project.status === "DRAFT"
             ? {}
-            : { status: String(data.get("status") ?? project.status) }),
-          showMilestones,
-          showProgress,
-          customerUpdatesEnabled,
-          customerRequestsEnabled,
-          customerFilesEnabled,
-          startDate: data.get("startDate")
-            ? new Date(String(data.get("startDate"))).toISOString()
+            : { status: values.status }),
+          showMilestones: values.showMilestones,
+          showProgress: values.showProgress,
+          customerUpdatesEnabled: values.customerUpdatesEnabled,
+          customerRequestsEnabled: values.customerRequestsEnabled,
+          customerFilesEnabled: values.customerFilesEnabled,
+          startDate: values.startDate
+            ? new Date(values.startDate).toISOString()
             : null,
-          endDate: data.get("endDate")
-            ? new Date(String(data.get("endDate"))).toISOString()
+          endDate: values.endDate
+            ? new Date(values.endDate).toISOString()
             : null,
         }),
       );
@@ -197,15 +232,14 @@ export function ProjectDeliveryActions({
     } finally {
       setSubmitting(false);
     }
-  }
+  });
 
-  async function submitStage(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const submitStage = stageForm.handleSubmit(async ({ stage }) => {
     setSubmitting(true);
     try {
       const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/projects/${project.id}/stage`,
-        jsonRequest("PATCH", { currentStage: stageValue.trim() || null }),
+        jsonRequest("PATCH", { currentStage: stage || null }),
       );
       setDialog(null);
       toast.success("项目阶段已更新");
@@ -218,7 +252,7 @@ export function ProjectDeliveryActions({
     } finally {
       setSubmitting(false);
     }
-  }
+  });
 
   if (!canManageDelivery && !canPublishUpdate && !canEditProject) return null;
 
@@ -246,8 +280,7 @@ export function ProjectDeliveryActions({
                 variant="contained"
                 startIcon={<CampaignOutlinedIcon />}
                 onClick={() => {
-                  setUpdateBody("");
-                  setUpdateInternal(false);
+                  updateForm.reset({ title: "", body: "", internal: false });
                   setDialog("update");
                 }}
               >
@@ -261,7 +294,7 @@ export function ProjectDeliveryActions({
                   variant="outlined"
                   startIcon={<AddOutlinedIcon />}
                   onClick={() => {
-                    setMilestoneDescription("");
+                    milestoneForm.reset({ title: "", description: "", status: "NOT_STARTED", startDate: "", endDate: "" });
                     setDialog("milestone");
                   }}
                 >
@@ -272,7 +305,7 @@ export function ProjectDeliveryActions({
                   variant="outlined"
                   startIcon={<RouteOutlinedIcon />}
                   onClick={() => {
-                    setStageValue(project.currentStage ?? "");
+                    stageForm.reset({ stage: project.currentStage ?? "" });
                     setDialog("stage");
                   }}
                 >
@@ -289,15 +322,18 @@ export function ProjectDeliveryActions({
             color="inherit"
             startIcon={<SettingsOutlinedIcon />}
             onClick={() => {
-              setShowProgress(project.showProgress !== false);
-              setShowMilestones(project.showMilestones !== false);
-              setCustomerUpdatesEnabled(
-                project.customerUpdatesEnabled !== false,
-              );
-              setCustomerRequestsEnabled(
-                project.customerRequestsEnabled !== false,
-              );
-              setCustomerFilesEnabled(project.customerFilesEnabled !== false);
+              projectForm.reset({
+                title: project.title,
+                status: project.status,
+                description: project.description ?? "",
+                startDate: dateInput(project.startDate),
+                endDate: dateInput(project.endDate),
+                showProgress: project.showProgress !== false,
+                showMilestones: project.showMilestones !== false,
+                customerUpdatesEnabled: project.customerUpdatesEnabled !== false,
+                customerRequestsEnabled: project.customerRequestsEnabled !== false,
+                customerFilesEnabled: project.customerFilesEnabled !== false,
+              });
               setDialog("project");
             }}
           >
@@ -327,45 +363,47 @@ export function ProjectDeliveryActions({
               {contentRiskNoticeEnabled ? (
                 <ContentRiskNotice audience="STAFF" />
               ) : null}
-              <TextField name="title" label="里程碑名称" required />
-              <TextField
-                name="status"
-                label="状态"
-                select
-                defaultValue="NOT_STARTED"
-              >
-                <MenuItem value="NOT_STARTED">未开始</MenuItem>
-                <MenuItem value="IN_PROGRESS">进行中</MenuItem>
-                <MenuItem value="COMPLETED">已完成</MenuItem>
-              </TextField>
+              <Controller name="title" control={milestoneForm.control} render={({ field }) => (
+                <TextField {...field} label="里程碑名称" required error={Boolean(milestoneForm.formState.errors.title)} helperText={milestoneForm.formState.errors.title?.message} />
+              )} />
+              <Controller name="status" control={milestoneForm.control} render={({ field }) => (
+                <TextField {...field} label="状态" select>
+                  <MenuItem value="NOT_STARTED">未开始</MenuItem>
+                  <MenuItem value="IN_PROGRESS">进行中</MenuItem>
+                  <MenuItem value="COMPLETED">已完成</MenuItem>
+                </TextField>
+              )} />
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <TextField
-                  name="startDate"
-                  label="开始日期"
-                  type="date"
-                  fullWidth
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
-                <TextField
-                  name="endDate"
-                  label="结束日期"
-                  type="date"
-                  fullWidth
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
+                <Controller name="startDate" control={milestoneForm.control} render={({ field }) => (
+                  <DateStringPicker
+                    label="开始日期"
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    inputRef={field.ref}
+                    maxDate={milestoneEndDate}
+                  />
+                )} />
+                <Controller name="endDate" control={milestoneForm.control} render={({ field }) => (
+                  <DateStringPicker
+                    label="结束日期"
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    inputRef={field.ref}
+                    minDate={milestoneStartDate}
+                    error={Boolean(milestoneForm.formState.errors.endDate)}
+                    helperText={milestoneForm.formState.errors.endDate?.message}
+                  />
+                )} />
               </Stack>
               <Stack spacing={1}>
                 <Typography sx={{ fontWeight: 650 }}>说明</Typography>
-                <RichTextEditor
-                  value={milestoneDescription}
-                  onChange={setMilestoneDescription}
-                  placeholder="说明里程碑目标、交付内容或验收标准"
-                  disabled={submitting}
-                  minHeight={130}
-                  maxHeight={260}
-                  uploadImage={uploadMilestoneImage}
-                  onImageUploadingChange={setInlineImageUploading}
-                />
+                <Controller name="description" control={milestoneForm.control} render={({ field }) => (
+                  <RichTextEditor value={field.value} onChange={field.onChange} placeholder="说明里程碑目标、交付内容或验收标准" disabled={submitting} minHeight={130} maxHeight={260} uploadImage={uploadMilestoneImage} onImageUploadingChange={setInlineImageUploading} />
+                )} />
               </Stack>
             </Stack>
           </DialogContent>
@@ -395,16 +433,9 @@ export function ProjectDeliveryActions({
           <DialogTitle>更新当前阶段</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              <TextField
-                label="当前阶段"
-                value={stageValue}
-                onChange={(event) => setStageValue(event.target.value)}
-                placeholder="留空则显示待启动"
-                helperText="用于描述交付所处环节，例如需求确认、方案制定、执行实施、测试验收。已付款属于财务信息，不建议填写在这里。"
-                slotProps={{ htmlInput: { maxLength: 120 } }}
-                autoFocus
-                fullWidth
-              />
+              <Controller name="stage" control={stageForm.control} render={({ field }) => (
+                <TextField {...field} label="当前阶段" placeholder="留空则显示待启动" helperText={stageForm.formState.errors.stage?.message ?? "用于描述交付所处环节，例如需求确认、方案制定、执行实施、测试验收。已付款属于财务信息，不建议填写在这里。"} error={Boolean(stageForm.formState.errors.stage)} slotProps={{ htmlInput: { maxLength: 120 } }} autoFocus fullWidth />
+              )} />
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -439,31 +470,19 @@ export function ProjectDeliveryActions({
               {contentRiskNoticeEnabled && !updateInternal ? (
                 <ContentRiskNotice audience="STAFF" />
               ) : null}
-              <TextField name="title" label="动态标题" required />
+              <Controller name="title" control={updateForm.control} render={({ field }) => (
+                <TextField {...field} label="动态标题" required error={Boolean(updateForm.formState.errors.title)} helperText={updateForm.formState.errors.title?.message} />
+              )} />
               <Stack spacing={1}>
                 <Typography sx={{ fontWeight: 650 }}>进度说明 *</Typography>
-                <RichTextEditor
-                  value={updateBody}
-                  onChange={setUpdateBody}
-                  placeholder="说明本次进展、已完成事项和下一步安排"
-                  disabled={submitting}
-                  minHeight={180}
-                  maxHeight={320}
-                  uploadImage={uploadInlineImage}
-                  onImageUploadingChange={setInlineImageUploading}
-                />
+                <Controller name="body" control={updateForm.control} render={({ field }) => (
+                  <RichTextEditor value={field.value} onChange={field.onChange} placeholder="说明本次进展、已完成事项和下一步安排" disabled={submitting} minHeight={180} maxHeight={320} uploadImage={uploadInlineImage} onImageUploadingChange={setInlineImageUploading} />
+                )} />
+                {updateForm.formState.errors.body?.message ? <Typography variant="caption" color="error">{updateForm.formState.errors.body.message}</Typography> : null}
               </Stack>
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={updateInternal}
-                    onChange={(event) =>
-                      setUpdateInternal(event.target.checked)
-                    }
-                  />
-                }
-                label="仅内部可见"
-              />
+              <Controller name="internal" control={updateForm.control} render={({ field }) => (
+                <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="仅内部可见" />
+              )} />
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -496,114 +515,62 @@ export function ProjectDeliveryActions({
           <DialogTitle>项目设置</DialogTitle>
           <DialogContent>
             <Stack spacing={2} sx={{ pt: 1 }}>
-              <TextField name="title" label="项目名称" defaultValue={project.title} required />
+              <Controller name="title" control={projectForm.control} render={({ field }) => (
+                <TextField {...field} label="项目名称" required error={Boolean(projectForm.formState.errors.title)} helperText={projectForm.formState.errors.title?.message} />
+              )} />
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <TextField
-                  name="status"
-                  label="项目状态"
-                  select
-                  defaultValue={project.status}
-                  fullWidth
-                  disabled={project.status === "DRAFT"}
-                  helperText={
-                    project.status === "DRAFT"
-                      ? "完成外部接入并激活后，项目会自动进入进行中"
-                      : undefined
-                  }
-                >
-                  {(project.status === "DRAFT"
-                    ? [{ value: "DRAFT" as const, label: "待接入" }]
-                    : projectStatusOptions
-                  ).map((option) => (
-                    <MenuItem key={option.value} value={option.value}>
-                      {option.label}
-                    </MenuItem>
-                  ))}
-                </TextField>
+                <Controller name="status" control={projectForm.control} render={({ field }) => (
+                  <TextField {...field} label="项目状态" select fullWidth disabled={project.status === "DRAFT"} helperText={project.status === "DRAFT" ? "完成外部接入并激活后，项目会自动进入进行中" : undefined}>
+                    {(project.status === "DRAFT" ? [{ value: "DRAFT" as const, label: "待接入" }] : projectStatusOptions).map((option) => (
+                      <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+                    ))}
+                  </TextField>
+                )} />
               </Stack>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                <TextField
-                  name="startDate"
-                  label="开始日期"
-                  type="date"
-                  defaultValue={dateInput(project.startDate)}
-                  fullWidth
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
-                <TextField
-                  name="endDate"
-                  label="结束日期"
-                  type="date"
-                  defaultValue={dateInput(project.endDate)}
-                  fullWidth
-                  slotProps={{ inputLabel: { shrink: true } }}
-                />
+                <Controller name="startDate" control={projectForm.control} render={({ field }) => (
+                  <DateStringPicker
+                    label="开始日期"
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    inputRef={field.ref}
+                    maxDate={projectEndDate}
+                  />
+                )} />
+                <Controller name="endDate" control={projectForm.control} render={({ field }) => (
+                  <DateStringPicker
+                    label="结束日期"
+                    value={field.value}
+                    onChange={field.onChange}
+                    onBlur={field.onBlur}
+                    name={field.name}
+                    inputRef={field.ref}
+                    minDate={projectStartDate}
+                    error={Boolean(projectForm.formState.errors.endDate)}
+                    helperText={projectForm.formState.errors.endDate?.message}
+                  />
+                )} />
               </Stack>
-              <TextField
-                name="description"
-                label="项目说明"
-                defaultValue={project.description ?? ""}
-                multiline
-                minRows={3}
-                slotProps={{ htmlInput: { maxLength: 5000 } }}
-              />
+              <Controller name="description" control={projectForm.control} render={({ field }) => (
+                <TextField {...field} label="项目说明" multiline minRows={3} error={Boolean(projectForm.formState.errors.description)} helperText={projectForm.formState.errors.description?.message} slotProps={{ htmlInput: { maxLength: 5000 } }} />
+              )} />
               <Stack spacing={0.5}>
                 <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
                   客户中心展示
                 </Typography>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={showProgress}
-                      onChange={(event) => setShowProgress(event.target.checked)}
-                    />
-                  }
-                  label="客户显示整体进度条"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={showMilestones}
-                      onChange={(event) =>
-                        setShowMilestones(event.target.checked)
-                      }
-                    />
-                  }
-                  label="客户显示里程碑模块"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={customerUpdatesEnabled}
-                      onChange={(event) =>
-                        setCustomerUpdatesEnabled(event.target.checked)
-                      }
-                    />
-                  }
-                  label="客户显示进度动态"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={customerRequestsEnabled}
-                      onChange={(event) =>
-                        setCustomerRequestsEnabled(event.target.checked)
-                      }
-                    />
-                  }
-                  label="客户显示服务请求"
-                />
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={customerFilesEnabled}
-                      onChange={(event) =>
-                        setCustomerFilesEnabled(event.target.checked)
-                      }
-                    />
-                  }
-                  label="客户显示文件资料"
-                />
+                {([
+                  ["showProgress", "客户显示整体进度条"],
+                  ["showMilestones", "客户显示里程碑模块"],
+                  ["customerUpdatesEnabled", "客户显示进度动态"],
+                  ["customerRequestsEnabled", "客户显示服务请求"],
+                  ["customerFilesEnabled", "客户显示文件资料"],
+                ] as const).map(([name, label]) => (
+                  <Controller key={name} name={name} control={projectForm.control} render={({ field }) => (
+                    <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label={label} />
+                  )} />
+                ))}
               </Stack>
             </Stack>
           </DialogContent>

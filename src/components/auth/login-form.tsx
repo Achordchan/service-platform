@@ -17,6 +17,7 @@ import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
+import { useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
 
@@ -25,7 +26,13 @@ const passwordSchema = z.object({
   password: z.string().min(1, "请输入密码"),
 });
 
+const otpFormSchema = z.object({
+  email: z.email("请输入有效邮箱"),
+  otp: z.string(),
+});
+
 type PasswordFormData = z.infer<typeof passwordSchema>;
+type OtpFormData = z.infer<typeof otpFormSchema>;
 type LoginMode = "password" | "email-otp";
 
 function loginError(code?: string) {
@@ -46,24 +53,23 @@ export function LoginForm({
   emailOtpEnabled?: boolean;
 }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [mode, setMode] = useState<LoginMode>("password");
-  const [error, setError] = useState("");
-  const [otpEmail, setOtpEmail] = useState("");
-  const [otp, setOtp] = useState("");
   const [otpSent, setOtpSent] = useState(false);
-  const [otpBusy, setOtpBusy] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
+  const passwordForm = useForm<PasswordFormData>({
+    resolver: zodResolver(passwordSchema),
+    defaultValues: { email: "", password: "" },
+  });
+  const otpForm = useForm<OtpFormData>({
+    resolver: zodResolver(otpFormSchema),
+    defaultValues: { email: "", otp: "" },
+  });
   const {
     control,
     handleSubmit,
     formState: { errors, isSubmitting },
-  } = useForm<PasswordFormData>({
-    resolver: zodResolver(passwordSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-    },
-  });
+  } = passwordForm;
 
   useEffect(() => {
     if (resendSeconds <= 0) return;
@@ -74,86 +80,90 @@ export function LoginForm({
   }, [resendSeconds]);
 
   function finishLogin() {
+    queryClient.clear();
     router.replace("/dashboard");
     router.refresh();
   }
 
   const submitPassword = handleSubmit(async (data) => {
-    setError("");
+    passwordForm.clearErrors("root");
     const result = await authClient.signIn.email({
       email: data.email,
       password: data.password,
       rememberMe: true,
     });
     if (result.error) {
-      setError(
-        result.error.code === "INVALID_ORIGIN"
-          ? loginError(result.error.code)
-          : "邮箱或密码不正确",
-      );
+      passwordForm.setError("root", {
+        message:
+          result.error.code === "INVALID_ORIGIN"
+            ? loginError(result.error.code)
+            : "邮箱或密码不正确",
+      });
       return;
     }
     finishLogin();
   });
 
-  async function sendOtp() {
-    const email = otpEmail.trim().toLowerCase();
-    if (!z.email().safeParse(email).success) {
-      setError("请输入有效邮箱");
-      return;
-    }
-    setOtpBusy(true);
-    setError("");
+  const sendOtp = otpForm.handleSubmit(async (data) => {
+    const email = data.email.trim().toLowerCase();
+    otpForm.clearErrors();
     try {
       const result = await authClient.emailOtp.sendVerificationOtp({
         email,
         type: "sign-in",
       });
       if (result.error) {
-        setError(otpSendError(result.error));
+        otpForm.setError("root", { message: otpSendError(result.error) });
         return;
       }
-      setOtpEmail(email);
+      otpForm.setValue("email", email);
       setOtpSent(true);
-      setOtp("");
+      otpForm.setValue("otp", "");
       setResendSeconds(60);
     } catch {
-      setError("验证码暂时无法发送，请稍后重试");
-    } finally {
-      setOtpBusy(false);
+      otpForm.setError("root", {
+        message: "验证码暂时无法发送，请稍后重试",
+      });
     }
-  }
+  });
 
-  async function submitOtp(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const submitOtp = otpForm.handleSubmit(async ({ email, otp }) => {
     if (!/^\d{6}$/.test(otp)) {
-      setError("请输入邮件中的 6 位验证码");
+      otpForm.setError("otp", {
+        message: "请输入邮件中的 6 位验证码",
+      });
       return;
     }
-    setOtpBusy(true);
-    setError("");
+    otpForm.clearErrors("root");
     try {
       const result = await authClient.signIn.emailOtp({
-        email: otpEmail,
+        email,
         otp,
       });
       if (result.error) {
-        setError(loginError(result.error.code));
+        otpForm.setError("root", {
+          message: loginError(result.error.code),
+        });
         return;
       }
       finishLogin();
     } catch {
-      setError("验证码登录失败，请稍后重试");
-    } finally {
-      setOtpBusy(false);
+      otpForm.setError("root", {
+        message: "验证码登录失败，请稍后重试",
+      });
     }
-  }
+  });
 
   function changeMode(nextMode: LoginMode | null) {
     if (!nextMode) return;
     setMode(nextMode);
-    setError("");
   }
+
+  const activeRootError =
+    mode === "password"
+      ? passwordForm.formState.errors.root?.message
+      : otpForm.formState.errors.root?.message;
+  const otpBusy = otpForm.formState.isSubmitting;
 
   return (
     <Stack spacing={2.25}>
@@ -177,10 +187,15 @@ export function LoginForm({
         </ToggleButtonGroup>
       ) : null}
 
-      {error ? <Alert severity="error">{error}</Alert> : null}
+      {activeRootError ? <Alert severity="error">{activeRootError}</Alert> : null}
 
       {mode === "password" ? (
-        <Stack component="form" onSubmit={submitPassword} spacing={2.25}>
+        <Stack
+          key="password-login-form"
+          component="form"
+          onSubmit={submitPassword}
+          spacing={2.25}
+        >
           <Controller
             name="email"
             control={control}
@@ -231,37 +246,62 @@ export function LoginForm({
           </Typography>
         </Stack>
       ) : (
-        <Stack component="form" onSubmit={submitOtp} spacing={2.25}>
-          <TextField
-            label="邮箱"
-            type="email"
-            autoComplete="email"
-            value={otpEmail ?? ""}
-            onChange={(event) => setOtpEmail(event.target.value)}
-            disabled={otpSent || otpBusy}
-            fullWidth
+        <Stack
+          key="otp-login-form"
+          component="form"
+          onSubmit={otpSent ? submitOtp : sendOtp}
+          spacing={2.25}
+        >
+          <Controller
+            name="email"
+            control={otpForm.control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                label="邮箱"
+                type="email"
+                autoComplete="email"
+                value={field.value ?? ""}
+                onChange={(event) => field.onChange(event.target.value)}
+                disabled={otpSent || otpBusy}
+                fullWidth
+                error={Boolean(otpForm.formState.errors.email)}
+                helperText={otpForm.formState.errors.email?.message}
+              />
+            )}
           />
           {otpSent ? (
             <>
               <Alert severity="success">
                 验证码已发送，请在 5 分钟内完成登录。
               </Alert>
-              <TextField
-                label="6 位验证码"
-                value={otp ?? ""}
-                onChange={(event) =>
-                  setOtp(event.target.value.replace(/\D/g, "").slice(0, 6))
-                }
-                autoComplete="one-time-code"
-                autoFocus
-                fullWidth
-                slotProps={{
-                  htmlInput: {
-                    inputMode: "numeric",
-                    pattern: "[0-9]*",
-                    maxLength: 6,
-                  },
-                }}
+              <Controller
+                name="otp"
+                control={otpForm.control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    label="6 位验证码"
+                    value={field.value ?? ""}
+                    onChange={(event) =>
+                      field.onChange(
+                        event.target.value.replace(/\D/g, "").slice(0, 6),
+                      )
+                    }
+                    autoComplete="one-time-code"
+                    autoFocus
+                    fullWidth
+                    error={Boolean(otpForm.formState.errors.otp)}
+                    helperText={otpForm.formState.errors.otp?.message}
+                    slotProps={{
+                      htmlInput: {
+                        inputMode: "numeric",
+                        pattern: "[0-9]*",
+                        maxLength: 6,
+                      },
+                    }}
+                  />
+                )}
               />
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                 <Button
@@ -278,8 +318,8 @@ export function LoginForm({
                   color="inherit"
                   onClick={() => {
                     setOtpSent(false);
-                    setOtp("");
-                    setError("");
+                    otpForm.setValue("otp", "");
+                    otpForm.clearErrors();
                   }}
                   disabled={otpBusy}
                   fullWidth
@@ -290,11 +330,10 @@ export function LoginForm({
             </>
           ) : null}
           <Button
-            type={otpSent ? "submit" : "button"}
+            type="submit"
             variant="contained"
             size="large"
             disabled={otpBusy}
-            onClick={otpSent ? undefined : () => void sendOtp()}
             sx={{ mt: 0.5, py: 1.15, fontWeight: 650 }}
           >
             {otpBusy

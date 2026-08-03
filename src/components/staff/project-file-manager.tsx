@@ -13,6 +13,10 @@ import {
 } from "@mui/material";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 import { useToast } from "@/components/shared/toast-provider";
 import {
   ContentRiskNotice,
@@ -23,6 +27,7 @@ import type {
   RequestAttachment,
 } from "@/components/staff/staff-types";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
+import { apiRequest } from "@/lib/api-client";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -56,28 +61,24 @@ export function ProjectFileManager({
     body.append("file", file);
     body.append("projectId", projectId);
     body.append("visibility", visibility);
-    const response = await fetch("/api/v1/attachments", {
-      method: "POST",
-      body,
-    });
-    if (!response.ok) {
-      const result = (await response.json().catch(() => ({}))) as {
-        error?: { message?: string };
-      };
-      toast.error(result.error?.message ?? "文件上传失败");
-    } else {
-      const result = (await response.json()) as {
-        data?: { deliveryFeedback?: DeliveryFeedback | null };
-      };
+    try {
+      const result = await apiRequest<{
+        deliveryFeedback?: DeliveryFeedback | null;
+      }>("/api/v1/attachments", { method: "POST", body }, "文件上传失败");
       toast.success(
         visibility === "CUSTOMER_VISIBLE"
           ? "文件已上传，客户可在项目中查看"
           : "内部文件已上传",
       );
-      toast.delivery(result.data?.deliveryFeedback);
+      toast.delivery(result.deliveryFeedback);
       router.refresh();
+    } catch (uploadError) {
+      toast.error(
+        uploadError instanceof Error ? uploadError.message : "文件上传失败",
+      );
+    } finally {
+      setUploading(false);
     }
-    setUploading(false);
   }
 
   return (
@@ -104,23 +105,21 @@ export function ProjectFileManager({
               <MenuItem value="CUSTOMER_VISIBLE">客户可见</MenuItem>
               <MenuItem value="INTERNAL">仅内部可见</MenuItem>
             </TextField>
-            <Button
-              component="label"
+            <FilePickerButton
               variant="contained"
               startIcon={<FileUploadOutlinedIcon />}
               disabled={uploading}
+              accept={policy.accept}
+              maxSize={policy.maxSizeMb * 1024 * 1024}
+              onFiles={([file]) => {
+                if (file) void upload(file);
+              }}
+              onRejected={(rejections) =>
+                toast.warning(firstFileRejectionMessage(rejections))
+              }
             >
               {uploading ? "正在上传" : "上传文件"}
-              <input
-                hidden
-                type="file"
-                onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (file) void upload(file);
-                  event.target.value = "";
-                }}
-              />
-            </Button>
+            </FilePickerButton>
             <Typography variant="body2" color="text.secondary">
               单个文件不超过 {policy.maxSizeMb}MB
             </Typography>

@@ -1,7 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Avatar,
   Box,
@@ -20,8 +23,21 @@ import {
   EmailChangeControl,
   type PendingEmailChange,
 } from "@/components/shared/email-change-control";
+import {
+  FilePickerButton,
+  IMAGE_FILE_ACCEPT,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 import { useToast } from "@/components/shared/toast-provider";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
+import { apiRequest } from "@/lib/api-client";
+
+const profileFormSchema = z.object({
+  name: z.string().trim().min(2, "姓名至少需要 2 个字符").max(60),
+  avatar: z.custom<File>().nullable(),
+});
+
+type ProfileFormValues = z.infer<typeof profileFormSchema>;
 
 export function ProfileSettingsForm({
   user,
@@ -37,13 +53,21 @@ export function ProfileSettingsForm({
 }) {
   const router = useRouter();
   const toast = useToast();
-  const [name, setName] = useState(user.name);
-  const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
   const [editingEmail, setEditingEmail] = useState(
     Boolean(initialPendingEmailChange),
   );
+  const {
+    control,
+    handleSubmit,
+    setValue,
+    reset,
+    formState: { errors, isSubmitting },
+  } = useForm<ProfileFormValues>({
+    resolver: zodResolver(profileFormSchema),
+    defaultValues: { name: user.name, avatar: null },
+  });
+  const name = useWatch({ control, name: "name" });
   const showEmailChange = editingEmail || Boolean(initialPendingEmailChange);
 
   const avatarSrc = useMemo(
@@ -51,24 +75,25 @@ export function ProfileSettingsForm({
     [preview, user.image, name, user.name, user.id],
   );
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setSubmitting(true);
+  useEffect(
+    () => () => {
+      if (preview) URL.revokeObjectURL(preview);
+    },
+    [preview],
+  );
+
+  const submit = handleSubmit(async ({ name: submittedName, avatar }) => {
     try {
       const formData = new FormData();
-      formData.append("name", name.trim());
-      if (file) formData.append("avatar", file);
-      const response = await fetch("/api/v1/profile", {
-        method: "PATCH",
-        body: formData,
-      });
-      const payload = (await response.json()) as {
-        error?: { message?: string };
-      };
-      if (!response.ok) {
-        throw new Error(payload.error?.message || "保存失败");
-      }
-      setFile(null);
+      const normalizedName = submittedName.trim();
+      formData.append("name", normalizedName);
+      if (avatar) formData.append("avatar", avatar);
+      await apiRequest(
+        "/api/v1/profile",
+        { method: "PATCH", body: formData },
+        "保存失败",
+      );
+      reset({ name: normalizedName, avatar: null });
       setPreview(null);
       toast.success("个人资料已更新");
       router.refresh();
@@ -76,15 +101,13 @@ export function ProfileSettingsForm({
       toast.error(
         submitError instanceof Error ? submitError.message : "保存失败",
       );
-    } finally {
-      setSubmitting(false);
     }
-  }
+  });
 
   return (
     <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
-      {submitting ? <LinearProgress sx={{ mb: 2 }} /> : null}
-      <Stack component="form" spacing={2.5} onSubmit={submit}>
+      {isSubmitting ? <LinearProgress sx={{ mb: 2 }} /> : null}
+      <Stack component="form" noValidate spacing={2.5} onSubmit={submit}>
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={2.5}
@@ -98,35 +121,40 @@ export function ProfileSettingsForm({
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               支持 JPG / PNG / GIF / WebP，最大 2MB。未上传时使用默认头像。
             </Typography>
-            <Button
-              component="label"
+            <FilePickerButton
               startIcon={<PhotoCameraOutlinedIcon />}
               sx={{ mt: 1.25 }}
-              disabled={submitting}
+              disabled={isSubmitting}
+              accept={IMAGE_FILE_ACCEPT}
+              maxSize={2 * 1024 * 1024}
+              onFiles={([next]) => {
+                if (!next) return;
+                setValue("avatar", next, { shouldDirty: true });
+                setPreview(URL.createObjectURL(next));
+              }}
+              onRejected={(rejections) =>
+                toast.warning(firstFileRejectionMessage(rejections))
+              }
             >
               选择图片
-              <input
-                hidden
-                type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp"
-                onChange={(event) => {
-                  const next = event.target.files?.[0] ?? null;
-                  setFile(next);
-                  if (preview) URL.revokeObjectURL(preview);
-                  setPreview(next ? URL.createObjectURL(next) : null);
-                }}
-              />
-            </Button>
+            </FilePickerButton>
           </Box>
         </Stack>
-        <TextField
-          label="姓名"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          fullWidth
-          required
-          disabled={submitting}
-          slotProps={{ htmlInput: { minLength: 2, maxLength: 60 } }}
+        <Controller
+          name="name"
+          control={control}
+          render={({ field }) => (
+            <TextField
+              {...field}
+              label="姓名"
+              fullWidth
+              required
+              disabled={isSubmitting}
+              error={Boolean(errors.name)}
+              helperText={errors.name?.message}
+              slotProps={{ htmlInput: { minLength: 2, maxLength: 60 } }}
+            />
+          )}
         />
         <Stack
           direction={{ xs: "column", sm: "row" }}
@@ -160,7 +188,7 @@ export function ProfileSettingsForm({
         <Button
           type="submit"
           variant="contained"
-          disabled={submitting || name.trim().length < 2}
+          disabled={isSubmitting}
           sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
         >
           保存资料

@@ -1,10 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { useRouter } from "next/navigation";
 import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
   Box,
@@ -21,14 +23,15 @@ import {
   Typography,
 } from "@mui/material";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
-import {
-  apiErrorMessage,
-  readApiJson,
-  type ApiResponsePayload,
-} from "@/lib/api-client-error";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
+import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import type {
   RequestPriority,
@@ -43,10 +46,22 @@ type FormValues = {
   priority: RequestPriority;
 };
 
-type CreateRequestPayload = ApiResponsePayload<{
+const newRequestFormSchema = z.object({
+  projectId: z.string().min(1, "请选择所属项目"),
+  categoryId: z.string().min(1, "请选择业务类型"),
+  title: z
+    .string()
+    .trim()
+    .min(1, "请输入问题标题")
+    .max(160, "标题不能超过 160 个字符"),
+  description: z.string().refine(hasMeaningfulHtml, "请补充问题详情"),
+  priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
+}) satisfies z.ZodType<FormValues>;
+
+type CreateRequestResult = {
   id: string;
   initialMessageId: string;
-}>;
+};
 
 export function NewRequestForm({
   projects,
@@ -67,6 +82,7 @@ export function NewRequestForm({
     setValue,
     formState: { errors, isSubmitting },
   } = useForm<FormValues>({
+    resolver: zodResolver(newRequestFormSchema),
     defaultValues: {
       projectId:
         projects.find((project) => project.id === initialProjectId)?.id ??
@@ -101,52 +117,39 @@ export function NewRequestForm({
     setSubmitProgress("正在创建服务请求");
 
     try {
-      const response = await fetch(
+      const result = await apiRequest<CreateRequestResult>(
         `/api/v1/projects/${values.projectId}/requests`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            categoryId: values.categoryId,
-            title: values.title,
-            description: values.description,
-            priority: values.priority,
-          }),
-        },
+        jsonRequest("POST", {
+          categoryId: values.categoryId,
+          title: values.title,
+          description: values.description,
+          priority: values.priority,
+        }),
+        "服务请求创建失败",
       );
-      const payload = await readApiJson<CreateRequestPayload>(response);
-      if (!response.ok || !payload?.data) {
-        throw new Error(
-          apiErrorMessage(response, payload, "服务请求创建失败"),
-        );
-      }
 
-      const requestId = payload.data.id;
-      const initialMessageId = payload.data.initialMessageId;
+      const requestId = result.id;
+      const initialMessageId = result.initialMessageId;
       if (files.length > 0) {
         setSubmitProgress(`正在上传附件（共 ${files.length} 个）`);
-        for (const file of files) {
+        const failedFiles = await uploadFilesBestEffort(files, async (file) => {
           const formData = new FormData();
           formData.append("file", file);
           formData.append("serviceRequestId", requestId);
           formData.append("requestMessageId", initialMessageId);
           formData.append("visibility", "CUSTOMER_VISIBLE");
-          const uploadResponse = await fetch("/api/v1/attachments", {
-            method: "POST",
-            body: formData,
-          });
-          if (!uploadResponse.ok) {
-            const uploadPayload = await readApiJson<ApiResponsePayload>(
-              uploadResponse,
-            );
-            throw new Error(
-              apiErrorMessage(
-                uploadResponse,
-                uploadPayload,
-                `${file.name} 上传失败，请进入服务请求后重新上传`,
-              ),
-            );
-          }
+          await apiRequest(
+            "/api/v1/attachments",
+            { method: "POST", body: formData },
+            `${file.name} 上传失败，请进入服务请求后重新上传`,
+          );
+        });
+        if (failedFiles.length > 0) {
+          toast.warning(
+            `服务请求已创建，但附件上传失败：${fileNames(failedFiles)}。请进入服务请求重新添加。`,
+          );
+          router.push(`/customer/requests/${requestId}`);
+          return;
         }
       }
 
@@ -171,6 +174,7 @@ export function NewRequestForm({
   return (
     <Paper
       component="form"
+      noValidate
       variant="outlined"
       onSubmit={handleSubmit(onSubmit)}
       sx={{ overflow: "hidden" }}
@@ -185,7 +189,6 @@ export function NewRequestForm({
           <Controller
             name="projectId"
             control={control}
-            rules={{ required: "请选择所属项目" }}
             render={({ field }) => (
               <FormControl fullWidth error={Boolean(errors.projectId)}>
                 <InputLabel>所属项目</InputLabel>
@@ -210,7 +213,6 @@ export function NewRequestForm({
           <Controller
             name="categoryId"
             control={control}
-            rules={{ required: "请选择业务类型" }}
             render={({ field }) => (
               <FormControl
                 fullWidth
@@ -239,10 +241,6 @@ export function NewRequestForm({
         <Controller
           name="title"
           control={control}
-          rules={{
-            required: "请输入问题标题",
-            maxLength: { value: 160, message: "标题不能超过 160 个字符" },
-          }}
           render={({ field }) => (
             <TextField
               {...field}
@@ -258,10 +256,6 @@ export function NewRequestForm({
         <Controller
           name="description"
           control={control}
-          rules={{
-            validate: (value) =>
-              hasMeaningfulHtml(value) || "请补充问题详情",
-          }}
           render={({ field }) => (
             <Box>
               <Typography sx={{ mb: 1, fontWeight: 650 }}>问题详情</Typography>
@@ -303,24 +297,20 @@ export function NewRequestForm({
         />
 
         <Box>
-          <Button
-            component="label"
+          <FilePickerButton
             variant="outlined"
             startIcon={<AttachFileOutlinedIcon />}
             disabled={isSubmitting}
+            multiple
+            accept={policy.accept}
+            maxSize={policy.maxSizeMb * 1024 * 1024}
+            onFiles={addFiles}
+            onRejected={(rejections) =>
+              toast.warning(firstFileRejectionMessage(rejections))
+            }
           >
             添加附件
-            <input
-              hidden
-              multiple
-              type="file"
-              accept={policy.accept}
-              onChange={(event) => {
-                addFiles(Array.from(event.target.files ?? []));
-                event.target.value = "";
-              }}
-            />
-          </Button>
+          </FilePickerButton>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
             最多 5 个附件，单个附件最大 {policy.maxSizeMb}MB，可粘贴图片。
           </Typography>

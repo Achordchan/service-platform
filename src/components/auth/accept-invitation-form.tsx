@@ -1,8 +1,18 @@
 "use client";
 
 import { Alert, Button, Stack, TextField, Typography } from "@mui/material";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
+
+const invitationFormSchema = z.object({
+  name: z.string().trim().min(2, "姓名至少需要 2 个字符").max(60),
+  password: z.string().min(10, "密码至少需要 10 个字符").max(128),
+});
+
+type InvitationFormValues = z.infer<typeof invitationFormSchema>;
 
 export function AcceptInvitationForm({
   token,
@@ -26,35 +36,37 @@ export function AcceptInvitationForm({
   jobTitle?: string;
 }) {
   const router = useRouter();
-  const [name, setName] = useState(defaultName);
-  const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const {
+    control,
+    handleSubmit,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<InvitationFormValues>({
+    resolver: zodResolver(invitationFormSchema),
+    defaultValues: { name: defaultName, password: "" },
+  });
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
+  const submit = handleSubmit(async ({ name, password }) => {
     if (invalid || !token) return;
-    setError("");
-    setSubmitting(true);
-    const response = await fetch("/api/v1/invitations/accept", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ token, name, password }),
-    });
-    const payload = await response.json();
-    setSubmitting(false);
-    if (!response.ok) {
-      setError(
-        payload.error === "MEMBER_LIMIT_REACHED"
-          ? "该客户空间的成员名额已满"
-          : "邀请链接无效或已经过期",
+    try {
+      const result = await apiRequest<{ accountExists: boolean }>(
+        "/api/v1/invitations/accept",
+        jsonRequest("POST", { token, name, password }),
+        "邀请链接无效或已经过期",
       );
-      return;
+      router.replace(
+        `/login?invitation=${result.accountExists ? "existing" : "accepted"}`,
+      );
+    } catch (error) {
+      setError("root", {
+        message:
+          error instanceof Error &&
+          error.message.startsWith("MEMBER_LIMIT_REACHED")
+            ? "该客户空间的成员名额已满"
+            : "邀请链接无效或已经过期",
+      });
     }
-    router.replace(
-      `/login?invitation=${payload.data.accountExists ? "existing" : "accepted"}`,
-    );
-  }
+  });
 
   if (invalid || !token) {
     return (
@@ -80,13 +92,19 @@ export function AcceptInvitationForm({
           ) : null}
         </Alert>
       ) : null}
-      {error ? <Alert severity="error">{error}</Alert> : null}
-      <TextField
-        label="姓名"
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        required
-        helperText="将用于服务沟通与进度通知"
+      {errors.root?.message ? <Alert severity="error">{errors.root.message}</Alert> : null}
+      <Controller
+        name="name"
+        control={control}
+        render={({ field }) => (
+          <TextField
+            {...field}
+            label="姓名"
+            required
+            error={Boolean(errors.name)}
+            helperText={errors.name?.message ?? "将用于服务沟通与进度通知"}
+          />
+        )}
       />
       <TextField
         label="登录邮箱"
@@ -94,16 +112,25 @@ export function AcceptInvitationForm({
         fullWidth
         disabled
       />
-      <TextField
-        label="设置密码"
-        type="password"
-        value={password}
-        onChange={(event) => setPassword(event.target.value)}
-        helperText="至少 10 个字符；若账号已存在，将保留原密码"
-        required
+      <Controller
+        name="password"
+        control={control}
+        render={({ field }) => (
+          <TextField
+            {...field}
+            label="设置密码"
+            type="password"
+            error={Boolean(errors.password)}
+            helperText={
+              errors.password?.message ??
+              "至少 10 个字符；若账号已存在，将保留原密码"
+            }
+            required
+          />
+        )}
       />
-      <Button type="submit" variant="contained" disabled={submitting}>
-        {submitting
+      <Button type="submit" variant="contained" disabled={isSubmitting}>
+        {isSubmitting
           ? "正在加入"
           : isStaff
             ? "加入服务支持团队"

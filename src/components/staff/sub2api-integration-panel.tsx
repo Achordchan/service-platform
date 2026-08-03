@@ -1,9 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useDeferredValue, useState } from "react";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
-  Avatar,
   Box,
   Button,
   Chip,
@@ -18,12 +27,6 @@ import {
   Paper,
   Stack,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
   TextField,
   Tooltip,
   Typography,
@@ -34,7 +37,27 @@ import SyncOutlinedIcon from "@mui/icons-material/SyncOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import BlockOutlinedIcon from "@mui/icons-material/BlockOutlined";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
-import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { useAppConfirm } from "@/components/shared/confirm-provider";
+import {
+  ExternalContactGrid,
+  type ExternalContact,
+} from "@/components/staff/external-contact-grid";
+import {
+  jsonRequest,
+  staffApi,
+  type ApiRequestOptions,
+} from "@/components/staff/staff-api";
+import { queryKeys } from "@/lib/query-keys";
+
+const connectionFormSchema = z.object({
+  baseUrl: z.url("请输入有效的 Sub2API 地址").max(2048),
+  adminApiKey: z.string().trim().max(512),
+  clearAdminApiKey: z.boolean(),
+  emailNotificationsEnabled: z.boolean(),
+  customerMemberNotificationsEnabled: z.boolean(),
+});
+
+type ConnectionFormValues = z.infer<typeof connectionFormSchema>;
 
 type Connection = {
   bindingId: string;
@@ -54,22 +77,6 @@ type Connection = {
 type IntegrationView = {
   plugin: { enabled: boolean; healthStatus: string; lastError: string | null };
   connection: Connection | null;
-};
-
-type ExternalContact = {
-  id: string;
-  externalUserId: string;
-  email: string | null;
-  username: string | null;
-  displayName: string;
-  avatarUrl: string | null;
-  profileAttributes: Record<string, string | number | boolean>;
-  sourceKey: string;
-  sourceLabel: string;
-  status: "ACTIVE" | "BLOCKED";
-  firstSeenAt: string;
-  lastSeenAt: string;
-  _count: { requestsCreated: number };
 };
 
 type ExternalContactPage = {
@@ -93,100 +100,98 @@ export function Sub2ApiIntegrationPanel({
   projectId: string;
   canEdit: boolean;
 }) {
-  const [view, setView] = useState<IntegrationView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [working, setWorking] = useState(false);
+  const confirm = useAppConfirm();
+  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [error, setError] = useState("");
-
-  async function load() {
-    setLoading(true);
-    setError("");
-    try {
-      setView(await staffApi(`/api/v1/projects/${projectId}/integrations/sub2api`));
-    } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "连接信息加载失败");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    let active = true;
-    staffApi<IntegrationView>(
-      `/api/v1/projects/${projectId}/integrations/sub2api`,
-    )
-      .then((next) => {
-        if (active) setView(next);
-      })
-      .catch((loadError) => {
-        if (active) {
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : "连接信息加载失败",
-          );
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false);
+  const integrationKey = queryKeys.sub2api.integration(projectId);
+  const integrationQuery = useQuery({
+    queryKey: integrationKey,
+    queryFn: ({ signal }) =>
+      staffApi<IntegrationView>(
+        `/api/v1/projects/${projectId}/integrations/sub2api`,
+        { signal },
+      ),
+  });
+  const actionMutation = useMutation({
+    mutationFn: ({
+      url,
+      init,
+    }: {
+      kind: "check" | "status" | "archive";
+      url: string;
+      init: ApiRequestOptions;
+    }) => staffApi<Connection | { archived: true }>(url, init),
+    onSuccess: (result, variables) => {
+      queryClient.setQueryData<IntegrationView>(integrationKey, (current) => {
+        if (!current?.connection) return current;
+        return {
+          ...current,
+          connection:
+            variables.kind === "archive"
+              ? { ...current.connection, bindingStatus: "ARCHIVED" }
+              : (result as Connection),
+        };
       });
-    return () => {
-      active = false;
-    };
-  }, [projectId]);
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: integrationKey });
+    },
+  });
+  const view = integrationQuery.data;
+  const working = actionMutation.isPending;
+  const error = actionMutation.error ?? integrationQuery.error;
+  const errorMessage =
+    error instanceof Error ? error.message : error ? "连接操作失败" : "";
 
   async function check() {
-    setWorking(true);
-    setError("");
     try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/integrations/sub2api/check`,
-        jsonRequest("POST"),
-      );
-      await load();
-    } catch (checkError) {
-      setError(checkError instanceof Error ? checkError.message : "连接检测失败");
-      await load();
-    } finally {
-      setWorking(false);
+      await actionMutation.mutateAsync({
+        kind: "check",
+        url: `/api/v1/projects/${projectId}/integrations/sub2api/check`,
+        init: jsonRequest("POST"),
+      });
+    } catch {
+      // Mutation state renders the API error and onSettled refreshes the view.
     }
   }
 
   async function changeStatus(status: "ACTIVE" | "DISABLED") {
-    setWorking(true);
-    setError("");
     try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/integrations/sub2api`,
-        jsonRequest("PATCH", { status }),
-      );
-      await load();
-    } catch (statusError) {
-      setError(statusError instanceof Error ? statusError.message : "状态更新失败");
-    } finally {
-      setWorking(false);
+      await actionMutation.mutateAsync({
+        kind: "status",
+        url: `/api/v1/projects/${projectId}/integrations/sub2api`,
+        init: jsonRequest("PATCH", { status }),
+      });
+    } catch {
+      // Mutation state renders the API error.
     }
   }
 
   async function archive() {
-    if (!window.confirm("归档后现有嵌入会话会立即失效，确定继续吗？")) return;
-    setWorking(true);
+    const confirmed = await confirm({
+      title: "归档 Sub2API 连接？",
+      description: "归档后现有嵌入会话会立即失效。",
+      confirmationText: "确认归档",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/integrations/sub2api/archive`,
-        jsonRequest("POST"),
-      );
-      await load();
-    } catch (archiveError) {
-      setError(archiveError instanceof Error ? archiveError.message : "归档失败");
-    } finally {
-      setWorking(false);
+      await actionMutation.mutateAsync({
+        kind: "archive",
+        url: `/api/v1/projects/${projectId}/integrations/sub2api/archive`,
+        init: jsonRequest("POST"),
+      });
+    } catch {
+      // Mutation state renders the API error.
     }
   }
 
-  if (loading) return <LinearProgress />;
-  if (!view) return <Alert severity="error">{error || "连接信息不可用"}</Alert>;
+  if (integrationQuery.isPending) return <LinearProgress />;
+  if (!view) {
+    return (
+      <Alert severity="error">{errorMessage || "连接信息不可用"}</Alert>
+    );
+  }
   if (!view.plugin.enabled || view.plugin.healthStatus !== "READY") {
     return (
       <Alert severity="warning">
@@ -198,7 +203,7 @@ export function Sub2ApiIntegrationPanel({
 
   return (
     <Stack spacing={2.5}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
+      {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
       <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
         <Stack
           direction={{ xs: "column", sm: "row" }}
@@ -302,13 +307,19 @@ export function Sub2ApiIntegrationPanel({
         ) : null}
       </Paper>
       <ConnectionDialog
+        key={`${connection?.bindingId ?? "new"}:${dialogOpen ? "open" : "closed"}`}
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
         projectId={projectId}
         connection={connection}
-        onSaved={async () => {
+        onSaved={(savedConnection) => {
           setDialogOpen(false);
-          await load();
+          queryClient.setQueryData<IntegrationView>(integrationKey, (current) =>
+            current
+              ? { ...current, connection: savedConnection }
+              : current,
+          );
+          void queryClient.invalidateQueries({ queryKey: integrationKey });
         }}
       />
     </Stack>
@@ -326,34 +337,37 @@ function ConnectionDialog({
   onClose: () => void;
   projectId: string;
   connection: Connection | null;
-  onSaved: () => Promise<void>;
+  onSaved: (connection: Connection) => void;
 }) {
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    setSaving(true);
-    setError("");
+  const form = useForm<ConnectionFormValues>({
+    resolver: zodResolver(connectionFormSchema),
+    defaultValues: {
+      baseUrl: connection?.baseUrl ?? "",
+      adminApiKey: "",
+      clearAdminApiKey: false,
+      emailNotificationsEnabled: connection?.emailNotificationsEnabled ?? true,
+      customerMemberNotificationsEnabled:
+        connection?.customerMemberNotificationsEnabled ?? false,
+    },
+  });
+  const submit = form.handleSubmit(async (values) => {
+    form.clearErrors("root");
     try {
-      await staffApi(
+      const savedConnection = await staffApi<Connection>(
         `/api/v1/projects/${projectId}/integrations/sub2api`,
         jsonRequest(connection ? "PATCH" : "POST", {
-          baseUrl: String(data.get("baseUrl") ?? "").trim(),
-          adminApiKey: String(data.get("adminApiKey") ?? "").trim() || undefined,
-          clearAdminApiKey: data.get("clearAdminApiKey") === "on",
-          emailNotificationsEnabled: data.get("emailNotificationsEnabled") === "on",
-          customerMemberNotificationsEnabled:
-            data.get("customerMemberNotificationsEnabled") === "on",
+          ...values,
+          adminApiKey: values.adminApiKey || undefined,
         }),
       );
-      await onSaved();
+      onSaved(savedConnection);
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "保存失败");
-    } finally {
-      setSaving(false);
+      form.setError("root", {
+        message: saveError instanceof Error ? saveError.message : "保存失败",
+      });
     }
-  }
+  });
+  const saving = form.formState.isSubmitting;
   return (
     <Dialog open={open} onClose={saving ? undefined : onClose} fullWidth maxWidth="sm">
       <Box component="form" onSubmit={submit}>
@@ -361,33 +375,90 @@ function ConnectionDialog({
         <DialogTitle>连接设置</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
-            <TextField
+            {form.formState.errors.root?.message ? (
+              <Alert severity="error">{form.formState.errors.root.message}</Alert>
+            ) : null}
+            <Controller
               name="baseUrl"
-              label="Sub2API 地址"
-              defaultValue={connection?.baseUrl ?? ""}
-              placeholder="https://sub2api.example.com"
-              required
-              fullWidth
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="Sub2API 地址"
+                  placeholder="https://sub2api.example.com"
+                  required
+                  fullWidth
+                  error={Boolean(form.formState.errors.baseUrl)}
+                  helperText={form.formState.errors.baseUrl?.message}
+                />
+              )}
             />
-            <TextField
+            <Controller
               name="adminApiKey"
-              label="管理员 API Key（可选）"
-              type="password"
-              autoComplete="new-password"
-              helperText={connection?.hasAdminApiKey ? "留空表示不修改" : "仅用于补充用户资料"}
-              fullWidth
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="管理员 API Key（可选）"
+                  type="password"
+                  autoComplete="new-password"
+                  error={Boolean(form.formState.errors.adminApiKey)}
+                  helperText={
+                    form.formState.errors.adminApiKey?.message ??
+                    (connection?.hasAdminApiKey
+                      ? "留空表示不修改"
+                      : "仅用于补充用户资料")
+                  }
+                  fullWidth
+                />
+              )}
             />
             {connection?.hasAdminApiKey ? (
-              <FormControlLabel control={<Switch name="clearAdminApiKey" />} label="清除已保存的管理员 Key" />
+              <Controller
+                name="clearAdminApiKey"
+                control={form.control}
+                render={({ field }) => (
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={field.value}
+                        onChange={(_, checked) => field.onChange(checked)}
+                      />
+                    }
+                    label="清除已保存的管理员 Key"
+                  />
+                )}
+              />
             ) : null}
-            <FormControlLabel
-              control={<Switch name="emailNotificationsEnabled" defaultChecked={connection?.emailNotificationsEnabled ?? true} />}
-              label="向外部联系人发送邮件提醒"
+            <Controller
+              name="emailNotificationsEnabled"
+              control={form.control}
+              render={({ field }) => (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={field.value}
+                      onChange={(_, checked) => field.onChange(checked)}
+                    />
+                  }
+                  label="向外部联系人发送邮件提醒"
+                />
+              )}
             />
-            <FormControlLabel
-              control={<Switch name="customerMemberNotificationsEnabled" defaultChecked={connection?.customerMemberNotificationsEnabled ?? false} />}
-              label="通知客户空间成员"
+            <Controller
+              name="customerMemberNotificationsEnabled"
+              control={form.control}
+              render={({ field }) => (
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={field.value}
+                      onChange={(_, checked) => field.onChange(checked)}
+                    />
+                  }
+                  label="通知客户空间成员"
+                />
+              )}
             />
           </Stack>
         </DialogContent>
@@ -401,63 +472,55 @@ function ConnectionDialog({
 }
 
 export function ExternalContactsPanel({ projectId }: { projectId: string }) {
-  const [contacts, setContacts] = useState<ExternalContact[]>([]);
+  const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState("");
   const [status, setStatus] = useState<"ALL" | "ACTIVE" | "BLOCKED">("ALL");
-  const [nextCursor, setNextCursor] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState("");
   const [detailContact, setDetailContact] = useState<ExternalContact | null>(null);
-  const requestSequence = useRef(0);
-  const load = useCallback(async (
-    cursor: string | null = null,
-    append = false,
-  ) => {
-    const sequence = ++requestSequence.current;
-    if (append) setLoadingMore(true);
-    else setLoading(true);
-    setError("");
-    try {
+  const deferredKeyword = useDeferredValue(keyword.trim());
+  const contactsQuery = useInfiniteQuery({
+    queryKey: queryKeys.sub2api.externalContacts(
+      projectId,
+      deferredKeyword,
+      status,
+    ),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({ limit: "50" });
-      if (keyword.trim()) params.set("q", keyword.trim());
+      if (deferredKeyword) params.set("q", deferredKeyword);
       if (status !== "ALL") params.set("status", status);
-      if (cursor) params.set("cursor", cursor);
-      const page = await staffApi<ExternalContactPage>(
+      if (pageParam) params.set("cursor", pageParam);
+      return staffApi<ExternalContactPage>(
         `/api/v1/projects/${projectId}/external-contacts?${params}`,
+        { signal },
       );
-      if (sequence !== requestSequence.current) return;
-      setContacts((current) => append ? [...current, ...page.items] : page.items);
-      setNextCursor(page.nextCursor);
-    } catch (loadError) {
-      if (sequence !== requestSequence.current) return;
-      setError(loadError instanceof Error ? loadError.message : "联系人加载失败");
-    } finally {
-      if (sequence === requestSequence.current) {
-        setLoading(false);
-        setLoadingMore(false);
-      }
-    }
-  }, [keyword, projectId, status]);
-  useEffect(() => {
-    const timer = window.setTimeout(() => void load(), 250);
-    return () => window.clearTimeout(timer);
-  }, [load]);
-  async function toggle(contact: ExternalContact) {
-    try {
-      await staffApi(
+    },
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
+    placeholderData: keepPreviousData,
+  });
+  const toggleMutation = useMutation({
+    mutationFn: (contact: ExternalContact) =>
+      staffApi(
         `/api/v1/projects/${projectId}/external-contacts/${contact.id}`,
-        jsonRequest("PATCH", { status: contact.status === "ACTIVE" ? "BLOCKED" : "ACTIVE" }),
-      );
-      await load();
-    } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "联系人状态更新失败");
-    }
-  }
-  if (loading) return <LinearProgress />;
+        jsonRequest("PATCH", {
+          status: contact.status === "ACTIVE" ? "BLOCKED" : "ACTIVE",
+        }),
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.sub2api.externalContactsRoot(projectId),
+      });
+    },
+  });
+  const contacts =
+    contactsQuery.data?.pages.flatMap((page) => page.items) ?? [];
+  const error = toggleMutation.error ?? contactsQuery.error;
+  const errorMessage =
+    error instanceof Error ? error.message : error ? "联系人操作失败" : "";
+
+  if (contactsQuery.isPending) return <LinearProgress />;
   return (
     <Stack spacing={2}>
-      {error ? <Alert severity="error">{error}</Alert> : null}
+      {errorMessage ? <Alert severity="error">{errorMessage}</Alert> : null}
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
         <TextField
           value={keyword}
@@ -477,60 +540,27 @@ export function ExternalContactsPanel({ projectId }: { projectId: string }) {
           <MenuItem value="BLOCKED">已停用</MenuItem>
         </TextField>
       </Stack>
-      <TableContainer component={Paper} variant="outlined" sx={{ overflowX: "auto" }}>
-        <Table size="small" sx={{ minWidth: 900 }}>
-          <TableHead>
-            <TableRow>
-              <TableCell>联系人</TableCell>
-              <TableCell>来源</TableCell>
-              <TableCell>外部用户 ID</TableCell>
-              <TableCell>邮箱 / 用户名</TableCell>
-              <TableCell align="right">服务请求</TableCell>
-              <TableCell>最后访问</TableCell>
-              <TableCell align="right">操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {contacts.map((contact) => (
-              <TableRow key={contact.id} hover>
-                <TableCell>
-                  <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    <Avatar src={contact.avatarUrl ?? undefined} sx={{ width: 28, height: 28 }}>
-                      {contact.displayName.slice(0, 1)}
-                    </Avatar>
-                    <Typography variant="body2">{contact.displayName}</Typography>
-                    <Chip size="small" label={contact.status === "ACTIVE" ? "正常" : "已停用"} color={contact.status === "ACTIVE" ? "success" : "default"} />
-                  </Stack>
-                </TableCell>
-                <TableCell>
-                  <Chip size="small" label={contact.sourceLabel} variant="outlined" />
-                </TableCell>
-                <TableCell>{contact.externalUserId}</TableCell>
-                <TableCell>{contact.email || contact.username || "未提供"}</TableCell>
-                <TableCell align="right">{contact._count.requestsCreated}</TableCell>
-                <TableCell>{new Date(contact.lastSeenAt).toLocaleString("zh-CN")}</TableCell>
-                <TableCell align="right">
-                  <Stack direction="row" spacing={0.5} sx={{ justifyContent: "flex-end" }}>
-                    <Button size="small" onClick={() => setDetailContact(contact)}>查看资料</Button>
-                    <Button size="small" color={contact.status === "ACTIVE" ? "inherit" : "primary"} onClick={() => toggle(contact)}>
-                      {contact.status === "ACTIVE" ? "停用" : "恢复"}
-                    </Button>
-                  </Stack>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </TableContainer>
-      {contacts.length === 0 ? <Alert severity="info">暂无外部联系人。</Alert> : null}
-      {nextCursor ? (
+      {contactsQuery.isFetching && !contactsQuery.isFetchingNextPage ? (
+        <LinearProgress />
+      ) : null}
+      <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+        <ExternalContactGrid
+          rows={contacts}
+          actionContactId={
+            toggleMutation.isPending ? toggleMutation.variables?.id ?? null : null
+          }
+          onView={setDetailContact}
+          onToggle={toggleMutation.mutate}
+        />
+      </Paper>
+      {contactsQuery.hasNextPage ? (
         <Button
           variant="outlined"
-          onClick={() => void load(nextCursor, true)}
-          disabled={loadingMore}
+          onClick={() => void contactsQuery.fetchNextPage()}
+          disabled={contactsQuery.isFetching}
           sx={{ alignSelf: "center" }}
         >
-          {loadingMore ? "加载中" : "加载更多"}
+          {contactsQuery.isFetchingNextPage ? "加载中" : "加载更多"}
         </Button>
       ) : null}
       <Dialog

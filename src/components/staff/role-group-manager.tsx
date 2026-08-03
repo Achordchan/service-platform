@@ -1,35 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
-  Box,
   Button,
-  Checkbox,
-  Chip,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  FormControlLabel,
-  FormGroup,
-  MenuItem,
   Paper,
   Stack,
-  Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  TextField,
-  Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
 import { useToast } from "@/components/shared/toast-provider";
+import {
+  RoleGroupFormDialog,
+  type RoleGroupFormValues,
+} from "@/components/staff/role-group-form-dialog";
+import { RoleGroupGrid } from "@/components/staff/role-group-grid";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
-import { ROLE_PERMISSION_OPTIONS } from "@/modules/users/role-permissions";
 
 export type RoleGroupView = {
   id: string;
@@ -46,16 +33,6 @@ export type RoleGroupView = {
   updatedAt: string;
 };
 
-const emptyForm = {
-  name: "",
-  key: "",
-  description: "",
-  accessLevel: "TECHNICIAN" as "PROJECT_MANAGER" | "TECHNICIAN",
-  permissions: [] as string[],
-  active: true,
-  sortOrder: 60,
-};
-
 export function RoleGroupManager({
   roleGroups,
   embedded = false,
@@ -67,97 +44,67 @@ export function RoleGroupManager({
   const toast = useToast();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<RoleGroupView | null>(null);
-  const [form, setForm] = useState(emptyForm);
-  const [submitting, setSubmitting] = useState(false);
+  const saveMutation = useMutation({
+    mutationFn: (action: () => Promise<void>) => action(),
+  });
+  const submitting = saveMutation.isPending;
   const [deleteTarget, setDeleteTarget] =
     useState<RoleGroupView | null>(null);
 
-  const permissionOptions = useMemo(() => {
-    if (form.accessLevel === "TECHNICIAN") {
-      return ROLE_PERMISSION_OPTIONS.filter(
-        (item) =>
-          ![
-            "project.manage_delivery",
-            "project.manage_staff",
-            "request.view_project",
-            "update.publish",
-          ].includes(item.key),
-      );
-    }
-    return ROLE_PERMISSION_OPTIONS;
-  }, [form.accessLevel]);
-
   function openCreate() {
     setEditing(null);
-    setForm(emptyForm);
     setOpen(true);
   }
 
   function openEdit(group: RoleGroupView) {
     setEditing(group);
-    setForm({
-      name: group.name,
-      key: group.key,
-      description: group.description ?? "",
-      accessLevel: group.accessLevel,
-      permissions: group.permissions,
-      active: group.active,
-      sortOrder: group.sortOrder,
-    });
     setOpen(true);
   }
 
-  function togglePermission(key: string) {
-    setForm((current) => {
-      const exists = current.permissions.includes(key);
-      return {
-        ...current,
-        permissions: exists
-          ? current.permissions.filter((item) => item !== key)
-          : [...current.permissions, key],
-      };
-    });
+  function closeDialog() {
+    if (submitting) return;
+    setOpen(false);
+    setEditing(null);
   }
 
-  async function save() {
-    setSubmitting(true);
+  async function save(values: RoleGroupFormValues) {
     try {
-      if (editing) {
-        await staffApi(
-          `/api/v1/admin/role-groups/${editing.id}`,
-          jsonRequest("PATCH", {
-            name: form.name,
-            key: editing.isSystem ? undefined : form.key || undefined,
-            description: form.description,
-            accessLevel: form.accessLevel,
-            permissions: form.permissions,
-            active: form.active,
-            sortOrder: form.sortOrder,
-          }),
-        );
-        toast.success("角色组已更新");
-      } else {
-        await staffApi(
-          "/api/v1/admin/role-groups",
-          jsonRequest("POST", {
-            name: form.name,
-            key: form.key || undefined,
-            description: form.description,
-            accessLevel: form.accessLevel,
-            permissions: form.permissions,
-            active: form.active,
-            sortOrder: form.sortOrder,
-          }),
-        );
-        toast.success("角色组已创建");
-      }
-      setOpen(false);
-      setEditing(null);
-      router.refresh();
+      await saveMutation.mutateAsync(async () => {
+        if (editing) {
+          await staffApi(
+            `/api/v1/admin/role-groups/${editing.id}`,
+            jsonRequest("PATCH", {
+              name: values.name,
+              key: editing.isSystem ? undefined : values.key || undefined,
+              description: values.description,
+              accessLevel: values.accessLevel,
+              permissions: values.permissions,
+              active: values.active,
+              sortOrder: values.sortOrder,
+            }),
+          );
+          toast.success("角色组已更新");
+        } else {
+          await staffApi(
+            "/api/v1/admin/role-groups",
+            jsonRequest("POST", {
+              name: values.name,
+              key: values.key || undefined,
+              description: values.description,
+              accessLevel: values.accessLevel,
+              permissions: values.permissions,
+              active: values.active,
+              sortOrder: values.sortOrder,
+            }),
+          );
+          toast.success("角色组已创建");
+        }
+        setOpen(false);
+        setEditing(null);
+        router.refresh();
+      });
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : "保存失败");
-    } finally {
-      setSubmitting(false);
     }
   }
 
@@ -192,199 +139,22 @@ export function RoleGroupManager({
           </Button>
         </Stack>
 
-        <Box sx={{ overflowX: "auto" }}>
-          <Table size="small">
-            <TableHead>
-              <TableRow>
-                <TableCell>角色组</TableCell>
-                <TableCell>访问级别</TableCell>
-                <TableCell>权限数</TableCell>
-                <TableCell>成员</TableCell>
-                <TableCell>状态</TableCell>
-                <TableCell>操作</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {roleGroups.map((group) => (
-                <TableRow key={group.id} hover>
-                  <TableCell>
-                    <Typography sx={{ fontWeight: 650 }}>{group.name}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {group.description || group.key}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    {group.accessLevel === "PROJECT_MANAGER"
-                      ? "项目负责人级"
-                      : "技术人员级"}
-                    {group.isSystem ? (
-                      <Chip size="small" label="系统" sx={{ ml: 1 }} />
-                    ) : null}
-                  </TableCell>
-                  <TableCell>{group.permissions.length}</TableCell>
-                  <TableCell>
-                    {group.userCount}
-                    {group.invitationCount
-                      ? ` / 邀请 ${group.invitationCount}`
-                      : ""}
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      size="small"
-                      color={group.active ? "success" : "default"}
-                      label={group.active ? "启用" : "停用"}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={1}>
-                      <Button size="small" onClick={() => openEdit(group)}>
-                        编辑
-                      </Button>
-                      <Button
-                        size="small"
-                        color="inherit"
-                        disabled={submitting}
-                        onClick={() => remove(group)}
-                      >
-                        删除
-                      </Button>
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </Box>
+        <RoleGroupGrid
+          rows={roleGroups}
+          submitting={submitting}
+          onEdit={openEdit}
+          onDelete={remove}
+        />
       </Paper>
 
-      <Dialog
+      <RoleGroupFormDialog
+        key={editing ? `edit-${editing.id}` : open ? "create-open" : "closed"}
         open={open}
-        onClose={submitting ? undefined : () => setOpen(false)}
-        fullWidth
-        maxWidth="md"
-      >
-        <DialogTitle>{editing ? "编辑角色组" : "新增角色组"}</DialogTitle>
-        <DialogContent>
-          <Stack spacing={2} sx={{ pt: 1 }}>
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <TextField
-                label="名称"
-                value={form.name}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, name: event.target.value }))
-                }
-                required
-                fullWidth
-              />
-              <TextField
-                label="标识"
-                value={form.key}
-                onChange={(event) =>
-                  setForm((current) => ({ ...current, key: event.target.value }))
-                }
-                disabled={Boolean(editing?.isSystem)}
-                helperText="小写字母、数字、下划线；可留空自动生成"
-                fullWidth
-              />
-            </Stack>
-            <TextField
-              label="说明"
-              value={form.description}
-              onChange={(event) =>
-                setForm((current) => ({
-                  ...current,
-                  description: event.target.value,
-                }))
-              }
-              fullWidth
-              multiline
-              minRows={2}
-            />
-            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-              <TextField
-                select
-                label="访问级别"
-                value={form.accessLevel}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    accessLevel: event.target.value as
-                      | "PROJECT_MANAGER"
-                      | "TECHNICIAN",
-                    permissions: [],
-                  }))
-                }
-                fullWidth
-              >
-                <MenuItem value="TECHNICIAN">技术人员级</MenuItem>
-                <MenuItem value="PROJECT_MANAGER">项目负责人级</MenuItem>
-              </TextField>
-              <TextField
-                label="排序"
-                type="number"
-                value={form.sortOrder}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    sortOrder: Number(event.target.value || 0),
-                  }))
-                }
-                fullWidth
-              />
-            </Stack>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={form.active}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      active: event.target.checked,
-                    }))
-                  }
-                />
-              }
-              label="启用该角色组"
-            />
-            <Box>
-              <Typography sx={{ fontWeight: 650, mb: 1 }}>权限项</Typography>
-              <FormGroup>
-                {permissionOptions.map((item) => (
-                  <FormControlLabel
-                    key={item.key}
-                    control={
-                      <Checkbox
-                        checked={form.permissions.includes(item.key)}
-                        onChange={() => togglePermission(item.key)}
-                      />
-                    }
-                    label={
-                      <Box>
-                        <Typography variant="body2">{item.label}</Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {item.description}
-                        </Typography>
-                      </Box>
-                    }
-                  />
-                ))}
-              </FormGroup>
-            </Box>
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setOpen(false)} disabled={submitting}>
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            onClick={save}
-            disabled={submitting || !form.name.trim()}
-          >
-            {submitting ? "保存中" : "保存"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        editing={editing}
+        submitting={submitting}
+        onClose={closeDialog}
+        onSubmit={save}
+      />
       <DeletionPreflightDialog
         target={
           deleteTarget

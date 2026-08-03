@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   Button,
   FormControlLabel,
@@ -10,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import { useToast } from "@/components/shared/toast-provider";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 type Preferences = {
   soundNotificationsEnabled: boolean;
@@ -23,35 +25,29 @@ export function NotificationPreferencesForm({
 }) {
   const toast = useToast();
   const [preferences, setPreferences] = useState(initialPreferences);
-  const [saving, setSaving] = useState(false);
-
-  async function save() {
-    setSaving(true);
-    try {
-      const response = await fetch("/api/v1/me/notification-preferences", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(preferences),
-      });
-      const result = (await response.json()) as {
-        data?: Preferences;
-        error?: { message?: string };
-      };
-      if (!response.ok || !result.data) {
-        throw new Error(result.error?.message || "通知设置保存失败");
-      }
-      setPreferences(result.data);
+  const saveMutation = useMutation({
+    mutationFn: (nextPreferences: Preferences) =>
+      apiRequest<Preferences>(
+        "/api/v1/me/notification-preferences",
+        jsonRequest("PATCH", nextPreferences),
+        "通知设置保存失败",
+      ),
+    onSuccess: (savedPreferences) => {
+      setPreferences(savedPreferences);
       toast.success("通知设置已保存");
       window.dispatchEvent(
         new CustomEvent("notification-preferences-updated", {
-          detail: result.data,
+          detail: savedPreferences,
         }),
       );
-    } catch (saveError) {
+    },
+    onError: (saveError) => {
       toast.error(saveError instanceof Error ? saveError.message : "保存失败");
-    } finally {
-      setSaving(false);
-    }
+    },
+  });
+
+  function save() {
+    saveMutation.mutate(preferences);
   }
 
   return (
@@ -97,10 +93,10 @@ export function NotificationPreferencesForm({
         <Button
           variant="contained"
           onClick={() => void save()}
-          disabled={saving}
+          disabled={saveMutation.isPending}
           sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
         >
-          {saving ? "保存中" : "保存通知设置"}
+          {saveMutation.isPending ? "保存中" : "保存通知设置"}
         </Button>
       </Stack>
     </Paper>

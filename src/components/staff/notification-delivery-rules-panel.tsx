@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -73,8 +74,52 @@ export function NotificationDeliveryRulesPanel({
   const toast = useToast();
   const [rules, setRules] = useState(initialRules);
   const [savedRules, setSavedRules] = useState(initialRules);
-  const [saving, setSaving] = useState(false);
-  const [savingEmailSwitch, setSavingEmailSwitch] = useState(false);
+  const saveMutation = useMutation({
+    mutationFn: (nextRules: NotificationDeliveryRuleView[]) =>
+      staffApi<NotificationDeliveryRuleView[]>(
+        "/api/v1/admin/notification-delivery-rules",
+        jsonRequest("PUT", {
+          rules: nextRules.map(
+            ({
+              key,
+              notificationEnabled,
+              soundEnabled,
+              emailEnabled,
+              dingtalkEnabled,
+            }) => ({
+              key,
+              notificationEnabled,
+              soundEnabled,
+              emailEnabled,
+              dingtalkEnabled,
+            }),
+          ),
+        }),
+      ),
+    onSuccess: (next) => {
+      setRules(next);
+      setSavedRules(next);
+      onRulesChange?.(next);
+      toast.success("通知规则已保存，仅对后续新事件生效");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    },
+  });
+  const unreadDelayMutation = useMutation({
+    mutationFn: (enabled: boolean) =>
+      staffApi(
+        "/api/v1/admin/settings",
+        jsonRequest("PATCH", { standardEmailUnreadDelayEnabled: enabled }),
+      ),
+    onSuccess: (_, enabled) => {
+      onUnreadDelayChange?.(enabled);
+      toast.success(enabled ? "未读 5 分钟延迟已开启" : "邮件已改为尽快发送");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "保存失败");
+    },
+  });
   const mailEnabled = mailMode !== "LOCAL_OUTBOX";
   const visibleChannels = notificationRuleChannels(
     mailEnabled,
@@ -132,38 +177,8 @@ export function NotificationDeliveryRulesPanel({
     );
   }
 
-  async function save() {
-    setSaving(true);
-    try {
-      const next = await staffApi<NotificationDeliveryRuleView[]>(
-        "/api/v1/admin/notification-delivery-rules",
-        jsonRequest("PUT", {
-          rules: rules.map(
-            ({
-              key,
-              notificationEnabled,
-              soundEnabled,
-              emailEnabled,
-              dingtalkEnabled,
-            }) => ({
-              key,
-              notificationEnabled,
-              soundEnabled,
-              emailEnabled,
-              dingtalkEnabled,
-            }),
-          ),
-        }),
-      );
-      setRules(next);
-      setSavedRules(next);
-      onRulesChange?.(next);
-      toast.success("通知规则已保存，仅对后续新事件生效");
-    } catch (saveError) {
-      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
-    } finally {
-      setSaving(false);
-    }
+  function save() {
+    saveMutation.mutate(rules);
   }
 
   const columnChecked = (channel: Channel) =>
@@ -171,20 +186,8 @@ export function NotificationDeliveryRulesPanel({
       .filter((rule) => channelSupported(rule, channel))
       .every((rule) => rule[channel]);
 
-  async function updateUnreadDelay(enabled: boolean) {
-    setSavingEmailSwitch(true);
-    try {
-      await staffApi(
-        "/api/v1/admin/settings",
-        jsonRequest("PATCH", { standardEmailUnreadDelayEnabled: enabled }),
-      );
-      onUnreadDelayChange?.(enabled);
-      toast.success(enabled ? "未读 5 分钟延迟已开启" : "邮件已改为尽快发送");
-    } catch (saveError) {
-      toast.error(saveError instanceof Error ? saveError.message : "保存失败");
-    } finally {
-      setSavingEmailSwitch(false);
-    }
+  function updateUnreadDelay(enabled: boolean) {
+    unreadDelayMutation.mutate(enabled);
   }
 
   return (
@@ -214,7 +217,7 @@ export function NotificationDeliveryRulesPanel({
             </Typography>
             <Switch
               checked={standardEmailUnreadDelayEnabled}
-              disabled={savingEmailSwitch}
+              disabled={unreadDelayMutation.isPending}
               onChange={(event) =>
                 void updateUnreadDelay(event.target.checked)
               }
@@ -343,11 +346,11 @@ export function NotificationDeliveryRulesPanel({
       </Box>
       <Button
         variant="contained"
-        disabled={saving || !dirty}
+        disabled={saveMutation.isPending || !dirty}
         onClick={() => void save()}
         sx={{ alignSelf: { xs: "stretch", sm: "flex-end" } }}
       >
-        {saving ? "保存中" : "保存通知规则"}
+        {saveMutation.isPending ? "保存中" : "保存通知规则"}
       </Button>
     </Stack>
   );

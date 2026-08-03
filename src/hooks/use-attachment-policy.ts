@@ -1,6 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
 
 export type AttachmentPolicy = {
   maxSizeMb: number;
@@ -46,31 +49,16 @@ function extensionOf(file: File) {
 }
 
 export function useAttachmentPolicy() {
-  const [policy, setPolicy] = useState<AttachmentPolicy | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-    void fetch("/api/v1/attachment-policy")
-      .then(async (response) => {
-        if (!response.ok) return null;
-        const payload = (await response.json()) as { data: AttachmentPolicy };
-        return payload.data;
-      })
-      .then((data) => {
-        if (!active) return;
-        if (data) setPolicy(data);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const resolved = policy ?? FALLBACK_POLICY;
+  const policyQuery = useQuery({
+    queryKey: queryKeys.attachmentPolicy,
+    queryFn: ({ signal }) =>
+      apiRequest<AttachmentPolicy>(
+        "/api/v1/attachment-policy",
+        { signal },
+        "附件策略加载失败",
+      ),
+  });
+  const resolved = policyQuery.data ?? FALLBACK_POLICY;
   const allowed = useMemo(
     () => new Set(resolved.allowedExtensions.map((item) => item.toLowerCase())),
     [resolved.allowedExtensions],
@@ -128,7 +116,7 @@ export function useAttachmentPolicy() {
 
   return {
     policy: resolved,
-    loading,
+    loading: policyQuery.isPending,
     validateFiles,
     filesFromClipboard,
   };

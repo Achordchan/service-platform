@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContentRiskPluginSettings } from "@/components/staff/content-risk-plugin-settings";
 import { ToastProvider } from "@/components/shared/toast-provider";
@@ -31,18 +32,26 @@ describe("内容审核工作区", () => {
     });
 
     render(
-      <ToastProvider>
-        <ContentRiskPluginSettings
-          enabled
-          healthStatus="READY"
-          config={{
-            baseUrl: "https://model.example.com",
-            model: "gpt-5.4-mini",
-            fullAuditEnabled: true,
-          }}
-          readOnly
-        />
-      </ToastProvider>,
+      <QueryClientProvider
+        client={
+          new QueryClient({
+            defaultOptions: { queries: { retry: false } },
+          })
+        }
+      >
+        <ToastProvider>
+          <ContentRiskPluginSettings
+            enabled
+            healthStatus="READY"
+            config={{
+              baseUrl: "https://model.example.com",
+              model: "gpt-5.4-mini",
+              fullAuditEnabled: true,
+            }}
+            readOnly
+          />
+        </ToastProvider>
+      </QueryClientProvider>,
     );
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledTimes(1));

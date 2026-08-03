@@ -8,6 +8,7 @@ import {
   countProjectRequestUnread,
   countProjectScopeUnread,
   countProjectUpdateUnread,
+  useMarkNotificationsRead,
   useUnreadNotifications,
 } from "@/hooks/use-unread-notifications";
 
@@ -43,7 +44,8 @@ export function ProjectTabs({
   requestsEnabled?: boolean;
   filesEnabled?: boolean;
 }) {
-  const { unread, refresh } = useUnreadNotifications();
+  const { unread } = useUnreadNotifications();
+  const { mutate: markRead } = useMarkNotificationsRead();
   const requestIdSet = new Set(requestIds);
   const updateCount = countProjectUpdateUnread(unread, projectId);
   const requestCount = countProjectRequestUnread(unread, projectId, requestIdSet);
@@ -61,33 +63,8 @@ export function ProjectTabs({
     if (activeTab === "requests") return;
     const scope = activeTab as keyof typeof projectScopeCounts;
     if ((projectScopeCounts[scope] ?? 0) === 0) return;
-    let cancelled = false;
-    async function markProjectScope() {
-      try {
-        const response = await fetch("/api/v1/notifications", {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            projectId,
-            projectScope: scope,
-          }),
-        });
-        if (!response.ok || cancelled) return;
-        window.dispatchEvent(
-          new CustomEvent("notifications-updated", {
-            detail: { projectId, projectScope: scope },
-          }),
-        );
-        await refresh();
-      } catch {
-        // ignore
-      }
-    }
-    void markProjectScope();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, projectId, projectScopeCounts, refresh]);
+    markRead({ projectId, projectScope: scope });
+  }, [activeTab, markRead, projectId, projectScopeCounts]);
 
   return (
     <Box

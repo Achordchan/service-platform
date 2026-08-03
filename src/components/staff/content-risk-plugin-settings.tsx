@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
   Box,
@@ -29,6 +30,7 @@ import {
 } from "@/components/staff/content-risk-history-dialog";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { queryKeys } from "@/lib/query-keys";
 
 type Dashboard = {
   runtime: {
@@ -68,28 +70,62 @@ export function ContentRiskPluginSettings({
   readOnly?: boolean;
 }) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [models, setModels] = useState<string[]>([]);
-  const [loadingModels, setLoadingModels] = useState(false);
-  const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [restoreReviewId, setRestoreReviewId] = useState<string | null>(null);
   const [restoreReason, setRestoreReason] = useState("");
-  const [restoring, setRestoring] = useState(false);
-
-  async function loadDashboard() {
-    const result = await staffApi<Dashboard>(
-      "/api/v1/admin/plugins/content-contact-risk/dashboard",
-    );
-    setDashboard(result);
-  }
-
-  useEffect(() => {
-    if (!enabled && healthStatus === "UNKNOWN") return;
-    const timer = window.setTimeout(() => {
-      void loadDashboard().catch(() => undefined);
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [enabled, healthStatus]);
+  const dashboardQuery = useQuery({
+    queryKey: queryKeys.contentRisk.dashboard,
+    queryFn: () =>
+      staffApi<Dashboard>(
+        "/api/v1/admin/plugins/content-contact-risk/dashboard",
+      ),
+    enabled: enabled || healthStatus !== "UNKNOWN",
+  });
+  const dashboard = dashboardQuery.data ?? null;
+  const discoverModelsMutation = useMutation({
+    mutationFn: ({ baseUrl, apiKey }: { baseUrl: string; apiKey?: string }) =>
+      staffApi<{ models: string[] }>(
+        "/api/v1/admin/plugins/content-contact-risk/models",
+        jsonRequest("POST", {
+          baseUrl,
+          ...(apiKey ? { apiKey } : {}),
+        }),
+      ),
+    onSuccess: (result) => {
+      setModels(result.models);
+      if (
+        result.models.length === 1 &&
+        !String(config.model ?? "").trim() &&
+        onConfigChange
+      ) {
+        onConfigChange({ ...config, model: result.models[0] });
+      }
+      toast.success(`已获取 ${result.models.length} 个模型`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "获取模型失败");
+    },
+  });
+  const restoreReviewMutation = useMutation({
+    mutationFn: ({ reviewId, reason }: { reviewId: string; reason: string }) =>
+      staffApi(
+        `/api/v1/admin/plugins/content-contact-risk/reviews/${reviewId}/restore`,
+        jsonRequest("POST", { reason }),
+      ),
+    onSuccess: async () => {
+      toast.success("内容已恢复并重新释放仍有效的通知");
+      setRestoreReviewId(null);
+      setRestoreReason("");
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.contentRisk.dashboard,
+      });
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "内容恢复失败");
+    },
+  });
 
   async function discoverModels() {
     if (readOnly || !onConfigChange) return;
@@ -102,46 +138,18 @@ export function ContentRiskPluginSettings({
       toast.warning("请先填写 API Key");
       return;
     }
-    setLoadingModels(true);
-    try {
-      const result = await staffApi<{ models: string[] }>(
-        "/api/v1/admin/plugins/content-contact-risk/models",
-        jsonRequest("POST", {
-          baseUrl,
-          ...(secrets?.apiKey?.trim() ? { apiKey: secrets.apiKey.trim() } : {}),
-        }),
-      );
-      const discoveredModels = result.models;
-      setModels(discoveredModels);
-      if (
-        discoveredModels.length === 1 &&
-        !String(config.model ?? "").trim()
-      ) {
-        onConfigChange({ ...config, model: discoveredModels[0] });
-      }
-      toast.success(`已获取 ${discoveredModels.length} 个模型`);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "获取模型失败");
-    } finally {
-      setLoadingModels(false);
-    }
+    discoverModelsMutation.mutate({
+      baseUrl,
+      apiKey: secrets?.apiKey?.trim() || undefined,
+    });
   }
 
-  async function confirmRestoreReview() {
+  function confirmRestoreReview() {
     if (!restoreReviewId || restoreReason.trim().length < 2) return;
-    setRestoring(true);
-    try {
-      await staffApi(
-        `/api/v1/admin/plugins/content-contact-risk/reviews/${restoreReviewId}/restore`,
-        jsonRequest("POST", { reason: restoreReason.trim() }),
-      );
-      toast.success("内容已恢复并重新释放仍有效的通知");
-      setRestoreReviewId(null);
-      setRestoreReason("");
-      await loadDashboard();
-    } finally {
-      setRestoring(false);
-    }
+    restoreReviewMutation.mutate({
+      reviewId: restoreReviewId,
+      reason: restoreReason.trim(),
+    });
   }
 
   const selectedModel = String(config.model ?? "");
@@ -288,7 +296,7 @@ export function ContentRiskPluginSettings({
                 variant="outlined"
                 startIcon={<RefreshOutlinedIcon />}
                 onClick={() => void discoverModels()}
-                disabled={busy || loadingModels}
+                disabled={busy || discoverModelsMutation.isPending}
                 sx={{ flexShrink: 0 }}
               >
                 获取模型
@@ -335,7 +343,11 @@ export function ContentRiskPluginSettings({
 
       <Dialog
         open={Boolean(restoreReviewId)}
-        onClose={restoring ? undefined : () => setRestoreReviewId(null)}
+        onClose={
+          restoreReviewMutation.isPending
+            ? undefined
+            : () => setRestoreReviewId(null)
+        }
         fullWidth
         maxWidth="xs"
       >
@@ -354,15 +366,21 @@ export function ContentRiskPluginSettings({
           />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setRestoreReviewId(null)} disabled={restoring}>
+          <Button
+            onClick={() => setRestoreReviewId(null)}
+            disabled={restoreReviewMutation.isPending}
+          >
             取消
           </Button>
           <Button
             variant="contained"
             onClick={() => void confirmRestoreReview()}
-            disabled={restoring || restoreReason.trim().length < 2}
+            disabled={
+              restoreReviewMutation.isPending ||
+              restoreReason.trim().length < 2
+            }
           >
-            {restoring ? "恢复中" : "确认恢复"}
+            {restoreReviewMutation.isPending ? "恢复中" : "确认恢复"}
           </Button>
         </DialogActions>
       </Dialog>

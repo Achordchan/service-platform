@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   subscribeRealtime,
   subscribeRealtimeReady,
   type RealtimeEventType,
 } from "@/lib/realtime-client";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
+import { queryKeys } from "@/lib/query-keys";
 
 const streamTypes: readonly RealtimeEventType[] = [
   "NOTIFICATION_CREATED",
@@ -40,25 +43,24 @@ const EMPTY_SUMMARY: UnreadNotificationSummary = {
 };
 
 export function useUnreadNotifications() {
-  const [unread, setUnread] = useState<UnreadNotificationSummary>(EMPTY_SUMMARY);
+  const queryClient = useQueryClient();
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.notifications.summary,
+    queryFn: ({ signal }) =>
+      apiRequest<UnreadNotificationSummary>(
+        "/api/v1/notifications/summary",
+        { cache: "no-store", signal },
+        "未读通知加载失败",
+      ),
+  });
 
   const refresh = useCallback(async () => {
-    try {
-      const response = await fetch("/api/v1/notifications/summary", {
-        cache: "no-store",
-      });
-      if (!response.ok) return;
-      const result = (await response.json()) as {
-        data: UnreadNotificationSummary;
-      };
-      setUnread(result.data);
-    } catch {
-      // Keep the last known unread state during transient network failures.
-    }
-  }, []);
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.notifications.summary,
+    });
+  }, [queryClient]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 0);
     const unsubscribeEvents = subscribeRealtime(streamTypes, (event) => {
       if (event.live) void refresh();
     });
@@ -66,14 +68,41 @@ export function useUnreadNotifications() {
     const onLocal = () => void refresh();
     window.addEventListener("notifications-updated", onLocal);
     return () => {
-      window.clearTimeout(timer);
       unsubscribeEvents();
       unsubscribeReady();
       window.removeEventListener("notifications-updated", onLocal);
     };
   }, [refresh]);
 
-  return { unread, refresh };
+  return { unread: summaryQuery.data ?? EMPTY_SUMMARY, refresh };
+}
+
+export function useMarkNotificationsRead() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: {
+      projectId: string;
+      projectScope: "overview" | "updates" | "milestones" | "files";
+    }) =>
+      apiRequest<void>(
+        "/api/v1/notifications",
+        jsonRequest("PATCH", input),
+        "通知状态更新失败",
+      ),
+    onSuccess: async (_, input) => {
+      window.dispatchEvent(
+        new CustomEvent("notifications-updated", { detail: input }),
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.notifications.summary,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.notifications.list,
+        }),
+      ]);
+    },
+  });
 }
 
 export function countProjectDeliveryUnread(

@@ -1,7 +1,11 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { useMutation } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
+import { z } from "zod";
 import {
   Alert,
   Button,
@@ -34,6 +38,13 @@ function defaultProjectRole(
   return platformRole === "TECHNICIAN" ? "TECHNICIAN" : "PROJECT_MANAGER";
 }
 
+const projectStaffFormSchema = z.object({
+  userId: z.string().min(1, "请选择协作人员"),
+  projectRole: z.enum(["PROJECT_MANAGER", "TECHNICIAN"]),
+});
+
+type ProjectStaffFormValues = z.infer<typeof projectStaffFormSchema>;
+
 export function ProjectStaffManager({
   projectId,
   staff,
@@ -48,71 +59,89 @@ export function ProjectStaffManager({
   const router = useRouter();
   const toast = useToast();
   const [open, setOpen] = useState(false);
-  const [selectedUserId, setSelectedUserId] = useState("");
-  const [projectRole, setProjectRole] =
-    useState<ProjectStaffMember["role"]>("PROJECT_MANAGER");
-  const [submitting, setSubmitting] = useState(false);
+  const form = useForm<ProjectStaffFormValues>({
+    resolver: zodResolver(projectStaffFormSchema),
+    defaultValues: {
+      userId: "",
+      projectRole: "PROJECT_MANAGER",
+    },
+    mode: "onChange",
+  });
+  const staffMutation = useMutation({
+    mutationFn: (action: () => Promise<void>) => action(),
+  });
+  const submitting = staffMutation.isPending;
 
   const availableCandidates = useMemo(() => {
     const assigned = new Set(staff.map((member) => member.userId));
     return candidates.filter((candidate) => !assigned.has(candidate.id));
   }, [candidates, staff]);
 
+  const selectedUserId = useWatch({
+    control: form.control,
+    name: "userId",
+  });
   const selectedCandidate = availableCandidates.find(
     (candidate) => candidate.id === selectedUserId,
   );
 
   function selectUser(userId: string) {
-    setSelectedUserId(userId);
+    form.setValue("userId", userId, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
     const candidate = availableCandidates.find((item) => item.id === userId);
     if (candidate) {
-      setProjectRole(defaultProjectRole(candidate.platformRole));
+      form.setValue("projectRole", defaultProjectRole(candidate.platformRole), {
+        shouldDirty: true,
+        shouldValidate: true,
+      });
     }
   }
 
-  async function addStaff() {
+  const addStaff = form.handleSubmit(async (values) => {
+    const selectedCandidate = availableCandidates.find(
+      (candidate) => candidate.id === values.userId,
+    );
     if (!selectedCandidate) return;
-    setSubmitting(true);
     try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/staff`,
-        jsonRequest("POST", {
-          userId: selectedCandidate.id,
-          role:
-            selectedCandidate.platformRole === "TECHNICIAN"
-              ? "TECHNICIAN"
-              : projectRole,
-        }),
-      );
-      setOpen(false);
-      setSelectedUserId("");
-      setProjectRole("PROJECT_MANAGER");
-      toast.success("项目人员已分配");
-      router.refresh();
+      await staffMutation.mutateAsync(async () => {
+        await staffApi(
+          `/api/v1/projects/${projectId}/staff`,
+          jsonRequest("POST", {
+            userId: selectedCandidate.id,
+            role:
+              selectedCandidate.platformRole === "TECHNICIAN"
+                ? "TECHNICIAN"
+                : values.projectRole,
+          }),
+        );
+        setOpen(false);
+        form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
+        toast.success("项目人员已分配");
+        router.refresh();
+      });
     } catch (submitError) {
       toast.error(
         submitError instanceof Error ? submitError.message : "人员分配失败",
       );
-    } finally {
-      setSubmitting(false);
     }
-  }
+  });
 
   async function removeStaff(projectStaffId: string) {
-    setSubmitting(true);
     try {
-      await staffApi(
-        `/api/v1/projects/${projectId}/staff/${projectStaffId}`,
-        { method: "DELETE" },
-      );
-      toast.success("项目人员已移除，相关服务请求分配已同步清理");
-      router.refresh();
+      await staffMutation.mutateAsync(async () => {
+        await staffApi(
+          `/api/v1/projects/${projectId}/staff/${projectStaffId}`,
+          { method: "DELETE" },
+        );
+        toast.success("项目人员已移除，相关服务请求分配已同步清理");
+        router.refresh();
+      });
     } catch (submitError) {
       toast.error(
         submitError instanceof Error ? submitError.message : "移除失败",
       );
-    } finally {
-      setSubmitting(false);
     }
   }
 
@@ -129,6 +158,7 @@ export function ProjectStaffManager({
             size="small"
             startIcon={<PersonAddAltOutlinedIcon />}
             onClick={() => {
+              form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
               setOpen(true);
             }}
           >
@@ -181,36 +211,49 @@ export function ProjectStaffManager({
         <DialogTitle>分配项目人员</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            <TextField
-              select
-              label="协作人员"
-              value={selectedUserId}
-              onChange={(event) => selectUser(event.target.value)}
-              fullWidth
-            >
-              {availableCandidates.map((candidate) => (
-                <MenuItem key={candidate.id} value={candidate.id}>
-                  {candidate.name} · {roleLabel(candidate.platformRole)}
-                </MenuItem>
-              ))}
-            </TextField>
+            <Controller
+              name="userId"
+              control={form.control}
+              render={({ fieldState }) => (
+                <TextField
+                  select
+                  label="协作人员"
+                  value={selectedUserId}
+                  onChange={(event) => selectUser(event.target.value)}
+                  fullWidth
+                  error={Boolean(fieldState.error)}
+                  helperText={fieldState.error?.message}
+                >
+                  {availableCandidates.map((candidate) => (
+                    <MenuItem key={candidate.id} value={candidate.id}>
+                      {candidate.name} · {roleLabel(candidate.platformRole)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              )}
+            />
             {selectedCandidate &&
             selectedCandidate.platformRole !== "TECHNICIAN" ? (
-              <TextField
-                select
-                label="项目角色"
-                value={projectRole}
-                onChange={(event) =>
-                  setProjectRole(
-                    event.target.value as ProjectStaffMember["role"],
-                  )
-                }
-                fullWidth
-                helperText="平台管理员和项目负责人默认可担任项目负责人"
-              >
-                <MenuItem value="PROJECT_MANAGER">项目负责人</MenuItem>
-                <MenuItem value="TECHNICIAN">技术人员</MenuItem>
-              </TextField>
+              <Controller
+                name="projectRole"
+                control={form.control}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    select
+                    label="项目角色"
+                    fullWidth
+                    error={Boolean(fieldState.error)}
+                    helperText={
+                      fieldState.error?.message ??
+                      "平台管理员和项目负责人默认可担任项目负责人"
+                    }
+                  >
+                    <MenuItem value="PROJECT_MANAGER">项目负责人</MenuItem>
+                    <MenuItem value="TECHNICIAN">技术人员</MenuItem>
+                  </TextField>
+                )}
+              />
             ) : null}
             {availableCandidates.length === 0 ? (
               <Alert severity="info">
@@ -225,8 +268,8 @@ export function ProjectStaffManager({
           </Button>
           <Button
             variant="contained"
-            onClick={addStaff}
-            disabled={!selectedCandidate || submitting}
+            onClick={() => void addStaff()}
+            disabled={!selectedCandidate || submitting || !form.formState.isValid}
           >
             确认分配
           </Button>

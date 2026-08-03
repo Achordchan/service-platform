@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { FormProvider, useForm } from "react-hook-form";
+import { useMutation } from "@tanstack/react-query";
 import {
   Alert,
   Chip,
@@ -13,11 +16,16 @@ import {
   Tabs,
   Typography,
 } from "@mui/material";
+import { useAppConfirm } from "@/components/shared/confirm-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useToast } from "@/components/shared/toast-provider";
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
 import { ResendProviderSettings } from "@/components/staff/resend-provider-settings";
 import { SmtpSettings } from "@/components/staff/smtp-settings";
+import {
+  mailSettingsFormSchema,
+  type MailSettingsFormValues,
+} from "@/components/staff/mail-settings-form";
 
 const modeLabel = {
   LOCAL_OUTBOX: "未启用",
@@ -38,6 +46,7 @@ export function MailSettingsPanel({
   onSettingsChange: (settings: PlatformSettingsView) => void;
   embedded?: boolean;
 }) {
+  const confirm = useAppConfirm();
   const toast = useToast();
   const [providerTab, setProviderTab] = useState<ProviderTab>(
     settings.mailMode === "SMTP" ||
@@ -47,9 +56,21 @@ export function MailSettingsPanel({
       ? "SMTP"
       : "RESEND",
   );
-  const [apiKey, setApiKey] = useState("");
-  const [testEmail, setTestEmail] = useState(currentAdminEmail);
-  const [busy, setBusy] = useState<string | null>(null);
+  const form = useForm<MailSettingsFormValues>({
+    resolver: zodResolver(mailSettingsFormSchema),
+    defaultValues: {
+      apiKey: "",
+      testEmail: currentAdminEmail,
+    },
+    mode: "onChange",
+  });
+  const actionMutation = useMutation({
+    mutationFn: ({ run }: { key: string; run: () => Promise<unknown> }) =>
+      run(),
+  });
+  const busy = actionMutation.isPending
+    ? (actionMutation.variables?.key ?? "action")
+    : null;
   const domainVerified = settings.resendDomainStatus === "verified";
   const webhookReady =
     settings.resendWebhookStatus === "enabled" &&
@@ -74,9 +95,11 @@ export function MailSettingsPanel({
     callback: () => Promise<T>,
     message: string,
   ) {
-    setBusy(action);
     try {
-      const result = await callback();
+      const result = (await actionMutation.mutateAsync({
+        key: action,
+        run: callback,
+      })) as T;
       toast.success(message);
       return result;
     } catch (actionError) {
@@ -86,8 +109,6 @@ export function MailSettingsPanel({
           : "操作失败，请稍后重试",
       );
       return null;
-    } finally {
-      setBusy(null);
     }
   }
 
@@ -109,7 +130,7 @@ export function MailSettingsPanel({
     return true;
   }
 
-  async function setupResend() {
+  async function setupResend(apiKey: string) {
     const next = await run(
       "resend-setup",
       () =>
@@ -121,14 +142,18 @@ export function MailSettingsPanel({
     );
     if (next) {
       onSettingsChange(next);
-      setApiKey("");
+      form.setValue("apiKey", "", { shouldDirty: false });
     }
   }
 
   async function disconnectResend() {
-    if (!window.confirm("确认清除 Resend 配置？当前使用 Resend 时会同时停止邮件发送。")) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: "清除 Resend 配置？",
+      description: "当前使用 Resend 时会同时停止邮件发送。",
+      confirmationText: "确认清除",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     const next = await run(
       "resend-disconnect",
       () =>
@@ -140,7 +165,7 @@ export function MailSettingsPanel({
     );
     if (next) {
       onSettingsChange(next);
-      setApiKey("");
+      form.setValue("apiKey", "", { shouldDirty: false });
       setShowResendSetup(true);
     }
   }
@@ -172,9 +197,13 @@ export function MailSettingsPanel({
   }
 
   async function disconnectSmtp() {
-    if (!window.confirm("确认清除 SMTP 配置？已保存的密码和连接信息会被删除。")) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: "清除 SMTP 配置？",
+      description: "已保存的密码和连接信息会被删除。",
+      confirmationText: "确认清除",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     const next = await run(
       "smtp-disconnect",
       () =>
@@ -187,14 +216,14 @@ export function MailSettingsPanel({
     if (next) onSettingsChange(next);
   }
 
-  async function sendTestMail(deliveryMode: ProviderTab) {
+  async function sendTestMail(deliveryMode: ProviderTab, to: string) {
     await run(
       `${deliveryMode.toLowerCase()}-test`,
       () =>
         staffApi(
           "/api/v1/admin/mail/test",
           jsonRequest("POST", {
-            to: testEmail.trim(),
+            to: to.trim(),
             deliveryMode,
           }),
         ),
@@ -203,14 +232,15 @@ export function MailSettingsPanel({
   }
 
   return (
-    <Paper
-      variant="outlined"
-      sx={{
-        p: embedded ? 0 : { xs: 2.5, md: 3 },
-        border: embedded ? 0 : undefined,
-      }}
-    >
-      <Stack spacing={3}>
+    <FormProvider {...form}>
+      <Paper
+        variant="outlined"
+        sx={{
+          p: embedded ? 0 : { xs: 2.5, md: 3 },
+          border: embedded ? 0 : undefined,
+        }}
+      >
+        <Stack spacing={3}>
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1}
@@ -288,13 +318,9 @@ export function MailSettingsPanel({
         {providerTab === "RESEND" ? (
           <ResendProviderSettings
             settings={settings}
-            apiKey={apiKey}
-            testEmail={testEmail}
             busy={busy !== null}
             busyAction={busy}
             showSetup={showResendSetup}
-            onApiKeyChange={setApiKey}
-            onTestEmailChange={setTestEmail}
             onShowSetupChange={setShowResendSetup}
             onSetup={setupResend}
             onDisconnect={disconnectResend}
@@ -307,7 +333,7 @@ export function MailSettingsPanel({
                 toast.error("复制失败，请手动选择记录值");
               }
             }}
-            onTest={() => sendTestMail("RESEND")}
+            onTest={(to) => sendTestMail("RESEND", to)}
             onEnable={() =>
               saveSettings(
                 { mailMode: "RESEND" },
@@ -320,8 +346,6 @@ export function MailSettingsPanel({
             key={`smtp-${settings.updatedAt ?? "initial"}`}
             settings={settings}
             busy={busy !== null}
-            testEmail={testEmail}
-            onTestEmailChange={setTestEmail}
             onSave={(payload) =>
               saveSettings(
                 payload,
@@ -331,7 +355,7 @@ export function MailSettingsPanel({
               )
             }
             onCheck={checkSmtp}
-            onTest={() => sendTestMail("SMTP")}
+            onTest={(to) => sendTestMail("SMTP", to)}
             onEnable={async () => {
               await saveSettings(
                 { mailMode: "SMTP" },
@@ -341,7 +365,8 @@ export function MailSettingsPanel({
             onDisconnect={disconnectSmtp}
           />
         )}
-      </Stack>
-    </Paper>
+        </Stack>
+      </Paper>
+    </FormProvider>
   );
 }

@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useFormContext, useWatch } from "react-hook-form";
+import { z } from "zod";
 import CheckCircleOutlineOutlinedIcon from "@mui/icons-material/CheckCircleOutlineOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
@@ -21,16 +24,26 @@ import {
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
 import { SmtpProviderGuidesDialog } from "@/components/staff/smtp-provider-guides-dialog";
 import type { SmtpProviderGuide } from "@/components/staff/smtp-provider-guides";
+import type { MailSettingsFormValues } from "@/components/staff/mail-settings-form";
 import {
   formatSmtpSender,
   smtpSenderName,
 } from "@/modules/platform-settings/smtp-sender";
 
+const smtpFormSchema = z.object({
+  host: z.string().trim().min(1, "请填写 SMTP 主机").max(255),
+  port: z.number().int().min(1).max(65535),
+  user: z.email("请输入有效的 SMTP 登录邮箱").max(255),
+  password: z.string().max(255),
+  fromName: z.string().trim().min(1, "请填写发件人名称").max(160),
+  secure: z.boolean(),
+});
+
+type SmtpFormValues = z.infer<typeof smtpFormSchema>;
+
 export function SmtpSettings({
   settings,
   busy,
-  testEmail,
-  onTestEmailChange,
   onSave,
   onCheck,
   onTest,
@@ -39,21 +52,25 @@ export function SmtpSettings({
 }: {
   settings: PlatformSettingsView;
   busy: boolean;
-  testEmail: string;
-  onTestEmailChange: (value: string) => void;
   onSave: (payload: Record<string, unknown>) => Promise<boolean>;
   onCheck: () => Promise<void>;
-  onTest: () => Promise<void>;
+  onTest: (testEmail: string) => Promise<void>;
   onEnable: () => Promise<void>;
   onDisconnect: () => Promise<void>;
 }) {
-  const [host, setHost] = useState(settings.smtpHost ?? "");
-  const [port, setPort] = useState(settings.smtpPort ?? 465);
-  const [user, setUser] = useState(settings.smtpUser ?? "");
-  const [password, setPassword] = useState("");
-  const [fromName, setFromName] = useState(smtpSenderName(settings.smtpFrom));
-  const [secure, setSecure] = useState(settings.smtpSecure);
   const [guidesOpen, setGuidesOpen] = useState(false);
+  const form = useForm<SmtpFormValues>({
+    resolver: zodResolver(smtpFormSchema),
+    defaultValues: {
+      host: settings.smtpHost ?? "",
+      port: settings.smtpPort ?? 465,
+      user: settings.smtpUser ?? "",
+      password: "",
+      fromName: smtpSenderName(settings.smtpFrom),
+      secure: settings.smtpSecure,
+    },
+  });
+  const user = useWatch({ control: form.control, name: "user" });
   const configured = Boolean(
     settings.smtpHost &&
       settings.smtpPort &&
@@ -67,34 +84,39 @@ export function SmtpSettings({
   const showOverview = configured && healthy && !editing;
 
   function applyGuide(guide: SmtpProviderGuide) {
-    setHost(guide.host);
-    setPort(guide.port);
-    setSecure(guide.secure);
+    form.setValue("host", guide.host, { shouldDirty: true });
+    form.setValue("port", guide.port, { shouldDirty: true });
+    form.setValue("secure", guide.secure, { shouldDirty: true });
   }
 
   function cancelEditing() {
-    setHost(settings.smtpHost ?? "");
-    setPort(settings.smtpPort ?? 465);
-    setUser(settings.smtpUser ?? "");
-    setPassword("");
-    setFromName(smtpSenderName(settings.smtpFrom));
-    setSecure(settings.smtpSecure);
+    form.reset({
+      host: settings.smtpHost ?? "",
+      port: settings.smtpPort ?? 465,
+      user: settings.smtpUser ?? "",
+      password: "",
+      fromName: smtpSenderName(settings.smtpFrom),
+      secure: settings.smtpSecure,
+    });
     setEditing(false);
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const handleSubmit = form.handleSubmit(async (values) => {
+    if (!settings.hasStoredPassword && !values.password) {
+      form.setError("password", { message: "请填写 SMTP 密码或授权码" });
+      return;
+    }
     const payload: Record<string, unknown> = {
-      smtpHost: host.trim(),
-      smtpPort: port,
-      smtpUser: user.trim(),
-      smtpFrom: formatSmtpSender(fromName, user),
-      smtpSecure: secure,
+      smtpHost: values.host,
+      smtpPort: values.port,
+      smtpUser: values.user,
+      smtpFrom: formatSmtpSender(values.fromName, values.user),
+      smtpSecure: values.secure,
     };
-    if (password) payload.smtpPassword = password;
+    if (values.password) payload.smtpPassword = values.password;
     const saved = await onSave(payload);
-    if (saved) setPassword("");
-  }
+    if (saved) form.setValue("password", "");
+  });
 
   return (
     <Stack spacing={2.5}>
@@ -150,8 +172,6 @@ export function SmtpSettings({
         <SmtpOverview
           settings={settings}
           busy={busy}
-          testEmail={testEmail}
-          onTestEmailChange={onTestEmailChange}
           onTest={onTest}
           onEnable={onEnable}
           onEdit={() => setEditing(true)}
@@ -162,7 +182,7 @@ export function SmtpSettings({
         <Stack
           component="form"
           spacing={2}
-          onSubmit={(event) => void handleSubmit(event)}
+          onSubmit={handleSubmit}
         >
           <Box
             sx={{
@@ -175,44 +195,68 @@ export function SmtpSettings({
               alignItems: "start",
             }}
           >
-            <TextField
-              label="SMTP 主机"
-              value={host}
-              onChange={(event) => setHost(event.target.value)}
-              placeholder="smtp.example.com"
-              fullWidth
-              required
+            <Controller
+              name="host"
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="SMTP 主机"
+                  placeholder="smtp.example.com"
+                  fullWidth
+                  required
+                  error={Boolean(form.formState.errors.host)}
+                  helperText={form.formState.errors.host?.message}
+                />
+              )}
             />
-            <TextField
-              label="SMTP 端口"
-              type="number"
-              value={port}
-              onChange={(event) => setPort(Number(event.target.value))}
-              slotProps={{ htmlInput: { min: 1, max: 65535 } }}
-              required
+            <Controller
+              name="port"
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="SMTP 端口"
+                  type="number"
+                  onChange={(event) => field.onChange(Number(event.target.value))}
+                  error={Boolean(form.formState.errors.port)}
+                  helperText={form.formState.errors.port?.message}
+                  slotProps={{ htmlInput: { min: 1, max: 65535 } }}
+                  required
+                />
+              )}
             />
-            <ToggleButtonGroup
-              exclusive
-              value={secure ? "ssl" : "starttls"}
-              onChange={(_, value: "ssl" | "starttls" | null) => {
-                if (!value) return;
-                const nextSecure = value === "ssl";
-                setSecure(nextSecure);
-                if (port === 465 || port === 587) {
-                  setPort(nextSecure ? 465 : 587);
-                }
-              }}
-              size="small"
-              aria-label="连接加密"
-              sx={{ height: 56 }}
-            >
-              <ToggleButton value="ssl" sx={{ px: 1.5 }}>
-                SSL/TLS
-              </ToggleButton>
-              <ToggleButton value="starttls" sx={{ px: 1.5 }}>
-                STARTTLS
-              </ToggleButton>
-            </ToggleButtonGroup>
+            <Controller
+              name="secure"
+              control={form.control}
+              render={({ field }) => (
+                <ToggleButtonGroup
+                  exclusive
+                  value={field.value ? "ssl" : "starttls"}
+                  onChange={(_, value: "ssl" | "starttls" | null) => {
+                    if (!value) return;
+                    const nextSecure = value === "ssl";
+                    field.onChange(nextSecure);
+                    const port = form.getValues("port");
+                    if (port === 465 || port === 587) {
+                      form.setValue("port", nextSecure ? 465 : 587, {
+                        shouldDirty: true,
+                      });
+                    }
+                  }}
+                  size="small"
+                  aria-label="连接加密"
+                  sx={{ height: 56 }}
+                >
+                  <ToggleButton value="ssl" sx={{ px: 1.5 }}>
+                    SSL/TLS
+                  </ToggleButton>
+                  <ToggleButton value="starttls" sx={{ px: 1.5 }}>
+                    STARTTLS
+                  </ToggleButton>
+                </ToggleButtonGroup>
+              )}
+            />
           </Box>
           <Box
             sx={{
@@ -221,37 +265,60 @@ export function SmtpSettings({
               gap: 2,
             }}
           >
-            <TextField
-              label="SMTP 用户名"
-              type="email"
-              value={user}
-              onChange={(event) => setUser(event.target.value)}
-              autoComplete="off"
-              fullWidth
-              required
+            <Controller
+              name="user"
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="SMTP 用户名"
+                  type="email"
+                  autoComplete="off"
+                  fullWidth
+                  required
+                  error={Boolean(form.formState.errors.user)}
+                  helperText={form.formState.errors.user?.message}
+                />
+              )}
             />
-            <TextField
-              label="SMTP 密码或授权码"
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
-              fullWidth
-              required={!settings.hasStoredPassword}
-              helperText={
-                settings.hasStoredPassword
-                  ? "已加密保存；留空表示不修改"
-                  : "请填写邮箱授权码、应用专用密码或 SMTP 密码"
-              }
+            <Controller
+              name="password"
+              control={form.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="SMTP 密码或授权码"
+                  type="password"
+                  autoComplete="new-password"
+                  fullWidth
+                  required={!settings.hasStoredPassword}
+                  error={Boolean(form.formState.errors.password)}
+                  helperText={
+                    form.formState.errors.password?.message ??
+                    (settings.hasStoredPassword
+                      ? "已加密保存；留空表示不修改"
+                      : "请填写邮箱授权码、应用专用密码或 SMTP 密码")
+                  }
+                />
+              )}
             />
           </Box>
-          <TextField
-            label="发件人名称"
-            value={fromName}
-            onChange={(event) => setFromName(event.target.value)}
-            helperText={`发件邮箱固定使用 ${user.trim() || "SMTP 登录邮箱"}`}
-            fullWidth
-            required
+          <Controller
+            name="fromName"
+            control={form.control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                label="发件人名称"
+                helperText={
+                  form.formState.errors.fromName?.message ??
+                  `发件邮箱固定使用 ${user.trim() || "SMTP 登录邮箱"}`
+                }
+                error={Boolean(form.formState.errors.fromName)}
+                fullWidth
+                required
+              />
+            )}
           />
           <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
             {configured && healthy ? (
@@ -263,7 +330,11 @@ export function SmtpSettings({
               type="submit"
               variant="outlined"
               startIcon={<SaveOutlinedIcon />}
-              disabled={busy || !settings.hasDedicatedEncryptionKey}
+              disabled={
+                busy ||
+                form.formState.isSubmitting ||
+                !settings.hasDedicatedEncryptionKey
+              }
             >
               保存 SMTP 配置
             </Button>
@@ -300,8 +371,6 @@ export function SmtpSettings({
 function SmtpOverview({
   settings,
   busy,
-  testEmail,
-  onTestEmailChange,
   onTest,
   onEnable,
   onEdit,
@@ -310,14 +379,21 @@ function SmtpOverview({
 }: {
   settings: PlatformSettingsView;
   busy: boolean;
-  testEmail: string;
-  onTestEmailChange: (value: string) => void;
-  onTest: () => Promise<void>;
+  onTest: (testEmail: string) => Promise<void>;
   onEnable: () => Promise<void>;
   onEdit: () => void;
   onDisconnect: () => Promise<void>;
   onOpenGuides: () => void;
 }) {
+  const form = useFormContext<MailSettingsFormValues>();
+  const testEmail = useWatch({ control: form.control, name: "testEmail" });
+
+  async function submitTest() {
+    const valid = await form.trigger("testEmail");
+    if (!valid) return;
+    await onTest(testEmail.trim());
+  }
+
   const active = settings.mailMode === "SMTP";
   return (
     <Stack spacing={2}>
@@ -352,17 +428,24 @@ function SmtpOverview({
           alignItems: "center",
         }}
       >
-        <TextField
-          label="测试收件邮箱"
-          type="email"
-          value={testEmail}
-          onChange={(event) => onTestEmailChange(event.target.value)}
-          fullWidth
+        <Controller
+          name="testEmail"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <TextField
+              {...field}
+              label="测试收件邮箱"
+              type="email"
+              error={Boolean(fieldState.error)}
+              helperText={fieldState.error?.message}
+              fullWidth
+            />
+          )}
         />
         <Button
           variant="outlined"
           startIcon={<ScienceOutlinedIcon />}
-          onClick={() => void onTest()}
+          onClick={() => void submitTest()}
           disabled={busy || !testEmail.trim()}
           sx={{ whiteSpace: "nowrap" }}
         >

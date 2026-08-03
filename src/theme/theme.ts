@@ -6,6 +6,7 @@ import {
   type ThemeOptions,
 } from "@mui/material/styles";
 import type {} from "@mui/x-data-grid/themeAugmentation";
+import { zhCN as dataGridZhCN } from "@mui/x-data-grid/locales";
 
 const commonThemeOptions: ThemeOptions = {
   shape: {
@@ -119,7 +120,7 @@ export const appTheme = createTheme({
     light: { palette: lightPalette },
     dark: { palette: darkPalette },
   },
-});
+}, dataGridZhCN);
 
 export function createEmbedTheme(mode: "light" | "dark") {
   return createTheme({

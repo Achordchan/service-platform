@@ -1,7 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouter } from "next/navigation";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
   Box,
@@ -38,6 +41,14 @@ const statusLabels = {
   ARCHIVED: "已归档",
 };
 
+const customerSpaceEditSchema = z.object({
+  name: z.string().trim().min(1, "请填写客户名称").max(120),
+  memberLimit: z.number().int().min(1).max(100),
+  status: z.enum(["ACTIVE", "SUSPENDED", "ARCHIVED"]),
+});
+
+type CustomerSpaceEditValues = z.infer<typeof customerSpaceEditSchema>;
+
 export function CustomerSpaceTable({
   spaces,
 }: {
@@ -48,7 +59,11 @@ export function CustomerSpaceTable({
   const [keyword, setKeyword] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<CustomerSpaceItem | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const editForm = useForm<CustomerSpaceEditValues>({
+    resolver: zodResolver(customerSpaceEditSchema),
+    defaultValues: { name: "", memberLimit: 1, status: "ACTIVE" },
+  });
+  const submitting = editForm.formState.isSubmitting;
   const [deleteTarget, setDeleteTarget] =
     useState<CustomerSpaceItem | null>(null);
   const [accountsTarget, setAccountsTarget] =
@@ -64,19 +79,18 @@ export function CustomerSpaceTable({
     );
   }, [keyword, spaces]);
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const submit = editForm.handleSubmit(async (values) => {
     if (!editing) return;
-    const data = new FormData(event.currentTarget);
-    setSubmitting(true);
+    if (values.memberLimit < editing.memberCount) {
+      editForm.setError("memberLimit", {
+        message: `成员上限不能低于当前账号数 ${editing.memberCount}`,
+      });
+      return;
+    }
     try {
       await staffApi(
         `/api/v1/admin/customer-spaces/${editing.id}`,
-        jsonRequest("PATCH", {
-          name: String(data.get("name") ?? "").trim(),
-          memberLimit: Number(data.get("memberLimit")),
-          status: String(data.get("status") ?? editing.status),
-        }),
+        jsonRequest("PATCH", values),
       );
       setEditing(null);
       toast.success("客户资料已更新");
@@ -85,9 +99,16 @@ export function CustomerSpaceTable({
       toast.error(
         submitError instanceof Error ? submitError.message : "客户更新失败",
       );
-    } finally {
-      setSubmitting(false);
     }
+  });
+
+  function openEditor(space: CustomerSpaceItem) {
+    editForm.reset({
+      name: space.name,
+      memberLimit: space.memberLimit,
+      status: space.status,
+    });
+    setEditing(space);
   }
 
   function removeSpace(space: CustomerSpaceItem) {
@@ -95,8 +116,7 @@ export function CustomerSpaceTable({
     setDeleteTarget(space);
   }
 
-  const columns = useMemo<GridColDef<CustomerSpaceItem>[]>(
-    () => [
+  const columns: GridColDef<CustomerSpaceItem>[] = [
       { field: "name", headerName: "客户", minWidth: 180, flex: 1 },
       { field: "slug", headerName: "空间标识", minWidth: 150, flex: 0.8 },
       {
@@ -171,7 +191,7 @@ export function CustomerSpaceTable({
               startIcon={<EditOutlinedIcon />}
               onClick={(event) => {
                 event.stopPropagation();
-                setEditing(row);
+                openEditor(row);
               }}
             >
               编辑
@@ -191,9 +211,7 @@ export function CustomerSpaceTable({
           </Stack>
         ),
       },
-    ],
-    [submitting],
-  );
+    ];
 
   return (
     <Stack spacing={2}>
@@ -302,7 +320,7 @@ export function CustomerSpaceTable({
                 <Button
                   variant="outlined"
                   startIcon={<EditOutlinedIcon />}
-                  onClick={() => setEditing(space)}
+                  onClick={() => openEditor(space)}
                 >
                   编辑
                 </Button>
@@ -310,7 +328,7 @@ export function CustomerSpaceTable({
                   variant="outlined"
                   color="inherit"
                   startIcon={<DeleteOutlinedIcon />}
-                  disabled={submitting}
+                  disabled={editForm.formState.isSubmitting}
                   onClick={() => removeSpace(space)}
                 >
                   删除
@@ -323,40 +341,56 @@ export function CustomerSpaceTable({
 
       <Dialog
         open={Boolean(editing)}
-        onClose={submitting ? undefined : () => setEditing(null)}
+        onClose={editForm.formState.isSubmitting ? undefined : () => setEditing(null)}
         fullWidth
         maxWidth="sm"
       >
         {editing ? (
           <Stack component="form" onSubmit={submit}>
-            {submitting ? <LinearProgress /> : null}
+            {editForm.formState.isSubmitting ? <LinearProgress /> : null}
             <DialogTitle>管理客户</DialogTitle>
             <DialogContent>
               <Stack spacing={2} sx={{ pt: 1 }}>
-                <TextField
+                <Controller
                   name="name"
-                  label="客户名称"
-                  defaultValue={editing.name}
-                  required
+                  control={editForm.control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      label="客户名称"
+                      required
+                      error={Boolean(editForm.formState.errors.name)}
+                      helperText={editForm.formState.errors.name?.message}
+                    />
+                  )}
                 />
-                <TextField
+                <Controller
                   name="memberLimit"
-                  label="成员上限"
-                  type="number"
-                  defaultValue={editing.memberLimit}
-                  slotProps={{ htmlInput: { min: editing.memberCount, max: 100 } }}
-                  required
+                  control={editForm.control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      label="成员上限"
+                      type="number"
+                      onChange={(event) => field.onChange(Number(event.target.value))}
+                      error={Boolean(editForm.formState.errors.memberLimit)}
+                      helperText={editForm.formState.errors.memberLimit?.message}
+                      slotProps={{ htmlInput: { min: editing.memberCount, max: 100 } }}
+                      required
+                    />
+                  )}
                 />
-                <TextField
+                <Controller
                   name="status"
-                  label="空间状态"
-                  select
-                  defaultValue={editing.status}
-                >
-                  <MenuItem value="ACTIVE">启用</MenuItem>
-                  <MenuItem value="SUSPENDED">暂停</MenuItem>
-                  <MenuItem value="ARCHIVED">归档</MenuItem>
-                </TextField>
+                  control={editForm.control}
+                  render={({ field }) => (
+                    <TextField {...field} label="空间状态" select>
+                      <MenuItem value="ACTIVE">启用</MenuItem>
+                      <MenuItem value="SUSPENDED">暂停</MenuItem>
+                      <MenuItem value="ARCHIVED">归档</MenuItem>
+                    </TextField>
+                  )}
+                />
                 <Alert severity="info">
                   当前共有 {editing.memberCount} 个客户账号。姓名、邮箱、负责人和普通成员请在“客户账号”中管理。
                 </Alert>
@@ -375,16 +409,16 @@ export function CustomerSpaceTable({
             <DialogActions sx={{ px: 3, pb: 3, justifyContent: "space-between" }}>
               <Button
                 color="inherit"
-                disabled={submitting}
+                disabled={editForm.formState.isSubmitting}
                 onClick={() => removeSpace(editing)}
               >
                 删除客户
               </Button>
               <Stack direction="row" spacing={1}>
-                <Button onClick={() => setEditing(null)} disabled={submitting}>
+                <Button onClick={() => setEditing(null)} disabled={editForm.formState.isSubmitting}>
                   取消
                 </Button>
-                <Button type="submit" variant="contained" disabled={submitting}>
+                <Button type="submit" variant="contained" disabled={editForm.formState.isSubmitting}>
                   保存
                 </Button>
               </Stack>

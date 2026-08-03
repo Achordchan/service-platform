@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
 import { ContentRiskPluginSettings } from "@/components/staff/content-risk-plugin-settings";
 import { staffApi } from "@/components/staff/staff-api";
+import { queryKeys } from "@/lib/query-keys";
 
 type PluginState = {
   enabled: boolean;
@@ -14,25 +16,19 @@ type PluginState = {
 
 export function ContentReviewWorkspace() {
   const router = useRouter();
-  const [plugin, setPlugin] = useState<PluginState | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [redirecting, setRedirecting] = useState(false);
+  const pluginQuery = useQuery({
+    queryKey: queryKeys.contentRisk.plugin,
+    queryFn: () =>
+      staffApi<PluginState>("/api/v1/admin/plugins/content-contact-risk"),
+  });
+  const plugin = pluginQuery.data;
+  const redirecting = plugin?.enabled === false;
 
   useEffect(() => {
-    staffApi<PluginState>("/api/v1/admin/plugins/content-contact-risk")
-      .then((result) => {
-        if (!result.enabled) {
-          setRedirecting(true);
-          router.replace("/staff/plugins");
-          return;
-        }
-        setPlugin(result);
-      })
-      .catch(() => setPlugin(null))
-      .finally(() => setLoading(false));
-  }, [router]);
+    if (redirecting) router.replace("/staff/plugins");
+  }, [redirecting, router]);
 
-  if (loading || redirecting) {
+  if (pluginQuery.isPending || redirecting) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
         <CircularProgress />
@@ -50,6 +46,11 @@ export function ContentReviewWorkspace() {
 
   return (
     <Stack spacing={2}>
+      {pluginQuery.isError ? (
+        <Alert severity="warning">
+          插件状态刷新失败，当前显示最近一次已确认的数据。
+        </Alert>
+      ) : null}
       <Typography variant="body2" color="text.secondary">
         监控和处理被风控拦截的内容。配置变更请在「插件中心」操作。
       </Typography>

@@ -1,8 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import {
-  Alert,
   Box,
   Button,
   Chip,
@@ -14,61 +17,38 @@ import {
   Paper,
   Stack,
   Switch,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
   TextField,
   Typography,
 } from "@mui/material";
+import { useAppConfirm } from "@/components/shared/confirm-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useToast } from "@/components/shared/toast-provider";
+import {
+  deliveryModeLabel,
+  MailMessageGrid,
+} from "@/components/staff/mail-message-grid";
 import { MailSettingsPanel } from "@/components/staff/mail-settings-panel";
 import type {
   MailMessageView,
   MailOutboxSummary,
   PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
+import { queryKeys } from "@/lib/query-keys";
 
 export type {
   MailMessageView,
   PlatformSettingsView,
 } from "@/components/staff/platform-settings-types";
 
-const statusLabel = {
-  QUEUED: "排队中",
-  PROCESSING: "发送中",
-  SENT: "已提交",
-  DELIVERY_DELAYED: "投递延迟",
-  DELIVERED: "已送达",
-  BOUNCED: "已退信",
-  COMPLAINED: "被投诉",
-  SUPPRESSED: "已拦截",
-  FAILED: "失败",
-  CANCELLED: "已取消",
-} as const;
-
-const statusColor = {
-  QUEUED: "default",
-  PROCESSING: "info",
-  SENT: "info",
-  DELIVERY_DELAYED: "warning",
-  DELIVERED: "success",
-  BOUNCED: "error",
-  COMPLAINED: "error",
-  SUPPRESSED: "error",
-  FAILED: "error",
-  CANCELLED: "default",
-} as const;
-
-const deliveryModeLabel = {
-  LOCAL_OUTBOX: "未启用",
-  RESEND: "Resend",
-  SMTP: "SMTP",
-} as const;
-
 export type PlatformSettingsSection = "site-mail" | "attachments" | "outbox";
+
+const attachmentPolicyFormSchema = z.object({
+  attachmentMaxSizeMb: z.number().int().min(1).max(100),
+  attachmentAllowedExtensions: z.string().trim().max(500),
+  customerReplyAttachmentsEnabled: z.boolean(),
+});
+
+type AttachmentPolicyFormValues = z.infer<typeof attachmentPolicyFormSchema>;
 
 export function PlatformSettingsManager({
   initialSettings,
@@ -89,15 +69,23 @@ export function PlatformSettingsManager({
   onSettingsChange?: (settings: PlatformSettingsView) => void;
   onMailOutboxSummaryChange?: (summary: MailOutboxSummary) => void;
 }) {
+  const confirm = useAppConfirm();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [settings, setSettings] = useState(initialSettings);
   const [messages, setMessages] = useState(initialMessages);
   const [mailOutboxSummary, setMailOutboxSummary] = useState(
     initialMailOutboxSummary,
   );
-  const [customerReplyAttachmentsEnabled, setCustomerReplyAttachmentsEnabled] =
-    useState(initialSettings.customerReplyAttachmentsEnabled);
-  const [submitting, setSubmitting] = useState(false);
+  const attachmentForm = useForm<AttachmentPolicyFormValues>({
+    resolver: zodResolver(attachmentPolicyFormSchema),
+    defaultValues: {
+      attachmentMaxSizeMb: initialSettings.attachmentMaxSizeMb,
+      attachmentAllowedExtensions: initialSettings.attachmentAllowedExtensions,
+      customerReplyAttachmentsEnabled:
+        initialSettings.customerReplyAttachmentsEnabled,
+    },
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [messageAction, setMessageAction] = useState<string | null>(null);
   const [selectedMessage, setSelectedMessage] =
@@ -109,32 +97,22 @@ export function PlatformSettingsManager({
   const showAttachments = activeSections.has("attachments");
   const showOutbox = activeSections.has("outbox");
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setSubmitting(true);
-    const form = new FormData(event.currentTarget);
-    const hasAttachmentFields = form.has("attachmentMaxSizeMb");
-    const payload: Record<string, unknown> = {};
-
-    if (hasAttachmentFields) {
-      payload.attachmentMaxSizeMb = Number(
-        form.get("attachmentMaxSizeMb") || 20,
-      );
-      payload.attachmentAllowedExtensions = String(
-        form.get("attachmentAllowedExtensions") ?? "",
-      ).trim();
-      payload.customerReplyAttachmentsEnabled =
-        customerReplyAttachmentsEnabled;
-    }
-
+  const handleAttachmentSubmit = attachmentForm.handleSubmit(async (values) => {
     try {
       const next = await staffApi<PlatformSettingsView>(
         "/api/v1/admin/settings",
-        jsonRequest("PATCH", payload),
+        jsonRequest("PATCH", values),
       );
       setSettings(next);
       onSettingsChange?.(next);
-      setCustomerReplyAttachmentsEnabled(next.customerReplyAttachmentsEnabled);
+      attachmentForm.reset({
+        attachmentMaxSizeMb: next.attachmentMaxSizeMb,
+        attachmentAllowedExtensions: next.attachmentAllowedExtensions,
+        customerReplyAttachmentsEnabled: next.customerReplyAttachmentsEnabled,
+      });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.attachmentPolicy,
+      });
       toast.success("附件策略已保存");
     } catch (submitError) {
       toast.error(
@@ -142,10 +120,8 @@ export function PlatformSettingsManager({
           ? submitError.message
           : "保存失败，请稍后重试",
       );
-    } finally {
-      setSubmitting(false);
     }
-  }
+  });
 
   async function refreshMessages() {
     setRefreshing(true);
@@ -187,7 +163,13 @@ export function PlatformSettingsManager({
   }
 
   async function cancelMessage(mailMessageId: string) {
-    if (!window.confirm("确认取消这封排队中的邮件？")) return;
+    const confirmed = await confirm({
+      title: "取消排队中的邮件？",
+      description: "取消后，这封邮件不会继续发送。",
+      confirmationText: "确认取消",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     setMessageAction(`${mailMessageId}:cancel`);
     try {
       await staffApi(`/api/v1/admin/mail-messages/${mailMessageId}`, {
@@ -222,36 +204,57 @@ export function PlatformSettingsManager({
           border: embedded ? 0 : undefined,
         }}
       >
-        <Stack key={`attachments-${settings.updatedAt ?? "init"}`} spacing={2.5} component="form" onSubmit={handleSubmit}>
-          <TextField
+        <Stack spacing={2.5} component="form" onSubmit={handleAttachmentSubmit}>
+          <Controller
             name="attachmentMaxSizeMb"
-            label="单文件大小上限（MB）"
-            type="number"
-            defaultValue={settings.attachmentMaxSizeMb}
-            fullWidth
-            slotProps={{ htmlInput: { min: 1, max: 100 } }}
+            control={attachmentForm.control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                label="单文件大小上限（MB）"
+                type="number"
+                onChange={(event) => field.onChange(Number(event.target.value))}
+                fullWidth
+                error={Boolean(attachmentForm.formState.errors.attachmentMaxSizeMb)}
+                helperText={attachmentForm.formState.errors.attachmentMaxSizeMb?.message}
+                slotProps={{ htmlInput: { min: 1, max: 100 } }}
+              />
+            )}
           />
-          <TextField
+          <Controller
             name="attachmentAllowedExtensions"
-            label="允许的后缀"
-            defaultValue={settings.attachmentAllowedExtensions}
-            fullWidth
-            helperText="用逗号分隔，例如 jpg,png,pdf,docx"
+            control={attachmentForm.control}
+            render={({ field }) => (
+              <TextField
+                {...field}
+                label="允许的后缀"
+                fullWidth
+                error={Boolean(attachmentForm.formState.errors.attachmentAllowedExtensions)}
+                helperText={
+                  attachmentForm.formState.errors.attachmentAllowedExtensions?.message ??
+                  "用逗号分隔，例如 jpg,png,pdf,docx"
+                }
+              />
+            )}
           />
           <FormControlLabel
             control={
-              <Switch
-                checked={customerReplyAttachmentsEnabled}
-                onChange={(event) =>
-                  setCustomerReplyAttachmentsEnabled(event.target.checked)
-                }
+              <Controller
+                name="customerReplyAttachmentsEnabled"
+                control={attachmentForm.control}
+                render={({ field }) => (
+                  <Switch
+                    checked={field.value}
+                    onChange={(_, checked) => field.onChange(checked)}
+                  />
+                )}
               />
             }
             label="允许客户在服务请求回复中添加附件 / 粘贴图片"
           />
           <Stack direction="row" spacing={1.5} sx={{ justifyContent: "flex-end" }}>
-            <Button type="submit" variant="contained" disabled={submitting}>
-              {submitting ? "保存中" : "保存附件策略"}
+            <Button type="submit" variant="contained" disabled={attachmentForm.formState.isSubmitting}>
+              {attachmentForm.formState.isSubmitting ? "保存中" : "保存附件策略"}
             </Button>
           </Stack>
         </Stack>
@@ -301,137 +304,14 @@ export function PlatformSettingsManager({
             {refreshing ? "刷新中" : "刷新"}
           </Button>
         </Stack>
-        {messages.length === 0 ? (
-          <Alert severity="info">暂无邮件记录</Alert>
-        ) : (
-          <Box sx={{ overflowX: "auto" }}>
-            <Table size="small">
-              <TableHead>
-                <TableRow>
-                  <TableCell>时间</TableCell>
-                  <TableCell>收件人</TableCell>
-                  <TableCell>主题</TableCell>
-                  <TableCell>方式</TableCell>
-                  <TableCell>状态</TableCell>
-                  <TableCell>操作</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {messages.map((message) => (
-                  <TableRow key={message.id} hover>
-                    <TableCell sx={{ whiteSpace: "nowrap" }}>
-                      {new Date(message.createdAt).toLocaleString("zh-CN")}
-                    </TableCell>
-                    <TableCell>{message.toEmail}</TableCell>
-                    <TableCell>
-                      <Typography sx={{ fontWeight: 600 }}>
-                        {message.subject}
-                      </Typography>
-                      <Typography color="text.secondary" variant="body2">
-                        {message.heading}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      {deliveryModeLabel[message.deliveryMode]}
-                    </TableCell>
-                    <TableCell>
-                      <Chip
-                        size="small"
-                        label={statusLabel[message.status]}
-                        color={statusColor[message.status]}
-                      />
-                      {message.status === "QUEUED" &&
-                      new Date(message.sendAfter).getTime() <=
-                        new Date(mailOutboxSummary.asOf).getTime() -
-                          2 * 60 * 1000 ? (
-                        <Typography
-                          color="error"
-                          variant="caption"
-                          sx={{ display: "block", fontWeight: 700 }}
-                        >
-                          已逾期超过 2 分钟
-                        </Typography>
-                      ) : null}
-                      {message.errorMessage ? (
-                        <Typography color="error" variant="caption" sx={{ display: "block" }}>
-                          {message.errorMessage}
-                        </Typography>
-                      ) : null}
-                      {message.lastEventAt ? (
-                        <Typography
-                          color="text.secondary"
-                          variant="caption"
-                          sx={{ display: "block" }}
-                        >
-                          {new Date(message.lastEventAt).toLocaleString("zh-CN")}
-                        </Typography>
-                      ) : null}
-                      {message.attemptCount > 0 ? (
-                        <Typography
-                          color="text.secondary"
-                          variant="caption"
-                          sx={{ display: "block" }}
-                        >
-                          尝试 {message.attemptCount} 次
-                        </Typography>
-                      ) : null}
-                    </TableCell>
-                    <TableCell>
-                      <Stack
-                        direction="row"
-                        spacing={0.5}
-                        useFlexGap
-                        sx={{ flexWrap: "wrap" }}
-                      >
-                        <Button
-                          size="small"
-                          onClick={() => setSelectedMessage(message)}
-                        >
-                          查看内容
-                        </Button>
-                        {message.actionUrl ? (
-                        <Button
-                          size="small"
-                          href={message.actionUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          打开链接
-                        </Button>
-                        ) : null}
-                        {message.status === "QUEUED" ||
-                        message.status === "FAILED" ||
-                        message.status === "CANCELLED" ? (
-                          <Button
-                            size="small"
-                            disabled={messageAction !== null}
-                            onClick={() => retryMessage(message.id)}
-                          >
-                            {messageAction === `${message.id}:retry`
-                              ? "入队中"
-                              : "重试"}
-                          </Button>
-                        ) : null}
-                        {message.status === "QUEUED" ? (
-                          <Button
-                            size="small"
-                            color="inherit"
-                            disabled={messageAction !== null}
-                            onClick={() => cancelMessage(message.id)}
-                          >
-                            {messageAction === `${message.id}:cancel`
-                              ? "取消中"
-                              : "取消"}
-                          </Button>
-                        ) : null}
-                      </Stack>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </Box>
-        )}
+        <MailMessageGrid
+          rows={messages}
+          asOf={mailOutboxSummary.asOf}
+          messageAction={messageAction}
+          onView={setSelectedMessage}
+          onRetry={retryMessage}
+          onCancel={cancelMessage}
+        />
       </Paper>
       ) : null}
 

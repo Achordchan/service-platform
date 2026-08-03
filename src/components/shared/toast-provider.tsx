@@ -4,16 +4,19 @@ import {
   createContext,
   useCallback,
   useContext,
+  useId,
   useMemo,
-  useRef,
-  useState,
 } from "react";
-import { Alert, Box, Snackbar, type AlertColor } from "@mui/material";
+import { Alert, type AlertColor } from "@mui/material";
+import { useColorScheme } from "@mui/material/styles";
+import { Toaster, toast as sonnerToast } from "sonner";
 import type {
   DeliveryFeedback,
   DeliveryFeedbackDetail,
 } from "@/lib/operation-feedback";
 import { deliveryFeedbackMessage } from "@/lib/operation-feedback";
+
+type ToastId = string | number;
 
 type ToastOptions = {
   severity?: AlertColor;
@@ -21,25 +24,17 @@ type ToastOptions = {
   action?: React.ReactNode;
 };
 
-type ToastItem = {
-  id: number;
-  message: string;
-  severity: AlertColor;
-  duration: number;
-  action?: React.ReactNode;
-};
-
 type ToastContextValue = {
-  show: (message: string, options?: ToastOptions) => number;
-  success: (message: string) => number;
-  error: (message: string) => number;
-  warning: (message: string) => number;
-  info: (message: string) => number;
+  show: (message: string, options?: ToastOptions) => ToastId;
+  success: (message: string) => ToastId;
+  error: (message: string) => ToastId;
+  warning: (message: string) => ToastId;
+  info: (message: string) => ToastId;
   delivery: (
     feedback?: DeliveryFeedback | null,
     detail?: DeliveryFeedbackDetail,
-  ) => number | null;
-  dismiss: (id: number) => void;
+  ) => ToastId | null;
+  dismiss: (id: ToastId) => void;
 };
 
 const ToastContext = createContext<ToastContextValue | null>(null);
@@ -52,30 +47,44 @@ const defaultDurations: Record<AlertColor, number> = {
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const nextId = useRef(0);
-  const [items, setItems] = useState<ToastItem[]>([]);
+  const toasterId = useId();
+  const { mode, systemMode } = useColorScheme();
+  const toasterTheme = mode === "system" ? systemMode : mode;
 
-  const dismiss = useCallback((id: number) => {
-    setItems((current) => current.filter((item) => item.id !== id));
+  const dismiss = useCallback((id: ToastId) => {
+    sonnerToast.dismiss(id);
   }, []);
 
   const show = useCallback((message: string, options: ToastOptions = {}) => {
     const normalized = message.trim();
     if (!normalized) return -1;
     const severity = options.severity ?? "info";
-    const id = ++nextId.current;
-    setItems((current) => [
-      ...current.slice(-3),
+    return sonnerToast.custom(
+      (id) => (
+        <Alert
+          severity={severity}
+          variant="filled"
+          action={options.action}
+          onClose={() => sonnerToast.dismiss(id)}
+          sx={{
+            width: "100%",
+            alignItems: "flex-start",
+            boxShadow: 3,
+            "& .MuiAlert-message": {
+              minWidth: 0,
+              overflowWrap: "anywhere",
+            },
+          }}
+        >
+          {normalized}
+        </Alert>
+      ),
       {
-        id,
-        message: normalized,
-        severity,
         duration: options.duration ?? defaultDurations[severity],
-        action: options.action,
+        toasterId,
       },
-    ]);
-    return id;
-  }, []);
+    );
+  }, [toasterId]);
 
   const value = useMemo<ToastContextValue>(
     () => ({
@@ -96,57 +105,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={value}>
       {children}
-      <Box
-        aria-label="操作消息"
-        sx={(theme) => ({
-          position: "fixed",
-          zIndex: theme.zIndex.snackbar,
-          top: { xs: 12, sm: 20 },
-          right: { xs: 12, sm: 20 },
-          left: { xs: 12, sm: "auto" },
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-end",
-          gap: 1,
-          pointerEvents: "none",
-        })}
-      >
-        {items.map((item) => (
-          <Snackbar
-            key={item.id}
-            open
-            autoHideDuration={item.duration}
-            onClose={(_, reason) => {
-              if (reason !== "clickaway") dismiss(item.id);
-            }}
-            sx={{
-              position: "static",
-              transform: "none",
-              width: { xs: "100%", sm: 400 },
-              maxWidth: "100%",
-              pointerEvents: "auto",
-            }}
-          >
-            <Alert
-              severity={item.severity}
-              variant="filled"
-              action={item.action}
-              onClose={() => dismiss(item.id)}
-              sx={{
-                width: "100%",
-                alignItems: "flex-start",
-                boxShadow: 3,
-                "& .MuiAlert-message": {
-                  minWidth: 0,
-                  overflowWrap: "anywhere",
-                },
-              }}
-            >
-              {item.message}
-            </Alert>
-          </Snackbar>
-        ))}
-      </Box>
+      <Toaster
+        id={toasterId}
+        theme={toasterTheme ?? "light"}
+        position="top-right"
+        expand
+        visibleToasts={4}
+        gap={8}
+        offset={{ top: 20, right: 20 }}
+        mobileOffset={{ top: 12, right: 12, left: 12 }}
+        containerAriaLabel="操作消息"
+        style={{ "--width": "400px" } as React.CSSProperties}
+      />
     </ToastContext.Provider>
   );
 }

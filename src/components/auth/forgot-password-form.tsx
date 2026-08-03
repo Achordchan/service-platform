@@ -9,48 +9,68 @@ import {
   Typography,
 } from "@mui/material";
 import NextLink from "next/link";
-import { useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import { authClient } from "@/lib/auth-client";
 
-export function ForgotPasswordForm() {
-  const [email, setEmail] = useState("");
-  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">(
-    "idle",
-  );
+const forgotPasswordSchema = z.object({
+  email: z.email("请输入有效邮箱"),
+});
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setState("sending");
+type ForgotPasswordValues = z.infer<typeof forgotPasswordSchema>;
+
+export function ForgotPasswordForm() {
+  const {
+    control,
+    handleSubmit,
+    setError,
+    clearErrors,
+    formState: { errors, isSubmitSuccessful, isSubmitting },
+  } = useForm<ForgotPasswordValues>({
+    resolver: zodResolver(forgotPasswordSchema),
+    defaultValues: { email: "" },
+  });
+
+  const submit = handleSubmit(async ({ email }) => {
+    clearErrors("root");
     const result = await authClient.requestPasswordReset({
       email,
       redirectTo: "/reset-password",
     });
-    setState(result.error ? "error" : "sent");
-  }
+    if (result.error) {
+      setError("root", { message: "暂时无法发送，请稍后重试。" });
+    }
+  });
 
   return (
     <Stack component="form" onSubmit={submit} spacing={2.25}>
-      {state === "sent" ? (
+      {isSubmitSuccessful && !errors.root ? (
         <Alert severity="success">
           若该邮箱存在，我们已发送密码重置链接。
         </Alert>
       ) : null}
-      {state === "error" ? (
-        <Alert severity="error">暂时无法发送，请稍后重试。</Alert>
-      ) : null}
-      <TextField
-        label="邮箱"
-        type="email"
-        value={email}
-        onChange={(event) => setEmail(event.target.value)}
-        required
+      {errors.root?.message ? <Alert severity="error">{errors.root.message}</Alert> : null}
+      <Controller
+        name="email"
+        control={control}
+        render={({ field }) => (
+          <TextField
+            {...field}
+            label="邮箱"
+            type="email"
+            required
+            error={Boolean(errors.email)}
+            helperText={errors.email?.message}
+          />
+        )}
       />
       <Button
         type="submit"
         variant="contained"
-        disabled={state === "sending"}
+        disabled={isSubmitting}
       >
-        {state === "sending" ? "正在发送" : "发送重置链接"}
+        {isSubmitting ? "正在发送" : "发送重置链接"}
       </Button>
       <Typography variant="body2" sx={{ textAlign: "center" }}>
         <Link component={NextLink} href="/login">

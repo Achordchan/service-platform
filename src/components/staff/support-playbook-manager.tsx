@@ -1,10 +1,15 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { z } from "zod";
 import {
   Accordion,
   AccordionDetails,
   AccordionSummary,
+  Alert,
   Box,
   Button,
   Chip,
@@ -30,13 +35,19 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
 import RestoreOutlinedIcon from "@mui/icons-material/RestoreOutlined";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
+import { useAppConfirm } from "@/components/shared/confirm-provider";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
-import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import {
+  jsonRequest,
+  staffApi,
+  type ApiRequestOptions,
+} from "@/components/staff/staff-api";
 import {
   buildDefaultSupportReplyPlaybookContent,
   type SupportReplyPlaybookView,
 } from "@/lib/support-reply-playbooks";
+import { queryKeys } from "@/lib/query-keys";
 
 const categoryLabels = {
   REMOTE: "远程协助",
@@ -49,88 +60,140 @@ type EditorState =
   | { mode: "edit"; playbook: SupportReplyPlaybookView }
   | null;
 
-function lines(value: FormDataEntryValue | null) {
-  return String(value ?? "")
+function lines(value: string) {
+  return value
     .split("\n")
     .map((item) => item.trim())
     .filter(Boolean);
 }
+
+const playbookFormSchema = z.object({
+  category: z.enum(["REMOTE", "DIAGNOSTIC", "INFORMATION"]),
+  title: z.string().trim().min(1, "请填写指南名称").max(120),
+  content: z.string().trim().min(1, "请填写指南正文").max(50_000),
+  safetyNotesText: z.string(),
+  active: z.boolean(),
+  sortOrder: z.number().int().min(-10_000).max(10_000),
+});
+
+type PlaybookFormValues = z.infer<typeof playbookFormSchema>;
 
 export function SupportPlaybookManager({
   initialPlaybooks,
 }: {
   initialPlaybooks: SupportReplyPlaybookView[];
 }) {
+  const confirm = useAppConfirm();
   const toast = useToast();
-  const [playbooks, setPlaybooks] = useState(initialPlaybooks);
+  const queryClient = useQueryClient();
+  const playbooksQuery = useQuery({
+    queryKey: queryKeys.supportPlaybooks.admin,
+    queryFn: ({ signal }) =>
+      staffApi<SupportReplyPlaybookView[]>(
+        "/api/v1/admin/support-playbooks",
+        { signal },
+      ),
+    initialData: initialPlaybooks,
+    staleTime: 30_000,
+  });
+  const actionMutation = useMutation({
+    mutationFn: ({
+      action,
+    }: {
+      key: string;
+      action: () => Promise<SupportReplyPlaybookView[]>;
+    }) => action(),
+    onSuccess: (next) => {
+      queryClient.setQueryData(queryKeys.supportPlaybooks.admin, next);
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.supportPlaybooks.available,
+      });
+    },
+  });
   const [editor, setEditor] = useState<EditorState>(null);
-  const [editorContent, setEditorContent] = useState("");
   const [imageUploading, setImageUploading] = useState(false);
   const [deletedOpen, setDeletedOpen] = useState(false);
-  const [busyKey, setBusyKey] = useState("");
+  const busyKey = actionMutation.isPending
+    ? (actionMutation.variables?.key ?? "action")
+    : "";
+  const playbooks = playbooksQuery.data ?? initialPlaybooks;
   const visiblePlaybooks = playbooks.filter((playbook) => !playbook.deletedAt);
   const deletedPlaybooks = playbooks.filter((playbook) => playbook.deletedAt);
+  const form = useForm<PlaybookFormValues>({
+    resolver: zodResolver(playbookFormSchema),
+    defaultValues: {
+      category: "INFORMATION",
+      title: "",
+      content: "",
+      safetyNotesText: "",
+      active: true,
+      sortOrder: 10,
+    },
+  });
 
   const uploadImage = useCallback(async (file: File) => {
     const form = new FormData();
     form.append("file", file);
-    const response = await fetch("/api/v1/admin/support-playbook-assets", {
-      method: "POST",
-      body: form,
-    });
-    const payload = (await response.json().catch(() => ({}))) as {
-      data?: { id?: string };
-      error?: { message?: string };
-    };
-    if (!response.ok || !payload.data?.id) {
-      throw new Error(payload.error?.message || "图片上传失败");
-    }
-    return { attachmentId: payload.data.id };
+    const result = await staffApi<{ id: string }>(
+      "/api/v1/admin/support-playbook-assets",
+      { method: "POST", body: form },
+    );
+    return { attachmentId: result.id };
   }, []);
 
   function openCreate() {
-    setEditorContent("");
+    form.reset({
+      category: "INFORMATION",
+      title: "",
+      content: "",
+      safetyNotesText: "",
+      active: true,
+      sortOrder: (visiblePlaybooks.at(-1)?.sortOrder ?? 0) + 10,
+    });
     setEditor({ mode: "create" });
   }
 
   function openEdit(playbook: SupportReplyPlaybookView) {
-    setEditorContent(
-      playbook.content || buildDefaultSupportReplyPlaybookContent(playbook),
-    );
+    form.reset({
+      category: playbook.category,
+      title: playbook.title,
+      content:
+        playbook.content || buildDefaultSupportReplyPlaybookContent(playbook),
+      safetyNotesText: playbook.safetyNotes.join("\n"),
+      active: playbook.active,
+      sortOrder: playbook.sortOrder,
+    });
     setEditor({ mode: "edit", playbook });
   }
 
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const submit = form.handleSubmit(async (values) => {
     if (!editor || imageUploading) return;
-    const form = new FormData(event.currentTarget);
     const payload = {
-      category: String(form.get("category")),
-      title: String(form.get("title") ?? "").trim(),
-      content: editorContent,
-      safetyNotes: lines(form.get("safetyNotes")),
-      active: form.get("active") === "on",
-      sortOrder: Number(form.get("sortOrder") ?? 0),
+      category: values.category,
+      title: values.title,
+      content: values.content,
+      safetyNotes: lines(values.safetyNotesText),
+      active: values.active,
+      sortOrder: values.sortOrder,
     };
     const actionKey = editor.mode === "create" ? "create" : editor.playbook.key;
-    setBusyKey(actionKey);
     try {
-      setPlaybooks(
-        await staffApi<SupportReplyPlaybookView[]>(
+      await actionMutation.mutateAsync({
+        key: actionKey,
+        action: () =>
+          staffApi<SupportReplyPlaybookView[]>(
           editor.mode === "create"
             ? "/api/v1/admin/support-playbooks"
             : `/api/v1/admin/support-playbooks/${encodeURIComponent(editor.playbook.key)}`,
           jsonRequest(editor.mode === "create" ? "POST" : "PATCH", payload),
-        ),
-      );
+          ),
+      });
       setEditor(null);
       toast.success("回复指南已保存");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "回复指南保存失败");
-    } finally {
-      setBusyKey("");
     }
-  }
+  });
 
   async function updateState(playbook: SupportReplyPlaybookView) {
     await runAction(
@@ -142,7 +205,13 @@ export function SupportPlaybookManager({
   }
 
   async function reset(playbook: SupportReplyPlaybookView) {
-    if (!window.confirm(`确认将“${playbook.title}”恢复为系统默认内容？`)) return;
+    const confirmed = await confirm({
+      title: "恢复系统默认内容？",
+      description: `“${playbook.title}”的当前内容将被系统默认内容覆盖。`,
+      confirmationText: "恢复默认",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     await runAction(
       playbook.key,
       `/api/v1/admin/support-playbooks/${encodeURIComponent(playbook.key)}/reset`,
@@ -153,7 +222,13 @@ export function SupportPlaybookManager({
   }
 
   async function remove(playbook: SupportReplyPlaybookView) {
-    if (!window.confirm(`确认删除回复指南“${playbook.title}”？历史消息不会受影响。`)) return;
+    const confirmed = await confirm({
+      title: `删除回复指南“${playbook.title}”？`,
+      description: "指南将移入已删除列表，历史消息不会受影响。",
+      confirmationText: "确认删除",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
     await runAction(
       playbook.key,
       `/api/v1/admin/support-playbooks/${encodeURIComponent(playbook.key)}`,
@@ -176,22 +251,20 @@ export function SupportPlaybookManager({
   async function runAction(
     key: string,
     url: string,
-    init: RequestInit,
+    init: ApiRequestOptions,
     fallbackError: string,
     successText?: string,
   ) {
-    setBusyKey(key);
     try {
-      setPlaybooks(await staffApi<SupportReplyPlaybookView[]>(url, init));
+      await actionMutation.mutateAsync({
+        key,
+        action: () => staffApi<SupportReplyPlaybookView[]>(url, init),
+      });
       if (successText) toast.success(successText);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : fallbackError);
-    } finally {
-      setBusyKey("");
     }
   }
-
-  const editing = editor?.mode === "edit" ? editor.playbook : null;
 
   return (
     <Stack spacing={2.5}>
@@ -222,6 +295,18 @@ export function SupportPlaybookManager({
         </Stack>
       </Stack>
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+        {playbooksQuery.error ? (
+          <Alert
+            severity="warning"
+            action={
+              <Button onClick={() => void playbooksQuery.refetch()}>
+                重试
+              </Button>
+            }
+          >
+            回复指南刷新失败，当前仍显示最近一次数据。
+          </Alert>
+        ) : null}
         {visiblePlaybooks.map((playbook, index) => (
           <Box key={playbook.key}>
             {index > 0 ? <Divider /> : null}
@@ -278,57 +363,47 @@ export function SupportPlaybookManager({
 
       <Dialog open={Boolean(editor)} onClose={busyKey ? undefined : () => setEditor(null)} fullWidth maxWidth="md">
         {editor ? (
-          <Stack component="form" onSubmit={submit} sx={{ maxHeight: "min(860px, 94vh)" }}>
+          <Stack component="form" noValidate onSubmit={submit} sx={{ maxHeight: "min(860px, 94vh)" }}>
             {busyKey ? <LinearProgress /> : null}
             <DialogTitle>{editor.mode === "create" ? "新建回复指南" : "编辑回复指南"}</DialogTitle>
             <DialogContent dividers sx={{ overflowY: "auto" }}>
               <Stack spacing={2.25} sx={{ pt: 0.5 }}>
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
-                  <TextField name="title" label="指南名称" defaultValue={editing?.title ?? ""} required fullWidth />
-                  <TextField name="category" label="分类" defaultValue={editing?.category ?? "INFORMATION"} select required sx={{ minWidth: { sm: 180 } }}>
-                    {Object.entries(categoryLabels).map(([value, label]) => (
-                      <MenuItem key={value} value={value}>{label}</MenuItem>
-                    ))}
-                  </TextField>
+                  <Controller name="title" control={form.control} render={({ field }) => (
+                    <TextField {...field} label="指南名称" required fullWidth error={Boolean(form.formState.errors.title)} helperText={form.formState.errors.title?.message} />
+                  )} />
+                  <Controller name="category" control={form.control} render={({ field }) => (
+                    <TextField {...field} label="分类" select required sx={{ minWidth: { sm: 180 } }}>
+                      {Object.entries(categoryLabels).map(([value, label]) => (
+                        <MenuItem key={value} value={value}>{label}</MenuItem>
+                      ))}
+                    </TextField>
+                  )} />
                 </Stack>
                 <Box>
                   <Typography variant="subtitle2" sx={{ mb: 0.75 }}>指南正文 *</Typography>
-                  <RichTextEditor
-                    value={editorContent}
-                    onChange={setEditorContent}
-                    placeholder="输入客户需要查看的完整处理说明，可使用列表、链接和图片"
-                    minHeight={220}
-                    maxHeight={420}
-                    uploadImage={uploadImage}
-                    onImageUploadingChange={setImageUploading}
-                  />
+                  <Controller name="content" control={form.control} render={({ field }) => (
+                    <RichTextEditor value={field.value} onChange={field.onChange} placeholder="输入客户需要查看的完整处理说明，可使用列表、链接和图片" minHeight={220} maxHeight={420} uploadImage={uploadImage} onImageUploadingChange={setImageUploading} />
+                  )} />
+                  {form.formState.errors.content?.message ? (
+                    <Typography variant="caption" color="error">{form.formState.errors.content.message}</Typography>
+                  ) : null}
                 </Box>
-                <TextField
-                  name="safetyNotes"
-                  label="安全边界"
-                  helperText="每行一条；没有安全提示时可以留空"
-                  defaultValue={editing?.safetyNotes.join("\n") ?? ""}
-                  multiline
-                  minRows={3}
-                />
+                <Controller name="safetyNotesText" control={form.control} render={({ field }) => (
+                  <TextField {...field} label="安全边界" helperText="每行一条；没有安全提示时可以留空" multiline minRows={3} />
+                )} />
                 <Accordion variant="outlined" disableGutters>
                   <AccordionSummary expandIcon={<ExpandMoreOutlinedIcon />}>
                     <Typography sx={{ fontWeight: 650 }}>高级设置</Typography>
                   </AccordionSummary>
                   <AccordionDetails>
                     <Stack spacing={2}>
-                      <TextField
-                        name="sortOrder"
-                        label="排序值"
-                        type="number"
-                        defaultValue={editing?.sortOrder ?? (visiblePlaybooks.at(-1)?.sortOrder ?? 0) + 10}
-                        helperText="数值越小越靠前"
-                        required
-                      />
-                      <FormControlLabel
-                        control={<Switch name="active" defaultChecked={editing?.active ?? true} />}
-                        label="启用后允许后台人员发送"
-                      />
+                      <Controller name="sortOrder" control={form.control} render={({ field }) => (
+                        <TextField {...field} label="排序值" type="number" onChange={(event) => field.onChange(Number(event.target.value))} error={Boolean(form.formState.errors.sortOrder)} helperText={form.formState.errors.sortOrder?.message ?? "数值越小越靠前"} required />
+                      )} />
+                      <Controller name="active" control={form.control} render={({ field }) => (
+                        <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="启用后允许后台人员发送" />
+                      )} />
                     </Stack>
                   </AccordionDetails>
                 </Accordion>

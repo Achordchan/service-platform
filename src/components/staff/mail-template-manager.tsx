@@ -1,6 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Box,
   Button,
@@ -15,36 +19,64 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import { useAppConfirm } from "@/components/shared/confirm-provider";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { MailTemplateView } from "@/components/staff/platform-settings-types";
 
+const mailTemplateFormSchema = z.object({
+  subject: z.string().trim().min(1, "请填写邮件主题").max(200),
+  previewText: z.string().trim().min(1, "请填写预览文字").max(240),
+  heading: z.string().trim().min(1, "请填写正文标题").max(160),
+  body: z.string().trim().min(1, "请填写正文").max(3000),
+  actionLabel: z.string().trim().max(80),
+});
+const testEmailFormSchema = z.object({
+  email: z.email("请输入有效邮箱"),
+});
+
+type MailTemplateFormValues = z.infer<typeof mailTemplateFormSchema>;
+type TestEmailFormValues = z.infer<typeof testEmailFormSchema>;
+
 function MailTemplateEditor({
   template,
   currentAdminEmail,
-  busy,
-  onBusy,
   onTemplatesChange,
   onMessage,
 }: {
   template: MailTemplateView;
   currentAdminEmail: string;
-  busy: string | null;
-  onBusy: (value: string | null) => void;
   onTemplatesChange: (templates: MailTemplateView[]) => void;
   onMessage: (message: { type: "success" | "error"; text: string }) => void;
 }) {
-  const [testEmail, setTestEmail] = useState(currentAdminEmail);
-  const [subject, setSubject] = useState(template.content.subject);
-  const [previewText, setPreviewText] = useState(
-    template.content.previewText,
-  );
-  const [heading, setHeading] = useState(template.content.heading);
-  const [body, setBody] = useState(template.content.body);
-  const [actionLabel, setActionLabel] = useState(
-    template.content.actionLabel ?? "",
-  );
+  const confirm = useAppConfirm();
+  const templateForm = useForm<MailTemplateFormValues>({
+    resolver: zodResolver(mailTemplateFormSchema),
+    defaultValues: {
+      subject: template.content.subject,
+      previewText: template.content.previewText,
+      heading: template.content.heading,
+      body: template.content.body,
+      actionLabel: template.content.actionLabel ?? "",
+    },
+  });
+  const testForm = useForm<TestEmailFormValues>({
+    resolver: zodResolver(testEmailFormSchema),
+    defaultValues: { email: currentAdminEmail },
+  });
+  const subject = useWatch({ control: templateForm.control, name: "subject" });
+  const previewText = useWatch({ control: templateForm.control, name: "previewText" });
+  const heading = useWatch({ control: templateForm.control, name: "heading" });
+  const body = useWatch({ control: templateForm.control, name: "body" });
+  const actionLabel = useWatch({ control: templateForm.control, name: "actionLabel" });
   const actionKey = `${template.key}:action`;
+  const actionMutation = useMutation({
+    mutationFn: ({ run }: { key: string; run: () => Promise<unknown> }) =>
+      run(),
+  });
+  const busy = actionMutation.isPending
+    ? (actionMutation.variables?.key ?? actionKey)
+    : null;
   const sampleByKey = Object.fromEntries(
     template.variables.map((variable) => [variable.key, variable.sample]),
   );
@@ -54,79 +86,81 @@ function MailTemplateEditor({
       (match, variable: string) => sampleByKey[variable] ?? match,
     );
 
-  async function saveTemplate(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    onBusy(actionKey);
-    const form = new FormData(event.currentTarget);
+  async function execute<T>(
+    run: () => Promise<T>,
+    fallbackError: string,
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     try {
-      const templates = await staffApi<MailTemplateView[]>(
-        `/api/v1/admin/mail/templates/${encodeURIComponent(template.key)}`,
-        jsonRequest("PATCH", {
-          subject: String(form.get("subject") ?? "").trim(),
-          previewText: String(form.get("previewText") ?? "").trim(),
-          heading: String(form.get("heading") ?? "").trim(),
-          body: String(form.get("body") ?? "").trim(),
-          actionLabel:
-            String(form.get("actionLabel") ?? "").trim() || null,
-        }),
-      );
-      onTemplatesChange(templates);
-      onMessage({ type: "success", text: `${template.name}已保存` });
+      const value = (await actionMutation.mutateAsync({
+        key: actionKey,
+        run,
+      })) as T;
+      return { ok: true, value };
     } catch (error) {
       onMessage({
         type: "error",
-        text: error instanceof Error ? error.message : "模板保存失败",
+        text: error instanceof Error ? error.message : fallbackError,
       });
-    } finally {
-      onBusy(null);
+      return { ok: false };
     }
   }
+
+  const saveTemplate = templateForm.handleSubmit(async (values) => {
+    const result = await execute(
+      () =>
+        staffApi<MailTemplateView[]>(
+          `/api/v1/admin/mail/templates/${encodeURIComponent(template.key)}`,
+          jsonRequest("PATCH", {
+            ...values,
+            actionLabel: values.actionLabel || null,
+          }),
+        ),
+      "模板保存失败",
+    );
+    if (!result.ok) return;
+    onTemplatesChange(result.value);
+    onMessage({ type: "success", text: `${template.name}已保存` });
+  });
 
   async function resetTemplate() {
-    if (!window.confirm(`确认将“${template.name}”恢复为系统默认内容？`)) {
-      return;
-    }
-    onBusy(actionKey);
-    try {
-      const templates = await staffApi<MailTemplateView[]>(
-        `/api/v1/admin/mail/templates/${encodeURIComponent(template.key)}`,
-        jsonRequest("DELETE"),
-      );
-      onTemplatesChange(templates);
-      onMessage({ type: "success", text: `${template.name}已恢复默认` });
-    } catch (error) {
-      onMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "恢复默认失败",
-      });
-    } finally {
-      onBusy(null);
-    }
+    const confirmed = await confirm({
+      title: "恢复系统默认模板？",
+      description: `“${template.name}”的自定义内容将被系统默认内容覆盖。`,
+      confirmationText: "恢复默认",
+      confirmationButtonProps: { color: "error", variant: "contained" },
+    });
+    if (!confirmed) return;
+    const result = await execute(
+      () =>
+        staffApi<MailTemplateView[]>(
+          `/api/v1/admin/mail/templates/${encodeURIComponent(template.key)}`,
+          jsonRequest("DELETE"),
+        ),
+      "恢复默认失败",
+    );
+    if (!result.ok) return;
+    onTemplatesChange(result.value);
+    onMessage({ type: "success", text: `${template.name}已恢复默认` });
   }
 
-  async function sendTest() {
-    onBusy(actionKey);
-    try {
-      await staffApi(
-        "/api/v1/admin/mail/test",
-        jsonRequest("POST", {
-          to: testEmail.trim(),
-          templateKey: template.key,
-        }),
-      );
-      onMessage({
-        type: "success",
-        text: `${template.name}测试邮件已加入队列`,
-      });
-    } catch (error) {
-      onMessage({
-        type: "error",
-        text: error instanceof Error ? error.message : "测试邮件发送失败",
-      });
-    } finally {
-      onBusy(null);
-    }
-  }
+  const sendTest = testForm.handleSubmit(async ({ email }) => {
+    const result = await execute(
+      () =>
+        staffApi(
+          "/api/v1/admin/mail/test",
+          jsonRequest("POST", {
+            to: email.trim(),
+            templateKey: template.key,
+          }),
+        ),
+      "测试邮件发送失败",
+    );
+    if (!result.ok) return;
+    onMessage({
+      type: "success",
+      text: `${template.name}测试邮件已加入队列`,
+    });
+  });
 
   return (
     <Stack
@@ -156,46 +190,40 @@ function MailTemplateEditor({
           ))}
         </Stack>
       ) : null}
-      <TextField
+      <Controller
         name="subject"
-        label="邮件主题"
-        value={subject}
-        onChange={(event) => setSubject(event.target.value)}
-        required
-        fullWidth
+        control={templateForm.control}
+        render={({ field }) => (
+          <TextField {...field} label="邮件主题" required fullWidth error={Boolean(templateForm.formState.errors.subject)} helperText={templateForm.formState.errors.subject?.message} />
+        )}
       />
-      <TextField
+      <Controller
         name="previewText"
-        label="收件箱预览文字"
-        value={previewText}
-        onChange={(event) => setPreviewText(event.target.value)}
-        required
-        fullWidth
+        control={templateForm.control}
+        render={({ field }) => (
+          <TextField {...field} label="收件箱预览文字" required fullWidth error={Boolean(templateForm.formState.errors.previewText)} helperText={templateForm.formState.errors.previewText?.message} />
+        )}
       />
-      <TextField
+      <Controller
         name="heading"
-        label="正文标题"
-        value={heading}
-        onChange={(event) => setHeading(event.target.value)}
-        required
-        fullWidth
+        control={templateForm.control}
+        render={({ field }) => (
+          <TextField {...field} label="正文标题" required fullWidth error={Boolean(templateForm.formState.errors.heading)} helperText={templateForm.formState.errors.heading?.message} />
+        )}
       />
-      <TextField
+      <Controller
         name="body"
-        label="正文"
-        value={body}
-        onChange={(event) => setBody(event.target.value)}
-        required
-        multiline
-        minRows={4}
-        fullWidth
+        control={templateForm.control}
+        render={({ field }) => (
+          <TextField {...field} label="正文" required multiline minRows={4} fullWidth error={Boolean(templateForm.formState.errors.body)} helperText={templateForm.formState.errors.body?.message} />
+        )}
       />
-      <TextField
+      <Controller
         name="actionLabel"
-        label="按钮文字"
-        value={actionLabel}
-        onChange={(event) => setActionLabel(event.target.value)}
-        fullWidth
+        control={templateForm.control}
+        render={({ field }) => (
+          <TextField {...field} label="按钮文字" fullWidth error={Boolean(templateForm.formState.errors.actionLabel)} helperText={templateForm.formState.errors.actionLabel?.message} />
+        )}
       />
 
       <Box
@@ -298,18 +326,18 @@ function MailTemplateEditor({
 
       <Divider />
       <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5}>
-        <TextField
-          label="测试收件邮箱"
-          type="email"
-          value={testEmail}
-          onChange={(event) => setTestEmail(event.target.value)}
-          fullWidth
+        <Controller
+          name="email"
+          control={testForm.control}
+          render={({ field }) => (
+            <TextField {...field} label="测试收件邮箱" type="email" fullWidth error={Boolean(testForm.formState.errors.email)} helperText={testForm.formState.errors.email?.message} />
+          )}
         />
         <Button
           type="button"
           variant="outlined"
-          onClick={sendTest}
-          disabled={busy !== null || !testEmail.trim()}
+          onClick={() => void sendTest()}
+          disabled={busy !== null}
           sx={{ whiteSpace: "nowrap" }}
         >
           发送测试
@@ -330,7 +358,6 @@ export function MailTemplateManager({
 }) {
   const toast = useToast();
   const [templates, setTemplates] = useState(initialTemplates);
-  const [busy, setBusy] = useState<string | null>(null);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const selectedTemplate =
     templates.find((template) => template.key === selectedKey) ?? null;
@@ -421,8 +448,6 @@ export function MailTemplateManager({
               key={`${selectedTemplate.key}-${selectedTemplate.updatedAt ?? "default"}`}
               template={selectedTemplate}
               currentAdminEmail={currentAdminEmail}
-              busy={busy}
-              onBusy={setBusy}
               onTemplatesChange={setTemplates}
               onMessage={(message) =>
                 toast.show(message.text, { severity: message.type })

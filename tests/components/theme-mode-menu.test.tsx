@@ -70,12 +70,23 @@ afterEach(() => {
 
 describe("ThemeModeMenu", () => {
   it("switches and persists the selected mode", async () => {
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(
+    let capturedRequest:
+      | { url: string; method: string; body: unknown }
+      | undefined;
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input) => {
+        const request = input as Request;
+        capturedRequest = {
+          url: request.url,
+          method: request.method,
+          body: await request.clone().json(),
+        };
+        return new Response(
         JSON.stringify({ data: { themePreference: "DARK" } }),
         { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    );
+        );
+      });
     renderMenu();
 
     fireEvent.click(
@@ -84,13 +95,11 @@ describe("ThemeModeMenu", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "深色" }));
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/me/appearance-preference",
-      expect.objectContaining({
-        method: "PATCH",
-        body: JSON.stringify({ themePreference: "DARK" }),
-      }),
-    );
+    expect(capturedRequest).toEqual({
+      url: "http://localhost:3000/api/v1/me/appearance-preference",
+      method: "PATCH",
+      body: { themePreference: "DARK" },
+    });
     await waitFor(() => {
       expect(localStorage.getItem(THEME_MODE_STORAGE_KEY)).toBe("dark");
       expect(

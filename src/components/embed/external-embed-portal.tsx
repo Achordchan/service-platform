@@ -1,6 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
   AppBar,
@@ -38,10 +41,15 @@ import type {
   ChatReplyTarget,
 } from "@/components/shared/request-chat-types";
 import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
 import { UnreadCountPill } from "@/components/shared/tab-badge-label";
+import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import { createEmbedTheme } from "@/theme/theme";
 
@@ -131,6 +139,27 @@ const statusLabels: Record<RequestStatus, string> = {
   RESOLVED: "已解决",
   CLOSED: "已关闭",
 };
+
+const embedReplySchema = z
+  .object({
+    body: z.string(),
+    files: z.array(z.custom<File>()),
+  })
+  .refine(
+    ({ body, files }) => hasMeaningfulHtml(body) || files.length > 0,
+    { path: ["body"], message: "请输入回复内容或添加附件" },
+  );
+
+type EmbedReplyValues = z.infer<typeof embedReplySchema>;
+
+const createRequestSchema = z.object({
+  title: z.string().trim().min(1, "请输入标题"),
+  categoryId: z.string().min(1, "请选择分类"),
+  priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]),
+  description: z.string().trim().min(1, "请输入问题详情"),
+});
+
+type CreateRequestValues = z.infer<typeof createRequestSchema>;
 
 function createSessionId() {
   return crypto.randomUUID();
@@ -913,13 +942,22 @@ function EmbedReplyComposer({
   initialBody?: string;
   restoredAttachmentCount?: number;
 }) {
-  const [body, setBody] = useState(initialBody);
-  const [files, setFiles] = useState<File[]>([]);
   const [editorVersion, setEditorVersion] = useState(0);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const typingTimer = useRef<number | null>(null);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setError,
+    setValue,
+    formState: { errors, isSubmitting },
+  } = useForm<EmbedReplyValues>({
+    resolver: zodResolver(embedReplySchema),
+    defaultValues: { body: initialBody, files: [] },
+  });
+  const body = useWatch({ control, name: "body" });
+  const files = useWatch({ control, name: "files" });
   const uploadInlineImage = useCallback(
     async (file: File) => {
       const form = new FormData();
@@ -942,55 +980,73 @@ function EmbedReplyComposer({
     },
     [requestId, token],
   );
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    if (!hasMeaningfulHtml(body) && files.length === 0) return;
-    setSending(true);
-    setError("");
+  async function submit(values: EmbedReplyValues) {
     onTyping(false);
     try {
       const response = await fetch(`/api/v1/embed/requests/${requestId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Embed ${token}` },
         body: JSON.stringify({
-          body: hasMeaningfulHtml(body) ? body : `附件：${files.map((file) => file.name).join("、")}`,
+          body: hasMeaningfulHtml(values.body)
+            ? values.body
+            : `附件：${values.files.map((file) => file.name).join("、")}`,
           replyToMessageId: replyTarget?.id,
         }),
       });
       const payload = await response.json() as { data?: { message?: { id?: string } }; error?: { message?: string } };
       if (!response.ok || !payload.data?.message?.id) throw new Error(payload.error?.message || "回复发送失败");
-      const failedUploads: string[] = [];
-      for (const file of files) {
+      const messageId = payload.data.message.id;
+      const failedFiles = await uploadFilesBestEffort(
+        values.files,
+        async (file) => {
         const form = new FormData();
         form.append("file", file);
         form.append("serviceRequestId", requestId);
-        form.append("requestMessageId", payload.data.message.id);
+        form.append("requestMessageId", messageId);
         const upload = await fetch("/api/v1/embed/attachments", {
           method: "POST",
           headers: { Authorization: `Embed ${token}` },
           body: form,
         });
-        if (!upload.ok) failedUploads.push(file.name);
-      }
-      setBody("");
+          if (!upload.ok) throw new Error(`${file.name} 上传失败`);
+        },
+      );
+      reset({ body: "", files: [] });
       setEditorVersion((version) => version + 1);
-      setFiles([]);
       onCancelReply();
-      await onSent();
-      if (failedUploads.length > 0) {
-        throw new Error(`消息已发送，但附件上传失败：${failedUploads.join("、")}`);
+      let refreshError: unknown = null;
+      try {
+        await onSent();
+      } catch (error) {
+        refreshError = error;
+      }
+      if (failedFiles.length > 0 || refreshError) {
+        const messages: string[] = [];
+        if (failedFiles.length > 0) {
+          messages.push(`附件上传失败：${fileNames(failedFiles)}`);
+        }
+        if (refreshError) {
+          messages.push(
+            refreshError instanceof Error
+              ? `页面刷新失败：${refreshError.message}`
+              : "页面刷新失败",
+          );
+        }
+        setError("root", {
+          message: `消息已发送，但${messages.join("；")}。`,
+        });
       }
     } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "回复发送失败");
-    } finally {
-      setSending(false);
+      setError("root", {
+        message: sendError instanceof Error ? sendError.message : "回复发送失败",
+      });
     }
   }
   return (
-    <Paper id="request-reply-composer" component="form" variant="outlined" onSubmit={submit} sx={{ overflow: "hidden" }}>
-      {sending ? <LinearProgress /> : null}
+    <Paper id="request-reply-composer" component="form" variant="outlined" onSubmit={handleSubmit(submit)} sx={{ overflow: "hidden" }}>
+      {isSubmitting ? <LinearProgress /> : null}
       <Stack spacing={1.5} sx={{ p: 2 }}>
-        {error ? <Alert severity="error">{error}</Alert> : null}
+        {errors.root?.message ? <Alert severity="error">{errors.root.message}</Alert> : null}
         {contentRiskEnabled ? <ContentRiskNotice audience="CUSTOMER" /> : null}
         {restoredAttachmentCount > 0 ? (
           <Alert severity="info">
@@ -999,30 +1055,66 @@ function EmbedReplyComposer({
           </Alert>
         ) : null}
         {replyTarget ? <RequestReplyPreview target={replyTarget} onCancel={onCancelReply} /> : null}
-        <RichTextEditor
-          key={editorVersion}
-          value={body}
-          onChange={(value) => {
-            setBody(value);
-            onTyping(hasMeaningfulHtml(value));
-            if (typingTimer.current) window.clearTimeout(typingTimer.current);
-            typingTimer.current = window.setTimeout(() => onTyping(false), 2200);
-          }}
-          disabled={sending}
-          uploadImage={uploadInlineImage}
-          onImageUploadingChange={setInlineImageUploading}
-          placeholder="回复服务人员"
+        <Controller
+          name="body"
+          control={control}
+          render={({ field }) => (
+            <RichTextEditor
+              key={editorVersion}
+              value={field.value}
+              onChange={(value) => {
+                field.onChange(value);
+                onTyping(hasMeaningfulHtml(value));
+                if (typingTimer.current) window.clearTimeout(typingTimer.current);
+                typingTimer.current = window.setTimeout(() => onTyping(false), 2200);
+              }}
+              disabled={isSubmitting}
+              uploadImage={uploadInlineImage}
+              onImageUploadingChange={setInlineImageUploading}
+              placeholder="回复服务人员"
+            />
+          )}
         />
+        {errors.body?.message ? (
+          <Typography variant="body2" color="error">
+            {errors.body.message}
+          </Typography>
+        ) : null}
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between" }}>
-          <Button component="label" variant="outlined" startIcon={<AttachFileOutlinedIcon />} disabled={sending}>
+          <FilePickerButton
+            variant="outlined"
+            startIcon={<AttachFileOutlinedIcon />}
+            disabled={isSubmitting}
+            multiple
+            onFiles={(selected) => {
+              if (selected.length === 0) return;
+              setValue("files", [...files, ...selected], {
+                shouldDirty: true,
+                shouldValidate: true,
+              });
+            }}
+            onRejected={(rejections) =>
+              setError("root", {
+                message: firstFileRejectionMessage(rejections),
+              })
+            }
+          >
             添加附件
-            <input hidden type="file" multiple onChange={(event) => { setFiles((current) => [...current, ...Array.from(event.target.files ?? [])]); event.target.value = ""; }} />
-          </Button>
-          <Button type="submit" variant="contained" endIcon={<SendOutlinedIcon />} disabled={sending || inlineImageUploading || (!hasMeaningfulHtml(body) && files.length === 0)}>
+          </FilePickerButton>
+          <Button type="submit" variant="contained" endIcon={<SendOutlinedIcon />} disabled={isSubmitting || inlineImageUploading || (!hasMeaningfulHtml(body) && files.length === 0)}>
             发送
           </Button>
         </Stack>
-        <RequestAttachmentDrafts files={files} onRemove={(index) => setFiles((current) => current.filter((_, itemIndex) => itemIndex !== index))} />
+        <RequestAttachmentDrafts
+          files={files}
+          onRemove={(index) =>
+            setValue(
+              "files",
+              files.filter((_, itemIndex) => itemIndex !== index),
+              { shouldDirty: true, shouldValidate: true },
+            )
+          }
+        />
       </Stack>
     </Paper>
   );
@@ -1047,29 +1139,42 @@ function CreateRequestDialog({
   ) => Promise<void>;
 }) {
   const [fileDrafts, setFileDrafts] = useState<Array<{ key: string; file: File }>>([]);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const [createdRequest, setCreatedRequest] = useState<{
     id: string;
     initialMessageId: string;
   } | null>(null);
   const draftKeyRef = useRef(0);
+  const {
+    control,
+    handleSubmit,
+    reset,
+    setError,
+    formState: { errors, isSubmitting },
+  } = useForm<CreateRequestValues>({
+    resolver: zodResolver(createRequestSchema),
+    defaultValues: {
+      title: "",
+      categoryId: "",
+      priority: "NORMAL",
+      description: "",
+    },
+  });
   function resetDialogState() {
     setFileDrafts([]);
-    setError("");
     setCreatedRequest(null);
-    setSaving(false);
+    reset({
+      title: "",
+      categoryId: "",
+      priority: "NORMAL",
+      description: "",
+    });
   }
   function handleClose() {
-    if (saving) return;
+    if (isSubmitting) return;
     resetDialogState();
     onClose();
   }
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    setSaving(true);
-    setError("");
+  async function submit(values: CreateRequestValues) {
     try {
       let requestId = createdRequest?.id;
       let initialMessageId = createdRequest?.initialMessageId;
@@ -1078,10 +1183,10 @@ function CreateRequestDialog({
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Embed ${token}` },
           body: JSON.stringify({
-            title: String(form.get("title") ?? "").trim(),
-            description: String(form.get("description") ?? "").trim(),
-            categoryId: String(form.get("categoryId") ?? ""),
-            priority: String(form.get("priority") ?? "NORMAL"),
+            title: values.title,
+            description: values.description,
+            categoryId: values.categoryId,
+            priority: values.priority,
           }),
         });
         const payload = await response.json() as { data?: { id: string; initialMessageId: string }; error?: { message?: string } };
@@ -1124,9 +1229,9 @@ function CreateRequestDialog({
         } catch {
           // Parent refresh failure must not forget the created request id.
         }
-        setError(
-          `服务请求已创建，但附件上传失败：${failedDrafts.map((item) => item.file.name).join("、")}。请重试剩余附件，或关闭后到服务请求详情补传。`,
-        );
+        setError("root", {
+          message: `服务请求已创建，但附件上传失败：${failedDrafts.map((item) => item.file.name).join("、")}。请重试剩余附件，或关闭后到服务请求详情补传。`,
+        });
         return;
       }
       // All uploads succeeded. Clear local files immediately so a later refresh
@@ -1136,75 +1241,134 @@ function CreateRequestDialog({
         await onCreated(requestId);
         resetDialogState();
       } catch (refreshError) {
-        setError(
-          refreshError instanceof Error
+        setError("root", {
+          message: refreshError instanceof Error
             ? `服务请求已创建，但页面刷新失败：${refreshError.message}`
             : "服务请求已创建，但页面刷新失败",
-        );
+        });
       }
     } catch (createError) {
-      setError(
-        createError instanceof Error
+      setError("root", {
+        message: createError instanceof Error
           ? createError.message
           : "服务请求创建失败",
-      );
-    } finally {
-      setSaving(false);
+      });
     }
   }
   return (
-    <Dialog open={open} onClose={saving ? undefined : handleClose} fullWidth maxWidth="sm">
-      <Box component="form" onSubmit={submit}>
-        {saving ? <LinearProgress /> : null}
+    <Dialog open={open} onClose={isSubmitting ? undefined : handleClose} fullWidth maxWidth="sm">
+      <Box component="form" onSubmit={handleSubmit(submit)}>
+        {isSubmitting ? <LinearProgress /> : null}
         <DialogTitle>
           <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
             新建服务请求
-            <IconButton onClick={handleClose} disabled={saving}><CloseOutlinedIcon /></IconButton>
+            <IconButton onClick={handleClose} disabled={isSubmitting}><CloseOutlinedIcon /></IconButton>
           </Stack>
         </DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
-            {error ? <Alert severity="error">{error}</Alert> : null}
+            {errors.root?.message ? <Alert severity="error">{errors.root.message}</Alert> : null}
             {createdRequest ? (
               <Alert severity="info">
                 服务请求已创建。当前只会重试失败附件，不会再次创建新的服务请求。
               </Alert>
             ) : null}
-            <TextField name="title" label="标题" required fullWidth disabled={Boolean(createdRequest) || saving} />
-            <TextField name="categoryId" label="分类" select required defaultValue="" fullWidth disabled={Boolean(createdRequest) || saving}>
-              {categories.map((category) => <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>)}
-            </TextField>
-            <TextField name="priority" label="优先级" select defaultValue="NORMAL" fullWidth disabled={Boolean(createdRequest) || saving}>
-              <MenuItem value="LOW">低</MenuItem>
-              <MenuItem value="NORMAL">普通</MenuItem>
-              <MenuItem value="HIGH">高</MenuItem>
-              <MenuItem value="URGENT">紧急</MenuItem>
-            </TextField>
+            <Controller
+              name="title"
+              control={control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="标题"
+                  required
+                  fullWidth
+                  disabled={Boolean(createdRequest) || isSubmitting}
+                  error={Boolean(errors.title)}
+                  helperText={errors.title?.message}
+                />
+              )}
+            />
+            <Controller
+              name="categoryId"
+              control={control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="分类"
+                  select
+                  required
+                  fullWidth
+                  disabled={Boolean(createdRequest) || isSubmitting}
+                  error={Boolean(errors.categoryId)}
+                  helperText={errors.categoryId?.message}
+                >
+                  {categories.map((category) => <MenuItem key={category.id} value={category.id}>{category.name}</MenuItem>)}
+                </TextField>
+              )}
+            />
+            <Controller
+              name="priority"
+              control={control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="优先级"
+                  select
+                  fullWidth
+                  disabled={Boolean(createdRequest) || isSubmitting}
+                  error={Boolean(errors.priority)}
+                  helperText={errors.priority?.message}
+                >
+                  <MenuItem value="LOW">低</MenuItem>
+                  <MenuItem value="NORMAL">普通</MenuItem>
+                  <MenuItem value="HIGH">高</MenuItem>
+                  <MenuItem value="URGENT">紧急</MenuItem>
+                </TextField>
+              )}
+            />
             {contentRiskEnabled && !createdRequest ? (
               <ContentRiskNotice audience="CUSTOMER" />
             ) : null}
-            <TextField name="description" label="问题详情" multiline minRows={5} required fullWidth disabled={Boolean(createdRequest) || saving} />
-            <Button component="label" variant="outlined" startIcon={<AttachFileOutlinedIcon />} disabled={saving}>
+            <Controller
+              name="description"
+              control={control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="问题详情"
+                  multiline
+                  minRows={5}
+                  required
+                  fullWidth
+                  disabled={Boolean(createdRequest) || isSubmitting}
+                  error={Boolean(errors.description)}
+                  helperText={errors.description?.message}
+                />
+              )}
+            />
+            <FilePickerButton
+              variant="outlined"
+              startIcon={<AttachFileOutlinedIcon />}
+              disabled={isSubmitting}
+              multiple
+              onFiles={(selected) => {
+                if (selected.length === 0) return;
+                setFileDrafts((current) => [
+                  ...current,
+                  ...selected.map((file) => {
+                    draftKeyRef.current += 1;
+                    return { key: `draft-${draftKeyRef.current}`, file };
+                  }),
+                ]);
+              }}
+              onRejected={(rejections) =>
+                setError("root", {
+                  message: firstFileRejectionMessage(rejections),
+                })
+              }
+            >
               添加附件
-              <input
-                hidden
-                type="file"
-                multiple
-                onChange={(event) => {
-                  const selected = Array.from(event.target.files ?? []);
-                  if (selected.length > 0) {
-                    setFileDrafts((current) => [
-                      ...current,
-                      ...selected.map((file) => {
-                        draftKeyRef.current += 1;
-                        return { key: `draft-${draftKeyRef.current}`, file };
-                      }),
-                    ]);
-                  }
-                  event.target.value = "";
-                }}
-              />
-            </Button>
+            </FilePickerButton>
             <RequestAttachmentDrafts
               files={fileDrafts.map((item) => item.file)}
               onRemove={(index) =>
@@ -1214,8 +1378,8 @@ function CreateRequestDialog({
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 3 }}>
-          <Button onClick={handleClose} disabled={saving}>取消</Button>
-          <Button type="submit" variant="contained" disabled={saving}>
+          <Button onClick={handleClose} disabled={isSubmitting}>取消</Button>
+          <Button type="submit" variant="contained" disabled={isSubmitting}>
             {createdRequest ? (fileDrafts.length > 0 ? "重试附件" : "关闭并查看") : "创建"}
           </Button>
         </DialogActions>

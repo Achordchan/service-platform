@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { LoginForm } from "@/components/auth/login-form";
 
 vi.mock("next/navigation", () => ({
@@ -18,13 +19,14 @@ vi.mock("next/navigation", () => ({
 }));
 
 const authMocks = vi.hoisted(() => ({
+  signInEmail: vi.fn(),
   sendVerificationOtp: vi.fn(),
 }));
 
 vi.mock("@/lib/auth-client", () => ({
   authClient: {
     signIn: {
-      email: vi.fn(),
+      email: authMocks.signInEmail,
       emailOtp: vi.fn(),
     },
     emailOtp: {
@@ -38,9 +40,20 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+function renderLoginForm(
+  emailOtpEnabled: boolean,
+  queryClient = new QueryClient(),
+) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <LoginForm emailOtpEnabled={emailOtpEnabled} />
+    </QueryClientProvider>,
+  );
+}
+
 describe("登录方式", () => {
   it("管理员关闭验证码登录时只显示默认密码登录", () => {
-    render(<LoginForm emailOtpEnabled={false} />);
+    renderLoginForm(false);
 
     expect(screen.getByLabelText("密码")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "邮箱验证码登录" })).toBeNull();
@@ -48,7 +61,7 @@ describe("登录方式", () => {
 
   it("管理员开启后允许切换到邮箱验证码模式", () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    render(<LoginForm emailOtpEnabled />);
+    renderLoginForm(true);
 
     expect(screen.getByLabelText("密码")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "邮箱验证码登录" }));
@@ -72,7 +85,7 @@ describe("登录方式", () => {
       data: null,
       error: { code: "EMAIL_NOT_FOUND", message: "邮箱不存在" },
     });
-    render(<LoginForm emailOtpEnabled />);
+    renderLoginForm(true);
 
     fireEvent.click(screen.getByRole("button", { name: "邮箱验证码登录" }));
     fireEvent.change(screen.getByRole("textbox", { name: "邮箱" }), {
@@ -84,5 +97,24 @@ describe("登录方式", () => {
       expect(screen.getByText("邮箱不存在，请检查后重试")).toBeTruthy();
     });
     expect(screen.queryByLabelText("6 位验证码")).toBeNull();
+  });
+
+  it("登录成功时清除上一账号的查询缓存", async () => {
+    authMocks.signInEmail.mockResolvedValue({ data: {}, error: null });
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(["private-user-data"], { userId: "previous" });
+    renderLoginForm(false, queryClient);
+
+    fireEvent.change(screen.getByLabelText("邮箱"), {
+      target: { value: "next@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    await waitFor(() =>
+      expect(queryClient.getQueryData(["private-user-data"])).toBeUndefined(),
+    );
   });
 });

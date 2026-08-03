@@ -1,6 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Accordion,
   AccordionDetails,
@@ -42,6 +45,21 @@ type Props = {
   ) => Promise<void>;
 };
 
+const templateFormSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, "请填写消息标题")
+    .max(80, "消息标题最多 80 个字符"),
+  body: z
+    .string()
+    .trim()
+    .min(1, "请填写 Markdown 正文")
+    .max(2_000, "Markdown 正文最多 2000 个字符"),
+});
+
+type TemplateFormValues = z.infer<typeof templateFormSchema>;
+
 export function DingTalkTemplateSettings({
   config,
   busy,
@@ -58,13 +76,18 @@ export function DingTalkTemplateSettings({
   }, [config]);
   const [selectedKey, setSelectedKey] =
     useState<DingTalkRobotEventType | null>(null);
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
+  const templateForm = useForm<TemplateFormValues>({
+    resolver: zodResolver(templateFormSchema),
+    defaultValues: { title: "", body: "" },
+    mode: "onChange",
+  });
+  const title = useWatch({ control: templateForm.control, name: "title" });
+  const body = useWatch({ control: templateForm.control, name: "body" });
+  const hasTemplateContent = Boolean(title.trim() && body.trim());
 
   const selectedDefinition = DINGTALK_ROBOT_TEMPLATE_DEFINITIONS.find(
     (definition) => definition.key === selectedKey,
   );
-  const draft = { title: title.trim(), body: body.trim() };
   const sampleByKey = Object.fromEntries(
     DINGTALK_ROBOT_TEMPLATE_VARIABLES.map((variable) => [
       variable.key,
@@ -80,28 +103,31 @@ export function DingTalkTemplateSettings({
   function openEditor(eventType: DingTalkRobotEventType) {
     const template = parsedConfig.templates[eventType];
     setSelectedKey(eventType);
-    setTitle(template.title);
-    setBody(template.body);
+    templateForm.reset({ title: template.title, body: template.body });
   }
 
   function restoreDefault() {
     if (!selectedKey) return;
     const template = DINGTALK_ROBOT_DEFAULT_CONFIG.templates[selectedKey];
-    setTitle(template.title);
-    setBody(template.body);
+    templateForm.reset({ title: template.title, body: template.body });
   }
 
-  async function save() {
-    if (!selectedKey || !draft.title || !draft.body) return;
+  async function save(values: TemplateFormValues) {
+    if (!selectedKey) return;
     const saved = await onSave({
       ...parsedConfig,
       templates: {
         ...parsedConfig.templates,
-        [selectedKey]: draft,
+        [selectedKey]: values,
       },
     });
     if (saved) setSelectedKey(null);
   }
+
+  const sendTest = templateForm.handleSubmit(async (values) => {
+    if (!selectedKey) return;
+    await onTest(selectedKey, values);
+  });
 
   return (
     <>
@@ -178,97 +204,112 @@ export function DingTalkTemplateSettings({
         maxWidth="md"
         scroll="paper"
       >
-        <DialogTitle>{selectedDefinition?.name ?? "钉钉通知模板"}</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-              {DINGTALK_ROBOT_TEMPLATE_VARIABLES.map((variable) => (
-                <Chip
-                  key={variable.key}
-                  size="small"
-                  variant="outlined"
-                  label={`{{${variable.key}}} · ${variable.label}`}
-                  sx={{ fontFamily: "monospace" }}
-                />
-              ))}
-            </Stack>
-            <TextField
-              label="消息标题"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              required
-              fullWidth
-              slotProps={{ htmlInput: { maxLength: 80 } }}
-            />
-            <TextField
-              label="Markdown 正文"
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              required
-              multiline
-              minRows={7}
-              fullWidth
-              slotProps={{ htmlInput: { maxLength: 2000 } }}
-            />
-            <Paper
-              variant="outlined"
-              sx={{ p: { xs: 2, sm: 2.5 }, bgcolor: "action.hover" }}
-            >
-              <Typography variant="overline" color="text.secondary">
-                消息预览
-              </Typography>
-              <Typography sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>
-                {DINGTALK_ROBOT_KEYWORD}：{renderSample(title)}
-              </Typography>
-              <Typography
-                component="div"
-                sx={{
-                  mt: 1.5,
-                  color: "text.secondary",
-                  lineHeight: 1.8,
-                  whiteSpace: "pre-wrap",
-                  overflowWrap: "anywhere",
-                }}
+        <Box component="form" onSubmit={templateForm.handleSubmit(save)}>
+          <DialogTitle>{selectedDefinition?.name ?? "钉钉通知模板"}</DialogTitle>
+          <DialogContent dividers>
+            <Stack spacing={2}>
+              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+                {DINGTALK_ROBOT_TEMPLATE_VARIABLES.map((variable) => (
+                  <Chip
+                    key={variable.key}
+                    size="small"
+                    variant="outlined"
+                    label={`{{${variable.key}}} · ${variable.label}`}
+                    sx={{ fontFamily: "monospace" }}
+                  />
+                ))}
+              </Stack>
+              <Controller
+                name="title"
+                control={templateForm.control}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    label="消息标题"
+                    required
+                    fullWidth
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                    slotProps={{ htmlInput: { maxLength: 80 } }}
+                  />
+                )}
+              />
+              <Controller
+                name="body"
+                control={templateForm.control}
+                render={({ field, fieldState }) => (
+                  <TextField
+                    {...field}
+                    label="Markdown 正文"
+                    required
+                    multiline
+                    minRows={7}
+                    fullWidth
+                    error={Boolean(fieldState.error)}
+                    helperText={fieldState.error?.message}
+                    slotProps={{ htmlInput: { maxLength: 2_000 } }}
+                  />
+                )}
+              />
+              <Paper
+                variant="outlined"
+                sx={{ p: { xs: 2, sm: 2.5 }, bgcolor: "action.hover" }}
               >
-                {renderSample(body)}
-              </Typography>
-              <Typography sx={{ mt: 2, color: "primary.main", fontWeight: 650 }}>
-                打开服务请求
-              </Typography>
-            </Paper>
-          </Stack>
-        </DialogContent>
-        <DialogActions
-          sx={{
-            px: 3,
-            py: 2,
-            justifyContent: "space-between",
-            flexWrap: "wrap",
-            gap: 1,
-          }}
-        >
-          <Button color="error" onClick={restoreDefault} disabled={busy}>
-            恢复默认
-          </Button>
-          <Stack direction="row" spacing={1}>
-            <Button
-              startIcon={<SendOutlinedIcon />}
-              onClick={() =>
-                selectedKey ? void onTest(selectedKey, draft) : undefined
-              }
-              disabled={busy || !canTest || !draft.title || !draft.body}
-            >
-              发送测试
+                <Typography variant="overline" color="text.secondary">
+                  消息预览
+                </Typography>
+                <Typography sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>
+                  {DINGTALK_ROBOT_KEYWORD}：{renderSample(title)}
+                </Typography>
+                <Typography
+                  component="div"
+                  sx={{
+                    mt: 1.5,
+                    color: "text.secondary",
+                    lineHeight: 1.8,
+                    whiteSpace: "pre-wrap",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {renderSample(body)}
+                </Typography>
+                <Typography sx={{ mt: 2, color: "primary.main", fontWeight: 650 }}>
+                  打开服务请求
+                </Typography>
+              </Paper>
+            </Stack>
+          </DialogContent>
+          <DialogActions
+            sx={{
+              px: 3,
+              py: 2,
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
+            <Button color="error" type="button" onClick={restoreDefault} disabled={busy}>
+              恢复默认
             </Button>
-            <Button
-              variant="contained"
-              onClick={() => void save()}
-              disabled={busy || !draft.title || !draft.body}
-            >
-              保存模板
-            </Button>
-          </Stack>
-        </DialogActions>
+            <Stack direction="row" spacing={1}>
+              <Button
+                type="button"
+                startIcon={<SendOutlinedIcon />}
+                onClick={() => void sendTest()}
+                disabled={busy || !canTest || !hasTemplateContent}
+              >
+                发送测试
+              </Button>
+              <Button
+                type="submit"
+                variant="contained"
+                disabled={busy || !hasTemplateContent}
+              >
+                保存模板
+              </Button>
+            </Stack>
+          </DialogActions>
+        </Box>
       </Dialog>
     </>
   );

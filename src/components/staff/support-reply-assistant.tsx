@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Accordion,
   AccordionDetails,
@@ -27,6 +28,7 @@ import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { staffApi } from "@/components/staff/staff-api";
 import type { SupportReplyPlaybook } from "@/lib/support-reply-playbooks";
 import { resolveInlineAttachmentHtml } from "@/lib/message-content";
+import { queryKeys } from "@/lib/query-keys";
 
 type CategoryFilter = "ALL" | SupportReplyPlaybook["category"];
 
@@ -47,27 +49,36 @@ export function SupportReplyAssistant({
   const [open, setOpen] = useState(false);
   const [category, setCategory] = useState<CategoryFilter>("ALL");
   const [keyword, setKeyword] = useState("");
-  const [sendingKey, setSendingKey] = useState("");
-  const [error, setError] = useState("");
-  const [playbooks, setPlaybooks] = useState<SupportReplyPlaybook[]>([]);
-  const [loading, setLoading] = useState(false);
-  async function loadPlaybooks() {
-    setLoading(true);
-    setError("");
-    try {
-      setPlaybooks(
-        await staffApi<SupportReplyPlaybook[]>("/api/v1/support-playbooks"),
-      );
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : "处理指南加载失败",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
+  const playbooksQuery = useQuery({
+    queryKey: queryKeys.supportPlaybooks.available,
+    queryFn: ({ signal }) =>
+      staffApi<SupportReplyPlaybook[]>("/api/v1/support-playbooks", {
+        signal,
+      }),
+    enabled: open,
+  });
+  const sendMutation = useMutation({
+    mutationFn: (playbookKey: string) => onSend(playbookKey),
+    onSuccess: () => setOpen(false),
+  });
+  const sendingKey = sendMutation.isPending
+    ? (sendMutation.variables ?? "")
+    : "";
+  const queryErrorMessage =
+    playbooksQuery.error instanceof Error
+      ? playbooksQuery.error.message
+      : playbooksQuery.error
+        ? "处理指南加载失败"
+        : "";
+  const sendErrorMessage =
+    sendMutation.error instanceof Error
+      ? sendMutation.error.message
+      : sendMutation.error
+        ? "处理指南发送失败"
+        : "";
 
   const filtered = useMemo(() => {
+    const playbooks = playbooksQuery.data ?? [];
     const normalized = keyword.trim().toLowerCase();
     return playbooks.filter((playbook) => {
       const matchesCategory =
@@ -79,19 +90,20 @@ export function SupportReplyAssistant({
         playbook.steps.some((step) => step.toLowerCase().includes(normalized));
       return matchesCategory && matchesKeyword;
     });
-  }, [category, keyword, playbooks]);
+  }, [category, keyword, playbooksQuery.data]);
 
   async function send(playbook: SupportReplyPlaybook) {
-    setSendingKey(playbook.key);
-    setError("");
-    try {
-      await onSend(playbook.key);
-      setOpen(false);
-    } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : "处理指南发送失败");
-    } finally {
-      setSendingKey("");
-    }
+    await sendMutation.mutateAsync(playbook.key).catch(() => undefined);
+  }
+
+  function openAssistant() {
+    sendMutation.reset();
+    setOpen(true);
+  }
+
+  function closeAssistant() {
+    sendMutation.reset();
+    setOpen(false);
   }
 
   return (
@@ -104,10 +116,7 @@ export function SupportReplyAssistant({
             size="small"
             variant="outlined"
             startIcon={<MenuBookOutlinedIcon />}
-            onClick={() => {
-              setOpen(true);
-              void loadPlaybooks();
-            }}
+            onClick={openAssistant}
             disabled={disabled}
           >
             回复助手
@@ -117,7 +126,7 @@ export function SupportReplyAssistant({
       <Drawer
         anchor="right"
         open={open}
-        onClose={() => setOpen(false)}
+        onClose={closeAssistant}
         slotProps={{
           paper: {
             sx: {
@@ -144,7 +153,7 @@ export function SupportReplyAssistant({
                 选择处理指南，并作为独立消息发送给客户。
               </Typography>
             </Box>
-            <IconButton onClick={() => setOpen(false)} aria-label="关闭回复助手">
+            <IconButton onClick={closeAssistant} aria-label="关闭回复助手">
               <CloseOutlinedIcon />
             </IconButton>
           </Stack>
@@ -177,21 +186,32 @@ export function SupportReplyAssistant({
             </Tabs>
           </Stack>
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", px: 2.5, pb: 3 }}>
-            {loading ? (
+            {playbooksQuery.isPending ? (
               <Stack sx={{ py: 8, alignItems: "center" }}>
                 <CircularProgress size={28} />
               </Stack>
             ) : null}
-            {error ? (
+            {queryErrorMessage ? (
               <Alert
                 severity="error"
                 sx={{ mt: 2 }}
-                action={<Button onClick={() => void loadPlaybooks()}>重试</Button>}
+                action={
+                  playbooksQuery.isError ? (
+                    <Button onClick={() => void playbooksQuery.refetch()}>
+                      重试
+                    </Button>
+                  ) : undefined
+                }
               >
-                {error}
+                {queryErrorMessage}
               </Alert>
             ) : null}
-            {!loading && !error ? filtered.map((playbook) => (
+            {sendErrorMessage ? (
+              <Alert severity="error" sx={{ mt: 2 }}>
+                {sendErrorMessage}
+              </Alert>
+            ) : null}
+            {!playbooksQuery.isPending && !queryErrorMessage ? filtered.map((playbook) => (
               <Accordion
                 key={playbook.key}
                 disableGutters
@@ -268,7 +288,7 @@ export function SupportReplyAssistant({
                 </AccordionDetails>
               </Accordion>
             )) : null}
-            {!loading && !error && filtered.length === 0 ? (
+            {!playbooksQuery.isPending && !queryErrorMessage && filtered.length === 0 ? (
               <Typography color="text.secondary" sx={{ py: 6, textAlign: "center" }}>
                 没有匹配的处理方案
               </Typography>

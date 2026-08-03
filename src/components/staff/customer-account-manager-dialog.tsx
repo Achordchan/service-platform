@@ -1,6 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm } from "react-hook-form";
+import { z } from "zod";
 import {
   Alert,
   Box,
@@ -30,6 +34,17 @@ import { AccountEmailChangeDialog } from "@/components/staff/account-email-chang
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
+import { queryKeys } from "@/lib/query-keys";
+
+const memberNameSchema = z.object({
+  name: z.string().trim().min(2, "姓名至少需要 2 个字符").max(60),
+});
+const customerInvitationSchema = z.object({
+  email: z.email("请输入有效邮箱").trim().toLowerCase(),
+});
+
+type MemberNameValues = z.infer<typeof memberNameSchema>;
+type CustomerInvitationValues = z.infer<typeof customerInvitationSchema>;
 
 type PendingEmailChange = {
   id: string;
@@ -91,56 +106,59 @@ export function CustomerAccountManagerDialog({
   onChanged: () => void;
 }) {
   const toast = useToast();
-  const [detail, setDetail] = useState<CustomerSpaceDetail | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [failedTargetId, setFailedTargetId] = useState("");
-  const [busyKey, setBusyKey] = useState("");
+  const queryClient = useQueryClient();
   const [editing, setEditing] = useState<CustomerMembership | null>(null);
   const [emailTarget, setEmailTarget] = useState<CustomerMembership | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CustomerMembership | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
+  const editForm = useForm<MemberNameValues>({
+    resolver: zodResolver(memberNameSchema),
+    defaultValues: { name: "" },
+  });
+  const inviteForm = useForm<CustomerInvitationValues>({
+    resolver: zodResolver(customerInvitationSchema),
+    defaultValues: { email: "" },
+  });
+  const targetId = target?.id ?? "";
+  const detailKey = queryKeys.customerSpaces.detail(targetId);
+  const detailQuery = useQuery({
+    queryKey: detailKey,
+    queryFn: ({ signal }) =>
+      staffApi<CustomerSpaceDetail>(
+        `/api/v1/admin/customer-spaces/${targetId}`,
+        { signal },
+      ),
+    enabled: Boolean(targetId),
+  });
+  const actionMutation = useMutation({
+    mutationFn: ({ run }: { key: string; run: () => Promise<unknown> }) =>
+      run(),
+  });
+  const busyKey = actionMutation.isPending
+    ? (actionMutation.variables?.key ?? "action")
+    : "";
+  const detail = detailQuery.data?.id === targetId ? detailQuery.data : null;
 
-  const loadDetail = useCallback(async () => {
-    if (!target) return;
-    setLoading(true);
+  async function refreshDetail() {
+    if (!targetId) return;
+    await queryClient.invalidateQueries({ queryKey: detailKey });
+  }
+
+  async function execute<T>(
+    key: string,
+    run: () => Promise<T>,
+    fallbackError: string,
+  ): Promise<{ ok: true; value: T } | { ok: false }> {
     try {
-      const next = await staffApi<CustomerSpaceDetail>(
-        `/api/v1/admin/customer-spaces/${target.id}`,
-      );
-      setDetail(next);
-      setFailedTargetId("");
+      const value = (await actionMutation.mutateAsync({ key, run })) as T;
+      return { ok: true, value };
     } catch (error) {
-      setFailedTargetId(target.id);
-      toast.error(error instanceof Error ? error.message : "客户账号加载失败");
-    } finally {
-      setLoading(false);
+      toast.error(error instanceof Error ? error.message : fallbackError);
+      return { ok: false };
     }
-  }, [target, toast]);
-
-  useEffect(() => {
-    if (!target) return;
-    let cancelled = false;
-    staffApi<CustomerSpaceDetail>(
-      `/api/v1/admin/customer-spaces/${target.id}`,
-    )
-      .then((next) => {
-        if (cancelled) return;
-        setDetail(next);
-        setFailedTargetId("");
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        setFailedTargetId(target.id);
-        toast.error(error instanceof Error ? error.message : "客户账号加载失败");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [target, toast]);
+  }
 
   function closeManager() {
-    setDetail(null);
     onClose();
   }
 
@@ -155,113 +173,111 @@ export function CustomerAccountManagerDialog({
     [detail],
   );
 
-  async function saveMemberName(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const saveMemberName = editForm.handleSubmit(async ({ name }) => {
     if (!target || !editing) return;
-    const data = new FormData(event.currentTarget);
-    setBusyKey(`edit:${editing.id}`);
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${target.id}/members/${editing.id}`,
-        jsonRequest("PATCH", {
-          name: String(data.get("name") ?? "").trim(),
-        }),
-      );
-      setEditing(null);
-      toast.success("客户账号资料已更新");
-      await loadDetail();
-      onChanged();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "客户账号更新失败");
-    } finally {
-      setBusyKey("");
-    }
-  }
+    const result = await execute(
+      `edit:${editing.id}`,
+      () =>
+        staffApi(
+          `/api/v1/admin/customer-spaces/${target.id}/members/${editing.id}`,
+          jsonRequest("PATCH", { name }),
+        ),
+      "客户账号更新失败",
+    );
+    if (!result.ok) return;
+    setEditing(null);
+    toast.success("客户账号资料已更新");
+    await refreshDetail();
+    onChanged();
+  });
 
   async function setOwner(member: CustomerMembership) {
     if (!target) return;
-    setBusyKey(`owner:${member.id}`);
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${target.id}`,
-        jsonRequest("PATCH", { ownerId: member.user.id }),
-      );
-      toast.success(`${member.user.name} 已设为客户负责人`);
-      await loadDetail();
-      onChanged();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "负责人变更失败");
-    } finally {
-      setBusyKey("");
-    }
+    const result = await execute(
+      `owner:${member.id}`,
+      () =>
+        staffApi(
+          `/api/v1/admin/customer-spaces/${target.id}`,
+          jsonRequest("PATCH", { ownerId: member.user.id }),
+        ),
+      "负责人变更失败",
+    );
+    if (!result.ok) return;
+    toast.success(`${member.user.name} 已设为客户负责人`);
+    await refreshDetail();
+    onChanged();
   }
 
   async function deleteMember() {
     if (!target || !deleteTarget) return;
-    setBusyKey(`delete:${deleteTarget.id}`);
-    try {
-      const result = await staffApi<{ accountDeleted: boolean }>(
-        `/api/v1/admin/customer-spaces/${target.id}/members/${deleteTarget.id}`,
-        jsonRequest("DELETE"),
-      );
-      setDeleteTarget(null);
-      toast.success(
-        result.accountDeleted
-          ? "客户账号已删除并退出登录"
-          : "成员已从当前客户移除，账号仍属于其他客户",
-      );
-      await loadDetail();
-      onChanged();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "客户账号删除失败");
-    } finally {
-      setBusyKey("");
-    }
+    const result = await execute(
+      `delete:${deleteTarget.id}`,
+      () =>
+        staffApi<{ accountDeleted: boolean }>(
+          `/api/v1/admin/customer-spaces/${target.id}/members/${deleteTarget.id}`,
+          jsonRequest("DELETE"),
+        ),
+      "客户账号删除失败",
+    );
+    if (!result.ok) return;
+    setDeleteTarget(null);
+    toast.success(
+      result.value.accountDeleted
+        ? "客户账号已删除并退出登录"
+        : "成员已从当前客户移除，账号仍属于其他客户",
+    );
+    await refreshDetail();
+    onChanged();
   }
 
-  async function sendInvitation(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  const sendInvitation = inviteForm.handleSubmit(async ({ email }) => {
     if (!target) return;
-    setBusyKey("invite");
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${target.id}/invitations`,
-        jsonRequest("POST", { email: inviteEmail.trim().toLowerCase() }),
-      );
-      setInviteOpen(false);
-      setInviteEmail("");
-      toast.success("客户邀请已加入发件箱");
-      await loadDetail();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "客户邀请发送失败");
-    } finally {
-      setBusyKey("");
-    }
+    const result = await execute(
+      "invite",
+      () =>
+        staffApi(
+          `/api/v1/admin/customer-spaces/${target.id}/invitations`,
+          jsonRequest("POST", { email }),
+        ),
+      "客户邀请发送失败",
+    );
+    if (!result.ok) return;
+    setInviteOpen(false);
+    inviteForm.reset();
+    toast.success("客户邀请已加入发件箱");
+    await refreshDetail();
+  });
+
+  function openMemberEditor(member: CustomerMembership) {
+    editForm.reset({ name: member.user.name });
+    setEditing(member);
+  }
+
+  function openInvitation() {
+    inviteForm.reset({ email: "" });
+    setInviteOpen(true);
   }
 
   async function revokeInvitation(invitationId: string) {
     if (!target) return;
-    setBusyKey(`invitation:${invitationId}`);
-    try {
-      await staffApi(
-        `/api/v1/admin/customer-spaces/${target.id}/invitations/${invitationId}`,
-        jsonRequest("DELETE"),
-      );
-      toast.success("客户邀请已撤销");
-      await loadDetail();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "客户邀请撤销失败");
-    } finally {
-      setBusyKey("");
-    }
+    const result = await execute(
+      `invitation:${invitationId}`,
+      () =>
+        staffApi(
+          `/api/v1/admin/customer-spaces/${target.id}/invitations/${invitationId}`,
+          jsonRequest("DELETE"),
+        ),
+      "客户邀请撤销失败",
+    );
+    if (!result.ok) return;
+    toast.success("客户邀请已撤销");
+    await refreshDetail();
   }
 
   const capacityUsed =
     (detail?.memberships.length ?? 0) + activeInvitations.length;
-  const visibleDetail = detail?.id === target?.id ? detail : null;
-  const initialLoading = Boolean(
-    target && !visibleDetail && failedTargetId !== target.id,
-  );
+  const visibleDetail = detail;
+  const initialLoading = Boolean(target && detailQuery.isPending);
 
   return (
     <>
@@ -272,7 +288,9 @@ export function CustomerAccountManagerDialog({
         maxWidth="md"
         slotProps={{ paper: { sx: { maxHeight: "calc(100dvh - 48px)" } } }}
       >
-        {loading || busyKey || initialLoading ? <LinearProgress /> : null}
+        {detailQuery.isFetching || busyKey || initialLoading ? (
+          <LinearProgress />
+        ) : null}
         <DialogTitle>客户账号 · {target?.name}</DialogTitle>
         <DialogContent dividers sx={{ p: 0 }}>
           {visibleDetail ? (
@@ -294,7 +312,7 @@ export function CustomerAccountManagerDialog({
                   variant="contained"
                   startIcon={<PersonAddAltOutlinedIcon />}
                   disabled={capacityUsed >= visibleDetail.memberLimit || Boolean(busyKey)}
-                  onClick={() => setInviteOpen(true)}
+                  onClick={openInvitation}
                   sx={{ alignSelf: { xs: "stretch", sm: "center" }, flexShrink: 0 }}
                 >
                   邀请成员
@@ -334,7 +352,7 @@ export function CustomerAccountManagerDialog({
                                 size="small"
                                 aria-label={`编辑 ${member.user.name}`}
                                 disabled={Boolean(busyKey)}
-                                onClick={() => setEditing(member)}
+                                onClick={() => openMemberEditor(member)}
                               >
                                 <EditOutlinedIcon fontSize="small" />
                               </IconButton>
@@ -459,15 +477,22 @@ export function CustomerAccountManagerDialog({
         <Box component="form" onSubmit={saveMemberName}>
           <DialogTitle>编辑客户账号</DialogTitle>
           <DialogContent>
-            <TextField
+            <Controller
               name="name"
-              label="姓名"
-              defaultValue={editing?.user.name}
-              required
-              fullWidth
-              autoFocus
-              sx={{ mt: 1 }}
-              slotProps={{ htmlInput: { minLength: 2, maxLength: 60 } }}
+              control={editForm.control}
+              render={({ field }) => (
+                <TextField
+                  {...field}
+                  label="姓名"
+                  required
+                  fullWidth
+                  autoFocus
+                  sx={{ mt: 1 }}
+                  error={Boolean(editForm.formState.errors.name)}
+                  helperText={editForm.formState.errors.name?.message}
+                  slotProps={{ htmlInput: { minLength: 2, maxLength: 60 } }}
+                />
+              )}
             />
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -518,14 +543,21 @@ export function CustomerAccountManagerDialog({
           <DialogTitle>邀请客户成员</DialogTitle>
           <DialogContent>
             <Stack spacing={1.5} sx={{ mt: 1 }}>
-              <TextField
-                label="登录邮箱"
-                type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
-                required
-                fullWidth
-                autoFocus
+              <Controller
+                name="email"
+                control={inviteForm.control}
+                render={({ field }) => (
+                  <TextField
+                    {...field}
+                    label="登录邮箱"
+                    type="email"
+                    required
+                    fullWidth
+                    autoFocus
+                    error={Boolean(inviteForm.formState.errors.email)}
+                    helperText={inviteForm.formState.errors.email?.message}
+                  />
+                )}
               />
               <Typography variant="body2" color="text.secondary">
                 每个客户账号只能属于一个客户，邀请链接 24 小时内有效。
@@ -558,7 +590,7 @@ export function CustomerAccountManagerDialog({
         onClose={() => setEmailTarget(null)}
         onChanged={() => {
           setEmailTarget(null);
-          void loadDetail();
+          void refreshDetail();
           onChanged();
         }}
       />

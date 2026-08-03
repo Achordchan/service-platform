@@ -1,5 +1,6 @@
 "use client";
 
+import { Controller, useFormContext, useWatch } from "react-hook-form";
 import {
   Alert,
   Box,
@@ -14,16 +15,13 @@ import {
 } from "@mui/material";
 import type { PlatformSettingsView } from "@/components/staff/platform-settings-types";
 import { ResendDnsRecords } from "@/components/staff/resend-dns-records";
+import type { MailSettingsFormValues } from "@/components/staff/mail-settings-form";
 
 export function ResendProviderSettings({
   settings,
-  apiKey,
-  testEmail,
   busy,
   busyAction,
   showSetup,
-  onApiKeyChange,
-  onTestEmailChange,
   onShowSetupChange,
   onSetup,
   onDisconnect,
@@ -33,21 +31,18 @@ export function ResendProviderSettings({
   onEnable,
 }: {
   settings: PlatformSettingsView;
-  apiKey: string;
-  testEmail: string;
   busy: boolean;
   busyAction: string | null;
   showSetup: boolean;
-  onApiKeyChange: (value: string) => void;
-  onTestEmailChange: (value: string) => void;
   onShowSetupChange: (show: boolean) => void;
-  onSetup: () => Promise<void>;
+  onSetup: (apiKey: string) => Promise<void>;
   onDisconnect: () => Promise<void>;
   onVerify: () => Promise<void>;
   onCopy: (value: string) => Promise<void>;
-  onTest: () => Promise<void>;
+  onTest: (testEmail: string) => Promise<void>;
   onEnable: () => Promise<boolean>;
 }) {
+  const form = useFormContext<MailSettingsFormValues>();
   const domainVerified = settings.resendDomainStatus === "verified";
   const webhookReady =
     settings.resendWebhookStatus === "enabled" &&
@@ -64,14 +59,23 @@ export function ResendProviderSettings({
     return (
       <ResendOverview
         settings={settings}
-        testEmail={testEmail}
         busy={busy}
-        onTestEmailChange={onTestEmailChange}
         onTest={onTest}
         onEnable={onEnable}
         onEdit={() => onShowSetupChange(true)}
       />
     );
+  }
+
+  async function submitSetup() {
+    const valid = await form.trigger("apiKey");
+    if (!valid) return;
+    const apiKey = form.getValues("apiKey");
+    if (!settings.hasResendApiKey && !apiKey.trim()) {
+      form.setError("apiKey", { message: "请填写 Resend API Key" });
+      return;
+    }
+    await onSetup(apiKey.trim());
   }
 
   return (
@@ -98,18 +102,25 @@ export function ResendProviderSettings({
           缺少 PLATFORM_SECRET_ENCRYPTION_KEY，不能从后台安全保存 Resend API Key。
         </Alert>
       ) : null}
-      <TextField
-        label="Resend API Key"
-        type="password"
-        value={apiKey}
-        onChange={(event) => onApiKeyChange(event.target.value)}
-        required={!settings.hasResendApiKey}
-        helperText={
-          settings.hasResendApiKey
-            ? "已加密保存；留空表示不修改"
-            : "粘贴 Resend API Key"
-        }
-        fullWidth
+      <Controller
+        name="apiKey"
+        control={form.control}
+        render={({ field, fieldState }) => (
+          <TextField
+            {...field}
+            label="Resend API Key"
+            type="password"
+            required={!settings.hasResendApiKey}
+            error={Boolean(fieldState.error)}
+            helperText={
+              fieldState.error?.message ??
+              (settings.hasResendApiKey
+                ? "已加密保存；留空表示不修改"
+                : "粘贴 Resend API Key")
+            }
+            fullWidth
+          />
+        )}
       />
       <Stack
         direction={{ xs: "column", sm: "row" }}
@@ -127,11 +138,10 @@ export function ResendProviderSettings({
         ) : null}
         <Button
           variant="contained"
-          onClick={() => void onSetup()}
+          onClick={() => void submitSetup()}
           disabled={
             busy ||
-            !settings.hasDedicatedEncryptionKey ||
-            (!settings.hasResendApiKey && !apiKey.trim())
+            !settings.hasDedicatedEncryptionKey
           }
         >
           {busyAction === "resend-setup"
@@ -154,9 +164,7 @@ export function ResendProviderSettings({
       {ready ? (
         <ResendOverview
           settings={settings}
-          testEmail={testEmail}
           busy={busy}
-          onTestEmailChange={onTestEmailChange}
           onTest={onTest}
           onEnable={onEnable}
           compact
@@ -168,23 +176,28 @@ export function ResendProviderSettings({
 
 function ResendOverview({
   settings,
-  testEmail,
   busy,
-  onTestEmailChange,
   onTest,
   onEnable,
   onEdit,
   compact = false,
 }: {
   settings: PlatformSettingsView;
-  testEmail: string;
   busy: boolean;
-  onTestEmailChange: (value: string) => void;
-  onTest: () => Promise<void>;
+  onTest: (testEmail: string) => Promise<void>;
   onEnable: () => Promise<boolean>;
   onEdit?: () => void;
   compact?: boolean;
 }) {
+  const form = useFormContext<MailSettingsFormValues>();
+  const testEmail = useWatch({ control: form.control, name: "testEmail" });
+
+  async function submitTest() {
+    const valid = await form.trigger("testEmail");
+    if (!valid) return;
+    await onTest(testEmail.trim());
+  }
+
   return (
     <Stack spacing={2.25}>
       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
@@ -226,16 +239,23 @@ function ResendOverview({
           alignItems: "center",
         }}
       >
-        <TextField
-          label="测试收件邮箱"
-          type="email"
-          value={testEmail}
-          onChange={(event) => onTestEmailChange(event.target.value)}
-          fullWidth
+        <Controller
+          name="testEmail"
+          control={form.control}
+          render={({ field, fieldState }) => (
+            <TextField
+              {...field}
+              label="测试收件邮箱"
+              type="email"
+              error={Boolean(fieldState.error)}
+              helperText={fieldState.error?.message}
+              fullWidth
+            />
+          )}
         />
         <Button
           variant="outlined"
-          onClick={() => void onTest()}
+          onClick={() => void submitTest()}
           disabled={busy || !testEmail.trim()}
           sx={{ whiteSpace: "nowrap" }}
         >

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
   Accordion,
@@ -17,12 +18,9 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  FormControlLabel,
   LinearProgress,
   Paper,
   Stack,
-  Switch,
-  TextField,
   Typography,
 } from "@mui/material";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
@@ -38,9 +36,11 @@ import type {
 import { DingTalkTemplateSettings } from "@/components/staff/dingtalk-template-settings";
 import { ContentRiskPluginSettings } from "@/components/staff/content-risk-plugin-settings";
 import { PluginDeveloperGuideDialog } from "@/components/staff/plugin-developer-guide-dialog";
+import { PluginSettingsForm } from "@/components/staff/plugin-settings-form";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { useRealtimeRouteRefresh } from "@/hooks/use-realtime-route-refresh";
+import { queryKeys } from "@/lib/query-keys";
 
 type PluginRunView = {
   id: string;
@@ -143,6 +143,7 @@ const pluginEvents = ["PLUGIN_RUN_UPDATED"] as const;
 
 export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const toast = useToast();
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [confirmMigrationKey, setConfirmMigrationKey] = useState<string | null>(
@@ -150,7 +151,12 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   );
   const [config, setConfig] = useState<Record<string, unknown>>({});
   const [secrets, setSecrets] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState("");
+  const actionMutation = useMutation({
+    mutationFn: ({ run }: { key: string; run: () => Promise<void> }) => run(),
+  });
+  const busy = actionMutation.isPending
+    ? (actionMutation.variables?.key ?? "action")
+    : "";
   const [guideOpen, setGuideOpen] = useState(false);
   const selected = useMemo(
     () => plugins.find((plugin) => plugin.key === selectedKey) ?? null,
@@ -168,32 +174,36 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
     setSecrets({});
   }
 
-  async function saveConfig() {
-    if (!selected) return;
+  async function saveConfig(
+    nextConfig = config,
+    nextSecrets = secrets,
+  ) {
+    if (!selected) return false;
     const missingRequiredFields = selected.settings.filter(
       (field) =>
         (field.type === "secret-url" || field.type === "secret-text") &&
         field.required &&
         !selected.configuredSecretKeys.includes(field.key) &&
-        !secrets[field.key]?.trim(),
+        !nextSecrets[field.key]?.trim(),
     );
     if (missingRequiredFields.length > 0) {
       toast.warning(`请填写${missingRequiredFields[0]?.label ?? "必填配置"}`);
-      return;
+      return false;
     }
-    await execute("save", async () => {
+    return execute("save", async () => {
       const changedSecrets = Object.fromEntries(
-        Object.entries(secrets).filter(([, value]) => value.trim().length > 0),
+        Object.entries(nextSecrets).filter(([, value]) => value.trim().length > 0),
       );
       await staffApi(
         `/api/v1/admin/plugins/${selected.key}`,
         jsonRequest("PATCH", {
-          config,
+          config: nextConfig,
           ...(Object.keys(changedSecrets).length > 0
             ? { secrets: changedSecrets }
             : {}),
         }),
       );
+      setConfig(nextConfig);
       setSecrets({});
       toast.success("插件配置已保存");
     });
@@ -299,9 +309,8 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
   }
 
   async function execute(key: string, action: () => Promise<void>) {
-    setBusy(key);
     try {
-      await action();
+      await actionMutation.mutateAsync({ key, run: action });
       return true;
     } catch (actionError) {
       toast.error(
@@ -309,8 +318,17 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
       );
       return false;
     } finally {
+      if (selected?.key === "dingtalk-robot") {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.plugins.dingtalk,
+        });
+      }
+      if (selected?.key === "content-contact-risk") {
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.contentRisk.plugin,
+        });
+      }
       router.refresh();
-      setBusy("");
     }
   }
 
@@ -424,7 +442,9 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                   onSecretChange={(key, value) =>
                     setSecrets((current) => ({ ...current, [key]: value }))
                   }
-                  onSave={saveConfig}
+                  onSave={async () => {
+                    await saveConfig();
+                  }}
                 />
               ) : hasPluginSettings(selected) ? (
                 <Accordion
@@ -436,96 +456,13 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
                     <Typography sx={{ fontWeight: 650 }}>插件设置</Typography>
                   </AccordionSummary>
                   <AccordionDetails>
-                    <Stack spacing={2}>
-                      {selected.settings.map((field) =>
-                        field.type === "number" ? (
-                          <TextField
-                            key={field.key}
-                            type="number"
-                            label={field.label}
-                            value={Number(config[field.key] ?? 0)}
-                            onChange={(event) =>
-                              setConfig((current) => ({
-                                ...current,
-                                [field.key]: Number(event.target.value),
-                              }))
-                            }
-                            helperText={field.description}
-                            slotProps={{
-                              htmlInput: {
-                                min: field.min,
-                                max: field.max,
-                                step: field.step ?? 1,
-                              },
-                            }}
-                            fullWidth
-                          />
-                        ) : field.type === "boolean" ? (
-                          <FormControlLabel
-                            key={field.key}
-                            control={
-                              <Switch
-                                checked={Boolean(config[field.key])}
-                                onChange={(event) =>
-                                  setConfig((current) => ({
-                                    ...current,
-                                    [field.key]: event.target.checked,
-                                  }))
-                                }
-                              />
-                            }
-                            label={field.label}
-                          />
-                        ) : field.type === "secret-url" || field.type === "secret-text" ? (
-                          <TextField
-                            key={field.key}
-                            type="password"
-                            label={field.label}
-                            value={secrets[field.key] ?? ""}
-                            onChange={(event) =>
-                              setSecrets((current) => ({
-                                ...current,
-                                [field.key]: event.target.value,
-                              }))
-                            }
-                            helperText={
-                              selected.configuredSecretKeys.includes(field.key)
-                                ? "已加密保存；留空表示不修改"
-                                : field.description
-                            }
-                            autoComplete="new-password"
-                            required={
-                              field.required &&
-                              !selected.configuredSecretKeys.includes(field.key)
-                            }
-                            fullWidth
-                          />
-                        ) : field.type === "url" || field.type === "text" ? (
-                          <TextField
-                            key={field.key}
-                            type={field.type === "url" ? "url" : "text"}
-                            label={field.label}
-                            value={String(config[field.key] ?? "")}
-                            onChange={(event) =>
-                              setConfig((current) => ({
-                                ...current,
-                                [field.key]: event.target.value,
-                              }))
-                            }
-                            helperText={field.description}
-                            placeholder={field.placeholder}
-                            fullWidth
-                          />
-                        ) : null,
-                      )}
-                      <Button
-                        variant="contained"
-                        onClick={() => void saveConfig()}
-                        disabled={Boolean(busy)}
-                      >
-                        保存配置
-                      </Button>
-                    </Stack>
+                    <PluginSettingsForm
+                      plugin={selected}
+                      initialConfig={config}
+                      initialSecrets={secrets}
+                      busy={Boolean(busy)}
+                      onSave={saveConfig}
+                    />
                   </AccordionDetails>
                 </Accordion>
               ) : null}

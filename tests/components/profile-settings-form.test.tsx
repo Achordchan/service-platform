@@ -2,6 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ThemeProvider } from "@mui/material/styles";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProfileSettingsForm } from "@/components/shared/profile-settings-form";
 import { ToastProvider } from "@/components/shared/toast-provider";
@@ -23,14 +24,19 @@ function renderForm(
     typeof ProfileSettingsForm
   >["initialPendingEmailChange"] = null,
 ) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
     <ThemeProvider theme={createEmbedTheme("light")}>
-      <ToastProvider>
-        <ProfileSettingsForm
-          user={user}
-          initialPendingEmailChange={pending}
-        />
-      </ToastProvider>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <ProfileSettingsForm
+            user={user}
+            initialPendingEmailChange={pending}
+          />
+        </ToastProvider>
+      </QueryClientProvider>
     </ThemeProvider>,
   );
 }

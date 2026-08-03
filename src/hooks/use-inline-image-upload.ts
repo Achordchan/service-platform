@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import type { RichTextImageUploadResult } from "@/components/shared/rich-text-editor";
+import { apiRequest } from "@/lib/api-client";
 
 type InlineImageTarget =
   | {
@@ -13,11 +14,6 @@ type InlineImageTarget =
       requestId: string;
       visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
     };
-
-type UploadPayload = {
-  data?: { id?: string };
-  error?: { message?: string };
-};
 
 export function useInlineImageUpload(target: InlineImageTarget) {
   return useCallback(
@@ -33,16 +29,12 @@ export function useInlineImageUpload(target: InlineImageTarget) {
         form.append("serviceRequestId", target.requestId);
       }
 
-      const response = await fetch("/api/v1/attachments", {
-        method: "POST",
-        body: form,
-      });
-      const payload = (await response.json()) as UploadPayload;
-      const attachmentId = payload.data?.id;
-      if (!response.ok || !attachmentId) {
-        throw new Error(payload.error?.message || "图片上传失败");
-      }
-      return { attachmentId };
+      const result = await apiRequest<{ id: string }>(
+        "/api/v1/attachments",
+        { method: "POST", body: form },
+        "图片上传失败",
+      );
+      return { attachmentId: result.id };
     },
     [target],
   );
