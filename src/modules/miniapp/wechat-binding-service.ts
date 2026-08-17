@@ -4,6 +4,7 @@ import { APIError } from "better-auth/api";
 import type { Actor } from "@/lib/actor";
 import { resolveActor, withActorDb } from "@/lib/actor";
 import { auth } from "@/lib/auth";
+import { internalTurnstileBypassHeaders } from "@/lib/turnstile";
 import { prisma } from "@/lib/db";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
@@ -106,12 +107,14 @@ export async function bindTicketToAccount(input: {
     if (input.password !== undefined) {
       const result = await auth.api.signInEmail({
         body: { email: input.email, password: input.password },
+        headers: internalTurnstileBypassHeaders(),
       });
       verifiedUserId = result.user.id;
       verifySessionToken = result.token;
     } else {
       const result = await auth.api.signInEmailOTP({
         body: { email: input.email, otp: input.otp ?? "" },
+        headers: internalTurnstileBypassHeaders(),
       });
       verifiedUserId = result.user.id;
       verifySessionToken = result.token;
@@ -201,6 +204,7 @@ async function sendBindingOtpSilently(
   try {
     await auth.api.sendVerificationOTP({
       body: { email, type: "sign-in" },
+      headers: internalTurnstileBypassHeaders(),
     });
   } catch (error) {
     await prisma.miniappAuthTicket

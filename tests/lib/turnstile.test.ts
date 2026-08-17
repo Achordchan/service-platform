@@ -109,3 +109,25 @@ describe("Turnstile 服务端校验", () => {
     }
   });
 });
+
+describe("Turnstile 内部调用豁免", () => {
+  it("内部令牌请求头可被守卫识别，跳过人机验证", async () => {
+    const { internalTurnstileBypassHeaders, isInternalTurnstileBypass } =
+      await import("@/lib/turnstile");
+    expect(isInternalTurnstileBypass(internalTurnstileBypassHeaders())).toBe(
+      true,
+    );
+  });
+
+  it("缺失或伪造令牌不予豁免（fail-closed）", async () => {
+    const { isInternalTurnstileBypass } = await import("@/lib/turnstile");
+    expect(isInternalTurnstileBypass(undefined)).toBe(false);
+    expect(isInternalTurnstileBypass(null)).toBe(false);
+    expect(isInternalTurnstileBypass(new Headers())).toBe(false);
+    expect(
+      isInternalTurnstileBypass(
+        new Headers({ "x-internal-turnstile-bypass": "forged-value" }),
+      ),
+    ).toBe(false);
+  });
+});

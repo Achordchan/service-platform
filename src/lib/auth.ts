@@ -4,6 +4,7 @@ import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import {
   TURNSTILE_GUARDED_PATHS,
+  isInternalTurnstileBypass,
   verifyTurnstileToken,
 } from "@/lib/turnstile";
 import { prismaAdapter } from "better-auth/adapters/prisma";
@@ -27,6 +28,8 @@ function turnstileGuard(): BetterAuthPlugin {
             typeof context.path === "string" &&
             TURNSTILE_GUARDED_PATHS.has(context.path),
           handler: createAuthMiddleware(async (context) => {
+            // 服务端内部可信调用（如小程序绑定复用登录校验）携带进程内令牌，跳过人机验证
+            if (isInternalTurnstileBypass(context.headers)) return;
             const body = context.body as { cfTurnstileToken?: unknown } | null;
             const forwardedFor = context.headers?.get("x-forwarded-for");
             const remoteIp = forwardedFor?.split(",")[0]?.trim() ?? null;

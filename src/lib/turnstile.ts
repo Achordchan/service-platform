@@ -1,6 +1,26 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { env } from "@/lib/runtime-env";
+
+// 服务端内部可信调用（如小程序绑定复用 better-auth 登录校验）会命中同样的登录路径守卫，
+// 但其请求体不含 cfTurnstileToken。用一个仅存活于本进程内存、随进程重启轮换的随机令牌标记
+// 这类内部调用：守卫见到匹配令牌即跳过；外部客户端无从获知或伪造，缺失则照常校验（fail-closed）。
+const INTERNAL_BYPASS_HEADER = "x-internal-turnstile-bypass";
+const INTERNAL_BYPASS_TOKEN = randomUUID();
+
+/** 内部可信调用（经 auth.api.* 复用登录校验）应携带的请求头，用于跳过人机验证守卫 */
+export function internalTurnstileBypassHeaders(): Headers {
+  return new Headers({ [INTERNAL_BYPASS_HEADER]: INTERNAL_BYPASS_TOKEN });
+}
+
+/** 守卫内部使用：判断请求是否来自携带进程内令牌的可信内部调用 */
+export function isInternalTurnstileBypass(
+  headers: Headers | null | undefined,
+): boolean {
+  return headers?.get(INTERNAL_BYPASS_HEADER) === INTERNAL_BYPASS_TOKEN;
+}
 
 // Cloudflare Turnstile 服务端校验。
 // secret 未配置 → 跳过（本地最小配置可登录）；
