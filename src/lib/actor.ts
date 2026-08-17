@@ -63,12 +63,23 @@ export async function withActorDb<T>(
     isolationLevel?: Prisma.TransactionIsolationLevel;
   },
 ) {
-  return prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT set_config('app.user_id', ${actor.id}, true)`;
-    await tx.$executeRaw`SELECT set_config('app.is_platform_admin', ${String(actor.isPlatformAdmin)}, true)`;
-    await tx.$executeRaw`SELECT set_config('app.is_staff', ${String(actor.isStaff)}, true)`;
-    return callback(tx);
-  }, options);
+  return prisma.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT set_config('app.user_id', ${actor.id}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.is_platform_admin', ${String(actor.isPlatformAdmin)}, true)`;
+      await tx.$executeRaw`SELECT set_config('app.is_staff', ${String(actor.isStaff)}, true)`;
+      return callback(tx);
+    },
+    {
+      // RLS 要求整段请求工作跑在同一个 interactive 事务里，而多写路径（如回复并接手：
+      // 建消息 + FOR UPDATE + 改派 + 审计）会串多次往返。Prisma 默认 5s 上限在负载
+      // 高时会被撑爆并回滚（曾观测到 commit 时已耗时 7093ms），导致写操作静默丢失。
+      // 这里放宽默认上限；显式传入的 options 仍然优先。
+      maxWait: options?.maxWait ?? 5_000,
+      timeout: options?.timeout ?? 15_000,
+      isolationLevel: options?.isolationLevel,
+    },
+  );
 }
 
 export async function withSystemDb<T>(
