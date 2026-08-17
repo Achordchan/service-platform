@@ -1,4 +1,9 @@
-import { ensureLoggedIn } from "../../lib/auth";
+import {
+  ensureLoggedIn,
+  savePendingWebLogin,
+  getPendingWebLogin,
+  clearPendingWebLogin,
+} from "../../lib/auth";
 import { confirmWebQrLogin } from "../../lib/api";
 
 // 微信「扫一扫」/长按识别小程序码直达的确认页（唯一扫码通道）
@@ -16,10 +21,17 @@ Page({
       const match = scene.match(/(?:^|[&;])t=([A-Za-z0-9_-]+)/);
       token = match?.[1] ?? "";
     }
+    // 未登录先跳登录页会销毁本页并带走 scene，登录后经 reLaunch 回跳无法再带参数，
+    // 此处从暂存中恢复扫码时的票据，继续完成网页登录确认
+    if (!token) {
+      token = getPendingWebLogin();
+    }
     if (!token) {
       this.setData({ result: "invalid" });
       return;
     }
+    // 暂存票据：登录跳转会销毁本页，登录成功后据此回跳
+    savePendingWebLogin(token);
     this.setData({
       pendingPayload: `t:${token}`,
     });
@@ -27,6 +39,8 @@ Page({
   onShow() {
     if (!ensureLoggedIn()) return;
     if (this.data.pendingPayload && !this.data.result && !this.data.confirming) {
+      // 已登录且票据在手，回跳暂存使命完成，清除以免影响后续普通登录
+      clearPendingWebLogin();
       void this.askConfirm();
     }
   },

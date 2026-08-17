@@ -3,6 +3,11 @@ import { ApiError, clearToken, request } from "./request";
 
 const TOKEN_KEY = "miniapp_token";
 const TICKET_KEY = "miniapp_binding_ticket";
+const PENDING_WEB_LOGIN_KEY = "miniapp_pending_web_login";
+// 网页码本身短时有效，暂存票据也设 5 分钟上限，逾期不再回跳，避免陈旧票据劫持后续普通登录
+const PENDING_WEB_LOGIN_TTL = 5 * 60 * 1000;
+
+type PendingWebLogin = { token: string; ts: number };
 
 export type MiniappUser = { id: string; name: string; email: string };
 
@@ -52,6 +57,32 @@ export function ensureLoggedIn(): boolean {
   if (isLoggedIn()) return true;
   wx.reLaunch({ url: "/pages/auth/login/page" });
   return false;
+}
+
+/**
+ * 扫码进入网页登录确认页时暂存票据：未登录需先跳登录页（reLaunch 会销毁确认页），
+ * 登录成功后据此回跳完成确认，避免票据随页面销毁而丢失、被迫重新扫码。
+ */
+export function savePendingWebLogin(token: string) {
+  const payload: PendingWebLogin = { token, ts: Date.now() };
+  wx.setStorageSync(PENDING_WEB_LOGIN_KEY, payload);
+}
+
+/** 读取暂存的网页登录票据；逾期自动清除并返回空 */
+export function getPendingWebLogin(): string {
+  const payload = wx.getStorageSync(PENDING_WEB_LOGIN_KEY) as
+    | PendingWebLogin
+    | "";
+  if (!payload || typeof payload !== "object") return "";
+  if (Date.now() - payload.ts > PENDING_WEB_LOGIN_TTL) {
+    clearPendingWebLogin();
+    return "";
+  }
+  return payload.token;
+}
+
+export function clearPendingWebLogin() {
+  wx.removeStorageSync(PENDING_WEB_LOGIN_KEY);
 }
 
 function wechatCode(): Promise<string> {

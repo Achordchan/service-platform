@@ -1,4 +1,4 @@
-import { bindWithCode } from "../../../lib/auth";
+import { bindWithCode, getPendingWebLogin } from "../../../lib/auth";
 
 Page({
   data: {
@@ -19,7 +19,12 @@ Page({
     this.setData({ submitting: true, error: "" });
     try {
       await bindWithCode(code);
-      wx.reLaunch({ url: "/pages/projects/page" });
+      // 扫码进入登录的用户绑定成功后回跳网页登录确认页，否则落到项目 Tab
+      wx.reLaunch({
+        url: getPendingWebLogin()
+          ? "/pages/web-login/page"
+          : "/pages/projects/page",
+      });
     } catch (error) {
       this.setData({
         error: error instanceof Error ? error.message : "绑定失败，请重试",

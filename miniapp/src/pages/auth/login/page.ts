@@ -2,9 +2,22 @@ import {
   loginWithWechat,
   loginWithEmail,
   sendLoginOtp,
+  getPendingWebLogin,
 } from "../../../lib/auth";
 
 type EmailMode = "password" | "otp";
+
+/**
+ * 登录成功后的落地页：若存在待确认的网页登录票据（由扫码进入登录），
+ * 回跳网页登录确认页完成确认，而非落到项目 Tab，避免扫码票据被孤立。
+ */
+function redirectAfterLogin() {
+  if (getPendingWebLogin()) {
+    wx.reLaunch({ url: "/pages/web-login/page" });
+    return;
+  }
+  wx.reLaunch({ url: "/pages/projects/page" });
+}
 
 Page({
   data: {
@@ -45,7 +58,7 @@ Page({
     try {
       const result = await loginWithWechat();
       if (result.status === "SESSION_ISSUED") {
-        wx.reLaunch({ url: "/pages/projects/page" });
+        redirectAfterLogin();
         return;
       }
       // 未绑定：引导用邮箱验证（验证成功即自动绑定，下次可一键登录）
@@ -131,7 +144,7 @@ Page({
           this.data.emailMode === "password" ? this.data.password : undefined,
         otp: this.data.emailMode === "otp" ? this.data.otp : undefined,
       });
-      wx.reLaunch({ url: "/pages/projects/page" });
+      redirectAfterLogin();
     } catch (error) {
       const code = (error as { code?: string }).code;
       let message =
