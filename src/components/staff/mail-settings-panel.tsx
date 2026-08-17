@@ -247,7 +247,7 @@ export function MailSettingsPanel({
           sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
         >
           <div>
-            <Typography sx={{ fontWeight: 700 }}>邮件通道</Typography>
+            <Typography sx={{ fontWeight: 650 }}>邮件通道</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
               Resend 与 SMTP 为同级通道，同一时间只会启用其中一个；切换不会删除另一方配置。
             </Typography>
@@ -271,7 +271,7 @@ export function MailSettingsPanel({
             sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
           >
             <div>
-              <Typography sx={{ fontWeight: 700 }}>邮箱验证码登录</Typography>
+              <Typography sx={{ fontWeight: 650 }}>邮箱验证码登录</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.4 }}>
                 开启后，登录页允许使用 6 位邮箱验证码登录；密码登录仍为默认方式。
               </Typography>

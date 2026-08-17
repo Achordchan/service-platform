@@ -1,6 +1,7 @@
 import { Alert, Stack } from "@mui/material";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { LoginForm } from "@/components/auth/login-form";
+import { env } from "@/lib/runtime-env";
 import { isEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 
 export default async function LoginPage({
@@ -21,7 +22,7 @@ export default async function LoginPage({
             邀请已接受，请使用该邮箱登录。
           </Alert>
         ) : null}
-        <LoginForm emailOtpEnabled={emailOtpEnabled} />
+        <LoginForm emailOtpEnabled={emailOtpEnabled} turnstileSiteKey={env.CF_TURNSTILE_SITE_KEY ?? null} />
       </Stack>
     </AuthShell>
   );

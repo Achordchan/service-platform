@@ -1,4 +1,4 @@
-import { Container } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { RequestDetailWorkspace } from "@/components/staff/request-detail-workspace";
 import type { RequestDetail } from "@/components/staff/staff-types";
 import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
@@ -195,15 +195,7 @@ export default async function StaffRequestDetailPage({
   };
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{
-        width: "100%",
-        maxWidth: "100%",
-        px: { xs: 2, md: 3.5 },
-        py: { xs: 3, md: 4 },
-      }}
-    >
+    <PageContainer sx={{ width: "100%", maxWidth: "100%" }}>
       <RequestDetailWorkspace
         request={requestView}
         headingDescription={headingDescription}
@@ -244,6 +236,6 @@ export default async function StaffRequestDetailPage({
           request.contentRiskUiEnabled && !actor.isPlatformAdmin
         }
       />
-    </Container>
+    </PageContainer>
   );
 }

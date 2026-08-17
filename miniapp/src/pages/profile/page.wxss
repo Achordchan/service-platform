@@ -1,0 +1,133 @@
+.profile-page {
+  padding: 24rpx 0 60rpx;
+}
+
+/* 身份卡：白底大留白，空间名是绝对主角 */
+.identity-card {
+  background: var(--card-bg);
+  border-radius: 28rpx;
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  margin: 0 24rpx 24rpx;
+  padding: 40rpx 36rpx 36rpx;
+}
+
+.identity-label {
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+  letter-spacing: 2rpx;
+}
+
+.identity-space {
+  display: flex;
+  align-items: baseline;
+  gap: 16rpx;
+  margin-top: 14rpx;
+}
+
+.identity-space-name {
+  font-size: 40rpx;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  letter-spacing: 1rpx;
+}
+
+.identity-space-role {
+  flex-shrink: 0;
+  font-size: 22rpx;
+  color: var(--text-secondary);
+  background: var(--page-bg);
+  border-radius: 999rpx;
+  padding: 4rpx 16rpx;
+}
+
+.identity-divider {
+  height: 1rpx;
+  background: var(--divider);
+  margin: 30rpx 0 26rpx;
+}
+
+.identity-user {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.identity-avatar {
+  width: 88rpx;
+  height: 88rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4096ff, var(--brand));
+  color: #ffffff;
+  font-size: 36rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.identity-user-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.identity-user-name {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.identity-user-email {
+  font-size: 23rpx;
+  color: var(--text-secondary);
+  margin-top: 4rpx;
+  overflow-wrap: anywhere;
+}
+
+.identity-bound {
+  flex-shrink: 0;
+  font-size: 21rpx;
+  color: var(--success);
+  background: var(--success-soft);
+  border-radius: 999rpx;
+  padding: 6rpx 18rpx;
+}
+
+.identity-bound-off {
+  color: var(--text-secondary);
+  background: var(--page-bg);
+}
+
+/* 功能列表 */
+.link-card {
+  padding: 8rpx 28rpx;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 26rpx 0;
+  font-size: 28rpx;
+}
+
+.row + .row {
+  border-top: 1rpx solid var(--divider);
+}
+
+.row-left {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.logout-wrap {
+  margin: 32rpx 24rpx 0;
+}
+
+.logout-btn {
+  color: var(--error);
+  background: var(--error-soft);
+}

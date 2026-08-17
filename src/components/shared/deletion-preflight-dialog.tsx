@@ -131,9 +131,9 @@ export function DeletionPreflightDialog({
       {checking || deleting ? <LinearProgress /> : null}
       <DialogTitle>删除检测</DialogTitle>
       <DialogContent>
-        <Stack spacing={2.25} sx={{ pt: 0.5 }}>
+        <Stack spacing={1.75} sx={{ pt: 0.5 }}>
           <Box>
-            <Typography sx={{ fontWeight: 700 }} noWrap>
+            <Typography sx={{ fontWeight: 650 }} noWrap>
               {target?.resourceLabel}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -239,7 +239,7 @@ function CheckRow({ check }: { check: DeletionCheck }) {
       spacing={1.25}
       sx={{
         px: 1.75,
-        py: 1.5,
+        py: check.status === "PASS" ? 0.75 : 1.5,
         alignItems: "flex-start",
         bgcolor:
           check.status === "BLOCK"
@@ -267,7 +267,7 @@ function CheckRow({ check }: { check: DeletionCheck }) {
           useFlexGap
           sx={{ alignItems: "baseline", flexWrap: "wrap" }}
         >
-          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+          <Typography variant="body2" sx={{ fontWeight: 650 }}>
             {check.label}
           </Typography>
           {check.count !== undefined ? (
@@ -276,9 +276,11 @@ function CheckRow({ check }: { check: DeletionCheck }) {
             </Typography>
           ) : null}
         </Stack>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
-          {check.message}
-        </Typography>
+        {check.status !== "PASS" ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
+            {check.message}
+          </Typography>
+        ) : null}
         {check.actionHref && check.actionLabel ? (
           <Button
             component={Link}

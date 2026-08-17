@@ -1,0 +1,202 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: loadErrorTitle, desc: loadError, retry: canRetry}}"
+  />
+
+  <block wx:elif="{{project}}">
+    <view class="hero">
+      <view class="head-row">
+        <view class="head-title">{{project.title}}</view>
+        <view class="tag tag-{{statusTone}}">{{statusLabel}}</view>
+      </view>
+      <view class="meta-grid">
+        <view class="meta-item">
+          <view class="meta-label">服务类型</view>
+          <view class="meta-value">{{project.serviceType.name}}</view>
+        </view>
+        <view class="meta-item">
+          <view class="meta-label">项目经理</view>
+          <view class="meta-value">
+            {{project.staff.length > 0 ? project.staff[0].user.name : '待指派'}}
+          </view>
+        </view>
+        <view class="meta-item">
+          <view class="meta-label">所属客户</view>
+          <view class="meta-value">{{project.customerSpace.name}}</view>
+        </view>
+        <view class="meta-item">
+          <view class="meta-label">最近更新</view>
+          <view class="meta-value">{{project.updatedAt}}</view>
+        </view>
+      </view>
+      <view wx:if="{{project.showProgress !== false && project.progress > 0}}" class="progress-row">
+        <view class="progress-track">
+          <view class="progress-fill" style="width: {{project.progress}}%"></view>
+        </view>
+        <view class="progress-text">进度 {{project.progress}}%</view>
+      </view>
+    </view>
+
+    <scroll-view scroll-x class="tab-bar" enhanced show-scrollbar="{{false}}">
+      <view
+        wx:for="{{tabs}}"
+        wx:key="key"
+        class="tab-item {{activeTab === item.key ? 'tab-active' : ''}}"
+        data-key="{{item.key}}"
+        bindtap="onSwitchTab"
+      >
+        {{item.label}}
+      </view>
+    </scroll-view>
+
+    <!-- 概览 -->
+    <block wx:if="{{activeTab === 'overview'}}">
+      <view class="card">
+        <view class="section-title">项目信息</view>
+        <view class="row"><text class="row-label">当前阶段</text><text>{{project.currentStage || '—'}}</text></view>
+        <view class="row"><text class="row-label">服务周期</text><text>{{project.startDate || '—'}} 至 {{project.endDate || '—'}}</text></view>
+        <view class="row"><text class="row-label">项目状态</text><text>{{statusLabel}}</text></view>
+      </view>
+      <view class="card stat-card">
+        <view class="stat-item">
+          <view class="stat-num">{{requestCount}}</view>
+          <view class="stat-label">服务请求</view>
+        </view>
+        <view class="stat-item">
+          <view class="stat-num">{{project.updates.length}}</view>
+          <view class="stat-label">项目动态</view>
+        </view>
+        <view class="stat-item">
+          <view class="stat-num">{{milestones.length > 0 ? milestones.length : project.milestones.length}}</view>
+          <view class="stat-label">里程碑</view>
+        </view>
+      </view>
+      <view wx:if="{{project.description}}" class="card">
+        <view class="section-title">项目描述</view>
+        <rich-text nodes="{{project.description}}"></rich-text>
+      </view>
+    </block>
+
+    <!-- 里程碑：骨架先行 -->
+    <block wx:if="{{activeTab === 'milestones'}}">
+      <template wx:if="{{milestonesLoading}}" is="skeleton-list" data="{{count: 3}}" />
+      <template
+        wx:elif="{{milestones.length === 0}}"
+        is="state-empty"
+        data="{{icon: 'flag', title: '暂无里程碑', desc: '里程碑设置后会展示项目阶段'}}"
+      />
+      <view wx:else class="timeline">
+        <view wx:for="{{milestones}}" wx:key="id" class="milestone-item">
+          <view class="milestone-rail">
+            <view class="milestone-dot ms-{{item.status}}"></view>
+            <view wx:if="{{index < milestones.length - 1}}" class="milestone-line"></view>
+          </view>
+          <view class="milestone-body">
+            <view class="milestone-title">{{item.title}}</view>
+            <view class="text-secondary">{{item.startDateText}} ~ {{item.endDateText}}</view>
+            <view wx:if="{{item.description}}" class="milestone-desc">
+              <rich-text nodes="{{item.description}}"></rich-text>
+            </view>
+          </view>
+        </view>
+      </view>
+    </block>
+
+    <!-- 项目动态：骨架先行 + 摘要卡片（全文进详情页） -->
+    <block wx:if="{{activeTab === 'updates'}}">
+      <template wx:if="{{updatesLoading}}" is="skeleton-list" data="{{count: 3}}" />
+      <template
+        wx:elif="{{updates.length === 0}}"
+        is="state-empty"
+        data="{{icon: 'chat', title: '暂无项目动态', desc: '项目进展发布后会同步到这里'}}"
+      />
+      <block wx:else>
+        <view
+          wx:for="{{updates}}"
+          wx:key="id"
+          class="card card-press"
+          hover-class="hover-card"
+          hover-stay-time="80"
+          data-index="{{index}}"
+          bindtap="onOpenUpdate"
+        >
+          <view class="update-title">{{item.title}}</view>
+          <view class="text-secondary update-meta">{{item.authorName}} · {{item.timeText}}</view>
+          <view class="update-preview">{{item.bodyText}}</view>
+          <view class="update-badges" wx:if="{{item.imageCount > 0 || item.commentCount > 0}}">
+            <view wx:if="{{item.imageCount > 0}}" class="update-badge">{{item.imageCount}} 张图片</view>
+            <view wx:if="{{item.commentCount > 0}}" class="update-badge">{{item.commentCount}} 条评论</view>
+          </view>
+          <view class="update-enter">查看全文<t-icon name="chevron-right" size="28rpx" color="#1677ff" /></view>
+        </view>
+      </block>
+    </block>
+
+    <!-- 服务请求：tab 内嵌该项目工单列表 -->
+    <block wx:if="{{activeTab === 'requests'}}">
+      <view class="request-actions">
+        <view class="request-count text-secondary">共 {{requestCount}} 个服务请求</view>
+        <view class="new-request-btn" hover-class="hover-plain" bindtap="onNewRequest">+ 新建服务请求</view>
+      </view>
+      <template wx:if="{{requestsLoading}}" is="skeleton-list" data="{{count: 3}}" />
+      <template
+        wx:elif="{{requests.length === 0}}"
+        is="state-empty"
+        data="{{icon: 'form', title: '暂无服务请求', desc: '有问题随时提交，我们会尽快处理'}}"
+      />
+      <block wx:else>
+        <view
+          wx:for="{{requests}}"
+          wx:key="id"
+          class="card card-press"
+          hover-class="hover-card"
+          hover-stay-time="80"
+          data-id="{{item.id}}"
+          bindtap="onOpenRequest"
+        >
+          <view class="req-head">
+            <view class="req-number">{{item.number}}</view>
+            <view class="tag tag-{{item.statusTone}}">{{item.statusLabel}}</view>
+          </view>
+          <view class="req-title">{{item.title}}</view>
+          <view class="text-secondary req-meta">{{item.category.name}} · 更新于 {{item.updatedText}}</view>
+        </view>
+      </block>
+    </block>
+
+    <!-- 文件：项目级附件列表 -->
+    <block wx:if="{{activeTab === 'files'}}">
+      <template
+        wx:if="{{files.length === 0}}"
+        is="state-empty"
+        data="{{icon: 'folder', title: '暂无项目文件', desc: '项目交付文件会展示在这里'}}"
+      />
+      <block wx:else>
+        <view class="card">
+          <view class="section-title">项目文件（{{files.length}}）</view>
+          <view
+            wx:for="{{files}}"
+            wx:key="id"
+            class="file-row"
+            hover-class="hover-card"
+            data-id="{{item.id}}"
+            bindtap="onOpenFile"
+          >
+            <view class="file-ext">{{item.ext}}</view>
+            <view class="file-main">
+              <view class="file-name">{{item.originalName}}</view>
+              <view class="text-secondary file-sub">{{item.sizeText}} · {{item.createdAt}}</view>
+            </view>
+            <t-icon name="chevron-right" size="34rpx" color="#98a2b3" />
+          </view>
+        </view>
+      </block>
+    </block>
+  </block>
+</view>

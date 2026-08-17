@@ -1,4 +1,4 @@
-import { Container } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { redirect } from "next/navigation";
 import type { ServiceRequestDetail } from "@/components/customer/customer-types";
 import { RequestDetail } from "@/components/customer/request-detail";
@@ -103,11 +103,8 @@ export default async function CustomerRequestDetailPage({
   };
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
+    <PageContainer>
       <RequestDetail request={requestView} currentUserId={actor.id} />
-    </Container>
+    </PageContainer>
   );
 }

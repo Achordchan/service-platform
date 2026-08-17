@@ -48,7 +48,7 @@ export function ResendDnsRecords({
         }}
       >
         <Box>
-          <Typography sx={{ fontWeight: 700 }}>
+          <Typography sx={{ fontWeight: 650 }}>
             2. 配置并验证 {settings.resendDomain}
           </Typography>
           <Typography variant="body2" color="text.secondary">

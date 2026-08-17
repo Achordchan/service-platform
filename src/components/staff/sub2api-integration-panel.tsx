@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -50,7 +50,11 @@ import {
 import { queryKeys } from "@/lib/query-keys";
 
 const connectionFormSchema = z.object({
-  baseUrl: z.url("请输入有效的 Sub2API 地址").max(2048),
+  baseUrl: z
+    .string()
+    .trim()
+    .max(2048)
+    .pipe(z.url("请输入有效的 Sub2API 地址")),
   adminApiKey: z.string().trim().max(512),
   clearAdminApiKey: z.boolean(),
   emailNotificationsEnabled: z.boolean(),
@@ -474,19 +478,26 @@ function ConnectionDialog({
 export function ExternalContactsPanel({ projectId }: { projectId: string }) {
   const queryClient = useQueryClient();
   const [keyword, setKeyword] = useState("");
+  const [debouncedKeyword, setDebouncedKeyword] = useState("");
   const [status, setStatus] = useState<"ALL" | "ACTIVE" | "BLOCKED">("ALL");
   const [detailContact, setDetailContact] = useState<ExternalContact | null>(null);
-  const deferredKeyword = useDeferredValue(keyword.trim());
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedKeyword(keyword.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [keyword]);
   const contactsQuery = useInfiniteQuery({
     queryKey: queryKeys.sub2api.externalContacts(
       projectId,
-      deferredKeyword,
+      debouncedKeyword,
       status,
     ),
     initialPageParam: null as string | null,
     queryFn: ({ pageParam, signal }) => {
       const params = new URLSearchParams({ limit: "50" });
-      if (deferredKeyword) params.set("q", deferredKeyword);
+      if (debouncedKeyword) params.set("q", debouncedKeyword);
       if (status !== "ALL") params.set("status", status);
       if (pageParam) params.set("cursor", pageParam);
       return staffApi<ExternalContactPage>(

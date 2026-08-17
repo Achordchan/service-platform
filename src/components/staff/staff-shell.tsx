@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
 import {
   AppBar,
-  Avatar,
   Box,
   Divider,
   Drawer,
@@ -15,8 +13,6 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
-  Menu,
-  MenuItem,
   Stack,
   Toolbar,
   Tooltip,
@@ -28,16 +24,13 @@ import ChevronLeftOutlinedIcon from "@mui/icons-material/ChevronLeftOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
 import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
-import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
-import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
-import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
+import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
 import type { StaffUser } from "@/components/staff/staff-types";
-import { resolveAvatarSrc } from "@/lib/default-avatar";
-import { authClient } from "@/lib/auth-client";
+import { AccountMenu } from "@/components/shared/account-menu";
 import { NotificationMenu } from "@/components/shared/notification-menu";
 import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
 import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
@@ -50,6 +43,11 @@ import {
 const drawerWidth = 224;
 
 const primaryNavigation = [
+  {
+    href: "/staff/dashboard",
+    label: "概览",
+    icon: <DashboardOutlinedIcon fontSize="small" />,
+  },
   {
     href: "/staff/projects",
     label: "项目",
@@ -84,6 +82,11 @@ const adminNavigation = [
     icon: <ExtensionOutlinedIcon fontSize="small" />,
   },
   {
+    href: "/staff/audit-logs",
+    label: "审计日志",
+    icon: <HistoryOutlinedIcon fontSize="small" />,
+  },
+  {
     href: "/staff/settings",
     label: "设置",
     icon: <SettingsOutlinedIcon fontSize="small" />,
@@ -106,11 +109,8 @@ export function StaffShell({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
-  const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [navigationUnread, setNavigationUnread] =
     useState<NavigationUnreadState>(EMPTY_NAVIGATION_UNREAD);
   const adminNav = user.role === "PLATFORM_ADMIN"
@@ -118,14 +118,59 @@ export function StaffShell({
         (item) => item.href !== "/staff/content-review" || contentReviewEnabled,
       )
     : [];
-  const navigation = [...primaryNavigation, ...adminNav];
   const currentWidth = collapsed ? 76 : drawerWidth;
+
+  function renderNavItem(item: (typeof primaryNavigation)[number]) {
+    const selected =
+      pathname === item.href || pathname.startsWith(`${item.href}/`);
+    const hasUnread = item.href === "/staff/projects"
+      ? navigationUnread.projects
+      : item.href === "/staff/requests"
+        ? navigationUnread.requests
+        : false;
+    const showUnread = hasUnread && !selected;
+    return (
+      <Tooltip key={item.href} title={collapsed ? item.label : ""} placement="right">
+        <ListItemButton
+          component={Link}
+          href={item.href}
+          aria-label={showUnread ? `${item.label}，有未读更新` : item.label}
+          selected={selected}
+          onClick={() => setMobileOpen(false)}
+          sx={{
+            minHeight: 44,
+            px: collapsed ? 1.5 : 2,
+            my: 0.5,
+            borderRadius: 1.5,
+            justifyContent: collapsed ? "center" : "flex-start",
+            "&.Mui-selected": {
+              bgcolor: "action.selected",
+              color: "primary.main",
+            },
+          }}
+        >
+          <ListItemIcon
+            sx={{
+              minWidth: collapsed ? 0 : 38,
+              color: "inherit",
+              justifyContent: "center",
+            }}
+          >
+            <NavigationUnreadBadge visible={showUnread}>
+              {item.icon}
+            </NavigationUnreadBadge>
+          </ListItemIcon>
+          {!collapsed ? <ListItemText primary={item.label} /> : null}
+        </ListItemButton>
+      </Tooltip>
+    );
+  }
 
   const navigationList = (
     <Stack sx={{ height: "100%" }}>
       <Toolbar
         sx={{
-          minHeight: "72px !important",
+          "&": { minHeight: 64 },
           px: collapsed ? 1.5 : 2.5,
           justifyContent: collapsed ? "center" : "flex-start",
         }}
@@ -134,12 +179,12 @@ export function StaffShell({
         {!collapsed ? (
           <Typography
             component={Link}
-            href="/staff/projects"
+            href="/staff/dashboard"
             sx={{
               ml: 1.25,
               color: "primary.main",
               fontSize: 20,
-              fontWeight: 700,
+              fontWeight: 650,
               whiteSpace: "nowrap",
             }}
           >
@@ -148,59 +193,27 @@ export function StaffShell({
         ) : null}
       </Toolbar>
       <Divider />
-      <List sx={{ px: 1, py: 2 }}>
-        {navigation.map((item) => {
-          const selected =
-            pathname === item.href || pathname.startsWith(`${item.href}/`);
-          const hasUnread = item.href === "/staff/projects"
-            ? navigationUnread.projects
-            : item.href === "/staff/requests"
-              ? navigationUnread.requests
-              : false;
-          const showUnread = hasUnread && !selected;
-          return (
-            <Tooltip
-              key={item.href}
-              title={collapsed ? item.label : ""}
-              placement="right"
-            >
-              <ListItemButton
-                component={Link}
-                href={item.href}
-                aria-label={
-                  showUnread ? `${item.label}，有未读更新` : item.label
-                }
-                selected={selected}
-                onClick={() => setMobileOpen(false)}
-                sx={{
-                  minHeight: 44,
-                  px: collapsed ? 1.5 : 2,
-                  my: 0.5,
-                  borderRadius: 1.5,
-                  justifyContent: collapsed ? "center" : "flex-start",
-                  "&.Mui-selected": {
-                    bgcolor: "action.selected",
-                    color: "primary.main",
-                  },
-                }}
-              >
-                <ListItemIcon
-                  sx={{
-                    minWidth: collapsed ? 0 : 38,
-                    color: "inherit",
-                    justifyContent: "center",
-                  }}
-                >
-                  <NavigationUnreadBadge visible={showUnread}>
-                    {item.icon}
-                  </NavigationUnreadBadge>
-                </ListItemIcon>
-                {!collapsed ? <ListItemText primary={item.label} /> : null}
-              </ListItemButton>
-            </Tooltip>
-          );
-        })}
+      <List sx={{ px: 1, pt: 2, pb: adminNav.length ? 0.5 : 2 }}>
+        {primaryNavigation.map(renderNavItem)}
       </List>
+      {adminNav.length ? (
+        <>
+          {!collapsed ? (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ px: 2.5, pt: 1, pb: 0.5, fontWeight: 650, letterSpacing: "0.04em" }}
+            >
+              管理
+            </Typography>
+          ) : (
+            <Divider sx={{ mx: 1.5 }} />
+          )}
+          <List sx={{ px: 1, pt: collapsed ? 1 : 0, pb: 2 }}>
+            {adminNav.map(renderNavItem)}
+          </List>
+        </>
+      ) : null}
       <Box sx={{ mt: "auto", p: 1 }}>
         <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
           <ListItemButton
@@ -247,7 +260,11 @@ export function StaffShell({
             width: currentWidth,
             boxSizing: "border-box",
             borderRightColor: "divider",
-            position: "relative",
+            position: "fixed",
+            top: 0,
+            left: 0,
+            height: "100dvh",
+            overflowY: "auto",
             transition: "width 160ms ease",
             overflowX: "hidden",
           },
@@ -283,7 +300,7 @@ export function StaffShell({
             bgcolor: "background.paper",
           }}
         >
-          <Toolbar sx={{ minHeight: "72px !important", px: { xs: 2, md: 3 } }}>
+          <Toolbar sx={{ "&": { minHeight: 64 }, px: { xs: 2, md: 3.5 } }}>
             <IconButton
               aria-label="打开导航"
               onClick={() => {
@@ -297,7 +314,7 @@ export function StaffShell({
             <Typography
               sx={{
                 display: { xs: "block", md: "none" },
-                fontWeight: 700,
+                fontWeight: 650,
                 fontSize: 18,
               }}
             >
@@ -313,51 +330,16 @@ export function StaffShell({
                 staff
                 onUnreadStateChange={setNavigationUnread}
               />
-              <Stack
-                component="button"
-                type="button"
-                direction="row"
-                spacing={1}
-                onClick={(event) => setAccountAnchor(event.currentTarget)}
-                sx={{
-                  alignItems: "center",
-                  border: 0,
-                  bgcolor: "transparent",
-                  color: "text.primary",
-                  cursor: "pointer",
-                  p: 0.5,
-                }}
-              >
-                <Avatar
-                  src={resolveAvatarSrc(user.image, user.name, user.id)}
-                  alt={user.name}
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    bgcolor: "action.selected",
-                    color: "primary.main",
-                  }}
-                >
-                  {user.name.slice(0, 1)}
-                </Avatar>
-                <Box
-                  sx={{
-                    display: { xs: "none", sm: "block" },
-                    textAlign: "left",
-                  }}
-                >
-                  <Typography variant="body2" sx={{ fontWeight: 650 }}>
-                    {user.name}
-                  </Typography>
+              <AccountMenu
+                user={user}
+                accountHref="/staff/account"
+                avatarSx={{ color: "primary.main" }}
+                subtitle={
                   <Typography variant="caption" color="text.secondary">
                     {roleLabels[user.role]}
                   </Typography>
-                </Box>
-                <KeyboardArrowDownOutlinedIcon
-                  fontSize="small"
-                  sx={{ display: { xs: "none", sm: "block" } }}
-                />
-              </Stack>
+                }
+              />
             </Stack>
           </Toolbar>
         </AppBar>
@@ -366,65 +348,6 @@ export function StaffShell({
           {children}
         </Box>
       </Box>
-
-      <Menu
-        anchorEl={accountAnchor}
-        open={Boolean(accountAnchor)}
-        onClose={() => setAccountAnchor(null)}
-        anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
-        transformOrigin={{ horizontal: "right", vertical: "top" }}
-        slotProps={{ paper: { sx: { minWidth: 280 } } }}
-      >
-        <Box sx={{ px: 2, py: 1.75, maxWidth: 320 }}>
-          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-            <Avatar
-              src={resolveAvatarSrc(user.image, user.name, user.id)}
-              alt={user.name}
-              sx={{
-                width: 40,
-                height: 40,
-                bgcolor: "action.selected",
-                color: "primary.main",
-              }}
-            >
-              {user.name.slice(0, 1)}
-            </Avatar>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontWeight: 700 }} noWrap>
-                {user.name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {user.email}
-              </Typography>
-            </Box>
-          </Stack>
-        </Box>
-        <Divider />
-        <MenuItem
-          component={Link}
-          href="/staff/account"
-          onClick={() => setAccountAnchor(null)}
-        >
-          <ListItemIcon>
-            <ManageAccountsOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          个人设置
-        </MenuItem>
-        <Divider />
-        <MenuItem
-          onClick={async () => {
-            await authClient.signOut();
-            queryClient.clear();
-            router.replace("/login");
-            router.refresh();
-          }}
-        >
-          <ListItemIcon>
-            <LogoutOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          退出登录
-        </MenuItem>
-      </Menu>
     </Box>
   );
 }

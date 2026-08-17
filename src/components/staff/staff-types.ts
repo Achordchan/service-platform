@@ -99,13 +99,18 @@ export type ProjectUpdate = {
   visibility: ContentVisibility;
   authorName: string;
   createdAt: string;
+  updatedAt: string;
+  hasEditHistory: boolean;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
   comments: Array<{
     id: string;
     body: string;
     visibility: ContentVisibility;
+    authorId: string;
     authorName: string;
     createdAt: string;
+    updatedAt: string;
+    hasEditHistory: boolean;
     contentRiskStatus?: "PENDING" | "REVOKED" | null;
   }>;
 };
@@ -141,6 +146,8 @@ export type RequestListItem = {
   source?: "ACHORD" | "SUB2API" | "UNIVERSAL";
   sourceKey?: string | null;
   sourceLabel?: string | null;
+  firstRespondedAt?: string | null;
+  dueAt?: string | null;
 };
 
 export type RequestAttachment = {
@@ -242,6 +249,8 @@ export type ServiceTypeItem = {
   description?: string | null;
   active: boolean;
   updatedAt: string;
+  slaResponseMinutes?: number | null;
+  slaResolutionMinutes?: number | null;
   categories: Array<{
     id: string;
     name: string;

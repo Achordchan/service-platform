@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import {
   type MailMessageView,
   type MailOutboxSummary,
@@ -117,10 +118,7 @@ export default async function StaffSettingsPage() {
   }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
+    <PageContainer>
       <Stack spacing={3}>
         <StaffPageHeading title="设置" />
         <SettingsWorkspace
@@ -136,6 +134,6 @@ export default async function StaffSettingsPage() {
           playbooks={playbooks}
         />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

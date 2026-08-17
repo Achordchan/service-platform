@@ -1,0 +1,23 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{result === 'invalid'}}" is="state-error" data="{{title: '二维码无效或已过期', desc: '请回到网页刷新二维码后重新扫码'}}" />
+  <template wx:elif="{{result === 'denied'}}" is="state-empty" data="{{icon: 'lock-on', title: '已取消登录', desc: '如需登录网页版，请重新扫码并确认'}}" />
+
+  <view wx:elif="{{result === 'success'}}" class="card done-card">
+    <view class="state-badge badge-neutral">
+      <t-icon name="check-circle" size="56rpx" color="#16a466" />
+    </view>
+    <view class="state-title">已确认登录</view>
+    <view class="state-desc">网页版即将自动进入，可关闭本页</view>
+    <view class="state-action" hover-class="hover-plain" bindtap="onBackHome">返回小程序</view>
+  </view>
+
+  <view wx:else class="card done-card">
+    <view class="state-badge badge-neutral">
+      <t-icon name="scan" size="56rpx" color="#98a2b3" />
+    </view>
+    <view class="state-title">网页版登录确认</view>
+    <view class="state-desc">正在等待确认…</view>
+  </view>
+</view>

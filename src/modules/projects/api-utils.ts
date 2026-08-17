@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import type { Actor } from "@/lib/actor";
-import { resolveActor } from "@/lib/actor";
+import { resolveApiActor } from "@/modules/http/api-actor";
 import {
   unexpectedApiErrorResponse,
   type ApiErrorContext,
 } from "@/lib/api-error";
-import { getCurrentSession } from "@/lib/session";
 import {
   readBoundedRequestBody,
   RequestBodyTooLargeError,
@@ -19,27 +18,16 @@ type ActorResult =
 
 export async function requireApiActor(): Promise<ActorResult> {
   try {
-    const session = await getCurrentSession();
-    if (!session) {
+    const result = await resolveApiActor();
+    if (result.failure) {
       return {
         response: NextResponse.json(
-          { error: { code: "UNAUTHORIZED", message: "请先登录" } },
+          { error: { code: result.failure.code, message: result.failure.message } },
           { status: 401 },
         ),
       };
     }
-
-    const actor = await resolveActor(session.user.id);
-    if (!actor) {
-      return {
-        response: NextResponse.json(
-          { error: { code: "UNAUTHORIZED", message: "当前账号不可用" } },
-          { status: 401 },
-        ),
-      };
-    }
-
-    return { actor };
+    return { actor: result.actor };
   } catch (error) {
     return {
       response: unexpectedApiErrorResponse(error, {

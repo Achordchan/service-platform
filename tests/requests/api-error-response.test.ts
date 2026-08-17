@@ -3,8 +3,14 @@ import { DomainError } from "@/modules/projects/errors";
 import { apiErrorResponse } from "@/modules/requests/api";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/headers", () => ({
+  headers: async () => ({ get: () => null }),
+}));
 vi.mock("@/lib/actor", () => ({ resolveActor: vi.fn() }));
 vi.mock("@/lib/session", () => ({ getCurrentSession: vi.fn() }));
+vi.mock("@/modules/miniapp/session", () => ({
+  resolveMiniappSessionFromAuthorization: vi.fn().mockResolvedValue(null),
+}));
 
 describe("服务请求 API 错误响应", () => {
   it("保留跨模块业务错误的状态、编码和明确提示", async () => {

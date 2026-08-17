@@ -1,4 +1,5 @@
-import { Box, Container } from "@mui/material";
+import { Box } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { notFound } from "next/navigation";
 import type {
   ProjectDetail,
@@ -146,12 +147,14 @@ export default async function CustomerProjectPage({
       body: update.body,
       authorName: update.author.name,
       createdAt: update.createdAt.toISOString(),
+      updatedAt: update.updatedAt.toISOString(),
       contentRiskStatus: update.contentRiskStatus,
       comments: update.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
         authorName: comment.author.name,
         createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString(),
         contentRiskStatus: comment.contentRiskStatus,
       })),
     })),
@@ -169,15 +172,7 @@ export default async function CustomerProjectPage({
   );
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{
-        width: "100%",
-        maxWidth: "100%",
-        px: { xs: 2, md: 3.5 },
-        py: { xs: 3, md: 4 },
-      }}
-    >
+    <PageContainer sx={{ width: "100%", maxWidth: "100%" }}>
       <RealtimeRouteRefresh
         mode="project-detail"
         projectId={project.id}
@@ -260,6 +255,6 @@ export default async function CustomerProjectPage({
           />
         </Box>
       ) : null}
-    </Container>
+    </PageContainer>
   );
 }

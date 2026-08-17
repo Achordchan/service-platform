@@ -84,6 +84,30 @@ export async function loadProjectDetail(
     },
     orderBy: { createdAt: "asc" },
   });
+  const updatesWithRevisions = actor.isStaff
+    ? new Set(
+        (
+          await tx.projectUpdateRevision.findMany({
+            where: { projectUpdateId: { in: updates.map((update) => update.id) } },
+            select: { projectUpdateId: true },
+            distinct: ["projectUpdateId"],
+          })
+        ).map((row) => row.projectUpdateId),
+      )
+    : new Set<string>();
+  const commentsWithRevisions = actor.isStaff
+    ? new Set(
+        (
+          await tx.updateCommentRevision.findMany({
+            where: {
+              updateCommentId: { in: comments.map((comment) => comment.id) },
+            },
+            select: { updateCommentId: true },
+            distinct: ["updateCommentId"],
+          })
+        ).map((row) => row.updateCommentId),
+      )
+    : new Set<string>();
   const contentAuthors = await tx.user.findMany({
     where: {
       id: {
@@ -238,6 +262,7 @@ export async function loadProjectDetail(
           ? ""
           : sanitizeMessageHtml(update.body),
       author: authorById.get(update.authorId)!,
+      hasEditHistory: updatesWithRevisions.has(update.id),
       comments: (commentsByUpdateId.get(update.id) ?? []).map((comment) => ({
         ...comment,
         contentRiskStatus: riskStatus(
@@ -249,8 +274,9 @@ export async function loadProjectDetail(
           !actor.isPlatformAdmin &&
           riskStatus("UPDATE_COMMENT", comment.id, false) === "REVOKED"
             ? ""
-            : comment.body,
+            : sanitizeMessageHtml(comment.body),
         author: authorById.get(comment.authorId)!,
+        hasEditHistory: commentsWithRevisions.has(comment.id),
       })),
     })),
     attachments: attachments.map((attachment) => ({

@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import type { RequestProjectOption } from "@/components/customer/customer-types";
 import { NewRequestForm } from "@/components/customer/new-request-form";
 import { PageHeading } from "@/components/customer/page-heading";
@@ -34,10 +35,7 @@ export default async function NewCustomerRequestPage({
   );
 
   return (
-    <Container
-      maxWidth="md"
-      sx={{ px: { xs: 2, md: 3 }, py: { xs: 3, md: 5 } }}
-    >
+    <PageContainer maxWidth="md">
       <Stack spacing={3}>
         <PageHeading
           backLabel={initialProjectId ? "返回项目请求" : "服务项目"}
@@ -53,6 +51,6 @@ export default async function NewCustomerRequestPage({
           initialProjectId={initialProjectId}
         />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

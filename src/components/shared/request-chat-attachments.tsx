@@ -84,7 +84,7 @@ function MessageImage({
         sx={{
           display: "block",
           width: "100%",
-          maxHeight: 360,
+          maxHeight: 240,
           objectFit: "contain",
           bgcolor: "rgba(15,23,42,0.06)",
         }}
@@ -258,7 +258,7 @@ export function RequestAttachmentDrafts({
         spacing={1}
         sx={{ alignItems: "center", mb: 1 }}
       >
-        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+        <Typography variant="body2" sx={{ fontWeight: 650 }}>
           待发送附件
         </Typography>
         <Chip size="small" label={`${files.length} 个`} />

@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { CustomerSpaceTable } from "@/components/staff/customer-space-table";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
@@ -38,14 +39,11 @@ export default async function StaffCustomersPage() {
   }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
-      <Stack spacing={3}>
+    <PageContainer>
+      <Stack spacing={2.5}>
         <StaffPageHeading title="客户" />
         <CustomerSpaceTable spaces={spaces} />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

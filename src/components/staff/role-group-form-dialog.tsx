@@ -19,7 +19,9 @@ import {
   Switch,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import type { RoleGroupView } from "@/components/staff/role-group-manager";
 import { ROLE_PERMISSION_OPTIONS } from "@/modules/users/role-permissions";
 
@@ -42,6 +44,9 @@ const roleGroupFormSchema = z.object({
     .int("排序必须是整数")
     .min(0, "排序不能小于 0")
     .max(9999, "排序不能大于 9999"),
+});
+const systemRoleGroupFormSchema = roleGroupFormSchema.extend({
+  key: z.string(),
 });
 
 export type RoleGroupFormValues = z.infer<typeof roleGroupFormSchema>;
@@ -81,8 +86,12 @@ export function RoleGroupFormDialog({
   onClose: () => void;
   onSubmit: (values: RoleGroupFormValues) => Promise<void>;
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const form = useForm<RoleGroupFormValues>({
-    resolver: zodResolver(roleGroupFormSchema),
+    resolver: zodResolver(
+      editing?.isSystem ? systemRoleGroupFormSchema : roleGroupFormSchema,
+    ),
     defaultValues: formValues(editing),
   });
   const accessLevel = useWatch({ control: form.control, name: "accessLevel" });
@@ -121,6 +130,7 @@ export function RoleGroupFormDialog({
       onClose={busy ? undefined : onClose}
       fullWidth
       maxWidth="md"
+      fullScreen={mobile}
     >
       <Box component="form" onSubmit={form.handleSubmit(onSubmit)} noValidate>
         <DialogTitle>{editing ? "编辑角色组" : "新增角色组"}</DialogTitle>

@@ -12,6 +12,7 @@ export function MilestoneTimeline({
     <MilestoneList
       milestones={milestones}
       contentRiskEnabled={contentRiskEnabled}
+      collapsible
     />
   );
 }

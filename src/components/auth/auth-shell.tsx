@@ -85,7 +85,7 @@ export function AuthShell({
               <Typography
                 sx={{
                   fontSize: 13,
-                  fontWeight: 700,
+                  fontWeight: 650,
                   letterSpacing: "0.08em",
                   textTransform: "uppercase",
                   color: "rgba(248,250,252,0.55)",
@@ -97,7 +97,7 @@ export function AuthShell({
                 sx={{
                   mt: 1,
                   fontSize: 30,
-                  fontWeight: 700,
+                  fontWeight: 650,
                   letterSpacing: "-0.02em",
                   color: "#f8fafc",
                 }}
@@ -125,7 +125,7 @@ export function AuthShell({
                   sx={{
                     display: { xs: "block", md: "none" },
                     fontSize: 13,
-                    fontWeight: 700,
+                    fontWeight: 650,
                     color: "text.secondary",
                     letterSpacing: "0.04em",
                   }}

@@ -1,4 +1,5 @@
-import { Box, Container } from "@mui/material";
+import { Box } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { hasRolePermission } from "@/modules/authorization/role-permission-policy";
 import { ProjectDeliveryActions } from "@/components/staff/project-delivery-actions";
 import { ProjectDetailWorkspace } from "@/components/staff/project-detail-workspace";
@@ -105,13 +106,18 @@ export default async function StaffProjectDetailPage({
       visibility: update.visibility,
       authorName: update.author.name,
       createdAt: update.createdAt.toISOString(),
+      updatedAt: update.updatedAt.toISOString(),
+      hasEditHistory: update.hasEditHistory,
       contentRiskStatus: update.contentRiskStatus,
       comments: update.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
         visibility: comment.visibility,
+        authorId: comment.authorId,
         authorName: comment.author.name,
         createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString(),
+        hasEditHistory: comment.hasEditHistory,
         contentRiskStatus: comment.contentRiskStatus,
       })),
     })),
@@ -185,15 +191,7 @@ export default async function StaffProjectDetailPage({
   const canEditProject = actor.isPlatformAdmin;
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{
-        width: "100%",
-        maxWidth: "100%",
-        px: { xs: 2, md: 3.5 },
-        py: { xs: 3, md: 4 },
-      }}
-    >
+    <PageContainer sx={{ width: "100%", maxWidth: "100%" }}>
       <RealtimeRouteRefresh
         mode="project-detail"
         projectId={project.id}
@@ -221,6 +219,7 @@ export default async function StaffProjectDetailPage({
         <ProjectDetailWorkspace
           project={projectView}
           requests={requestRows}
+          currentUserId={actor.id}
           canManageDelivery={canManageDelivery}
           canPublishUpdate={canPublishUpdate}
           canManageStaff={canManageStaff}
@@ -232,6 +231,6 @@ export default async function StaffProjectDetailPage({
           }
         />
       </Box>
-    </Container>
+    </PageContainer>
   );
 }

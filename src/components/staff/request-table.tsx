@@ -1,10 +1,9 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
-  Button,
   Chip,
   InputAdornment,
   MenuItem,
@@ -15,13 +14,13 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import {
   PriorityChip,
   StaffStatus,
 } from "@/components/staff/staff-status";
+import { SlaIndicator } from "@/components/staff/sla-indicator";
 import {
   RequestAdvancedFilters,
 } from "@/components/staff/request-advanced-filters";
@@ -30,6 +29,7 @@ import {
   defaultAdvancedFilters,
   filterRequestRows,
   type RequestAdvancedFilterValue,
+  type RequestSlaFilter,
 } from "@/components/staff/request-table-filters";
 import {
   TabBadgeLabel,
@@ -73,6 +73,12 @@ export function RequestTable({
   hideProjectFilter?: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // 从仪表盘 SLA 卡片带 ?sla= 参数进入时，初始化对应筛选，让落地列表与卡片计数一致
+  const [sla, setSla] = useState<RequestSlaFilter>(() => {
+    const value = searchParams.get("sla");
+    return value === "breached" || value === "at_risk" ? value : "ALL";
+  });
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const { unread } = useUnreadNotifications();
   const [projectId, setProjectId] = useState("ALL");
@@ -92,8 +98,9 @@ export function RequestTable({
         customerKey,
         advanced: advancedFilters,
         keyword,
+        sla,
       }),
-    [advancedFilters, customerKey, keyword, projectId, requests, status],
+    [advancedFilters, customerKey, keyword, projectId, requests, sla, status],
   );
 
   const columns = useMemo<GridColDef<RequestListItem>[]>(
@@ -165,45 +172,38 @@ export function RequestTable({
         renderCell: ({ row }) => <StaffStatus value={row.status} compact />,
       },
       {
+        field: "sla",
+        headerName: "SLA",
+        minWidth: 120,
+        renderCell: ({ row }) => (
+          <SlaIndicator
+            dueAt={row.dueAt}
+            firstRespondedAt={row.firstRespondedAt}
+            status={row.status}
+            compact
+          />
+        ),
+      },
+      {
         field: "updatedAt",
         headerName: "更新时间",
         minWidth: 170,
         renderCell: ({ row }) =>
           dateFormatter.format(new Date(row.updatedAt)),
       },
-      {
-        field: "actions",
-        headerName: "操作",
-        sortable: false,
-        filterable: false,
-        minWidth: 110,
-        display: "flex",
-        renderCell: ({ row }) => (
-          <Button
-            size="small"
-            startIcon={<EditOutlinedIcon />}
-            onClick={(event) => {
-              event.stopPropagation();
-              router.push(`/staff/requests/${row.id}`);
-            }}
-          >
-            处理
-          </Button>
-        ),
-      },
     ],
-    [router, unread.requestUnreadCounts],
+    [unread.requestUnreadCounts],
   );
 
   return (
     <Stack spacing={2}>
       <Stack
-        direction={{ xs: "column", xl: "row" }}
+        direction={{ xs: "column", lg: "row" }}
         spacing={2}
         sx={{
           borderBottom: "1px solid",
           borderColor: "divider",
-          alignItems: { xs: "stretch", xl: "flex-end" },
+          alignItems: { xs: "stretch", lg: "flex-end" },
           justifyContent: "space-between",
         }}
       >
@@ -299,6 +299,25 @@ export function RequestTable({
         </Stack>
       </Stack>
 
+      {sla !== "ALL" ? (
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            当前筛选
+          </Typography>
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            label={sla === "breached" ? "SLA 已超时" : "SLA 即将超时"}
+            onDelete={() => {
+              setSla("ALL");
+              // 同步清掉地址栏的 ?sla=，避免刷新后筛选“复活”
+              if (searchParams.get("sla")) router.replace("/staff/requests");
+            }}
+          />
+        </Stack>
+      ) : null}
+
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
         <Box
           sx={{
@@ -312,9 +331,9 @@ export function RequestTable({
             rows={rows}
             columns={columns}
             onRowClick={({ row }) => router.push(`/staff/requests/${row.id}`)}
-            pageSizeOptions={[10, 20, 50]}
+            pageSizeOptions={[20, 50]}
             initialState={{
-              pagination: { paginationModel: { pageSize: 10, page: 0 } },
+              pagination: { paginationModel: { pageSize: 20, page: 0 } },
               sorting: {
                 sortModel: [{ field: "updatedAt", sort: "desc" }],
               },

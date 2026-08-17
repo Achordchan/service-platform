@@ -29,10 +29,19 @@ export function CollapsibleText({
 
   useLayoutEffect(() => {
     const node = ref.current;
-    if (!node) return;
-    setOverflowing(
-      collapsible && node.scrollHeight > node.clientHeight + 2,
-    );
+    if (!node || !collapsible) {
+      setOverflowing(false);
+      return;
+    }
+    // A one-shot measurement can run before the clip CSS has been applied
+    // (style-insertion timing) or before images inside HTML content finish
+    // loading and shift the height — ResizeObserver re-checks whenever the
+    // node's box actually changes, so it can't miss those cases.
+    const check = () => setOverflowing(node.scrollHeight > node.clientHeight + 2);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(node);
+    return () => observer.disconnect();
   }, [text, maxLines, expanded, collapsible]);
 
   return (
@@ -44,10 +53,11 @@ export function CollapsibleText({
             mt: 1.25,
             lineHeight: 1.8,
             wordBreak: "break-word",
-            display: collapsible ? "-webkit-box" : "block",
-            WebkitBoxOrient: collapsible ? "vertical" : undefined,
-            WebkitLineClamp:
-              collapsible && !expanded ? maxLines : "unset",
+            // -webkit-line-clamp only reliably clips inline text runs; block
+            // children like <p>/<img> break its height calculation and the
+            // box renders at full content height instead. A max-height clip
+            // (in em, matching the 1.8 line-height above) works for both.
+            maxHeight: collapsible && !expanded ? `${maxLines * 1.8}em` : "none",
             overflow: collapsible ? "hidden" : "visible",
             "& p": { m: 0, mb: 0.75 },
             "& p:last-child": { mb: 0 },

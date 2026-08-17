@@ -4,6 +4,16 @@ import { z } from "zod";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import {
+  NOTIFICATION_DELIVERY_RULES,
+  notificationDeliveryRuleKeySchema,
+} from "@/modules/notifications/notification-delivery-rules";
+
+// 客户视角隐藏仅面向员工的规则（如内容风控告警、接手通知）
+const ruleKeysForAudience = (isStaff: boolean) =>
+  NOTIFICATION_DELIVERY_RULES.filter(
+    (rule) => rule.emailSupported && (isStaff || !("customerHidden" in rule)),
+  ).map((rule) => rule.key);
 
 export const notificationPreferenceSchema = z
   .object({
@@ -17,16 +27,38 @@ export const notificationPreferenceSchema = z
     "请至少修改一项通知设置",
   );
 
+export const perTypePreferenceSchema = z.object({
+  ruleKey: notificationDeliveryRuleKeySchema,
+  emailEnabled: z.boolean(),
+});
+
+export type PerTypePreference = { ruleKey: string; emailEnabled: boolean };
+
 export function getNotificationPreferences(actor: Actor) {
-  return withActorDb(actor, (tx) =>
-    tx.user.findUniqueOrThrow({
+  return withActorDb(actor, async (tx) => {
+    const user = await tx.user.findUniqueOrThrow({
       where: { id: actor.id },
       select: {
         soundNotificationsEnabled: true,
         requestEmailNotificationsEnabled: true,
       },
-    }),
-  );
+    });
+    const perType = await tx.userNotificationPreference.findMany({
+      where: { userId: actor.id },
+      select: { ruleKey: true, emailEnabled: true },
+    });
+    const perTypeMap: Record<string, boolean> = {};
+    for (const pref of perType) {
+      perTypeMap[pref.ruleKey] = pref.emailEnabled;
+    }
+    return {
+      ...user,
+      perType: ruleKeysForAudience(actor.isStaff).map((key) => ({
+        ruleKey: key,
+        emailEnabled: perTypeMap[key] ?? true,
+      })),
+    };
+  });
 }
 
 export function updateNotificationPreferences(
@@ -56,5 +88,32 @@ export function updateNotificationPreferences(
       metadata: input,
     });
     return updated;
+  });
+}
+
+export function updatePerTypePreference(
+  actor: Actor,
+  input: PerTypePreference,
+) {
+  return withActorDb(actor, async (tx) => {
+    const result = await tx.userNotificationPreference.upsert({
+      where: {
+        userId_ruleKey: { userId: actor.id, ruleKey: input.ruleKey },
+      },
+      create: {
+        userId: actor.id,
+        ruleKey: input.ruleKey,
+        emailEnabled: input.emailEnabled,
+      },
+      update: { emailEnabled: input.emailEnabled },
+      select: { ruleKey: true, emailEnabled: true },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "NOTIFICATION_PREFERENCE_TYPE_UPDATED",
+      resourceType: "UserNotificationPreference",
+      resourceId: `${actor.id}:${input.ruleKey}`,
+      metadata: input,
+    });
+    return result;
   });
 }

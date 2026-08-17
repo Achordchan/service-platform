@@ -16,6 +16,7 @@ import {
   loadContentRiskPageState,
 } from "@/modules/plugins/content-risk-view-service";
 import { badRequest, notFound } from "@/modules/requests/errors";
+import { DomainError } from "@/modules/projects/errors";
 import { generateRequestNumber } from "@/modules/requests/request-number";
 import type { CreateRequestInput } from "@/modules/requests/request-schemas";
 import {
@@ -34,6 +35,7 @@ import {
   canViewProjectRequests,
   canViewRequest,
 } from "@/modules/requests/request-permissions";
+import { calculateRequestDueAt } from "@/modules/requests/request-sla";
 
 const userBriefSelect = {
   id: true,
@@ -55,6 +57,8 @@ const requestBaseSelect = {
   createdById: true,
   createdByExternalContactId: true,
   assigneeId: true,
+  firstRespondedAt: true,
+  dueAt: true,
   resolvedAt: true,
   closedAt: true,
   archivedAt: true,
@@ -185,6 +189,14 @@ export async function createRequest(
   projectId: string,
   input: CreateRequestInput,
 ) {
+  if (input.clientMutationKey) {
+    const existing = await findRequestByMutationKey(
+      actor,
+      input.clientMutationKey,
+      projectId,
+    );
+    if (existing) return existing;
+  }
   const preflightProject = await withActorDb(actor, (tx) =>
     tx.project.findUnique({
       where: { id: projectId },
@@ -211,6 +223,7 @@ export async function createRequest(
         id: true,
         status: true,
         serviceTypeId: true,
+        serviceType: { select: { slaResolutionMinutes: true } },
         customerSpaceId: true,
         customerRequestsEnabled: true,
       },
@@ -260,6 +273,10 @@ export async function createRequest(
         projectId,
         categoryId: category.id,
         createdById: actor.id,
+        clientMutationKey: input.clientMutationKey ?? null,
+        dueAt: calculateRequestDueAt(
+          project.serviceType.slaResolutionMinutes,
+        ),
       },
       select: requestBaseSelect,
     });
@@ -341,7 +358,65 @@ export async function createRequest(
       initialMessageId: initialMessage.id,
       deliveryFeedback: delivery.feedback,
     };
+  }).catch(async (error: unknown) => {
+    // 并发同 key：另一请求已创建，唯一约束兜底后返回已有记录
+    if (input.clientMutationKey && isPrismaUniqueViolation(error)) {
+      const existing = await findRequestByMutationKey(
+        actor,
+        input.clientMutationKey,
+        projectId,
+      );
+      if (existing) return existing;
+    }
+    throw error;
   });
+}
+
+async function findRequestByMutationKey(
+  actor: Actor,
+  key: string,
+  projectId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    const request = await tx.serviceRequest.findUnique({
+      where: {
+        createdById_clientMutationKey: {
+          createdById: actor.id,
+          clientMutationKey: key,
+        },
+      },
+      select: requestBaseSelect,
+    });
+    if (!request) return null;
+    if (request.projectId !== projectId) {
+      // 同 key 换项目重试：拒绝而非静默返回另一项目的工单
+      throw new DomainError(
+        "IDEMPOTENCY_KEY_CONFLICT",
+        "重复提交标识与目标项目不一致，请刷新后重试",
+        409,
+      );
+    }
+    const initialMessage = await tx.requestMessage.findFirst({
+      where: { serviceRequestId: request.id, isInitial: true },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+    });
+    const [summary] = await hydrateRequestSummaries(tx, [request]);
+    return {
+      ...summary,
+      initialMessageId: initialMessage?.id ?? "",
+      deliveryFeedback: null,
+    };
+  });
+}
+
+function isPrismaUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 export function listProjectRequests(actor: Actor, projectId: string) {
@@ -397,6 +472,85 @@ export function listProjectRequests(actor: Actor, projectId: string) {
   });
 }
 
+export type ListRequestsForActorFilters = {
+  projectId?: string;
+  status?:
+    | "PENDING"
+    | "IN_PROGRESS"
+    | "WAITING_CUSTOMER"
+    | "RESOLVED"
+    | "CLOSED";
+  query?: string;
+  limit?: number;
+  offset?: number;
+};
+
+// 跨项目工单列表（小程序/移动端入口）：可见范围沿用 RLS——tx.project.findMany
+// 只会返回当前 Actor 有权访问的项目；客户额外受 customerRequestsEnabled 门控，
+// 员工沿用 listProjectRequests 的「仅被分配/未分配」限制语义。
+export function listRequestsForActor(
+  actor: Actor,
+  filters: ListRequestsForActorFilters = {},
+) {
+  const limit = Math.min(Math.max(filters.limit ?? 20, 1), 50);
+  const offset = Math.max(filters.offset ?? 0, 0);
+  return withActorDb(actor, async (tx) => {
+    const projects = await tx.project.findMany({
+      where: {
+        ...(filters.projectId ? { id: filters.projectId } : {}),
+        ...(actor.isStaff ? {} : { customerRequestsEnabled: { not: false } }),
+      },
+      select: { id: true },
+    });
+    const projectIds = projects.map((project) => project.id);
+    if (projectIds.length === 0) {
+      return { requests: [], nextOffset: null, totalVisibleProjects: 0 };
+    }
+
+    const restrictToAssigned =
+      actor.isStaff &&
+      !actor.isPlatformAdmin &&
+      !hasRolePermission(actor, "request.view_project");
+    const keyword = filters.query?.trim();
+
+    const requests = await tx.serviceRequest.findMany({
+      where: {
+        projectId: { in: projectIds },
+        ...(filters.status ? { status: filters.status } : {}),
+        ...(restrictToAssigned
+          ? {
+              OR: [
+                { assigneeId: actor.id },
+                { assignees: { some: { userId: actor.id } } },
+                { assigneeId: null, assignees: { none: {} } },
+              ],
+            }
+          : {}),
+        ...(keyword
+          ? {
+              OR: [
+                { title: { contains: keyword, mode: "insensitive" } },
+                { number: { contains: keyword, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
+      select: requestBaseSelect,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
+      skip: offset,
+    });
+    const hasMore = requests.length > limit;
+    const page = hasMore ? requests.slice(0, limit) : requests;
+    const summaries = await hydrateRequestSummaries(tx, page);
+    return {
+      requests: summaries,
+      nextOffset: hasMore ? offset + limit : null,
+      totalVisibleProjects: projectIds.length,
+    };
+  });
+}
+
 export function getRequest(actor: Actor, requestId: string) {
   return withActorDb(actor, async (tx) => {
     const visibleContent = actor.isStaff
@@ -423,21 +577,21 @@ export function getRequest(actor: Actor, requestId: string) {
       throw notFound();
     }
     if (actor.isStaff && !actor.isPlatformAdmin) {
-      const [projectAssignment, assignees] = await Promise.all([
-        tx.projectStaff.findUnique({
-          where: {
-            projectId_userId: {
-              projectId: request.projectId,
-              userId: actor.id,
-            },
+      // 顺序执行：withActorDb 是单个 pg 连接，Promise.all 并发查询在 pg 上
+      // 只是串行排队（重入警告，pg 9 起直接报错）
+      const projectAssignment = await tx.projectStaff.findUnique({
+        where: {
+          projectId_userId: {
+            projectId: request.projectId,
+            userId: actor.id,
           },
-          select: { role: true },
-        }),
-        tx.requestAssignee.findMany({
-          where: { serviceRequestId: request.id },
-          select: { userId: true },
-        }),
-      ]);
+        },
+        select: { role: true },
+      });
+      const assignees = await tx.requestAssignee.findMany({
+        where: { serviceRequestId: request.id },
+        select: { userId: true },
+      });
       if (
         !canViewRequest(actor, {
           assigneeId: request.assigneeId,

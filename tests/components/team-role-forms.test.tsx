@@ -105,7 +105,7 @@ describe("员工与角色组表单", () => {
     );
 
     expect(screen.getByRole("grid", { name: "角色组" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
     const nameInput = screen.getByRole("textbox", { name: /名称/ });
     const keyInput = screen.getByRole("textbox", { name: /标识/ });
     expect((nameInput as HTMLInputElement).value).toBe("系统技术人员");
@@ -128,6 +128,38 @@ describe("员工与角色组表单", () => {
       active: true,
       sortOrder: 10,
     });
+  });
+
+  it("编辑系统角色组时不校验不可修改的历史标识", async () => {
+    staffApiMock.mockResolvedValue({ id: "role-system" });
+    renderWithProviders(
+      <RoleGroupManager
+        roleGroups={[
+          {
+            id: "role-system",
+            key: "Legacy-System-Key",
+            name: "系统技术人员",
+            description: null,
+            accessLevel: "TECHNICIAN",
+            permissions: [],
+            isSystem: true,
+            active: true,
+            sortOrder: 10,
+            userCount: 1,
+            invitationCount: 0,
+            updatedAt: "2026-07-31T00:00:00.000Z",
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
+    fireEvent.change(screen.getByRole("textbox", { name: /名称/ }), {
+      target: { value: "系统技术支持" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
   });
 
   it("邀请成员时校验姓名和邮箱并保留默认角色组", async () => {
@@ -215,7 +247,7 @@ describe("员工与角色组表单", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "编辑资料" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑资料" })[0]);
     const nameInput = screen.getByRole("textbox", { name: /姓名/ });
     expect((nameInput as HTMLInputElement).value).toBe("原成员");
     fireEvent.change(nameInput, { target: { value: "更新成员" } });
@@ -237,6 +269,44 @@ describe("员工与角色组表单", () => {
       location: "",
       contactNotes: "",
     });
+  });
+
+  it("编辑成员资料时不校验不可修改的历史邮箱", async () => {
+    const member: TeamMemberView = {
+      id: "user-legacy-email",
+      name: "原成员",
+      email: "legacy-email",
+      pendingEmailChange: null,
+      platformRole: "TECHNICIAN",
+      phone: null,
+      company: null,
+      jobTitle: null,
+      wechat: null,
+      website: null,
+      location: null,
+      contactNotes: null,
+      roleGroupId: activeRoleGroup.id,
+      roleGroupName: activeRoleGroup.name,
+      projectCount: 0,
+      requestCount: 0,
+      createdAt: "2026-07-31T00:00:00.000Z",
+    };
+    staffApiMock.mockResolvedValue({ id: member.id });
+    renderWithProviders(
+      <TeamManager
+        members={[member]}
+        invitations={[]}
+        roleGroups={[activeRoleGroup]}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "编辑资料" })[0]);
+    fireEvent.change(screen.getByRole("textbox", { name: /手机/ }), {
+      target: { value: "13800138000" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存资料" }));
+
+    await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
   });
 
   it("待处理邀请使用 DataGrid 展示并保留撤销操作", async () => {
@@ -267,7 +337,7 @@ describe("员工与角色组表单", () => {
 
     expect(screen.getByRole("grid", { name: "团队成员" })).toBeTruthy();
     expect(screen.getByRole("grid", { name: "待处理邀请" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "撤销" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "撤销" })[0]);
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(staffApiMock).toHaveBeenCalledWith(

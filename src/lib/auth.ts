@@ -2,6 +2,11 @@ import "server-only";
 
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
 import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  TURNSTILE_GUARDED_PATHS,
+  isInternalTurnstileBypass,
+  verifyTurnstileToken,
+} from "@/lib/turnstile";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { emailOTP } from "better-auth/plugins";
 import { prisma } from "@/lib/db";
@@ -9,6 +14,41 @@ import { enqueueMail } from "@/lib/jobs";
 import { env } from "@/lib/runtime-env";
 import { assertEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 import { hasActiveLoginAccount } from "@/modules/users/login-account-service";
+
+// 人机验证守卫：密码/验证码登录提交前校验 Cloudflare Turnstile token
+//（客户端通过 authClient 额外字段 cfTurnstileToken 传入；secret 未配置时跳过）。
+function turnstileGuard(): BetterAuthPlugin {
+  return {
+    id: "turnstile-guard",
+    hooks: {
+      before: [
+        {
+          matcher: (context) =>
+            context.method === "POST" &&
+            typeof context.path === "string" &&
+            TURNSTILE_GUARDED_PATHS.has(context.path),
+          handler: createAuthMiddleware(async (context) => {
+            // 服务端内部可信调用（如小程序绑定复用登录校验）携带进程内令牌，跳过人机验证
+            if (isInternalTurnstileBypass(context.headers)) return;
+            const body = context.body as { cfTurnstileToken?: unknown } | null;
+            const forwardedFor = context.headers?.get("x-forwarded-for");
+            const remoteIp = forwardedFor?.split(",")[0]?.trim() ?? null;
+            const result = await verifyTurnstileToken(
+              body?.cfTurnstileToken,
+              remoteIp,
+            );
+            if (!result.ok) {
+              throw new APIError("FORBIDDEN", {
+                code: "TURNSTILE_FAILED",
+                message: "人机验证未通过，请刷新后重试",
+              });
+            }
+          }),
+        },
+      ],
+    },
+  };
+}
 
 function trustedOrigins() {
   const origins = new Set([env.APP_URL, env.BETTER_AUTH_URL]);
@@ -93,6 +133,7 @@ export const auth = betterAuth({
     max: 20,
   },
   plugins: [
+    turnstileGuard(),
     emailOtpAccountGuard(),
     emailOTP({
       disableSignUp: true,

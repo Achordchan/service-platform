@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import {
   Box,
   Button,
@@ -10,25 +13,37 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  FormControlLabel,
   IconButton,
   LinearProgress,
   Paper,
   Stack,
+  Switch,
   Tab,
   Tabs,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
+import { EmptyState } from "@/components/shared/content-state";
+import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
+import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
+import { hasMeaningfulHtml } from "@/lib/message-content";
 import { ProjectStaffManager } from "@/components/staff/project-staff-manager";
 import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
-import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
+import {
+  ContentRiskNotice,
+  ContentRiskStatusLine,
+} from "@/components/shared/content-risk-notice";
 import {
   countProjectRequestUnread,
   countProjectScopeUnread,
@@ -43,6 +58,10 @@ import {
 } from "@/components/staff/sub2api-integration-panel";
 import { UniversalIntegrationPanel } from "@/components/staff/universal-integration-panel";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import {
+  UpdateHistoryDialog,
+  type UpdateHistoryTarget,
+} from "@/components/staff/update-history-dialog";
 import type {
   ProjectDetail,
   ProjectUpdate,
@@ -69,6 +88,60 @@ function formatDate(value?: string | null) {
   return value ? dateFormatter.format(new Date(value)) : "未设置";
 }
 
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+function EditedAtLabel({
+  updatedAt,
+  onClick,
+}: {
+  updatedAt: string;
+  onClick: () => void;
+}) {
+  return (
+    <>
+      {" · "}
+      <Box
+        component="button"
+        type="button"
+        onClick={onClick}
+        sx={{
+          border: 0,
+          background: "none",
+          p: 0,
+          font: "inherit",
+          color: "primary.main",
+          cursor: "pointer",
+          textDecoration: "underline",
+        }}
+      >
+        重新编辑于 {dateTimeFormatter.format(new Date(updatedAt))}
+      </Box>
+    </>
+  );
+}
+
+const updateEditFormSchema = z.object({
+  title: z.string().trim().min(1, "请填写动态标题").max(200),
+  body: z.string().refine(hasMeaningfulHtml, "请填写进度说明"),
+  internal: z.boolean(),
+});
+type UpdateEditFormValues = z.infer<typeof updateEditFormSchema>;
+
+const commentEditFormSchema = z.object({
+  body: z.string().trim().min(1, "请填写评论内容").max(10000),
+  internal: z.boolean(),
+});
+type CommentEditFormValues = z.infer<typeof commentEditFormSchema>;
+
+type CommentItem = ProjectUpdate["comments"][number];
+
 function SummaryField({
   label,
   value,
@@ -89,6 +162,7 @@ function SummaryField({
 export function ProjectDetailWorkspace({
   project,
   requests,
+  currentUserId,
   canManageDelivery,
   canPublishUpdate,
   canManageStaff,
@@ -99,6 +173,7 @@ export function ProjectDetailWorkspace({
 }: {
   project: ProjectDetail;
   requests: RequestListItem[];
+  currentUserId: string;
   canManageDelivery: boolean;
   canPublishUpdate: boolean;
   canManageStaff: boolean;
@@ -112,6 +187,40 @@ export function ProjectDetailWorkspace({
   const [tab, setTab] = useState<ProjectTab>("overview");
   const [deleteTarget, setDeleteTarget] = useState<ProjectUpdate | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [historyTarget, setHistoryTarget] = useState<UpdateHistoryTarget | null>(
+    null,
+  );
+  const [editUpdateTarget, setEditUpdateTarget] =
+    useState<ProjectUpdate | null>(null);
+  const [editCommentTarget, setEditCommentTarget] = useState<{
+    update: ProjectUpdate;
+    comment: CommentItem;
+  } | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [inlineImageUploading, setInlineImageUploading] = useState(false);
+
+  const updateEditForm = useForm<UpdateEditFormValues>({
+    resolver: zodResolver(updateEditFormSchema),
+    defaultValues: { title: "", body: "", internal: false },
+  });
+  const updateEditInternal = useWatch({
+    control: updateEditForm.control,
+    name: "internal",
+  });
+  const updateEditBody = useWatch({
+    control: updateEditForm.control,
+    name: "body",
+  });
+  const uploadInlineImage = useInlineImageUpload({
+    projectId: project.id,
+    context: "PROJECT_UPDATE",
+    visibility: updateEditInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+  });
+
+  const commentEditForm = useForm<CommentEditFormValues>({
+    resolver: zodResolver(commentEditFormSchema),
+    defaultValues: { body: "", internal: false },
+  });
   const activeTab = tab;
   const deliveryActive = isProjectDeliveryActive(project.status);
   const { unread } = useUnreadNotifications();
@@ -157,6 +266,67 @@ export function ProjectDetailWorkspace({
       setDeleting(false);
     }
   }
+
+  function openEditUpdate(update: ProjectUpdate) {
+    updateEditForm.reset({
+      title: update.title,
+      body: update.body,
+      internal: update.visibility === "INTERNAL",
+    });
+    setEditUpdateTarget(update);
+  }
+
+  const submitEditUpdate = updateEditForm.handleSubmit(async (values) => {
+    if (!editUpdateTarget) return;
+    setSavingEdit(true);
+    try {
+      await staffApi(
+        `/api/v1/projects/${project.id}/updates/${editUpdateTarget.id}`,
+        jsonRequest("PATCH", {
+          title: values.title,
+          body: values.body,
+          visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        }),
+      );
+      setEditUpdateTarget(null);
+      setInlineImageUploading(false);
+      toast.success("进度动态已更新");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "进度动态更新失败");
+    } finally {
+      setSavingEdit(false);
+    }
+  });
+
+  function openEditComment(update: ProjectUpdate, comment: CommentItem) {
+    commentEditForm.reset({
+      body: comment.body,
+      internal: comment.visibility === "INTERNAL",
+    });
+    setEditCommentTarget({ update, comment });
+  }
+
+  const submitEditComment = commentEditForm.handleSubmit(async (values) => {
+    if (!editCommentTarget) return;
+    setSavingEdit(true);
+    try {
+      await staffApi(
+        `/api/v1/projects/${project.id}/updates/${editCommentTarget.update.id}/comments/${editCommentTarget.comment.id}`,
+        jsonRequest("PATCH", {
+          body: values.body,
+          visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        }),
+      );
+      setEditCommentTarget(null);
+      toast.success("评论已更新");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "评论更新失败");
+    } finally {
+      setSavingEdit(false);
+    }
+  });
 
   return (
     <Stack spacing={3} sx={{ width: "100%" }}>
@@ -268,7 +438,7 @@ export function ProjectDetailWorkspace({
             <Stack spacing={1.25}>
               <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                 <Typography sx={{ fontWeight: 650 }}>整体进度</Typography>
-                <Typography color="primary.main" sx={{ fontWeight: 700 }}>
+                <Typography color="primary.main" sx={{ fontWeight: 650 }}>
                   {project.progress}%
                 </Typography>
               </Stack>
@@ -318,9 +488,9 @@ export function ProjectDetailWorkspace({
       ) : null}
 
       {activeTab === "updates" && deliveryActive ? (
-        <Stack spacing={2}>
+        <Stack spacing={1.5}>
           {project.updates.map((update) => (
-            <Paper key={update.id} variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
+            <Paper key={update.id} variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
               <Stack
                 direction="row"
                 spacing={1}
@@ -344,23 +514,49 @@ export function ProjectDetailWorkspace({
                   </Stack>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
                     {update.authorName} · {dateFormatter.format(new Date(update.createdAt))}
+                    {update.hasEditHistory ? (
+                      <EditedAtLabel
+                        updatedAt={update.updatedAt}
+                        onClick={() =>
+                          setHistoryTarget({
+                            kind: "update",
+                            projectId: project.id,
+                            projectUpdateId: update.id,
+                            label: update.title,
+                          })
+                        }
+                      />
+                    ) : null}
                   </Typography>
                 </Box>
                 {canPublishUpdate ? (
-                  <Tooltip title="删除进度">
-                    <span>
-                      <IconButton
-                        size="small"
-                        color="error"
-                        aria-label={`删除进度 ${update.title}`}
-                        onClick={() => setDeleteTarget(update)}
-                        disabled={deleting}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        <DeleteOutlineOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
+                  <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
+                    <Tooltip title="编辑进度">
+                      <span>
+                        <IconButton
+                          size="small"
+                          aria-label={`编辑进度 ${update.title}`}
+                          onClick={() => openEditUpdate(update)}
+                          disabled={update.contentRiskStatus === "REVOKED"}
+                        >
+                          <EditOutlinedIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                    <Tooltip title="删除进度">
+                      <span>
+                        <IconButton
+                          size="small"
+                          color="error"
+                          aria-label={`删除进度 ${update.title}`}
+                          onClick={() => setDeleteTarget(update)}
+                          disabled={deleting}
+                        >
+                          <DeleteOutlineOutlinedIcon fontSize="small" />
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </Stack>
                 ) : null}
               </Stack>
               {update.contentRiskStatus === "PENDING" ? (
@@ -384,10 +580,45 @@ export function ProjectDetailWorkspace({
                 >
                   {update.comments.map((comment) => (
                     <Box key={comment.id}>
-                      <Typography variant="body2" sx={{ fontWeight: 650 }}>
-                        {comment.authorName}
-                        {comment.visibility === "INTERNAL" ? " · 内部评论" : ""}
-                      </Typography>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{ alignItems: "flex-start", justifyContent: "space-between" }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                          {comment.authorName}
+                          {comment.visibility === "INTERNAL" ? " · 内部评论" : ""}
+                          {comment.hasEditHistory ? (
+                            <EditedAtLabel
+                              updatedAt={comment.updatedAt}
+                              onClick={() =>
+                                setHistoryTarget({
+                                  kind: "comment",
+                                  projectId: project.id,
+                                  projectUpdateId: update.id,
+                                  updateCommentId: comment.id,
+                                  label: `${update.title} · 评论`,
+                                })
+                              }
+                            />
+                          ) : null}
+                        </Typography>
+                        {(canEditProject || comment.authorId === currentUserId) &&
+                        comment.contentRiskStatus !== "REVOKED" ? (
+                          <Tooltip title="编辑评论">
+                            <span>
+                              <IconButton
+                                size="small"
+                                aria-label="编辑评论"
+                                onClick={() => openEditComment(update, comment)}
+                                sx={{ flexShrink: 0 }}
+                              >
+                                <EditOutlinedIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        ) : null}
+                      </Stack>
                       {comment.contentRiskStatus === "REVOKED" ? (
                         <ContentRiskStatusLine
                           status="REVOKED"
@@ -395,9 +626,10 @@ export function ProjectDetailWorkspace({
                         />
                       ) : (
                         <>
-                          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
-                            {comment.body}
-                          </Typography>
+                          <CollapsibleText
+                            text={comment.body}
+                            maxLines={6}
+                          />
                           <ContentRiskStatusLine
                             status={comment.contentRiskStatus}
                             pluginEnabled={Boolean(project.contentRiskUiEnabled)}
@@ -411,8 +643,8 @@ export function ProjectDetailWorkspace({
             </Paper>
           ))}
           {project.updates.length === 0 ? (
-            <Paper variant="outlined" sx={{ p: 5, textAlign: "center" }}>
-              <Typography color="text.secondary">尚未发布项目进度</Typography>
+            <Paper variant="outlined" sx={{ p: 0 }}>
+              <EmptyState icon={<UpdateOutlinedIcon />} title="尚未发布项目进度" />
             </Paper>
           ) : null}
 
@@ -444,6 +676,166 @@ export function ProjectDetailWorkspace({
                 {deleting ? "删除中..." : "确认删除"}
               </Button>
             </DialogActions>
+          </Dialog>
+
+          <UpdateHistoryDialog
+            target={historyTarget}
+            onClose={() => setHistoryTarget(null)}
+          />
+
+          <Dialog
+            open={Boolean(editUpdateTarget)}
+            onClose={savingEdit ? undefined : () => setEditUpdateTarget(null)}
+            fullWidth
+            maxWidth="sm"
+            slotProps={{
+              paper: { sx: { maxHeight: "calc(100dvh - 48px)" } },
+            }}
+          >
+            <Stack
+              component="form"
+              onSubmit={submitEditUpdate}
+              sx={{ minHeight: 0, maxHeight: "inherit", overflow: "hidden" }}
+            >
+              {savingEdit ? <LinearProgress /> : null}
+              <DialogTitle>编辑进度动态</DialogTitle>
+              <DialogContent sx={{ overflowY: "auto" }}>
+                <Stack spacing={2} sx={{ pt: 1 }}>
+                  {contentRiskNoticeEnabled && !updateEditInternal ? (
+                    <ContentRiskNotice audience="STAFF" />
+                  ) : null}
+                  <Controller
+                    name="title"
+                    control={updateEditForm.control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="动态标题"
+                        required
+                        error={Boolean(updateEditForm.formState.errors.title)}
+                        helperText={updateEditForm.formState.errors.title?.message}
+                      />
+                    )}
+                  />
+                  <Stack spacing={1}>
+                    <Typography sx={{ fontWeight: 650 }}>进度说明 *</Typography>
+                    <Controller
+                      name="body"
+                      control={updateEditForm.control}
+                      render={({ field }) => (
+                        <RichTextEditor
+                          value={field.value}
+                          onChange={field.onChange}
+                          placeholder="说明本次进展、已完成事项和下一步安排"
+                          disabled={savingEdit}
+                          minHeight={180}
+                          maxHeight={320}
+                          uploadImage={uploadInlineImage}
+                          onImageUploadingChange={setInlineImageUploading}
+                        />
+                      )}
+                    />
+                    {updateEditForm.formState.errors.body?.message ? (
+                      <Typography variant="caption" color="error">
+                        {updateEditForm.formState.errors.body.message}
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                  <Controller
+                    name="internal"
+                    control={updateEditForm.control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={field.value}
+                            onChange={(_, checked) => field.onChange(checked)}
+                          />
+                        }
+                        label="仅内部可见"
+                      />
+                    )}
+                  />
+                </Stack>
+              </DialogContent>
+              <DialogActions sx={{ px: 3, pb: 3 }}>
+                <Button
+                  onClick={() => setEditUpdateTarget(null)}
+                  disabled={savingEdit}
+                >
+                  取消
+                </Button>
+                <Button
+                  type="submit"
+                  variant="contained"
+                  disabled={
+                    savingEdit ||
+                    inlineImageUploading ||
+                    !hasMeaningfulHtml(updateEditBody)
+                  }
+                >
+                  保存
+                </Button>
+              </DialogActions>
+            </Stack>
+          </Dialog>
+
+          <Dialog
+            open={Boolean(editCommentTarget)}
+            onClose={savingEdit ? undefined : () => setEditCommentTarget(null)}
+            fullWidth
+            maxWidth="sm"
+          >
+            <Stack component="form" onSubmit={submitEditComment}>
+              {savingEdit ? <LinearProgress /> : null}
+              <DialogTitle>编辑评论</DialogTitle>
+              <DialogContent>
+                <Stack spacing={2} sx={{ pt: 1 }}>
+                  <Controller
+                    name="body"
+                    control={commentEditForm.control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="评论内容"
+                        required
+                        multiline
+                        minRows={3}
+                        maxRows={10}
+                        error={Boolean(commentEditForm.formState.errors.body)}
+                        helperText={commentEditForm.formState.errors.body?.message}
+                      />
+                    )}
+                  />
+                  <Controller
+                    name="internal"
+                    control={commentEditForm.control}
+                    render={({ field }) => (
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={field.value}
+                            onChange={(_, checked) => field.onChange(checked)}
+                          />
+                        }
+                        label="仅内部可见"
+                      />
+                    )}
+                  />
+                </Stack>
+              </DialogContent>
+              <DialogActions sx={{ px: 3, pb: 3 }}>
+                <Button
+                  onClick={() => setEditCommentTarget(null)}
+                  disabled={savingEdit}
+                >
+                  取消
+                </Button>
+                <Button type="submit" variant="contained" disabled={savingEdit}>
+                  保存
+                </Button>
+              </DialogActions>
+            </Stack>
           </Dialog>
         </Stack>
       ) : null}

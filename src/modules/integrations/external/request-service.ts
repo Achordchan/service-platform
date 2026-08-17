@@ -33,6 +33,7 @@ import {
 import { recordUniversalUnreadWebhook } from "@/modules/integrations/universal/webhook-service";
 import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
 import { generateRequestNumber } from "@/modules/requests/request-number";
+import { calculateRequestDueAt } from "@/modules/requests/request-sla";
 import {
   assertRequestTransition,
   statusAfterCustomerReply,
@@ -171,6 +172,8 @@ export function listExternalRequests(actor: ExternalActor) {
         description: true,
         priority: true,
         status: true,
+        firstRespondedAt: true,
+        dueAt: true,
         createdAt: true,
         updatedAt: true,
         categoryId: true,
@@ -235,6 +238,7 @@ export async function createExternalRequest(
         kind: true,
         status: true,
         serviceTypeId: true,
+        serviceType: { select: { slaResolutionMinutes: true } },
         customerSpaceId: true,
       },
     });
@@ -270,6 +274,9 @@ export async function createExternalRequest(
         projectId: project.id,
         categoryId: category.id,
         createdByExternalContactId: actor.id,
+        dueAt: calculateRequestDueAt(
+          project.serviceType.slaResolutionMinutes,
+        ),
       },
       select: {
         id: true,
@@ -278,6 +285,8 @@ export async function createExternalRequest(
         description: true,
         priority: true,
         status: true,
+        firstRespondedAt: true,
+        dueAt: true,
         createdAt: true,
         updatedAt: true,
         category: { select: { id: true, name: true } },
@@ -363,6 +372,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         description: true,
         priority: true,
         status: true,
+        firstRespondedAt: true,
+        dueAt: true,
         resolvedAt: true,
         closedAt: true,
         archivedAt: true,

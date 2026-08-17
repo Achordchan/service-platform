@@ -1,7 +1,8 @@
 "use client";
 
-import { Container, Stack, Typography } from "@mui/material";
+import { Stack, Typography } from "@mui/material";
 import { ErrorState } from "@/components/shared/content-state";
+import { PageContainer } from "@/components/shared/page-container";
 
 export default function CustomerError({
   error,
@@ -11,10 +12,7 @@ export default function CustomerError({
   reset: () => void;
 }) {
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 5 }, py: { xs: 3, md: 5 } }}
-    >
+    <PageContainer>
       <Stack spacing={1}>
         <ErrorState
           message="客户服务数据暂时无法加载，请检查网络后重试。"
@@ -26,6 +24,6 @@ export default function CustomerError({
           </Typography>
         ) : null}
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

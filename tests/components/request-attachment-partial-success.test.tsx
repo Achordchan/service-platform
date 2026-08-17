@@ -81,6 +81,10 @@ vi.mock("@/components/shared/file-picker", () => ({
       onClick={() =>
         onFiles([new File(["attachment"], "failed.txt", { type: "text/plain" })])
       }
+      onDoubleClick={() => {
+        onFiles([new File(["first"], "first.txt", { type: "text/plain" })]);
+        onFiles([new File(["second"], "second.txt", { type: "text/plain" })]);
+      }}
     >
       {children}
     </button>
@@ -123,6 +127,14 @@ afterEach(() => {
 });
 
 describe("附件上传部分失败", () => {
+  it("客户回复连续选择附件时保留两次选择结果", () => {
+    render(<RequestReplyForm requestId="request-1" status="IN_PROGRESS" />);
+
+    fireEvent.doubleClick(screen.getByRole("button", { name: "添加附件" }));
+
+    expect(screen.getByText("first.txt、second.txt")).toBeTruthy();
+  });
+
   it("服务请求创建成功后附件失败仍进入已创建请求", async () => {
     apiRequestMock.mockImplementation(async (url: string) => {
       if (url === "/api/v1/projects/project-1/requests") {

@@ -35,8 +35,8 @@ let pluginTestStartedAt: Date | null = null;
 async function login(page: Page, email: string) {
   await page.goto("/login");
   await page.getByLabel("邮箱").fill(email);
-  await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL(/\/(staff|customer)\//);
 }
 
@@ -206,6 +206,8 @@ test.describe("主流程冒烟", () => {
   });
 
   test("管理员可进入项目、客户与服务请求后台", async () => {
+    // 登录后落在新的员工仪表盘（/staff/dashboard），需先经导航进入项目列表
+    await adminPage.getByRole("link", { name: "项目", exact: true }).click();
     await expect(
       adminPage.getByRole("heading", { name: "项目", exact: true }),
     ).toBeVisible();
@@ -356,7 +358,9 @@ test.describe("主流程冒烟", () => {
       await mailTemplates.click();
     }
 
-    await adminPage.goto("/staff/service-types");
+    // 该路由是服务端 redirect()，默认等待 load 会与重定向抢占导致 ERR_ABORTED，
+    // 用 commit 让导航一提交即返回，随后按最终 URL 断言重定向结果
+    await adminPage.goto("/staff/service-types", { waitUntil: "commit" });
     await expect(adminPage).toHaveURL(/\/staff\/settings\?tab=services$/);
     await expect(
       adminPage.getByRole("tab", {
@@ -383,6 +387,9 @@ test.describe("主流程冒烟", () => {
       () => document.documentElement.scrollWidth > window.innerWidth + 1,
     );
     expect(hasHorizontalOverflow).toBe(false);
+    // 复位共享 adminPage 视口：serial 套件后续用例默认按桌面宽度断言，
+    // 团队页在移动宽度下渲染为卡片列表（无 role=row），会漏掉成员行
+    await adminPage.setViewportSize({ width: 1280, height: 720 });
   });
 
   test("团队成员本人和平台管理员都能进入邮箱变更流程", async () => {
@@ -850,13 +857,17 @@ test.describe("主流程冒烟", () => {
       .getByRole("button", { name: "回复并接手" })
       .click();
 
-    await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible();
+    // 「回复并接手」是全流程最重的一次写事务（回复+自动接手+通知投递），
+    // 慢 runner 高负载下端到端（落库→SSE 推送→渲染）可能超 15s，给实时投递更长窗口
+    await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(
       customerPage
         .getByText("处理人", { exact: true })
         .locator("..")
         .getByText("李工程师", { exact: true }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30_000 });
 
     const staffMessage = customerPage.getByText("E2E 后台公开回复");
     await staffMessage.hover();
@@ -871,14 +882,19 @@ test.describe("主流程冒烟", () => {
     await customerPage
       .locator(".request-rich-editor")
       .fill("E2E 客户引用回复");
-    await customerPage.getByLabel("添加附件").setInputFiles({
-      name: "e2e-chat-image.png",
-      mimeType: "image/png",
-      buffer: Buffer.from(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-        "base64",
-      ),
-    });
+    // 附件选择器标准化为 react-dropzone：真正的 file input 是 aria-hidden 的，
+    // 可访问名落在外层「添加附件」按钮上，需定位按钮内的隐藏 input 再注入文件
+    await customerPage
+      .getByRole("button", { name: "添加附件" })
+      .locator('input[type="file"]')
+      .setInputFiles({
+        name: "e2e-chat-image.png",
+        mimeType: "image/png",
+        buffer: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      });
     await expect(customerPage.getByText("待发送附件")).toBeVisible();
     await customerPage.getByRole("button", { name: "发送回复" }).click();
 

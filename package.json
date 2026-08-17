@@ -28,6 +28,7 @@
     "test:integration:prepare": "node scripts/prepare-integration-db.mjs",
     "test:plugin:dingtalk": "pnpm --filter @achord/plugin-dingtalk-robot test",
     "typecheck:plugin:dingtalk": "pnpm --filter @achord/plugin-dingtalk-robot typecheck",
+    "typecheck:miniapp": "pnpm --filter @achord/miniapp typecheck",
     "test:sdk:go": "cd examples/integrations/go && go test ./...",
     "test:sdk:php": "php examples/integrations/php/verify-sdk.php"
   },
@@ -72,6 +73,7 @@
     "react-dom": "19.2.7",
     "react-dropzone": "19.1.1",
     "react-hook-form": "^7.81.0",
+    "recharts": "^3.10.1",
     "resend": "6.17.2",
     "server-only": "^0.0.1",
     "sharp": "0.35.3",

@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { RequestTable } from "@/components/staff/request-table";
 import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
@@ -85,15 +86,12 @@ export default async function StaffRequestsPage() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
-      <Stack spacing={3}>
+    <PageContainer>
+      <Stack spacing={2.5}>
         <RealtimeRouteRefresh mode="request-list" />
         <StaffPageHeading title="服务请求" />
         <RequestTable requests={requests} />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

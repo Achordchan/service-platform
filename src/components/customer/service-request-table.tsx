@@ -59,7 +59,7 @@ function MobileRequestRow({
             justifyContent: "space-between",
           }}
         >
-          <StatusIndicator status={request.status} compact />
+          <StatusIndicator status={request.status} compact audience="CUSTOMER" />
           <Typography variant="body2" color="text.secondary">
             {dateFormatter.format(new Date(request.updatedAt))}
           </Typography>

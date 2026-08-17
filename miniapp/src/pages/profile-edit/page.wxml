@@ -1,0 +1,86 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '加载失败', desc: loadError, retry: true}}"
+  />
+
+  <block wx:else>
+    <view class="card">
+      <view class="section-title">个人资料</view>
+      <view class="avatar-row" hover-class="hover-card" bindtap="onChooseAvatar">
+        <view class="avatar {{avatarPreview ? '' : 'avatar-placeholder'}}">
+          <image wx:if="{{avatarPreview}}" src="{{avatarPreview}}" class="avatar-img" mode="aspectFill" />
+          <text wx:else>{{name[0]}}</text>
+        </view>
+        <view class="avatar-hint">
+          <view class="avatar-hint-title">头像</view>
+          <view class="text-secondary">点击选择新图片</view>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+      <view class="form-label">姓名</view>
+      <input class="input" value="{{name}}" maxlength="60" bindinput="onNameInput" />
+      <view class="form-label">登录邮箱</view>
+      <view class="readonly-field">{{email}}</view>
+      <button
+        class="primary-btn save-btn"
+        hover-class="hover-btn"
+        loading="{{saving}}"
+        disabled="{{saving}}"
+        bindtap="onSave"
+      >
+        保存修改
+      </button>
+    </view>
+
+    <view class="card">
+      <view class="section-title">邮箱变更</view>
+      <block wx:if="{{pendingChange}}">
+        <view class="pending-banner">
+          <view class="pending-title">待验证变更</view>
+          <view class="text-secondary pending-desc">
+            正在变更为 {{pendingChange.newEmail}}。确认链接已发送到您的邮箱，请在邮件中点击完成变更。
+          </view>
+          <view class="pending-cancel" hover-class="hover-plain" bindtap="onCancelEmailChange">取消变更申请</view>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="text-secondary email-desc">
+          修改登录邮箱需要通过新旧邮箱双重确认：在此发起申请后，请到邮箱中点击确认链接完成变更。
+        </view>
+        <block wx:if="{{showEmailForm}}">
+          <view class="form-label email-form-label">新邮箱</view>
+          <input class="input" value="{{newEmail}}" type="text" placeholder="请输入新邮箱" bindinput="onNewEmailInput" />
+          <button
+            class="primary-btn"
+            hover-class="hover-btn"
+            loading="{{emailBusy}}"
+            disabled="{{emailBusy}}"
+            bindtap="onRequestEmailChange"
+          >
+            发送验证邮件
+          </button>
+        </block>
+        <button
+          wx:else
+          class="plain-btn"
+          hover-class="hover-plain"
+          bindtap="onToggleEmailForm"
+        >
+          修改登录邮箱
+        </button>
+      </block>
+    </view>
+
+    <view class="card hint-card">
+      <view class="text-secondary">
+        通知偏好请在「通知设置」中调整；主题外观、登录设备管理与账号删除请前往网页端「账户设置」完成。
+      </view>
+    </view>
+  </block>
+</view>

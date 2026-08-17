@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { MemberManagement } from "@/components/customer/member-management";
 import { PageHeading } from "@/components/customer/page-heading";
 import { requireUserWithAccess } from "@/lib/session";
@@ -22,10 +23,7 @@ export default async function CustomerMembersPage() {
   );
 
   return (
-    <Container
-      maxWidth="lg"
-      sx={{ px: { xs: 2, md: 5 }, py: { xs: 3, md: 5 } }}
-    >
+    <PageContainer maxWidth="lg">
       <Stack spacing={4}>
         <PageHeading title="成员" />
         <MemberManagement
@@ -42,6 +40,6 @@ export default async function CustomerMembersPage() {
           }))}
         />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

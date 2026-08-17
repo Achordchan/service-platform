@@ -1,0 +1,415 @@
+import { ensureLoggedIn, fetchMeCached } from "../../lib/auth";
+import {
+  getRequest,
+  replyRequest,
+  uploadAttachment,
+  downloadAttachment,
+  markRequestNotificationsRead,
+  type ServiceRequestDetail,
+  type RequestMessage,
+} from "../../lib/api";
+import { ensureBadgeSync } from "../../lib/badge";
+import { eventSync } from "../../lib/events";
+import {
+  formatFileSize,
+  REQUEST_STATUS_LABELS,
+  REQUEST_STATUS_TONES,
+  REQUEST_PRIORITY_LABELS,
+  escapeHtml,
+  formatDateTime,
+  htmlToText,
+  genMutationKey,
+  type RequestStatusValue,
+  type RequestPriorityValue,
+} from "../../lib/format";
+import { ApiError } from "../../lib/request";
+
+type ViewMessage = RequestMessage & {
+  authorName: string;
+  timeText: string;
+  isMine: boolean;
+  bodyText: string;
+  revoked: boolean;
+  revokedText: string;
+  reviewing: boolean;
+  replyPreview: string;
+  images: Array<{ id: string; name: string }>;
+  files: Array<{ id: string; name: string; size: string }>;
+};
+
+type AttachmentMetaLite = {
+  id: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  inline?: boolean;
+};
+
+Page({
+  data: {
+    requestId: "",
+    loading: true,
+    loadError: "",
+    request: null as ServiceRequestDetail | null,
+    statusLabel: "",
+    statusTone: "neutral",
+    priorityLabel: "",
+    loadErrorTitle: "加载失败",
+    canRetry: true,
+    messages: [] as ViewMessage[],
+    // 回复状态
+    replyText: "",
+    replyTarget: null as ViewMessage | null,
+    replyFiles: [] as Array<{ localPath: string; fileName: string }>,
+    sending: false,
+    scrollTop: 0,
+  },
+  replyMutationKey: "",
+  markReadTimer: null as ReturnType<typeof setTimeout> | null,
+  // eventSync 以裸函数引用调用 listener（严格模式 this 为 undefined），
+  // 必须在 onLoad 里 bind 后再注册/注销
+  boundEventHandler: null as ((events: Array<{ type: string; serviceRequestId: string | null }>) => void) | null,
+  myUserId: "",
+
+  onLoad(query: Record<string, string | undefined>) {
+    this.setData({ requestId: query.id ?? "" });
+    this.replyMutationKey = genMutationKey();
+    this.boundEventHandler = (events) => this.onRealtimeEvents(events);
+    void fetchMeCached()
+      .then((me) => {
+        this.myUserId = me.user.id;
+        if (this.data.messages.length > 0) {
+          void this.load();
+        }
+      })
+      .catch(() => undefined);
+  },
+  onShow() {
+    if (!ensureLoggedIn()) return;
+    void this.load();
+    // 活跃页面保持实时流：员工回复即时刷新（SSE，PRD §19）
+    if (this.boundEventHandler) {
+      eventSync.on(this.boundEventHandler);
+    }
+    eventSync.start();
+  },
+  onHide() {
+    if (this.boundEventHandler) {
+      eventSync.off(this.boundEventHandler);
+    }
+    eventSync.stop();
+    if (this.markReadTimer) {
+      clearTimeout(this.markReadTimer);
+      this.markReadTimer = null;
+    }
+  },
+  onUnload() {
+    if (this.boundEventHandler) {
+      eventSync.off(this.boundEventHandler);
+    }
+    eventSync.stop();
+    if (this.markReadTimer) {
+      clearTimeout(this.markReadTimer);
+      this.markReadTimer = null;
+    }
+  },
+  onPullDownRefresh() {
+    void this.load().then(() => wx.stopPullDownRefresh());
+  },
+  onRetry() {
+    void this.load();
+  },
+  // 事件过滤：只关心当前工单的消息/状态变化（经 boundEventHandler 调用）
+  onRealtimeEvents(
+    events: Array<{
+      type: string;
+      serviceRequestId: string | null;
+      payload?: Record<string, unknown>;
+    }>,
+  ) {
+    const requestId = this.data.requestId;
+    const matches = (event: {
+      type: string;
+      serviceRequestId: string | null;
+      payload?: Record<string, unknown>;
+    }) => {
+      if (event.serviceRequestId !== requestId) {
+        // NOTIFICATION_CREATED 事件的工单归属在 payload 里
+        if (event.type !== "NOTIFICATION_CREATED") return false;
+        const pid = event.payload?.serviceRequestId;
+        return typeof pid === "string" && pid === requestId;
+      }
+      return (
+        event.type === "REQUEST_MESSAGE_CREATED" ||
+        event.type === "REQUEST_STATUS_CHANGED" ||
+        event.type === "REQUEST_ASSIGNED" ||
+        event.type === "REQUEST_UPDATED" ||
+        event.type === "NOTIFICATION_CREATED"
+      );
+    };
+    if (events.some(matches)) {
+      void this.load();
+      // 我正在看这个工单：稍作防抖后把刚产生的通知标记已读并刷新角标
+      this.scheduleMarkRead(250);
+    }
+  },
+  /** 防抖标记该工单通知已读；失败静默（下次事件/进入再试） */
+  scheduleMarkRead(delay = 0) {
+    if (this.markReadTimer) clearTimeout(this.markReadTimer);
+    this.markReadTimer = setTimeout(() => {
+      this.markReadTimer = null;
+      const requestId = this.data.requestId;
+      if (!requestId) return;
+      void markRequestNotificationsRead(requestId)
+        .then(() => {
+          ensureBadgeSync();
+        })
+        .catch(() => undefined);
+    }, delay);
+  },
+
+  async load() {
+    const requestId = this.data.requestId;
+    if (!requestId) return;
+    try {
+      const request = await getRequest(requestId);
+      const messages = request.messages.map((message) =>
+        this.decorateMessage(message),
+      );
+      const decoratedRequest = {
+        ...request,
+        attachments: request.attachments.map((att) => ({
+          ...att,
+          sizeText: formatFileSize(att.size),
+        })),
+      };
+      this.setData({
+        loading: false,
+        loadError: "",
+        request: decoratedRequest,
+        statusLabel:
+          REQUEST_STATUS_LABELS[request.status as RequestStatusValue] ??
+          request.status,
+        statusTone:
+          REQUEST_STATUS_TONES[request.status as RequestStatusValue] ??
+          "neutral",
+        priorityLabel:
+          REQUEST_PRIORITY_LABELS[request.priority as RequestPriorityValue] ??
+          request.priority,
+        messages,
+        scrollTop: messages.length * 1000,
+      });
+      wx.setNavigationBarTitle({ title: request.number });
+      // 对齐 Web：停留在工单详情时该工单的通知保持已读
+      this.scheduleMarkRead();
+    } catch (error) {
+      const denied =
+        error instanceof ApiError && (error.status === 403 || error.status === 404);
+      this.setData({
+        loading: false,
+        loadError: denied
+          ? "工单不存在或当前账号无权查看"
+          : error instanceof Error
+            ? error.message
+            : "加载失败，请下拉重试",
+        loadErrorTitle: denied ? "无法访问" : "加载失败",
+        canRetry: !denied,
+      });
+    }
+  },
+  decorateMessage(message: RequestMessage): ViewMessage {
+    const attachments: AttachmentMetaLite[] = message.attachments ?? [];
+    return {
+      ...message,
+      authorName: message.author?.name ?? "系统",
+      timeText: formatDateTime(message.createdAt),
+      isMine: message.authorId !== null && message.authorId === this.myUserId,
+      bodyText: htmlToText(message.body),
+      revoked: message.contentRiskStatus === "REVOKED",
+      // 文案对齐 Web：人工撤回带决策理由，自动撤回用通用原因
+      revokedText:
+        message.contentRiskStatus === "REVOKED"
+          ? `该内容已被系统撤回：${
+              message.contentRiskReason?.trim() ||
+              "疑似包含联系方式或站外交易引导。"
+            }`
+          : "",
+      reviewing: message.contentRiskStatus === "PENDING",
+      replyPreview: message.replyTo
+        ? `${message.replyTo.author?.name ?? ""}: ${htmlToText(message.replyTo.body).slice(0, 60)}`
+        : "",
+      images: attachments
+        .filter((att) => att.mimeType.startsWith("image/"))
+        .map((att) => ({
+          id: att.id,
+          name: att.originalName,
+        })),
+      files: attachments
+        .filter((att) => !att.mimeType.startsWith("image/"))
+        .map((att) => ({
+          id: att.id,
+          name: att.originalName,
+          size: formatFileSize(att.size),
+        })),
+    };
+  },
+
+  // —— 回复 ——
+
+  onReplyInput(event: WechatMiniprogram.TextareaInput) {
+    this.setData({ replyText: event.detail.value });
+  },
+  onLongPressMessage(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const message = this.data.messages[index];
+    if (!message || message.isSystem) return;
+    wx.showActionSheet({
+      itemList: ["回复此消息"],
+      success: () => {
+        this.setData({ replyTarget: message });
+      },
+    });
+  },
+  onCancelReplyTarget() {
+    this.setData({ replyTarget: null });
+  },
+  async onAddReplyFile() {
+    if (this.data.replyFiles.length >= 5) {
+      wx.showToast({ title: "最多 5 个附件", icon: "none" });
+      return;
+    }
+    try {
+      const chosen = await wx.chooseMessageFile({
+        count: 5 - this.data.replyFiles.length,
+        type: "file",
+      });
+      if (chosen.tempFiles.length === 0) return;
+      this.setData({
+        replyFiles: [
+          ...this.data.replyFiles,
+          ...chosen.tempFiles.map((file) => ({
+            localPath: file.path,
+            fileName: file.name || "附件",
+          })),
+        ],
+      });
+    } catch {
+      // 用户取消
+    }
+  },
+  onRemoveReplyFile(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const replyFiles = [...this.data.replyFiles];
+    replyFiles.splice(index, 1);
+    this.setData({ replyFiles });
+  },
+  async onSend() {
+    if (this.data.sending) return;
+    const text = this.data.replyText.trim();
+    if (!text && this.data.replyFiles.length === 0) {
+      wx.showToast({ title: "请输入回复内容或添加附件", icon: "none" });
+      return;
+    }
+    this.setData({ sending: true });
+    const mutationKey = this.replyMutationKey;
+    // 对齐 Web 端：纯附件回复的正文写「附件：文件名列表」，否则服务端 EMPTY_MESSAGE 拒绝
+    const bodyHtml = text
+      ? `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`
+      : `<p>附件：${this.data.replyFiles
+          .map((file) => escapeHtml(file.fileName))
+          .join("、") || "文件"}</p>`;
+    try {
+      const result = await replyRequest(this.data.requestId, {
+        body: bodyHtml,
+        replyToMessageId: this.data.replyTarget?.id ?? null,
+        clientMutationKey: mutationKey,
+      });
+      // 回复成功后换新 key，供下一次回复使用
+      this.replyMutationKey = genMutationKey();
+      let attachFailed = 0;
+      for (const file of this.data.replyFiles) {
+        try {
+          await uploadAttachment({
+            filePath: file.localPath,
+            fileName: file.fileName,
+            serviceRequestId: this.data.requestId,
+            requestMessageId: result.message.id,
+          });
+        } catch {
+          attachFailed += 1;
+        }
+      }
+      if (attachFailed > 0) {
+        wx.showToast({ title: `${attachFailed} 个附件上传失败`, icon: "none" });
+      }
+      this.setData({ replyText: "", replyTarget: null, replyFiles: [] });
+      await this.load();
+    } catch (error) {
+      // 风控拦截需要醒目、可读完整的提示（对齐 Web 表单错误展示）
+      if (
+        error instanceof ApiError &&
+        error.code === "CONTACT_INFORMATION_BLOCKED"
+      ) {
+        wx.showModal({
+          title: "无法发送",
+          content:
+            error.message ||
+            "内容疑似包含联系方式或站外交易引导，已阻止发送。请继续通过平台沟通。",
+          showCancel: false,
+          confirmText: "我知道了",
+        });
+      } else {
+        // 保留同一 mutationKey：用户点重试不会发出重复回复
+        wx.showToast({
+          title: error instanceof Error ? error.message : "发送失败，请重试",
+          icon: "none",
+        });
+      }
+    } finally {
+      this.setData({ sending: false });
+    }
+  },
+
+  // —— 附件预览 ——
+
+  async onOpenImage(event: WechatMiniprogram.TouchEvent) {
+    const fileId = event.currentTarget.dataset.id as string;
+    wx.showLoading({ title: "加载图片" });
+    try {
+      const localPath = await downloadAttachment(fileId);
+      wx.hideLoading();
+      await wx.previewImage({ urls: [localPath] });
+    } catch (error) {
+      wx.hideLoading();
+      wx.showToast({
+        title: error instanceof Error ? error.message : "图片加载失败",
+        icon: "none",
+      });
+    }
+  },
+  async onOpenFile(event: WechatMiniprogram.TouchEvent) {
+    const fileId = event.currentTarget.dataset.id as string;
+    wx.showLoading({ title: "下载文件" });
+    try {
+      const localPath = await downloadAttachment(fileId);
+      wx.hideLoading();
+      await wx.openDocument({
+        filePath: localPath,
+        showMenu: true,
+        fail: () => {
+          wx.showToast({
+            title: "微信暂不支持预览该格式，可在电脑端查看",
+            icon: "none",
+            duration: 2500,
+          });
+        },
+      });
+    } catch (error) {
+      wx.hideLoading();
+      wx.showToast({
+        title: error instanceof Error ? error.message : "下载失败",
+        icon: "none",
+      });
+    }
+  },
+});

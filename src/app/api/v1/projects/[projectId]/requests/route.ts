@@ -6,7 +6,10 @@ import {
   createRequest,
   listProjectRequests,
 } from "@/modules/requests/request-service";
-import { createRequestSchema } from "@/modules/requests/request-schemas";
+import {
+  clientMutationKeySchema,
+  createRequestSchema,
+} from "@/modules/requests/request-schemas";
 
 type RouteContext = {
   params: Promise<{ projectId: string }>;
@@ -31,7 +34,12 @@ export async function POST(request: Request, context: RouteContext) {
     const actor = await requireApiActor();
     const { projectId } = await context.params;
     const input = createRequestSchema.parse(await request.json());
-    const created = await createRequest(actor, projectId, input);
+    const mutationKey = clientMutationKeySchema.optional().nullable()
+      .parse(request.headers.get("x-idempotency-key")) ?? undefined;
+    const created = await createRequest(actor, projectId, {
+      ...input,
+      clientMutationKey: input.clientMutationKey ?? mutationKey,
+    });
     return Response.json({ data: created }, { status: 201 });
   } catch (error) {
     return apiErrorResponse(error, {

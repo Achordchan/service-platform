@@ -3,6 +3,11 @@
 import { useMemo } from "react";
 import { Avatar, Box, Button, Chip, Stack, Typography } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import ContactsOutlinedIcon from "@mui/icons-material/ContactsOutlined";
+import { gridHeight, gridSx } from "@/lib/data-grid-styles";
+import { gridNoRowsOverlay } from "@/components/shared/data-grid-empty-overlay";
+
+const noRows = gridNoRowsOverlay("暂无外部联系人", <ContactsOutlinedIcon />);
 
 export type ExternalContact = {
   id: string;
@@ -19,10 +24,6 @@ export type ExternalContact = {
   lastSeenAt: string;
   _count: { requestsCreated: number };
 };
-
-function gridHeight(rowCount: number) {
-  return Math.min(620, Math.max(220, rowCount * 68 + 112));
-}
 
 export function ExternalContactGrid({
   rows,
@@ -153,32 +154,118 @@ export function ExternalContactGrid({
   );
 
   return (
-    <Box sx={{ width: "100%", height: gridHeight(rows.length) }}>
-      <DataGrid
-        aria-label="外部联系人"
-        rows={rows}
-        columns={columns}
-        getRowHeight={() => "auto"}
-        getEstimatedRowHeight={() => 68}
-        pageSizeOptions={[50, 100]}
-        initialState={{
-          pagination: { paginationModel: { pageSize: 50, page: 0 } },
-        }}
-        disableRowSelectionOnClick
-        hideFooter={rows.length <= 50}
-        localeText={{ noRowsLabel: "暂无外部联系人" }}
+    <>
+      <Box
         sx={{
-          border: 0,
-          "& .MuiDataGrid-cell": {
-            display: "flex",
-            alignItems: "center",
-            py: 1,
-          },
-          "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 650 },
-          "& .MuiDataGrid-columnHeaders": { borderBottomColor: "divider" },
-          "& .MuiDataGrid-footerContainer": { borderTopColor: "divider" },
+          width: "100%",
+          height: gridHeight(rows.length, 68),
+          display: { xs: "none", md: "block" },
         }}
-      />
-    </Box>
+      >
+        <DataGrid
+          aria-label="外部联系人"
+          rows={rows}
+          columns={columns}
+          getRowHeight={() => "auto"}
+          getEstimatedRowHeight={() => 68}
+          pageSizeOptions={[50, 100]}
+          initialState={{
+            pagination: { paginationModel: { pageSize: 50, page: 0 } },
+          }}
+          disableRowSelectionOnClick
+          hideFooter={rows.length <= 50}
+          slots={{ noRowsOverlay: noRows }}
+          sx={gridSx}
+        />
+      </Box>
+
+      <Stack sx={{ display: { xs: "flex", md: "none" } }}>
+        {rows.map((row) => {
+          const working = actionContactId === row.id;
+          return (
+            <Box
+              key={row.id}
+              sx={{
+                py: 1.5,
+                px: 2,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "&:last-child": { borderBottom: 0 },
+              }}
+            >
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: "center", mb: 0.5 }}
+              >
+                <Avatar
+                  src={row.avatarUrl ?? undefined}
+                  sx={{ width: 28, height: 28 }}
+                >
+                  {row.displayName.slice(0, 1)}
+                </Avatar>
+                <Typography
+                  variant="body2"
+                  noWrap
+                  sx={{ fontWeight: 650, minWidth: 0, flex: 1 }}
+                >
+                  {row.displayName}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={row.status === "ACTIVE" ? "正常" : "已停用"}
+                  color={row.status === "ACTIVE" ? "success" : "default"}
+                />
+              </Stack>
+
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: "center", mb: 0.5 }}
+              >
+                <Chip
+                  size="small"
+                  label={row.sourceLabel}
+                  variant="outlined"
+                />
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {row.email || row.username || "未提供"}
+                </Typography>
+              </Stack>
+
+              <Typography variant="caption" color="text.secondary">
+                服务请求 {row._count.requestsCreated} · 最后访问{" "}
+                {new Date(row.lastSeenAt).toLocaleDateString("zh-CN")}
+              </Typography>
+
+              <Stack direction="row" spacing={0.5} sx={{ mt: 0.5 }}>
+                <Button size="small" onClick={() => onView(row)}>
+                  查看资料
+                </Button>
+                <Button
+                  size="small"
+                  color={row.status === "ACTIVE" ? "inherit" : "primary"}
+                  onClick={() => onToggle(row)}
+                  disabled={actionContactId !== null}
+                >
+                  {working
+                    ? row.status === "ACTIVE"
+                      ? "停用中"
+                      : "恢复中"
+                    : row.status === "ACTIVE"
+                      ? "停用"
+                      : "恢复"}
+                </Button>
+              </Stack>
+            </Box>
+          );
+        })}
+        {rows.length === 0 && (
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography color="text.secondary">暂无外部联系人</Typography>
+          </Box>
+        )}
+      </Stack>
+    </>
   );
 }

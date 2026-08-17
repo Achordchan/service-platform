@@ -1,0 +1,51 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <view class="toolbar">
+    <view class="unread-hint text-secondary">
+      {{totalUnread > 0 ? totalUnread + ' 条未读' : '消息都是已读状态'}}
+    </view>
+    <view class="tool-link {{totalUnread > 0 ? '' : 'tool-link-muted'}}" hover-class="hover-plain" bindtap="onMarkAll">全部已读</view>
+    <view class="tool-divider"></view>
+    <view class="tool-link" hover-class="hover-plain" bindtap="onOpenSettings">通知设置</view>
+  </view>
+
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 5}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '加载失败', desc: loadError, retry: true}}"
+  />
+
+  <template
+    wx:elif="{{items.length === 0}}"
+    is="state-empty"
+    data="{{icon: 'notification', title: '暂无消息', desc: '工单回复与项目动态会提醒到这里'}}"
+  />
+
+  <block wx:else>
+    <view
+      wx:for="{{items}}"
+      wx:key="id"
+      class="card card-press notice-card {{item.unread ? 'notice-unread' : ''}}"
+      hover-class="hover-card"
+      hover-stay-time="80"
+      data-index="{{index}}"
+      bindtap="onTapItem"
+    >
+      <view class="notice-head">
+        <view wx:if="{{item.unread}}" class="unread-dot"></view>
+        <view class="notice-title">{{item.title}}</view>
+        <view class="notice-time">{{item.timeText}}</view>
+      </view>
+      <view class="notice-body text-secondary">
+        {{item.body}}
+        <text wx:if="{{item.occurrenceCount > 1}}">（{{item.occurrenceCount}} 条）</text>
+      </view>
+      <view wx:if="{{item.serviceRequestId || item.projectId}}" class="notice-link">查看详情<t-icon name="chevron-right" size="30rpx" color="#1677ff" /></view>
+    </view>
+    <view wx:if="{{loadingMore}}" class="load-more">加载中…</view>
+    <view wx:elif="{{!nextCursor}}" class="load-more">没有更多了</view>
+  </block>
+</view>

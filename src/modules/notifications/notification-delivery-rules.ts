@@ -1,20 +1,20 @@
 import { z } from "zod";
 
 export const NOTIFICATION_DELIVERY_RULES = [
-  { key: "PROJECT_CREATED", category: "项目交付", label: "新建项目", description: "项目创建后通知所选项目负责人和客户成员", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "PROJECT_UPDATE", category: "项目交付", label: "进度动态与评论", description: "面向客户发布的项目动态和评论", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", description: "项目当前阶段发生变化", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", description: "里程碑新增、修改或删除", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", description: "非编辑器内嵌的公开项目文件", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", description: "客户、外部联系人或后台人员创建新的服务请求", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true },
-  { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", description: "处理人或协作人员发生变化", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false },
-  { key: "REQUEST_CLAIMED", category: "服务请求", label: "服务请求已接手", description: "项目人员首次公开回复并自动接手时通知平台管理员", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false },
-  { key: "REQUEST_PUBLIC_MESSAGE", category: "服务请求", label: "公开回复", description: "邮件双向提醒；钉钉仅提醒客户或外部联系人的回复", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true },
-  { key: "REQUEST_INTERNAL_NOTE", category: "服务请求", label: "内部备注", description: "仅后台人员可见的服务请求备注", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "REQUEST_STATUS", category: "服务请求", label: "手动状态变化", description: "等待客户、已解决或已关闭等手动状态", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false },
-  { key: "REQUEST_ATTACHMENT", category: "服务请求", label: "独立附件上传", description: "脱离消息单独上传的公开附件", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "REQUEST_ARCHIVE", category: "服务请求", label: "归档与恢复", description: "后台归档或恢复服务请求", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false },
-  { key: "CONTENT_RISK_ALERT", category: "内容风控", label: "联系方式与站外交易告警", description: "明确规则阻止、AI撤回、人工确认和插件异常旁路告警", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true, dingtalkDefaultEnabled: true },
+  { key: "PROJECT_CREATED", category: "项目交付", label: "新建项目", description: "项目创建后通知所选项目负责人和客户成员", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "PROJECT_UPDATE", category: "项目交付", label: "进度动态与评论", description: "面向客户发布的项目动态和评论", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: true },
+  { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", description: "项目当前阶段发生变化", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", description: "里程碑新增、修改或删除", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", description: "非编辑器内嵌的公开项目文件", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", description: "客户、外部联系人或后台人员创建新的服务请求", descriptionCustomer: "您提交的服务请求已创建", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true, wechatSupported: false },
+  { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", description: "处理人或协作人员发生变化", descriptionCustomer: "您的工单更换负责人时邮件提醒", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: false },
+  { key: "REQUEST_CLAIMED", category: "服务请求", label: "服务请求已接手", description: "项目人员首次公开回复并自动接手时通知平台管理员", customerHidden: true, emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: false },
+  { key: "REQUEST_PUBLIC_MESSAGE", category: "服务请求", label: "公开回复", description: "邮件双向提醒；钉钉仅提醒客户或外部联系人的回复", descriptionCustomer: "工单有新回复时邮件提醒", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true, wechatSupported: true },
+  { key: "REQUEST_INTERNAL_NOTE", category: "服务请求", label: "内部备注", description: "仅后台人员可见的服务请求备注", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "REQUEST_STATUS", category: "服务请求", label: "手动状态变化", description: "等待客户、已解决或已关闭等手动状态", descriptionCustomer: "工单状态变化（如已解决、已关闭）时邮件提醒", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: true },
+  { key: "REQUEST_ATTACHMENT", category: "服务请求", label: "独立附件上传", description: "脱离消息单独上传的公开附件", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "REQUEST_ARCHIVE", category: "服务请求", label: "归档与恢复", description: "后台归档或恢复服务请求", emailSupported: false, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "CONTENT_RISK_ALERT", category: "内容风控", label: "联系方式与站外交易告警", description: "明确规则阻止、AI撤回、人工确认和插件异常旁路告警", customerHidden: true, emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true, dingtalkDefaultEnabled: true, wechatSupported: false },
 ] as const;
 
 export type NotificationDeliveryRuleKey =
@@ -25,6 +25,7 @@ export type NotificationDeliveryRuleState = {
   soundEnabled: boolean;
   emailEnabled: boolean;
   dingtalkEnabled: boolean;
+  wechatEnabled: boolean;
 };
 
 export type NotificationDeliveryRuleView =
@@ -147,6 +148,7 @@ export function defaultNotificationDeliveryRuleState(
       definition && "dingtalkDefaultEnabled" in definition
         ? definition.dingtalkDefaultEnabled
         : false,
+    wechatEnabled: false,
   };
 }
 

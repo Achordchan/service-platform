@@ -1,0 +1,113 @@
+.page {
+  padding-bottom: 160rpx;
+}
+
+.filter-bar {
+  display: flex;
+  gap: 16rpx;
+  padding: 20rpx 24rpx 12rpx;
+  background: var(--page-bg);
+}
+
+.picker-value {
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 14rpx;
+  padding: 14rpx 20rpx;
+  font-size: 26rpx;
+  max-width: 260rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+
+.search-input {
+  flex: 1;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 14rpx;
+  padding: 14rpx 20rpx;
+  font-size: 26rpx;
+}
+
+.search-placeholder {
+  color: var(--text-tertiary);
+}
+
+.status-bar {
+  white-space: nowrap;
+  padding: 8rpx 16rpx 16rpx;
+}
+
+.status-chip {
+  display: inline-block;
+  font-size: 24rpx;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 999rpx;
+  padding: 8rpx 24rpx;
+  margin: 0 8rpx;
+  transition: all 0.15s ease;
+}
+
+.status-chip-active {
+  color: #ffffff;
+  background: var(--brand);
+  border-color: var(--brand);
+  font-weight: 500;
+}
+
+.request-card {
+  display: block;
+}
+
+.request-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.request-number {
+  font-size: 24rpx;
+  color: var(--text-tertiary);
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.5rpx;
+}
+
+.request-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  margin-top: 10rpx;
+  overflow-wrap: anywhere;
+}
+
+.request-meta {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+}
+
+.fab {
+  position: fixed;
+  right: 40rpx;
+  bottom: calc(60rpx + env(safe-area-inset-bottom));
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4096ff, var(--brand));
+  color: #ffffff;
+  font-size: 54rpx;
+  font-weight: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12rpx 32rpx rgba(22, 119, 255, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fab-hover {
+  transform: scale(0.94);
+  box-shadow: 0 6rpx 20rpx rgba(22, 119, 255, 0.3);
+}

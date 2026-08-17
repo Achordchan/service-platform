@@ -1,0 +1,18 @@
+.bind-page {
+  padding: 40rpx 0;
+}
+
+.bind-desc {
+  margin: 12rpx 0 28rpx;
+}
+
+.code-input {
+  letter-spacing: 4rpx;
+  font-size: 34rpx;
+  text-align: center;
+}
+
+.use-account {
+  text-align: center;
+  margin: 32rpx 48rpx;
+}

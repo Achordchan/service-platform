@@ -1,10 +1,14 @@
 import { z } from "zod";
 
+// 弱网重试防重复：客户端为每次提交生成随机 key（如 UUID），服务端按 (作者, key) 幂等
+export const clientMutationKeySchema = z.string().trim().min(8).max(128);
+
 export const createRequestSchema = z.object({
   title: z.string().trim().min(1).max(160),
   description: z.string().trim().min(1).max(20_000),
   categoryId: z.string().trim().min(1),
   priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
+  clientMutationKey: clientMutationKeySchema.optional(),
 });
 
 export const assignRequestSchema = z
@@ -43,6 +47,7 @@ export const createRequestMessageSchema = z.object({
     .default("CUSTOMER_VISIBLE"),
   replyToMessageId: z.string().trim().min(1).nullable().optional(),
   supportPlaybookKey: z.string().trim().min(1).max(100).optional(),
+  clientMutationKey: clientMutationKeySchema.optional(),
 });
 
 const requestPresenceSessionSchema = z.object({

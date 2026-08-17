@@ -125,13 +125,13 @@ describe("邮件发送记录 DataGrid", () => {
     renderManager([message]);
 
     expect(screen.getByRole("grid", { name: "邮件发送记录" })).toBeTruthy();
-    expect(screen.getByText(message.toEmail)).toBeTruthy();
-    expect(screen.getByText(message.subject)).toBeTruthy();
-    expect(screen.getByText("失败")).toBeTruthy();
-    expect(screen.getByText(message.errorMessage as string)).toBeTruthy();
-    expect(screen.getByText("尝试 2 次")).toBeTruthy();
+    expect(screen.getAllByText(message.toEmail).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(message.subject).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("失败").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(message.errorMessage as string).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("尝试 2 次").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByRole("button", { name: "查看内容" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "查看内容" })[0]);
 
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "邮件内容" })).toBeTruthy();
@@ -148,7 +148,7 @@ describe("邮件发送记录 DataGrid", () => {
     });
     renderManager([message]);
 
-    fireEvent.click(screen.getByRole("button", { name: "重试" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "重试" })[0]);
 
     await waitFor(() =>
       expect(staffApiMock).toHaveBeenCalledWith(
@@ -182,8 +182,8 @@ describe("邮件发送记录 DataGrid", () => {
     });
     renderManager([message]);
 
-    expect(screen.getByText("已逾期超过 2 分钟")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    expect(screen.getAllByText("已逾期超过 2 分钟").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getAllByRole("button", { name: "取消" })[0]);
     expect(await screen.findByText("取消排队中的邮件？")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "确认取消" }));
 
@@ -208,6 +208,6 @@ describe("邮件发送记录 DataGrid", () => {
     );
 
     expect(screen.getByRole("grid", { name: "邮件发送记录" })).toBeTruthy();
-    expect(screen.getByText("暂无邮件记录")).toBeTruthy();
+    expect(screen.getAllByText("暂无邮件记录").length).toBeGreaterThan(0);
   });
 });

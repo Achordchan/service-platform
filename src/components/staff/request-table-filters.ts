@@ -13,13 +13,38 @@ export type RequestAdvancedFilterValue = {
   source: "ALL" | "ACHORD" | "SUB2API" | "UNIVERSAL";
 };
 
+export type RequestSlaFilter = "ALL" | "breached" | "at_risk";
+
 export type RequestTableFilterValue = {
   status: "ALL" | "ARCHIVED" | RequestStatus;
   projectId: string;
   customerKey: string;
   advanced: RequestAdvancedFilterValue;
   keyword: string;
+  sla?: RequestSlaFilter;
 };
+
+// 与仪表盘 SLA 卡片计数口径保持一致（getDashboardSlaSummary）：仅统计未闭合请求，
+// breached = 已过截止；at_risk = 距截止不足 1 小时。两处同源，点击卡片落到的列表条数才对得上。
+const SLA_OPEN_STATUSES: RequestStatus[] = [
+  "PENDING",
+  "IN_PROGRESS",
+  "WAITING_CUSTOMER",
+];
+
+export function matchesRequestSlaFilter(
+  request: RequestListItem,
+  sla: RequestSlaFilter | undefined,
+  now = Date.now(),
+): boolean {
+  if (!sla || sla === "ALL") return true;
+  if (!request.dueAt || !SLA_OPEN_STATUSES.includes(request.status)) {
+    return false;
+  }
+  const due = new Date(request.dueAt).getTime();
+  if (sla === "breached") return due < now;
+  return due >= now && due < now + 3_600_000;
+}
 
 export const defaultAdvancedFilters: RequestAdvancedFilterValue = {
   priority: "ALL",
@@ -78,6 +103,7 @@ export function filterRequestRows(
     const assignedStaff = request.assignedStaff ?? [];
     return (
       matchesRequestArchiveFilter(request, filters.status) &&
+      matchesRequestSlaFilter(request, filters.sla) &&
       (filters.projectId === "ALL" || request.projectId === filters.projectId) &&
       (filters.customerKey === "ALL" ||
         (request.customerFilterKey ?? request.customerName) ===

@@ -13,6 +13,9 @@ import {
 } from "@mui/material";
 import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
 import MarkEmailReadOutlinedIcon from "@mui/icons-material/MarkEmailReadOutlined";
+import QrCode2OutlinedIcon from "@mui/icons-material/QrCode2Outlined";
+import { QrLoginPanel } from "@/components/auth/qr-login-panel";
+import { TurnstileWidget } from "@/components/auth/turnstile-widget";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -33,7 +36,7 @@ const otpFormSchema = z.object({
 
 type PasswordFormData = z.infer<typeof passwordSchema>;
 type OtpFormData = z.infer<typeof otpFormSchema>;
-type LoginMode = "password" | "email-otp";
+type LoginMode = "password" | "email-otp" | "qr";
 
 function loginError(code?: string) {
   return code === "INVALID_ORIGIN"
@@ -49,12 +52,22 @@ function otpSendError(error: { code?: string; message?: string }) {
 
 export function LoginForm({
   emailOtpEnabled = false,
+  turnstileSiteKey = null,
 }: {
   emailOtpEnabled?: boolean;
+  turnstileSiteKey?: string | null;
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<LoginMode>("password");
+  // Turnstile token 一次性：每次提交（无论成败）都重置挑战重新取 token，
+  // 否则 token 已被 siteverify 消费，第二次提交必然 403
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileResetSignal, setTurnstileResetSignal] = useState(0);
+  function consumeTurnstileToken() {
+    setTurnstileToken(null);
+    setTurnstileResetSignal((count) => count + 1);
+  }
   const [otpSent, setOtpSent] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const passwordForm = useForm<PasswordFormData>({
@@ -87,11 +100,13 @@ export function LoginForm({
 
   const submitPassword = handleSubmit(async (data) => {
     passwordForm.clearErrors("root");
+    consumeTurnstileToken();
     const result = await authClient.signIn.email({
       email: data.email,
       password: data.password,
       rememberMe: true,
-    });
+      cfTurnstileToken: turnstileToken ?? undefined,
+    } as Parameters<typeof authClient.signIn.email>[0]);
     if (result.error) {
       passwordForm.setError("root", {
         message:
@@ -107,11 +122,13 @@ export function LoginForm({
   const sendOtp = otpForm.handleSubmit(async (data) => {
     const email = data.email.trim().toLowerCase();
     otpForm.clearErrors();
+    consumeTurnstileToken();
     try {
       const result = await authClient.emailOtp.sendVerificationOtp({
         email,
         type: "sign-in",
-      });
+        cfTurnstileToken: turnstileToken ?? undefined,
+      } as Parameters<typeof authClient.emailOtp.sendVerificationOtp>[0]);
       if (result.error) {
         otpForm.setError("root", { message: otpSendError(result.error) });
         return;
@@ -135,11 +152,13 @@ export function LoginForm({
       return;
     }
     otpForm.clearErrors("root");
+    consumeTurnstileToken();
     try {
       const result = await authClient.signIn.emailOtp({
         email,
         otp,
-      });
+        cfTurnstileToken: turnstileToken ?? undefined,
+      } as Parameters<typeof authClient.signIn.emailOtp>[0]);
       if (result.error) {
         otpForm.setError("root", {
           message: loginError(result.error.code),
@@ -164,32 +183,50 @@ export function LoginForm({
       ? passwordForm.formState.errors.root?.message
       : otpForm.formState.errors.root?.message;
   const otpBusy = otpForm.formState.isSubmitting;
+  // 人机验证已启用但 token 未就绪（挑战进行中/重置后）时禁止提交：
+  // 此刻发出去只会拿到 403，也让提交闭包永远拿不到过期 token
+  const turnstilePending = Boolean(turnstileSiteKey) && turnstileToken === null;
 
   return (
     <Stack spacing={2.25}>
-      {emailOtpEnabled ? (
-        <ToggleButtonGroup
-          value={mode}
-          exclusive
-          fullWidth
-          size="small"
-          onChange={(_, nextMode: LoginMode | null) => changeMode(nextMode)}
-          aria-label="登录方式"
-        >
-          <ToggleButton value="password" aria-label="密码登录">
-            <KeyOutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
-            密码登录
-          </ToggleButton>
+      <ToggleButtonGroup
+        value={mode}
+        exclusive
+        fullWidth
+        size="small"
+        onChange={(_, nextMode: LoginMode | null) => changeMode(nextMode)}
+        aria-label="登录方式"
+      >
+        <ToggleButton value="qr" aria-label="微信扫码登录">
+          <QrCode2OutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
+          微信扫码
+        </ToggleButton>
+        <ToggleButton value="password" aria-label="密码登录">
+          <KeyOutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
+          密码登录
+        </ToggleButton>
+        {emailOtpEnabled ? (
           <ToggleButton value="email-otp" aria-label="邮箱验证码登录">
             <MarkEmailReadOutlinedIcon fontSize="small" sx={{ mr: 0.75 }} />
             邮箱验证码
           </ToggleButton>
-        </ToggleButtonGroup>
-      ) : null}
+        ) : null}
+      </ToggleButtonGroup>
 
       {activeRootError ? <Alert severity="error">{activeRootError}</Alert> : null}
 
-      {mode === "password" ? (
+      {mode !== "qr" && turnstileSiteKey ? (
+        <TurnstileWidget
+          siteKey={turnstileSiteKey}
+          resetSignal={turnstileResetSignal}
+          onToken={setTurnstileToken}
+          onError={() => setTurnstileToken(null)}
+        />
+      ) : null}
+
+      {mode === "qr" ? (
+        <QrLoginPanel />
+      ) : mode === "password" ? (
         <Stack
           key="password-login-form"
           component="form"
@@ -229,7 +266,7 @@ export function LoginForm({
             type="submit"
             variant="contained"
             size="large"
-            disabled={isSubmitting}
+            disabled={isSubmitting || turnstilePending}
             sx={{ mt: 0.5, py: 1.15, fontWeight: 650 }}
           >
             {isSubmitting ? "正在登录" : "登录"}
@@ -333,7 +370,7 @@ export function LoginForm({
             type="submit"
             variant="contained"
             size="large"
-            disabled={otpBusy}
+            disabled={otpBusy || turnstilePending}
             sx={{ mt: 0.5, py: 1.15, fontWeight: 650 }}
           >
             {otpBusy

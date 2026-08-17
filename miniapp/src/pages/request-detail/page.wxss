@@ -1,0 +1,322 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.hero {
+  flex-shrink: 0;
+  background: linear-gradient(180deg, #ffffff, var(--page-bg));
+  border-bottom: 1rpx solid var(--divider);
+  padding: 24rpx 28rpx;
+}
+
+.info-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.info-number {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  color: var(--text-tertiary);
+  font-size: 24rpx;
+  letter-spacing: 0.5rpx;
+}
+
+.info-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  margin-top: 8rpx;
+  overflow-wrap: anywhere;
+}
+
+.info-grid {
+  margin-top: 16rpx;
+}
+
+.info-item {
+  display: flex;
+  gap: 16rpx;
+  padding: 6rpx 0;
+  font-size: 26rpx;
+}
+
+.info-label {
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  width: 110rpx;
+}
+
+.info-value {
+  flex: 1;
+}
+
+.priority-HIGH { color: var(--warning); font-weight: 600; }
+.priority-URGENT { color: var(--error); font-weight: 600; }
+
+.chat-scroll {
+  flex: 1;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 8rpx 28rpx 0;
+}
+
+.chat-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-tertiary);
+  font-size: 25rpx;
+}
+
+.chat-bottom-spacer {
+  height: 24rpx;
+}
+
+.msg-row {
+  display: flex;
+  margin: 18rpx 0;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.msg-mine {
+  justify-content: flex-end;
+}
+
+.bubble {
+  max-width: 74%;
+  background: var(--card-bg);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  border-radius: 22rpx 22rpx 22rpx 8rpx;
+  padding: 18rpx 22rpx;
+}
+
+.bubble-mine {
+  background: linear-gradient(135deg, #e8f2ff, #dbeafe);
+  border-color: rgba(22, 119, 255, 0.12);
+  border-radius: 22rpx 22rpx 8rpx 22rpx;
+}
+
+.bubble-system {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 8rpx 0;
+  max-width: 100%;
+  text-align: center;
+}
+
+.system-text {
+  color: var(--text-tertiary);
+  font-size: 24rpx;
+}
+
+.msg-author {
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+  margin-bottom: 8rpx;
+}
+
+.reply-quote {
+  border-left: 6rpx solid var(--brand);
+  padding: 10rpx 16rpx;
+  margin-bottom: 12rpx;
+  background: var(--brand-soft);
+  border-radius: 10rpx;
+}
+
+.reply-quote-label {
+  font-size: 20rpx;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.reply-quote-body {
+  font-size: 24rpx;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.msg-body {
+  font-size: 28rpx;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.msg-files {
+  margin-top: 14rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.msg-file {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16rpx;
+  background: rgba(16, 24, 40, 0.04);
+  border-radius: 12rpx;
+  padding: 16rpx 18rpx;
+}
+
+.msg-file-image .file-name {
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.file-name {
+  font-size: 26rpx;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-size {
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+}
+
+/* 底部回复栏 */
+.reply-bar {
+  flex-shrink: 0;
+  background: var(--card-bg);
+  border-top: 1rpx solid var(--divider);
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
+}
+
+.reply-target {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--brand-soft);
+  border-radius: 12rpx;
+  padding: 12rpx 16rpx;
+  margin-bottom: 12rpx;
+  font-size: 24rpx;
+  color: var(--brand);
+}
+
+.reply-target-cancel {
+  padding: 0 8rpx;
+  color: var(--text-secondary);
+}
+
+.reply-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-bottom: 12rpx;
+}
+
+.reply-file {
+  font-size: 22rpx;
+  background: rgba(16, 24, 40, 0.04);
+  border-radius: 10rpx;
+  padding: 10rpx 14rpx;
+  display: flex;
+  gap: 10rpx;
+  align-items: center;
+}
+
+.reply-file-remove {
+  color: var(--error);
+}
+
+.reply-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 14rpx;
+}
+
+.reply-attach {
+  width: 76rpx;
+  height: 76rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--page-bg);
+  border-radius: 14rpx;
+  flex-shrink: 0;
+}
+
+.reply-input {
+  flex: 1;
+  background: var(--page-bg);
+  border-radius: 14rpx;
+  /* 用 padding 垂直居中（textarea 的 line-height 对 placeholder 居中不可靠）；
+     基础高度与两侧按钮一致，auto-height 多行时自然增高 */
+  box-sizing: border-box;
+  padding: 16rpx 22rpx;
+  font-size: 28rpx;
+  min-height: 76rpx;
+  line-height: 44rpx;
+  max-height: 220rpx;
+}
+
+.reply-placeholder {
+  color: var(--text-tertiary);
+  line-height: 44rpx;
+}
+
+.send-btn {
+  background: var(--brand) !important;
+  color: #ffffff !important;
+  border-radius: 14rpx !important;
+  flex-shrink: 0;
+  font-weight: 600;
+  height: 76rpx !important;
+  line-height: 76rpx !important;
+  padding: 0 32rpx !important;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 风控撤回提示（对齐 Web：红色警告块 + 理由） */
+.revoked-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  color: var(--error);
+}
+
+.revoked-text {
+  font-size: 24rpx;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+/* 安全复查中提示 */
+.reviewing-hint {
+  margin-top: 10rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+}
+
+/* 输入区常置警示（对齐 Web ContentRiskNotice） */
+.risk-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  margin-bottom: 14rpx;
+}
+
+.risk-notice-text {
+  font-size: 21rpx;
+  color: var(--text-tertiary);
+  line-height: 1.6;
+}

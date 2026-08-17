@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { recordWechatSubscribeDelivery } from "@/modules/miniapp/wechat-subscribe-message-service";
 import {
   Prisma,
   type ContentVisibility,
@@ -37,6 +38,7 @@ import {
 import { loadNotificationDeliveryRule } from "@/modules/notifications/notification-delivery-rule-service";
 import {
   resolveNotificationSoundEnabled,
+  ruleKeyForNotificationEmail,
   ruleKeyForProjectNotification,
   ruleKeyForRequestActivity,
 } from "@/modules/notifications/notification-delivery-rules";
@@ -284,6 +286,17 @@ export async function createNotification(
     payload: {
       notificationId: notification.id,
     },
+  });
+  // 微信订阅消息（提醒渠道）：入队失败不影响通知本身
+  await recordWechatSubscribeDelivery(tx, {
+    id: notification.id,
+    occurrenceCount: notification.occurrenceCount,
+    type: input.type,
+    title: input.title,
+    body: input.body,
+    userId: input.userId,
+    projectId: input.projectId ?? null,
+    serviceRequestId: input.serviceRequestId ?? null,
   });
   return { ...input, ...notification };
 }
@@ -1146,6 +1159,7 @@ async function persistActivityDelivery(
       .map((notification) => notification.userId),
   );
   const emailEnabledUserIds = new Set<string>();
+  let perTypeDisabled = new Set<string>();
   let delayEmailUntilUnread = false;
   if (emailCandidateUserIds.length > 0) {
     const [settings] = await tx.$queryRaw<
@@ -1161,6 +1175,18 @@ async function persistActivityDelivery(
       where: { id: { in: emailCandidateUserIds } },
       select: { id: true, requestEmailNotificationsEnabled: true },
     });
+    // 退订偏好是「收件人」的行，但本事务挂在发送方 Actor 的 RLS 会话上：
+    // 普通发送方查不到他人偏好（策略仅允许本人/管理员），直接 findMany 会
+    // 恒为空 → 已退订用户照发不误。改走 SECURITY DEFINER 函数按收件人集合读取。
+    const optouts = await tx.$queryRaw<
+      Array<{ user_id: string; rule_key: string }>
+    >`
+      SELECT user_id, rule_key
+      FROM app_notification_email_optouts(${emailCandidateUserIds}::text[])
+    `;
+    perTypeDisabled = new Set(
+      optouts.map((p) => `${p.user_id}:${p.rule_key}`),
+    );
     if (settings && settings.mail_mode !== "LOCAL_OUTBOX") {
       delayEmailUntilUnread = settings?.delay_enabled ?? false;
       for (const user of users) {
@@ -1180,12 +1206,17 @@ async function persistActivityDelivery(
     ) {
       continue;
     }
-    const notificationEmailDueAt = emailEnabledUserIds.has(notification.userId)
-      ? emailDueAt
-      : undefined;
+    const ruleKey = ruleKeyForNotificationEmail(notification.type);
+    const perTypeOptedOut =
+      ruleKey != null &&
+      perTypeDisabled.has(`${notification.userId}:${ruleKey}`);
+    const emailDueAtForUser =
+      emailEnabledUserIds.has(notification.userId) && !perTypeOptedOut
+        ? emailDueAt
+        : undefined;
     const persistenceInput = toNotificationPersistenceInput(
       notification,
-      options?.contentRiskReviewId ? undefined : notificationEmailDueAt,
+      options?.contentRiskReviewId ? undefined : emailDueAtForUser,
     );
     const persistedNotification = await createNotification(
       tx,
@@ -1198,15 +1229,15 @@ async function persistActivityDelivery(
         SELECT app_hold_notification_for_content_risk(
           ${persistedNotification.id},
           ${options.contentRiskReviewId},
-          ${notificationEmailDueAt ?? null}
+          ${emailDueAtForUser ?? null}
         ) AS held
       `;
       if (!held?.held) throw new Error("风控通知暂缓失败");
     }
     notifications.push(persistedNotification);
-    if (notificationEmailDueAt) emailCount += 1;
+    if (emailDueAtForUser) emailCount += 1;
     if (
-      notificationEmailDueAt &&
+      emailDueAtForUser &&
       !delayEmailUntilUnread &&
       !options?.contentRiskReviewId
     ) {

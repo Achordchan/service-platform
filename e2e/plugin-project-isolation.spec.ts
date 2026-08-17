@@ -71,8 +71,8 @@ test.afterAll(async () => {
 test("插件设置与外部项目客户选择保持隔离", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("邮箱").fill("admin@local.test");
-  await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL(/\/staff\//);
 
   await page.goto("/staff/plugins");

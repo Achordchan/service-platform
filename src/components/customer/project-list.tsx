@@ -76,7 +76,7 @@ function ProjectCard({
             display: "flex",
             flexDirection: "column",
             height: "100%",
-            p: { xs: 2.5, md: 3 },
+            p: { xs: 2, md: 2.5 },
           }}
         >
           <Stack
@@ -181,7 +181,7 @@ function ProjectCard({
               justifyContent: "space-between",
             }}
           >
-            <StatusIndicator status={project.status} compact />
+            <StatusIndicator status={project.status} compact audience="CUSTOMER" />
             <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
               <CalendarMonthOutlinedIcon
                 sx={{ fontSize: 17, color: "text.secondary" }}

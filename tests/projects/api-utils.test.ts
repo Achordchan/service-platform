@@ -7,11 +7,18 @@ const sessionMocks = vi.hoisted(() => ({
   getCurrentSession: vi.fn(),
 }));
 
+vi.mock("server-only", () => ({}));
+vi.mock("next/headers", () => ({
+  headers: async () => ({ get: () => null }),
+}));
 vi.mock("@/lib/actor", () => ({
   resolveActor: actorMocks.resolveActor,
 }));
 vi.mock("@/lib/session", () => ({
   getCurrentSession: sessionMocks.getCurrentSession,
+}));
+vi.mock("@/modules/miniapp/session", () => ({
+  resolveMiniappSessionFromAuthorization: vi.fn().mockResolvedValue(null),
 }));
 
 describe("API 登录用户解析", () => {

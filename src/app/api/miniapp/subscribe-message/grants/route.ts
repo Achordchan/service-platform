@@ -1,0 +1,45 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import {
+  isWechatTemplateKey,
+  reportSubscribeGrant,
+} from "@/modules/miniapp/wechat-subscribe-message-service";
+import {
+  requireApiActor,
+  routeError,
+} from "@/modules/projects/api-utils";
+
+const grantReportSchema = z.object({
+  templateKey: z.string().trim().min(1).max(40),
+  accept: z.literal(true),
+});
+
+export async function POST(request: Request) {
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+
+  try {
+    const input = grantReportSchema.parse(
+      await request.json().catch(() => null),
+    );
+    if (!isWechatTemplateKey(input.templateKey)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "未知的订阅消息模板",
+          },
+        },
+        { status: 422 },
+      );
+    }
+    // 客户端授权上报只作为额度状态：服务端节流/封顶，真实额度按微信发送结果修正
+    const data = await reportSubscribeGrant(auth.actor.id, input.templateKey);
+    return NextResponse.json({ data });
+  } catch (error) {
+    return routeError(error, {
+      request,
+      operation: "miniapp.subscribe_message.grants",
+    });
+  }
+}

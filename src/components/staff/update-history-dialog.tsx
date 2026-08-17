@@ -1,0 +1,125 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  Stack,
+  Typography,
+} from "@mui/material";
+import { staffApi } from "@/components/staff/staff-api";
+import { CollapsibleText } from "@/components/shared/collapsible-text";
+
+const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+type RevisionView = {
+  id: string;
+  title?: string | null;
+  body: string;
+  visibility: string;
+  editedAt: string;
+  editedByName: string;
+};
+
+export type UpdateHistoryTarget =
+  | {
+      kind: "update";
+      projectId: string;
+      projectUpdateId: string;
+      label: string;
+    }
+  | {
+      kind: "comment";
+      projectId: string;
+      projectUpdateId: string;
+      updateCommentId: string;
+      label: string;
+    };
+
+export function UpdateHistoryDialog({
+  target,
+  onClose,
+}: {
+  target: UpdateHistoryTarget | null;
+  onClose: () => void;
+}) {
+  const [revisions, setRevisions] = useState<RevisionView[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!target) return;
+    const path =
+      target.kind === "update"
+        ? `/api/v1/projects/${target.projectId}/updates/${target.projectUpdateId}/revisions`
+        : `/api/v1/projects/${target.projectId}/updates/${target.projectUpdateId}/comments/${target.updateCommentId}/revisions`;
+    // 打开弹窗时的同步重置属于请求路径必需状态，非级联渲染
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLoading(true);
+    setError(null);
+    staffApi<RevisionView[]>(path)
+      .then((data) => setRevisions(data))
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "加载编辑历史失败"),
+      )
+      .finally(() => setLoading(false));
+  }, [target]);
+
+  // 关闭时的状态清理放在事件处理器（而非 effect 的同步 setState），避免级联渲染
+  function handleClose() {
+    setRevisions(null);
+    setError(null);
+    setLoading(false);
+    onClose();
+  }
+
+  return (
+    <Dialog open={Boolean(target)} onClose={handleClose} maxWidth="sm" fullWidth>
+      <DialogTitle>编辑历史{target ? ` · ${target.label}` : ""}</DialogTitle>
+      <DialogContent dividers>
+        {loading ? (
+          <Stack sx={{ alignItems: "center", py: 4 }}>
+            <CircularProgress size={28} />
+          </Stack>
+        ) : error ? (
+          <Typography color="error.main">{error}</Typography>
+        ) : !revisions || revisions.length === 0 ? (
+          <Typography color="text.secondary">暂无历史版本。</Typography>
+        ) : (
+          <Stack divider={<Divider />} spacing={2}>
+            {revisions.map((revision) => (
+              <Box key={revision.id}>
+                <Typography variant="body2" color="text.secondary">
+                  {revision.editedByName} ·{" "}
+                  {dateTimeFormatter.format(new Date(revision.editedAt))}
+                </Typography>
+                {revision.title ? (
+                  <Typography sx={{ fontWeight: 650, mt: 0.5 }}>
+                    {revision.title}
+                  </Typography>
+                ) : null}
+                <CollapsibleText text={revision.body} maxLines={6} />
+              </Box>
+            ))}
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 3 }}>
+        <Button onClick={onClose}>关闭</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}

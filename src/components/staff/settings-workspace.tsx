@@ -69,6 +69,8 @@ export function SettingsWorkspace(props: SettingsWorkspaceProps) {
       <Tabs
         value={tab}
         onChange={(_event, value: SettingsTab) => selectTab(value)}
+        variant="scrollable"
+        scrollButtons="auto"
       >
         <Tab value="platform" label="平台设置" />
         <Tab value="services" label="服务类型与分类" />
@@ -77,7 +79,7 @@ export function SettingsWorkspace(props: SettingsWorkspaceProps) {
           <Tab value="dingtalk" label="钉钉模板" />
         ) : null}
       </Tabs>
-      <Box sx={{ pt: 2.5 }}>
+      <Box sx={{ pt: 2 }}>
         {tab === "platform" ? (
           <PlatformSettingsHub
             initialSettings={props.initialSettings}

@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // 小程序包有独立 tsconfig，由 pnpm typecheck:miniapp 单独检查
+    "miniapp/**",
   ]),
 ]);
 

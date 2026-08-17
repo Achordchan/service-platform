@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   Alert,
   Box,
@@ -11,9 +12,13 @@ import RefreshOutlinedIcon from "@mui/icons-material/RefreshOutlined";
 
 type EmptyStateProps = {
   title: string;
-  description: string;
+  description?: string;
   actionLabel?: string;
   actionHref?: string;
+  onAction?: () => void;
+  icon?: ReactNode;
+  /** Compact rendering for use inside dense containers like DataGrid overlays. */
+  dense?: boolean;
 };
 
 export function EmptyState({
@@ -21,42 +26,58 @@ export function EmptyState({
   description,
   actionLabel,
   actionHref,
+  onAction,
+  icon,
+  dense = false,
 }: EmptyStateProps) {
   return (
     <Stack
-      spacing={1.5}
+      spacing={dense ? 1 : 1.5}
       sx={{
         alignItems: "center",
         justifyContent: "center",
-        minHeight: 280,
+        minHeight: dense ? 160 : 200,
         px: 3,
-        py: 6,
+        py: dense ? 3 : 4,
         textAlign: "center",
-        border: "1px dashed",
+        border: dense ? "none" : "1px dashed",
         borderColor: "divider",
         borderRadius: 2,
-        bgcolor: "background.paper",
+        bgcolor: dense ? "transparent" : "background.paper",
       }}
     >
       <Box
         sx={{
           display: "grid",
           placeItems: "center",
-          width: 48,
-          height: 48,
+          width: dense ? 36 : 48,
+          height: dense ? 36 : 48,
           borderRadius: "50%",
           color: "text.secondary",
           bgcolor: "action.hover",
+          "& svg": { fontSize: dense ? 18 : 24 },
         }}
       >
-        <InboxOutlinedIcon />
+        {icon ?? <InboxOutlinedIcon />}
       </Box>
-      <Typography variant="h3">{title}</Typography>
-      <Typography color="text.secondary" sx={{ maxWidth: 480 }}>
-        {description}
-      </Typography>
-      {actionLabel && actionHref ? (
-        <Button href={actionHref} variant="contained" sx={{ mt: 1 }}>
+      <Typography variant={dense ? "subtitle2" : "h3"}>{title}</Typography>
+      {description ? (
+        <Typography
+          variant={dense ? "body2" : "body1"}
+          color="text.secondary"
+          sx={{ maxWidth: 480 }}
+        >
+          {description}
+        </Typography>
+      ) : null}
+      {actionLabel && (actionHref || onAction) ? (
+        <Button
+          href={actionHref}
+          onClick={onAction}
+          variant="contained"
+          size={dense ? "small" : "medium"}
+          sx={{ mt: 1 }}
+        >
           {actionLabel}
         </Button>
       ) : null}
@@ -98,7 +119,7 @@ export function LoadingState({ label = "正在加载" }: { label?: string }) {
       direction="row"
       spacing={1.5}
       sx={{
-        minHeight: 240,
+        minHeight: 140,
         color: "text.secondary",
         alignItems: "center",
         justifyContent: "center",

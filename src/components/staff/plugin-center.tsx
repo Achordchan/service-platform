@@ -343,7 +343,7 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
         }}
       >
         <Box>
-          <Typography sx={{ fontWeight: 700 }}>已安装插件</Typography>
+          <Typography sx={{ fontWeight: 650 }}>已安装插件</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
             共 {plugins.length} 个受信任扩展
           </Typography>
@@ -432,8 +432,6 @@ export function PluginCenter({ plugins }: { plugins: PluginView[] }) {
 
               {selected.key === "content-contact-risk" ? (
                 <ContentRiskPluginSettings
-                  enabled={selected.enabled}
-                  healthStatus={selected.healthStatus}
                   config={config}
                   secrets={secrets}
                   hasApiKey={selected.configuredSecretKeys.includes("apiKey")}
@@ -639,7 +637,7 @@ function PluginCard({
                 useFlexGap
                 sx={{ alignItems: "baseline", flexWrap: "wrap" }}
               >
-                <Typography sx={{ fontWeight: 750 }}>{plugin.name}</Typography>
+                <Typography sx={{ fontWeight: 650 }}>{plugin.name}</Typography>
                 <Typography variant="caption" color="text.secondary">
                   v{plugin.version}
                 </Typography>
@@ -683,7 +681,7 @@ function PluginCard({
                 spacing={0.5}
                 sx={{ alignItems: "center", color: "primary.main", pt: 0.25 }}
               >
-                <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                <Typography variant="body2" sx={{ fontWeight: 650 }}>
                   管理插件
                 </Typography>
                 <ArrowForwardOutlinedIcon fontSize="small" />
@@ -711,7 +709,7 @@ function PluginStatusSummary({ plugin }: { plugin: PluginView }) {
       }}
     >
       <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-        <Typography sx={{ fontWeight: 700 }}>运行状态</Typography>
+        <Typography sx={{ fontWeight: 650 }}>运行状态</Typography>
         <Chip
           size="small"
           label={
@@ -783,7 +781,7 @@ function RunCard({
         spacing={1}
         sx={{ alignItems: "center", justifyContent: "space-between" }}
       >
-        <Typography variant="body2" sx={{ fontWeight: 700 }}>
+        <Typography variant="body2" sx={{ fontWeight: 650 }}>
           {runStatusLabel(run.status)}
         </Typography>
         <Typography variant="caption" color="text.secondary">

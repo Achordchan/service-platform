@@ -4,6 +4,13 @@ const optionalText = (max: number) =>
   z.string().trim().max(max).nullable().optional();
 
 const optionalDate = z.iso.datetime().nullable().optional();
+const optionalSlaMinutes = z
+  .number()
+  .int()
+  .min(1)
+  .max(525_600)
+  .nullable()
+  .optional();
 
 export const createServiceTypeSchema = z.object({
   key: z
@@ -15,6 +22,8 @@ export const createServiceTypeSchema = z.object({
   name: z.string().trim().min(1).max(100),
   description: optionalText(1000),
   active: z.boolean().optional(),
+  slaResponseMinutes: optionalSlaMinutes,
+  slaResolutionMinutes: optionalSlaMinutes,
 });
 
 export const updateServiceTypeSchema = createServiceTypeSchema

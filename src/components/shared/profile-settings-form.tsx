@@ -105,21 +105,21 @@ export function ProfileSettingsForm({
   });
 
   return (
-    <Paper variant="outlined" sx={{ p: { xs: 2.5, md: 3 } }}>
+    <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 } }}>
       {isSubmitting ? <LinearProgress sx={{ mb: 2 }} /> : null}
-      <Stack component="form" noValidate spacing={2.5} onSubmit={submit}>
+      <Stack component="form" noValidate spacing={2} onSubmit={submit}>
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={2.5}
           sx={{ alignItems: "center" }}
         >
-          <Avatar src={avatarSrc} alt={name} sx={{ width: 84, height: 84, fontSize: 28 }}>
+          <Avatar src={avatarSrc} alt={name} sx={{ width: 64, height: 64, fontSize: 24 }}>
             {(name || user.name).slice(0, 1)}
           </Avatar>
           <Box>
             <Typography sx={{ fontWeight: 650 }}>头像</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              支持 JPG / PNG / GIF / WebP，最大 2MB。未上传时使用默认头像。
+              JPG / PNG / GIF / WebP，最大 2MB
             </Typography>
             <FilePickerButton
               startIcon={<PhotoCameraOutlinedIcon />}
@@ -197,9 +197,9 @@ export function ProfileSettingsForm({
       {showEmailChange ? (
         <>
           <Divider sx={{ my: 3 }} />
-          <Stack spacing={2.25}>
+          <Stack spacing={2}>
             <div>
-              <Typography sx={{ fontWeight: 700 }}>修改登录邮箱</Typography>
+              <Typography sx={{ fontWeight: 650 }}>修改登录邮箱</Typography>
               <Typography
                 variant="body2"
                 color="text.secondary"

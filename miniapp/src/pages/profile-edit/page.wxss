@@ -1,0 +1,92 @@
+.page {
+  padding: 20rpx 0 60rpx;
+}
+
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 22rpx;
+  padding: 18rpx 0 26rpx;
+  border-radius: 16rpx;
+}
+
+.avatar {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4096ff, var(--brand));
+  color: #ffffff;
+  font-size: 48rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+}
+
+.avatar-hint {
+  flex: 1;
+}
+
+.avatar-hint-title {
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.readonly-field {
+  background: var(--page-bg);
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  font-size: 28rpx;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+.save-btn {
+  margin-top: 32rpx;
+}
+
+.email-desc {
+  line-height: 1.7;
+  margin-bottom: 22rpx;
+}
+
+.email-form-label {
+  margin-top: 8rpx;
+}
+
+.pending-banner {
+  background: var(--warning-soft);
+  border-radius: 16rpx;
+  padding: 22rpx;
+}
+
+.pending-title {
+  color: var(--warning);
+  font-weight: 600;
+  font-size: 27rpx;
+}
+
+.pending-desc {
+  margin-top: 8rpx;
+  line-height: 1.7;
+}
+
+.pending-cancel {
+  margin-top: 16rpx;
+  color: var(--error);
+  font-size: 25rpx;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.hint-card {
+  font-size: 24rpx;
+  line-height: 1.7;
+}

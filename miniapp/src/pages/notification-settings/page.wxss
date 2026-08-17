@@ -1,0 +1,29 @@
+.page {
+  padding: 20rpx 0 60rpx;
+}
+
+.setting-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24rpx;
+  padding: 18rpx 0;
+}
+
+.setting-row + .setting-row {
+  border-top: 1rpx solid var(--divider);
+}
+
+.setting-title {
+  font-weight: 600;
+  font-size: 28rpx;
+}
+
+.wechat-desc {
+  margin: 12rpx 0 24rpx;
+}
+
+.retry-hint {
+  margin-top: 12rpx;
+  color: var(--brand);
+}

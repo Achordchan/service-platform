@@ -34,6 +34,41 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((value) => value === "true"),
+  // 微信小程序：real = 正式微信接口；dev = 本地开发/测试用假 Provider。
+  // dev Provider 在生产环境被 wechat-provider 硬性拒绝。
+  MINIAPP_WECHAT_PROVIDER: z.enum(["real", "dev"]).default("real"),
+  WECHAT_MINIAPP_APPID: z.string().min(1).optional(),
+  WECHAT_MINIAPP_APP_SECRET: z.string().min(1).optional(),
+  MINIAPP_DEV_OPENID: z.string().min(1).optional(),
+  // 订阅消息模板 ID：正式模板审批通过后配置；缺失时投递在 worker 侧 SKIPPED
+  WECHAT_TEMPLATE_REQUEST_REPLY_ID: z.string().min(1).optional(),
+  WECHAT_TEMPLATE_REQUEST_STATUS_ID: z.string().min(1).optional(),
+  WECHAT_TEMPLATE_PROJECT_UPDATE_ID: z.string().min(1).optional(),
+  // Cloudflare Turnstile 人机验证。默认为 CF 官方测试密钥（永远通过），
+  // 上线前替换为正式密钥；两者都不配则完全跳过校验（本地最小配置），
+  // 只配其一会导致前端不渲染验证件而服务端强制拒绝 → 全站无法登录，启动即报错。
+  CF_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
+  CF_TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
+});
+
+const pairedEnvSchema = envSchema.superRefine((env, ctx) => {
+  const pairs: Array<[keyof typeof env, keyof typeof env, string]> = [
+    ["CF_TURNSTILE_SITE_KEY", "CF_TURNSTILE_SECRET_KEY", "Turnstile"],
+    [
+      "WECHAT_MINIAPP_APPID",
+      "WECHAT_MINIAPP_APP_SECRET",
+      "微信小程序凭据",
+    ],
+  ];
+  for (const [first, second, label] of pairs) {
+    if (Boolean(env[first]) !== Boolean(env[second])) {
+      ctx.addIssue({
+        code: "custom",
+        path: [env[first] ? second : first],
+        message: `${label} ${String(first)} 与 ${String(second)} 必须同时配置或同时留空`,
+      });
+    }
+  }
 });
 
 export type RuntimeEnv = z.infer<typeof envSchema>;
@@ -72,6 +107,18 @@ function readEnvSource() {
       SMTP_PASSWORD: process.env.SMTP_PASSWORD,
       SMTP_FROM: process.env.SMTP_FROM,
       SMTP_SECURE: process.env.SMTP_SECURE,
+      MINIAPP_WECHAT_PROVIDER: process.env.MINIAPP_WECHAT_PROVIDER as
+        | "real"
+        | "dev"
+        | undefined,
+      WECHAT_MINIAPP_APPID: process.env.WECHAT_MINIAPP_APPID,
+      WECHAT_MINIAPP_APP_SECRET: process.env.WECHAT_MINIAPP_APP_SECRET,
+      MINIAPP_DEV_OPENID: process.env.MINIAPP_DEV_OPENID,
+      WECHAT_TEMPLATE_REQUEST_REPLY_ID: process.env.WECHAT_TEMPLATE_REQUEST_REPLY_ID,
+      WECHAT_TEMPLATE_REQUEST_STATUS_ID: process.env.WECHAT_TEMPLATE_REQUEST_STATUS_ID,
+      WECHAT_TEMPLATE_PROJECT_UPDATE_ID: process.env.WECHAT_TEMPLATE_PROJECT_UPDATE_ID,
+      CF_TURNSTILE_SITE_KEY: process.env.CF_TURNSTILE_SITE_KEY,
+      CF_TURNSTILE_SECRET_KEY: process.env.CF_TURNSTILE_SECRET_KEY,
     };
   }
 
@@ -92,6 +139,18 @@ function readEnvSource() {
     SMTP_PASSWORD: process.env.SMTP_PASSWORD,
     SMTP_FROM: process.env.SMTP_FROM,
     SMTP_SECURE: process.env.SMTP_SECURE,
+    MINIAPP_WECHAT_PROVIDER: process.env.MINIAPP_WECHAT_PROVIDER as
+      | "real"
+      | "dev"
+      | undefined,
+    WECHAT_MINIAPP_APPID: process.env.WECHAT_MINIAPP_APPID,
+    WECHAT_MINIAPP_APP_SECRET: process.env.WECHAT_MINIAPP_APP_SECRET,
+    MINIAPP_DEV_OPENID: process.env.MINIAPP_DEV_OPENID,
+    WECHAT_TEMPLATE_REQUEST_REPLY_ID: process.env.WECHAT_TEMPLATE_REQUEST_REPLY_ID,
+    WECHAT_TEMPLATE_REQUEST_STATUS_ID: process.env.WECHAT_TEMPLATE_REQUEST_STATUS_ID,
+    WECHAT_TEMPLATE_PROJECT_UPDATE_ID: process.env.WECHAT_TEMPLATE_PROJECT_UPDATE_ID,
+    CF_TURNSTILE_SITE_KEY: process.env.CF_TURNSTILE_SITE_KEY,
+    CF_TURNSTILE_SECRET_KEY: process.env.CF_TURNSTILE_SECRET_KEY,
   };
 }
 
@@ -99,7 +158,7 @@ let cachedEnv: RuntimeEnv | null = null;
 
 function getEnv(): RuntimeEnv {
   if (!cachedEnv) {
-    cachedEnv = envSchema.parse(readEnvSource());
+    cachedEnv = pairedEnvSchema.parse(readEnvSource());
   }
   return cachedEnv;
 }

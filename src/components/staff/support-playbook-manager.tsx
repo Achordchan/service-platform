@@ -28,7 +28,9 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
@@ -83,6 +85,8 @@ export function SupportPlaybookManager({
 }: {
   initialPlaybooks: SupportReplyPlaybookView[];
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const confirm = useAppConfirm();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -317,7 +321,7 @@ export function SupportPlaybookManager({
             >
               <Box sx={{ minWidth: 0, flex: 1 }}>
                 <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
-                  <Typography sx={{ fontWeight: 700 }}>{playbook.title}</Typography>
+                  <Typography sx={{ fontWeight: 650 }}>{playbook.title}</Typography>
                   <Chip size="small" variant="outlined" label={categoryLabels[playbook.category]} />
                   <Chip size="small" color={playbook.active ? "success" : "default"} label={playbook.active ? "启用" : "停用"} />
                   {playbook.isBuiltin ? <Chip size="small" variant="outlined" label="系统内置" /> : null}
@@ -361,7 +365,7 @@ export function SupportPlaybookManager({
         ) : null}
       </Paper>
 
-      <Dialog open={Boolean(editor)} onClose={busyKey ? undefined : () => setEditor(null)} fullWidth maxWidth="md">
+      <Dialog open={Boolean(editor)} onClose={busyKey ? undefined : () => setEditor(null)} fullWidth maxWidth="md" fullScreen={mobile}>
         {editor ? (
           <Stack component="form" noValidate onSubmit={submit} sx={{ maxHeight: "min(860px, 94vh)" }}>
             {busyKey ? <LinearProgress /> : null}

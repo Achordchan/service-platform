@@ -1,0 +1,16 @@
+{
+  "name": "@achord/miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "服务支持中心微信小程序（客户侧 V1）",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "miniprogram-api-typings": "^3.12.1",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "tdesign-miniprogram": "^1.16.0"
+  }
+}

@@ -35,6 +35,9 @@ runs:
         APP_URL="http://127.0.0.1:3000"
         UPLOAD_DIR=".data/test-uploads"
         PLATFORM_SECRET_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+        WECHAT_TEMPLATE_REQUEST_REPLY_ID="tmpl-reply-ci"
+        WECHAT_TEMPLATE_REQUEST_STATUS_ID="tmpl-status-ci"
+        WECHAT_TEMPLATE_PROJECT_UPDATE_ID="tmpl-update-ci"
         EOF
 
     - name: Migrate and seed database

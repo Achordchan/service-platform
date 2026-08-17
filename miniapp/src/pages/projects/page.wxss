@@ -1,0 +1,158 @@
+.page {
+  padding-bottom: 40rpx;
+}
+
+.home-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 28rpx 32rpx 8rpx;
+}
+
+.greeting {
+  font-size: 34rpx;
+  font-weight: 650;
+  color: var(--text-primary);
+  letter-spacing: 1rpx;
+}
+
+.date-text {
+  font-size: 23rpx;
+  color: var(--text-tertiary);
+}
+
+/* 单项目大卡：信息密度优先，减少首屏空白 */
+.project-hero {
+  display: block;
+  padding: 32rpx 28rpx 26rpx;
+}
+
+.hero-head {
+  display: flex;
+  align-items: stretch;
+  gap: 20rpx;
+}
+
+/* 品牌色竖条：替代首字头像，克制且有辨识度 */
+.hero-accent {
+  width: 8rpx;
+  border-radius: 4rpx;
+  background: linear-gradient(180deg, #4096ff, var(--brand));
+  flex-shrink: 0;
+}
+
+.hero-head-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.hero-title {
+  font-size: 36rpx;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.hero-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 10rpx;
+}
+
+.hero-type-chip {
+  flex-shrink: 0;
+  font-size: 21rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 8rpx;
+  padding: 4rpx 14rpx;
+  font-weight: 500;
+}
+
+.hero-customer {
+  font-size: 24rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-progress {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin-top: 28rpx;
+}
+
+.hero-progress .progress-track {
+  flex: 1;
+  height: 16rpx;
+}
+
+.hero-stage {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 26rpx;
+}
+
+.hero-stage-label {
+  font-size: 24rpx;
+  color: var(--text-tertiary);
+}
+
+.hero-stage-value {
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+.hero-stats {
+  display: flex;
+  align-items: center;
+  margin-top: 28rpx;
+  background: var(--page-bg);
+  border-radius: 18rpx;
+  padding: 22rpx 0;
+}
+
+.hero-stat {
+  flex: 1;
+  text-align: center;
+}
+
+.hero-stat-num {
+  font-size: 36rpx;
+  font-weight: 700;
+  color: var(--brand);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-stat-label {
+  font-size: 22rpx;
+  color: var(--text-secondary);
+  margin-top: 6rpx;
+}
+
+.hero-stat-divider {
+  width: 1rpx;
+  height: 48rpx;
+  background: var(--divider);
+}
+
+.hero-pm {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-top: 22rpx;
+  font-size: 26rpx;
+}
+
+.hero-pm-name {
+  font-weight: 600;
+}
+
+.hero-footer {
+  margin-top: 22rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+}

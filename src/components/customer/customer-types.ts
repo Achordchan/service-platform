@@ -82,12 +82,14 @@ export type ProjectUpdate = {
   body: string;
   authorName: string;
   createdAt: string;
+  updatedAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
   comments: Array<{
     id: string;
     body: string;
     authorName: string;
     createdAt: string;
+    updatedAt: string;
     contentRiskStatus?: "PENDING" | "REVOKED" | null;
   }>;
 };

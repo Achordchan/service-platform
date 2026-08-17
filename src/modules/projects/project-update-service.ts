@@ -46,15 +46,43 @@ function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function sanitizeProjectUpdateBody(body: string) {
+type UserHtmlBodyRules = {
+  maxLength: number;
+  emptyCode: string;
+  emptyMessage: string;
+  tooLongCode: string;
+  tooLongMessage: string;
+};
+
+function sanitizeUserHtmlBody(body: string, rules: UserHtmlBodyRules) {
   const sanitized = sanitizeMessageHtml(body);
   if (!hasMeaningfulHtml(sanitized)) {
-    throw new DomainError("EMPTY_PROJECT_UPDATE", "请填写进度说明", 422);
+    throw new DomainError(rules.emptyCode, rules.emptyMessage, 422);
   }
-  if (sanitized.length > 20_000) {
-    throw new DomainError("PROJECT_UPDATE_TOO_LONG", "进度说明过长", 422);
+  if (sanitized.length > rules.maxLength) {
+    throw new DomainError(rules.tooLongCode, rules.tooLongMessage, 422);
   }
   return sanitized;
+}
+
+function sanitizeProjectUpdateBody(body: string) {
+  return sanitizeUserHtmlBody(body, {
+    maxLength: 20_000,
+    emptyCode: "EMPTY_PROJECT_UPDATE",
+    emptyMessage: "请填写进度说明",
+    tooLongCode: "PROJECT_UPDATE_TOO_LONG",
+    tooLongMessage: "进度说明过长",
+  });
+}
+
+function sanitizeUpdateCommentBody(body: string) {
+  return sanitizeUserHtmlBody(body, {
+    maxLength: 10_000,
+    emptyCode: "EMPTY_UPDATE_COMMENT",
+    emptyMessage: "请填写评论内容",
+    tooLongCode: "UPDATE_COMMENT_TOO_LONG",
+    tooLongMessage: "评论内容过长",
+  });
 }
 
 export function listProjectUpdates(actor: Actor, projectId: string) {
@@ -145,13 +173,59 @@ export function listProjectUpdates(actor: Actor, projectId: string) {
             contentRisk.states.get(`UPDATE_COMMENT:${comment.id}`),
           )
             ? ""
-            : comment.body,
+            : sanitizeMessageHtml(comment.body),
         contentRiskStatus: riskStatus(
           "UPDATE_COMMENT",
           comment.id,
           comment.authorId === actor.id,
         ),
       })),
+    }));
+  });
+}
+
+export function listProjectUpdateRevisions(
+  actor: Actor,
+  projectId: string,
+  projectUpdateId: string,
+) {
+  assertAllowed(actor.isStaff, "仅后台员工可查看编辑历史");
+
+  return withActorDb(actor, async (tx) => {
+    await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
+    const update = await tx.projectUpdate.findFirst({
+      where: { id: projectUpdateId, projectId },
+      select: { id: true },
+    });
+    assertFound(update, "进度动态不存在");
+
+    const revisions = await tx.projectUpdateRevision.findMany({
+      where: { projectUpdateId },
+      select: {
+        id: true,
+        title: true,
+        body: true,
+        visibility: true,
+        editedAt: true,
+        editedBy: { select: { name: true } },
+      },
+      orderBy: [{ editedAt: "desc" }, { id: "desc" }],
+    });
+
+    return revisions.map((revision) => ({
+      id: revision.id,
+      title: revision.title,
+      // 历史数据可能含未消毒 HTML（渲染走 CollapsibleText → dangerouslySetInnerHTML），
+      // 与评论历史路径一致在读取侧兜底消毒
+      body: sanitizeMessageHtml(revision.body),
+      visibility: revision.visibility,
+      editedAt: revision.editedAt.toISOString(),
+      editedByName: revision.editedBy.name,
     }));
   });
 }
@@ -290,6 +364,7 @@ export async function updateProjectUpdate(
       where: { id: projectUpdateId, projectId },
       select: {
         id: true,
+        title: true,
         body: true,
         visibility: true,
         attachments: {
@@ -305,6 +380,19 @@ export async function updateProjectUpdate(
         ? {}
         : { body: sanitizeProjectUpdateBody(input.body) }),
     };
+    const nextTitle = updateInput.title ?? existing.title;
+    const nextBody = updateInput.body ?? existing.body;
+    if (nextTitle !== existing.title || nextBody !== existing.body) {
+      await tx.projectUpdateRevision.create({
+        data: {
+          projectUpdateId,
+          title: existing.title,
+          body: existing.body,
+          visibility: existing.visibility,
+          editedById: actor.id,
+        },
+      });
+    }
     const update = await tx.projectUpdate.update({
       where: { id: projectUpdateId },
       data: updateInput,
@@ -527,7 +615,7 @@ export function listUpdateComments(
         body:
           !actor.isPlatformAdmin && isContentRiskStateRevoked(state)
             ? ""
-            : comment.body,
+            : sanitizeMessageHtml(comment.body),
         contentRiskStatus: actor.isPlatformAdmin
           ? null
           : contentRiskStatusFor(state, {
@@ -536,6 +624,53 @@ export function listUpdateComments(
             }),
       };
     });
+  });
+}
+
+export function listUpdateCommentRevisions(
+  actor: Actor,
+  projectId: string,
+  projectUpdateId: string,
+  updateCommentId: string,
+) {
+  assertAllowed(actor.isStaff, "仅后台员工可查看编辑历史");
+
+  return withActorDb(actor, async (tx) => {
+    await assertCanViewCustomerProjectFeature(
+      tx,
+      actor,
+      projectId,
+      "updates",
+    );
+    const comment = await tx.updateComment.findFirst({
+      where: {
+        id: updateCommentId,
+        projectUpdateId,
+        projectUpdate: { projectId },
+      },
+      select: { id: true },
+    });
+    assertFound(comment, "评论不存在");
+
+    const revisions = await tx.updateCommentRevision.findMany({
+      where: { updateCommentId },
+      select: {
+        id: true,
+        body: true,
+        visibility: true,
+        editedAt: true,
+        editedBy: { select: { name: true } },
+      },
+      orderBy: [{ editedAt: "desc" }, { id: "desc" }],
+    });
+
+    return revisions.map((revision) => ({
+      id: revision.id,
+      body: sanitizeMessageHtml(revision.body),
+      visibility: revision.visibility,
+      editedAt: revision.editedAt.toISOString(),
+      editedByName: revision.editedBy.name,
+    }));
   });
 }
 
@@ -586,9 +721,10 @@ export async function createUpdateComment(
     const visibility = actor.isStaff
       ? (input.visibility ?? "CUSTOMER_VISIBLE")
       : "CUSTOMER_VISIBLE";
+    const body = sanitizeUpdateCommentBody(input.body);
     const comment = await tx.updateComment.create({
       data: {
-        body: input.body,
+        body,
         visibility,
         projectUpdateId,
         authorId: actor.id,
@@ -722,8 +858,23 @@ export async function updateUpdateComment(
 
     const data = {
       ...input,
+      ...(input.body === undefined
+        ? {}
+        : { body: sanitizeUpdateCommentBody(input.body) }),
       visibility: actor.isStaff ? input.visibility : undefined,
     };
+    const nextBody = data.body ?? comment.body;
+    const previousBody = sanitizeMessageHtml(comment.body);
+    if (nextBody !== comment.body) {
+      await tx.updateCommentRevision.create({
+        data: {
+          updateCommentId,
+          body: previousBody,
+          visibility: comment.visibility,
+          editedById: actor.id,
+        },
+      });
+    }
     const updated = await tx.updateComment.update({
       where: { id: updateCommentId },
       data,
@@ -748,7 +899,7 @@ export async function updateUpdateComment(
         visibility: updated.visibility,
       },
       previousSnapshot: {
-        body: comment.body,
+        body: previousBody,
         visibility: comment.visibility,
       },
     });

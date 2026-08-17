@@ -1,0 +1,62 @@
+{
+  "pages": [
+    "pages/projects/page",
+    "pages/requests/page",
+    "pages/messages/page",
+    "pages/profile/page",
+    "pages/project-detail/page",
+    "pages/request-detail/page",
+    "pages/request-new/page",
+    "pages/auth/login/page",
+    "pages/auth/bind-code/page",
+    "pages/notification-settings/page",
+    "pages/members/page",
+    "pages/update-detail/page",
+    "pages/profile-edit/page",
+    "pages/web-login/page"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTitleText": "服务支持中心",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f5f6f8",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#667085",
+    "selectedColor": "#1677ff",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/projects/page",
+        "text": "项目",
+        "iconPath": "images/tabbar/projects-gray.png",
+        "selectedIconPath": "images/tabbar/projects-active.png"
+      },
+      {
+        "pagePath": "pages/requests/page",
+        "text": "工单",
+        "iconPath": "images/tabbar/requests-gray.png",
+        "selectedIconPath": "images/tabbar/requests-active.png"
+      },
+      {
+        "pagePath": "pages/messages/page",
+        "text": "消息",
+        "iconPath": "images/tabbar/messages-gray.png",
+        "selectedIconPath": "images/tabbar/messages-active.png"
+      },
+      {
+        "pagePath": "pages/profile/page",
+        "text": "我的",
+        "iconPath": "images/tabbar/profile-gray.png",
+        "selectedIconPath": "images/tabbar/profile-active.png"
+      }
+    ]
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json",
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon"
+  }
+}

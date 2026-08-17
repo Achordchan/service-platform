@@ -112,6 +112,7 @@ export function RequestReplyForm({
   const {
     control,
     handleSubmit,
+    getValues,
     reset,
     setValue,
     formState: { errors, isSubmitting },
@@ -154,10 +155,14 @@ export function RequestReplyForm({
   }
 
   function addFiles(next: File[]) {
-    const { accepted, error: validateError } = validateFiles(next, files.length);
+    const currentFiles = getValues("files");
+    const { accepted, error: validateError } = validateFiles(
+      next,
+      currentFiles.length,
+    );
     if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      setValue("files", [...files, ...accepted], {
+      setValue("files", [...currentFiles, ...accepted], {
         shouldDirty: true,
         shouldValidate: true,
       });
@@ -308,7 +313,7 @@ export function RequestReplyForm({
             >
               <CheckCircleOutlineOutlinedIcon color="success" />
               <Box>
-                <Typography sx={{ fontWeight: 700 }}>服务人员已标记解决</Typography>
+                <Typography sx={{ fontWeight: 650 }}>服务人员已标记解决</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   确认无误后可关闭；仍有问题可继续反馈，发送后恢复为处理中。7
                   天内没有确认或回复，系统将自动关闭。

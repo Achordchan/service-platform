@@ -135,7 +135,7 @@ type RequestDetailView = RequestSummary & {
 const statusLabels: Record<RequestStatus, string> = {
   PENDING: "待处理",
   IN_PROGRESS: "处理中",
-  WAITING_CUSTOMER: "等待回复",
+  WAITING_CUSTOMER: "等待客户",
   RESOLVED: "已解决",
   CLOSED: "已关闭",
 };
@@ -722,7 +722,7 @@ function ExternalEmbedPortal({
             </Tooltip>
           ) : null}
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography sx={{ fontWeight: 750 }} noWrap>{list.project.title}</Typography>
+            <Typography sx={{ fontWeight: 650 }} noWrap>{list.project.title}</Typography>
             <Typography variant="caption" color="text.secondary" noWrap>
               {session.contact.name} · {connectorLabel}
             </Typography>
@@ -735,7 +735,7 @@ function ExternalEmbedPortal({
           <Stack spacing={2}>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between" }}>
               <Box>
-                <Typography variant="h5" sx={{ fontWeight: 750 }}>{detail.title}</Typography>
+                <Typography variant="h5" sx={{ fontWeight: 650 }}>{detail.title}</Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {detail.number} · {detail.category.name}
                 </Typography>
@@ -879,7 +879,7 @@ function ExternalEmbedPortal({
                       spacing={0.75}
                       sx={{ alignItems: "center", minWidth: 0 }}
                     >
-                      <Typography sx={{ fontWeight: 700, minWidth: 0 }} noWrap>
+                      <Typography sx={{ fontWeight: 650, minWidth: 0 }} noWrap>
                         {request.title}
                       </Typography>
                       <UnreadCountPill count={request.unreadCount} />
@@ -947,6 +947,7 @@ function EmbedReplyComposer({
   const typingTimer = useRef<number | null>(null);
   const {
     control,
+    getValues,
     handleSubmit,
     reset,
     setError,
@@ -1088,7 +1089,7 @@ function EmbedReplyComposer({
             multiple
             onFiles={(selected) => {
               if (selected.length === 0) return;
-              setValue("files", [...files, ...selected], {
+              setValue("files", [...getValues("files"), ...selected], {
                 shouldDirty: true,
                 shouldValidate: true,
               });

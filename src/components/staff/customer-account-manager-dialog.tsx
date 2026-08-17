@@ -24,13 +24,17 @@ import {
   TextField,
   Tooltip,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import AdminPanelSettingsOutlinedIcon from "@mui/icons-material/AdminPanelSettingsOutlined";
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import EmailOutlinedIcon from "@mui/icons-material/EmailOutlined";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import ChatOutlinedIcon from "@mui/icons-material/ChatOutlined";
 import { AccountEmailChangeDialog } from "@/components/staff/account-email-change-dialog";
+import { MemberWechatBindingDialog } from "@/components/staff/member-wechat-binding-dialog";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
@@ -40,7 +44,7 @@ const memberNameSchema = z.object({
   name: z.string().trim().min(2, "姓名至少需要 2 个字符").max(60),
 });
 const customerInvitationSchema = z.object({
-  email: z.email("请输入有效邮箱").trim().toLowerCase(),
+  email: z.string().trim().toLowerCase().pipe(z.email("请输入有效邮箱")),
 });
 
 type MemberNameValues = z.infer<typeof memberNameSchema>;
@@ -63,6 +67,7 @@ type CustomerMembership = {
     id: string;
     name: string;
     email: string;
+    wechatBinding: { createdAt: string; lastLoginAt: string | null } | null;
     emailChanges: Array<{
       id: string;
       newEmail: string;
@@ -105,11 +110,14 @@ export function CustomerAccountManagerDialog({
   onClose: () => void;
   onChanged: () => void;
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const toast = useToast();
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<CustomerMembership | null>(null);
   const [emailTarget, setEmailTarget] = useState<CustomerMembership | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<CustomerMembership | null>(null);
+  const [wechatTarget, setWechatTarget] = useState<CustomerMembership | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
   const editForm = useForm<MemberNameValues>({
     resolver: zodResolver(memberNameSchema),
@@ -159,6 +167,7 @@ export function CustomerAccountManagerDialog({
   }
 
   function closeManager() {
+    setWechatTarget(null);
     onClose();
   }
 
@@ -286,7 +295,8 @@ export function CustomerAccountManagerDialog({
         onClose={busyKey ? undefined : closeManager}
         fullWidth
         maxWidth="md"
-        slotProps={{ paper: { sx: { maxHeight: "calc(100dvh - 48px)" } } }}
+        fullScreen={mobile}
+        slotProps={mobile ? undefined : { paper: { sx: { maxHeight: "calc(100dvh - 48px)" } } }}
       >
         {detailQuery.isFetching || busyKey || initialLoading ? (
           <LinearProgress />
@@ -301,7 +311,7 @@ export function CustomerAccountManagerDialog({
                 sx={{ px: 3, py: 2.25, justifyContent: "space-between" }}
               >
                 <Box>
-                  <Typography sx={{ fontWeight: 700 }}>
+                  <Typography sx={{ fontWeight: 650 }}>
                     已使用 {capacityUsed}/{visibleDetail.memberLimit} 个账号名额
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
@@ -358,6 +368,18 @@ export function CustomerAccountManagerDialog({
                               </IconButton>
                             </span>
                           </Tooltip>
+                          <Tooltip title="微信绑定">
+                            <span>
+                              <IconButton
+                                size="small"
+                                aria-label={`管理 ${member.user.name} 的微信绑定`}
+                                disabled={Boolean(busyKey)}
+                                onClick={() => setWechatTarget(member)}
+                              >
+                                <ChatOutlinedIcon fontSize="small" />
+                              </IconButton>
+                            </span>
+                          </Tooltip>
                           <Tooltip title="修改登录邮箱">
                             <span>
                               <IconButton
@@ -410,10 +432,11 @@ export function CustomerAccountManagerDialog({
                             color="text.secondary"
                             sx={{ overflowWrap: "anywhere" }}
                           >
-                            {member.user.email}
-                            {member.user.emailChanges[0]
-                              ? ` · 待验证 ${member.user.emailChanges[0].newEmail}`
-                              : ""}
+                        {member.user.email}
+                        {member.user.emailChanges[0]
+                          ? ` · 待验证 ${member.user.emailChanges[0].newEmail}`
+                          : ""}
+                        {member.user.wechatBinding ? " · 微信已绑定" : ""}
                           </Typography>
                         }
                       />
@@ -423,7 +446,7 @@ export function CustomerAccountManagerDialog({
               </List>
               {activeInvitations.length > 0 ? (
                 <Stack spacing={1.25} sx={{ px: 3, py: 2.25 }}>
-                  <Typography sx={{ fontWeight: 700 }}>待接受邀请</Typography>
+                  <Typography sx={{ fontWeight: 650 }}>待接受邀请</Typography>
                   {activeInvitations.map((invitation) => (
                     <Stack
                       key={invitation.id}
@@ -594,6 +617,21 @@ export function CustomerAccountManagerDialog({
           onChanged();
         }}
       />
+
+      {target && detail ? (
+        <MemberWechatBindingDialog
+          customerSpaceId={target.id}
+          target={
+            wechatTarget
+              ? {
+                  membershipId: wechatTarget.id,
+                  userName: wechatTarget.user.name,
+                }
+              : null
+          }
+          onClose={() => setWechatTarget(null)}
+        />
+      ) : null}
     </>
   );
 }

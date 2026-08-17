@@ -872,7 +872,7 @@ export function UniversalIntegrationPanel({
                 }}
               >
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 650 }}>
                     {delivery.eventType} · {delivery.status}
                   </Typography>
                   <Typography variant="caption" color="text.secondary">
