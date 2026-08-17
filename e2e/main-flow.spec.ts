@@ -206,6 +206,8 @@ test.describe("主流程冒烟", () => {
   });
 
   test("管理员可进入项目、客户与服务请求后台", async () => {
+    // 登录后落在新的员工仪表盘（/staff/dashboard），需先经导航进入项目列表
+    await adminPage.getByRole("link", { name: "项目", exact: true }).click();
     await expect(
       adminPage.getByRole("heading", { name: "项目", exact: true }),
     ).toBeVisible();
