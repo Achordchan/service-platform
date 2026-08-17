@@ -27,3 +27,88 @@
   margin-top: 12rpx;
   color: var(--brand);
 }
+
+/* 微信提醒卡片 */
+.wechat-head {
+  padding-top: 0;
+}
+
+.wechat-status {
+  font-size: 24rpx;
+  padding: 4rpx 16rpx;
+  border-radius: 999rpx;
+  font-weight: 600;
+}
+
+.wechat-status-on {
+  color: #12b76a;
+  background: rgba(18, 183, 106, 0.12);
+}
+
+.wechat-status-part {
+  color: #b54708;
+  background: rgba(247, 144, 9, 0.14);
+}
+
+.wechat-status-off {
+  color: var(--text-secondary);
+  background: var(--divider);
+}
+
+.wechat-template {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18rpx 0;
+  border-top: 1rpx solid var(--divider);
+}
+
+.wechat-template-label {
+  font-size: 28rpx;
+}
+
+.wechat-template-state {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  font-size: 26rpx;
+}
+
+.wechat-template-state.on {
+  color: #12b76a;
+}
+
+.wechat-template-state.off {
+  color: var(--text-secondary);
+}
+
+.wechat-all-on {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  margin-top: 24rpx;
+  padding: 22rpx 0;
+  border-radius: 16rpx;
+  background: rgba(18, 183, 106, 0.1);
+  color: #12b76a;
+  font-weight: 600;
+  font-size: 28rpx;
+}
+
+.wechat-reauth {
+  margin-top: 20rpx;
+  text-align: center;
+  color: var(--brand);
+  font-size: 26rpx;
+}
+
+.wechat-reauth-hover {
+  opacity: 0.6;
+}
+
+.wechat-hint {
+  margin-top: 20rpx;
+  font-size: 24rpx;
+  line-height: 1.6;
+}

@@ -154,6 +154,9 @@ Page({
           "该账号已绑定其他微信，请使用原微信登录，或联系客服解绑后重试";
       } else if (code === "WECHAT_ALREADY_BOUND") {
         message = "当前微信已绑定账号，请返回使用微信一键登录";
+      } else if (code === "WECHAT_BOUND_TO_OTHER") {
+        message =
+          "当前微信已绑定其他账号，无法用该邮箱登录。如需切换账号，请联系客服解绑后重试。";
       }
       this.setData({ error: message });
     } finally {

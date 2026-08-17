@@ -1,0 +1,11 @@
+<view wx:if="{{visible}}" class="subscribe-banner">
+  <t-icon name="notification" size="40rpx" color="#d98b16" class="subscribe-banner-icon" />
+  <view class="subscribe-banner-body">
+    <view class="subscribe-banner-title">开启微信提醒，进展不错过</view>
+    <view class="subscribe-banner-desc">工单回复、状态变化和项目动态第一时间通知你</view>
+  </view>
+  <view class="subscribe-banner-actions">
+    <view class="subscribe-banner-enable" hover-class="subscribe-banner-enable-hover" bindtap="onEnable">去开启</view>
+    <view class="subscribe-banner-ignore" hover-class="subscribe-banner-ignore-hover" bindtap="onIgnore">忽略</view>
+  </view>
+</view>

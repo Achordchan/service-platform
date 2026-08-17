@@ -2,10 +2,13 @@ import { ensureLoggedIn } from "../../lib/auth";
 import {
   getNotificationPreferences,
   updateNotificationPreferences,
-  reportSubscribeGrant,
-  getSubscribeMessageConfig,
-  type SubscribeTemplateConfig,
 } from "../../lib/api";
+import {
+  fetchSubscribeState,
+  requestSubscribe,
+  clearBannerDismiss,
+  type SubscribeTemplateState,
+} from "../../lib/subscribe";
 
 Page({
   data: {
@@ -14,7 +17,12 @@ Page({
     soundEnabled: true,
     emailEnabled: true,
     saving: false,
-    templates: [] as SubscribeTemplateConfig[],
+    // 微信订阅真实状态
+    wechatConfigured: false,
+    wechatTemplates: [] as SubscribeTemplateState[],
+    wechatAllSubscribed: false,
+    wechatMissingCount: 0,
+    subscribing: false,
   },
   onShow() {
     if (!ensureLoggedIn()) return;
@@ -26,15 +34,18 @@ Page({
   async load() {
     this.setData({ loading: true, loadError: "" });
     try {
-      const [prefs, config] = await Promise.all([
+      const [prefs, subscribeState] = await Promise.all([
         getNotificationPreferences(),
-        getSubscribeMessageConfig().catch(() => ({ templates: [] })),
+        fetchSubscribeState(),
       ]);
       this.setData({
         loading: false,
         soundEnabled: prefs.soundNotificationsEnabled,
         emailEnabled: prefs.requestEmailNotificationsEnabled,
-        templates: config.templates,
+        wechatConfigured: subscribeState.configured,
+        wechatTemplates: subscribeState.templates,
+        wechatAllSubscribed: subscribeState.allSubscribed,
+        wechatMissingCount: subscribeState.missingCount,
       });
     } catch (error) {
       this.setData({
@@ -70,8 +81,10 @@ Page({
       this.setData({ saving: false });
     }
   },
+  // 拉起微信订阅授权（首开或补充未订阅的模板），成功后刷新真实状态
   async onSubscribeReminders() {
-    if (this.data.templates.length === 0) {
+    if (this.data.subscribing) return;
+    if (!this.data.wechatConfigured) {
       wx.showModal({
         title: "暂未开放",
         content: "微信订阅消息模板配置完成后即可开启提醒。",
@@ -79,24 +92,20 @@ Page({
       });
       return;
     }
-    const templateIds = this.data.templates.map((item) => item.templateId);
+    this.setData({ subscribing: true });
     try {
-      const result = await wx.requestSubscribeMessage({ tmplIds: templateIds });
-      let accepted = 0;
-      for (const template of this.data.templates) {
-        if (result[template.templateId] === "accept") {
-          await reportSubscribeGrant(template.templateKey).catch(
-            () => undefined,
-          );
-          accepted += 1;
-        }
-      }
+      const accepted = await requestSubscribe(this.data.wechatTemplates);
       wx.showToast({
         title: accepted > 0 ? `已开启 ${accepted} 类提醒` : "未开启提醒",
         icon: "none",
       });
+      // 订阅状态有变化：清掉顶部横幅的「暂时忽略」，让横幅按最新状态即时反映
+      if (accepted > 0) clearBannerDismiss();
+      await this.load();
     } catch {
       wx.showToast({ title: "授权未完成", icon: "none" });
+    } finally {
+      this.setData({ subscribing: false });
     }
   },
 });

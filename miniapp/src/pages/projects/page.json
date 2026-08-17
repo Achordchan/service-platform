@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "项目",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "subscribe-banner": "/components/subscribe-banner/index"
+  }
 }

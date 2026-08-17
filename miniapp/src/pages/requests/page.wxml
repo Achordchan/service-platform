@@ -1,6 +1,7 @@
 <import src="/components/states.wxml" />
 
 <view class="page">
+  <subscribe-banner />
   <view class="filter-bar">
     <picker
       class="project-picker"

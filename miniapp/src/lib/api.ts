@@ -449,6 +449,21 @@ export function reportSubscribeGrant(
   });
 }
 
+export type SubscribeGrantState = {
+  templateKey: WechatTemplateKey;
+  remaining: number;
+};
+
+/**
+ * 读取当前用户各订阅模板的剩余额度（服务端 WechatSubscribeGrant.remaining）。
+ * 与后端发送门槛同源，用于展示真实订阅状态与顶部引导横幅的检测。
+ */
+export function getSubscribeGrants(): Promise<{
+  grants: SubscribeGrantState[];
+}> {
+  return request(`/api/miniapp/subscribe-message/grants`);
+}
+
 // —— 通知偏好 ——
 
 export type NotificationPreferences = {

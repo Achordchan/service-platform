@@ -34,11 +34,61 @@
     </view>
 
     <view class="card">
-      <view class="setting-title">微信提醒</view>
-      <view class="text-secondary wechat-desc">
-        开启后，工单有新回复、状态变化和项目动态时会通过微信服务提醒通知你（需要微信授权，每次授权支持接收一条提醒）。
+      <view class="setting-row wechat-head">
+        <view class="setting-title">微信提醒</view>
+        <view
+          wx:if="{{wechatConfigured}}"
+          class="wechat-status {{wechatAllSubscribed ? 'wechat-status-on' : (wechatMissingCount < wechatTemplates.length ? 'wechat-status-part' : 'wechat-status-off')}}"
+        >
+          {{wechatAllSubscribed ? '已全部开启' : (wechatMissingCount < wechatTemplates.length ? '部分开启' : '未开启')}}
+        </view>
       </view>
-      <button class="primary-btn" hover-class="hover-btn" bindtap="onSubscribeReminders">开启微信提醒</button>
+      <view class="text-secondary wechat-desc">
+        工单有新回复、状态变化和项目动态时，通过微信服务通知第一时间提醒你。
+      </view>
+
+      <block wx:if="{{wechatConfigured}}">
+        <view class="wechat-template" wx:for="{{wechatTemplates}}" wx:key="templateKey">
+          <view class="wechat-template-label">{{item.label}}</view>
+          <view class="wechat-template-state {{item.subscribed ? 'on' : 'off'}}">
+            <t-icon
+              wx:if="{{item.subscribed}}"
+              name="check-circle-filled"
+              size="32rpx"
+              color="#12b76a"
+            />
+            <text>{{item.subscribed ? (item.persistent ? '长期开启' : '已开启') : '未开启'}}</text>
+          </view>
+        </view>
+
+        <view wx:if="{{wechatAllSubscribed}}" class="wechat-all-on">
+          <t-icon name="check-circle-filled" size="36rpx" color="#12b76a" />
+          <text>微信提醒已全部开启</text>
+        </view>
+        <button
+          wx:else
+          class="primary-btn"
+          hover-class="hover-btn"
+          loading="{{subscribing}}"
+          bindtap="onSubscribeReminders"
+        >
+          {{wechatMissingCount < wechatTemplates.length ? '补充开启微信提醒' : '开启微信提醒'}}
+        </button>
+
+        <view
+          wx:if="{{wechatAllSubscribed}}"
+          class="wechat-reauth"
+          hover-class="wechat-reauth-hover"
+          bindtap="onSubscribeReminders"
+        >再次授权</view>
+        <view class="text-secondary wechat-hint">
+          微信限制每次授权仅接收一条提醒，勾选「总是保持以上选择」可长期开启。
+        </view>
+      </block>
+
+      <view wx:else class="text-secondary wechat-desc">
+        微信订阅消息模板配置完成后即可开启提醒。
+      </view>
     </view>
   </block>
 </view>
