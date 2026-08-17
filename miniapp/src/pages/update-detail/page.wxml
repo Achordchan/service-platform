@@ -1,0 +1,54 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '无法查看', desc: loadError, retry: canRetry}}"
+  />
+
+  <block wx:else>
+    <view class="card">
+      <view class="detail-title">{{title}}</view>
+      <view class="text-secondary detail-meta">{{authorName}} · {{timeText}}</view>
+      <view class="detail-body">
+        <rich-text nodes="{{body}}"></rich-text>
+      </view>
+      <view wx:if="{{images.length > 0}}" class="image-section">
+        <view class="section-title">图片（{{images.length}}）</view>
+        <view class="image-grid">
+          <view
+            wx:for="{{images}}"
+            wx:key="id"
+            class="image-cell"
+            data-index="{{index}}"
+            bindtap="onPreviewImage"
+          >
+            <image
+              wx:if="{{item.localPath}}"
+              class="image-thumb"
+              src="{{item.localPath}}"
+              mode="aspectFill"
+            />
+            <view wx:else class="image-loading">
+              <view class="skeleton image-skeleton"></view>
+            </view>
+          </view>
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{comments.length > 0}}" class="card">
+      <view class="section-title">评论（{{comments.length}}）</view>
+      <view wx:for="{{comments}}" wx:key="id" class="comment-item">
+        <view class="comment-head">
+          <text class="comment-author">{{item.authorName}}</text>
+          <text class="text-secondary comment-time">{{item.timeText}}</text>
+        </view>
+        <view class="comment-body">{{item.body}}</view>
+      </view>
+    </view>
+  </block>
+</view>

@@ -78,6 +78,9 @@ export function getCustomerSpace(actor: Actor, customerSpaceId: string) {
                 name: true,
                 email: true,
                 platformRole: true,
+                wechatBinding: {
+                  select: { createdAt: true, lastLoginAt: true },
+                },
                 emailChanges: {
                   where: { status: "PENDING" },
                   orderBy: { createdAt: "desc" },

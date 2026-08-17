@@ -1,5 +1,8 @@
 export const queryKeys = {
   attachmentPolicy: ["attachment-policy"] as const,
+  auditLogs: {
+    list: (query: string) => ["audit-logs", "list", query] as const,
+  },
   contentRisk: {
     plugin: ["content-risk", "plugin"] as const,
     dashboard: ["content-risk", "dashboard"] as const,
@@ -7,6 +10,9 @@ export const queryKeys = {
   customerSpaces: {
     detail: (customerSpaceId: string) =>
       ["customer-spaces", "detail", customerSpaceId] as const,
+  },
+  dashboard: {
+    analytics: ["dashboard", "analytics"] as const,
   },
   notifications: {
     list: ["notifications", "list"] as const,

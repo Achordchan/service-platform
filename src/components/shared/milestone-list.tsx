@@ -61,23 +61,36 @@ function formatDateRange(milestone: MilestoneListItem) {
   return start ?? end;
 }
 
+const DEFAULT_COLLAPSED_COUNT = 5;
+
 export function MilestoneList({
   milestones,
   emptyText = "尚未设置里程碑",
   renderActions,
   contentRiskEnabled = false,
+  collapsible = false,
+  collapsedCount = DEFAULT_COLLAPSED_COUNT,
 }: {
   milestones: MilestoneListItem[];
   emptyText?: string;
   renderActions?: (milestone: MilestoneListItem) => ReactNode;
   contentRiskEnabled?: boolean;
+  /** 条目多时默认折叠（客户视角），避免里程碑随条数增长把页面拉得过长 */
+  collapsible?: boolean;
+  collapsedCount?: number;
 }) {
   const [detail, setDetail] = useState<MilestoneListItem | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const shouldCollapse =
+    collapsible && milestones.length > collapsedCount && !expanded;
+  const visibleMilestones = shouldCollapse
+    ? milestones.slice(0, collapsedCount)
+    : milestones;
 
   return (
     <>
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
-        {milestones.map((milestone, index) => {
+        {visibleMilestones.map((milestone, index) => {
           const description = milestone.description ?? "";
           const preview = htmlToPlainText(description);
           const hasImages =
@@ -89,21 +102,23 @@ export function MilestoneList({
             <Box
               key={milestone.id}
               sx={{
-                p: { xs: 2, md: 2.5 },
+                p: { xs: 1.25, md: 1.5 },
                 display: "grid",
                 gridTemplateColumns: {
                   xs: "minmax(0, 1fr)",
-                  md: "minmax(0, 1fr) minmax(250px, auto)",
+                  md: "minmax(0, 1fr) minmax(190px, auto)",
                 },
-                columnGap: 4,
-                rowGap: 2,
+                columnGap: 3,
+                rowGap: 1.25,
                 borderBottom:
-                  index === milestones.length - 1 ? 0 : "1px solid",
+                  index === visibleMilestones.length - 1 && !shouldCollapse
+                    ? 0
+                    : "1px solid",
                 borderColor: "divider",
                 alignItems: "start",
               }}
             >
-              <Stack spacing={1.25} sx={{ minWidth: 0 }}>
+              <Stack spacing={0.75} sx={{ minWidth: 0 }}>
                 {revoked ? (
                   <ContentRiskStatusLine
                     status="REVOKED"
@@ -161,10 +176,10 @@ export function MilestoneList({
                 ) : null}
               </Stack>
               <Stack
-                spacing={1.5}
+                spacing={0.75}
                 sx={{
                   minWidth: 0,
-                  pt: { xs: 1.5, md: 0 },
+                  pt: { xs: 1.25, md: 0 },
                   borderTop: { xs: "1px solid", md: 0 },
                   borderColor: "divider",
                   alignItems: { xs: "flex-start", md: "flex-end" },
@@ -172,19 +187,13 @@ export function MilestoneList({
                 }}
               >
                 <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    创建时间
-                  </Typography>
-                  <Typography variant="body2" sx={{ mt: 0.25 }}>
+                  <Typography variant="body2" color="text.secondary">
                     {timestampFormatter.format(new Date(milestone.createdAt))}
                   </Typography>
                 </Box>
                 {dateRange ? (
                   <Box>
-                    <Typography variant="caption" color="text.secondary">
-                      计划日期
-                    </Typography>
-                    <Typography variant="body2" sx={{ mt: 0.25 }}>
+                    <Typography variant="body2" color="text.secondary">
                       {dateRange}
                     </Typography>
                   </Box>
@@ -204,7 +213,7 @@ export function MilestoneList({
                     {milestone.description ? (
                       <Button
                         size="small"
-                        variant="outlined"
+                        color="primary"
                         startIcon={<VisibilityOutlinedIcon />}
                         onClick={() => setDetail(milestone)}
                       >
@@ -221,6 +230,26 @@ export function MilestoneList({
         {milestones.length === 0 ? (
           <Box sx={{ p: 5, textAlign: "center" }}>
             <Typography color="text.secondary">{emptyText}</Typography>
+          </Box>
+        ) : null}
+        {collapsible && milestones.length > collapsedCount ? (
+          <Box
+            sx={{
+              p: 1.25,
+              textAlign: "center",
+              borderTop: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Button
+              size="small"
+              color="inherit"
+              onClick={() => setExpanded((prev) => !prev)}
+            >
+              {expanded
+                ? "收起"
+                : `查看全部 ${milestones.length} 个里程碑`}
+            </Button>
           </Box>
         ) : null}
       </Paper>

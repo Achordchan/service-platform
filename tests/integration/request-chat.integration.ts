@@ -320,6 +320,29 @@ describe("请求聊天生产流程", () => {
     });
   });
 
+  it("只记录第一次员工公开回复时间", async () => {
+    const created = await createFixtureRequest("首响时间");
+    expect(created.firstRespondedAt).toBeNull();
+
+    const firstReply = await addRequestMessage(manager, created.id, {
+      body: "<p>第一次公开回复</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    const afterFirstReply = await getRequest(manager, created.id);
+    expect(afterFirstReply.firstRespondedAt).toEqual(
+      firstReply.message.createdAt,
+    );
+
+    await addRequestMessage(manager, created.id, {
+      body: "<p>第二次公开回复</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    const afterSecondReply = await getRequest(manager, created.id);
+    expect(afterSecondReply.firstRespondedAt).toEqual(
+      firstReply.message.createdAt,
+    );
+  });
+
   it("项目负责人公开回复会通知客户，并将接手状态通知平台管理员", async () => {
     const created = await createFixtureRequest("客户回复通知");
     await addRequestMessage(manager, created.id, {

@@ -14,7 +14,9 @@ import {
   Tab,
   Tabs,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 
 const packageTree = `plugins/example-plugin/
 ├── package.json
@@ -50,13 +52,16 @@ export function PluginDeveloperGuideDialog({
   onClose: () => void;
 }) {
   const [tab, setTab] = useState(0);
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
+
   function closeDialog() {
     setTab(0);
     onClose();
   }
 
   return (
-    <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="md">
+    <Dialog open={open} onClose={closeDialog} fullWidth maxWidth="md" fullScreen={mobile}>
       <DialogTitle>插件开发规范</DialogTitle>
       <DialogContent sx={{ px: { xs: 2, sm: 3 } }}>
         <Stack spacing={2.5} sx={{ pt: 0.5 }}>
@@ -239,7 +244,7 @@ function GuideSection({
 }) {
   return (
     <Stack spacing={1.25}>
-      <Typography sx={{ fontWeight: 750 }}>{title}</Typography>
+      <Typography sx={{ fontWeight: 650 }}>{title}</Typography>
       {children}
     </Stack>
   );

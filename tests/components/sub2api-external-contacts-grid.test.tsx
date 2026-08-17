@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ThemeProvider } from "@mui/material/styles";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +21,7 @@ vi.mock("@/components/staff/staff-api", () => ({
 }));
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
 });
@@ -71,13 +72,13 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     expect(
       await screen.findByRole("grid", { name: "外部联系人" }),
     ).toBeTruthy();
-    expect(screen.getByText(contact.displayName)).toBeTruthy();
+    expect(screen.getAllByText(contact.displayName).length).toBeGreaterThan(0);
     expect(screen.getByText(contact.externalUserId)).toBeTruthy();
-    expect(screen.getByText(contact.email as string)).toBeTruthy();
-    expect(screen.getByText("正常")).toBeTruthy();
+    expect(screen.getAllByText(contact.email as string).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
     expect(screen.getByText("3")).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "查看资料" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "查看资料" })[0]);
 
     expect(await screen.findByRole("dialog")).toBeTruthy();
     expect(
@@ -96,7 +97,7 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     });
     renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "停用" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "停用" }))[0]);
 
     await waitFor(() =>
       expect(staffApiMock).toHaveBeenCalledWith(
@@ -123,7 +124,7 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     });
     renderPanel();
 
-    fireEvent.click(await screen.findByRole("button", { name: "恢复" }));
+    fireEvent.click((await screen.findAllByRole("button", { name: "恢复" }))[0]);
 
     await waitFor(() =>
       expect(staffApiMock).toHaveBeenCalledWith(
@@ -163,6 +164,34 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     );
   });
 
+  it("连续输入关键词时只在 250ms 静默期后查询最终值", async () => {
+    staffApiMock.mockResolvedValue({ items: [], nextCursor: null });
+    renderPanel();
+    await screen.findByRole("grid", { name: "外部联系人" });
+    staffApiMock.mockClear();
+    vi.useFakeTimers();
+
+    const search = screen.getByPlaceholderText(
+      "搜索姓名、邮箱、用户名或外部 ID",
+    );
+    fireEvent.change(search, { target: { value: "a" } });
+    fireEvent.change(search, { target: { value: "al" } });
+    fireEvent.change(search, { target: { value: "alice" } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(249);
+    });
+    expect(staffApiMock).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(staffApiMock).toHaveBeenCalledTimes(1);
+    expect(staffApiMock).toHaveBeenCalledWith(
+      expect.stringContaining("limit=50&q=alice"),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it("加载下一游标后保留已有联系人和服务端顺序", async () => {
     const first = createContact();
     const second = createContact({
@@ -181,11 +210,11 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     );
     renderPanel();
 
-    expect(await screen.findByText(first.displayName)).toBeTruthy();
+    expect((await screen.findAllByText(first.displayName)).length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "加载更多" }));
 
-    expect(await screen.findByText(second.displayName)).toBeTruthy();
-    expect(screen.getByText(first.displayName)).toBeTruthy();
+    expect((await screen.findAllByText(second.displayName)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(first.displayName).length).toBeGreaterThan(0);
     expect(staffApiMock).toHaveBeenCalledWith(
       expect.stringContaining("limit=50&cursor=cursor-2"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -199,7 +228,7 @@ describe("Sub2API 外部联系人 DataGrid", () => {
     expect(
       await screen.findByRole("grid", { name: "外部联系人" }),
     ).toBeTruthy();
-    expect(screen.getByText("暂无外部联系人")).toBeTruthy();
+    expect(screen.getAllByText("暂无外部联系人").length).toBeGreaterThan(0);
   });
 });
 

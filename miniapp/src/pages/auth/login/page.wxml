@@ -1,0 +1,122 @@
+<view class="login-page">
+  <!-- 品牌区：低调排版，无图形徽章 -->
+  <view class="brand">
+    <view class="brand-name">服务支持中心</view>
+    <view class="brand-rule"></view>
+  </view>
+
+  <view wx:if="{{error}}" class="error-banner">{{error}}</view>
+
+  <!-- 微信一键视图 -->
+  <block wx:if="{{view === 'wechat'}}">
+    <view class="login-card">
+      <button
+        class="primary-btn wechat-btn"
+        hover-class="hover-btn"
+        loading="{{submitting}}"
+        disabled="{{submitting}}"
+        bindtap="onWechatLogin"
+      >
+        微信一键登录
+      </button>
+      <view class="alt-row">
+        <view class="alt-line"></view>
+        <text class="alt-text">或使用邮箱登录</text>
+        <view class="alt-line"></view>
+      </view>
+      <view class="alt-entry" hover-class="hover-plain" bindtap="onShowEmailLogin">
+        <t-icon name="mail" size="34rpx" color="#1677ff" />
+        <text>邮箱登录</text>
+      </view>
+    </view>
+    <view class="foot-hint">首次使用微信登录需验证已有客户账号</view>
+  </block>
+
+  <!-- 邮箱登录视图 -->
+  <block wx:else>
+    <view class="login-card">
+      <view wx:if="{{needsBinding}}" class="bind-tip">
+        <t-icon name="info-circle" size="30rpx" color="#1677ff" />
+        <text>当前微信尚未绑定账号，邮箱验证通过后将自动绑定，下次可直接一键登录</text>
+      </view>
+
+      <view class="form-label">登录邮箱</view>
+      <input
+        class="input"
+        type="text"
+        value="{{email}}"
+        placeholder="网页端登录邮箱"
+        placeholder-class="input-placeholder"
+        bindinput="onEmailInput"
+      />
+
+      <block wx:if="{{emailMode === 'password'}}">
+        <view class="form-label">密码</view>
+        <input
+          class="input"
+          password
+          value="{{password}}"
+          placeholder="登录密码"
+          placeholder-class="input-placeholder"
+          bindinput="onPasswordInput"
+        />
+      </block>
+
+      <block wx:if="{{emailMode === 'otp'}}">
+        <view class="form-label">邮箱验证码</view>
+        <view class="otp-row">
+          <input
+            class="input otp-input"
+            type="number"
+            maxlength="6"
+            value="{{otp}}"
+            placeholder="6 位验证码"
+            placeholder-class="input-placeholder"
+            bindinput="onOtpInput"
+          />
+          <button
+            class="plain-btn otp-btn"
+            hover-class="hover-plain"
+            disabled="{{sendingOtp || countdown > 0}}"
+            loading="{{sendingOtp}}"
+            bindtap="onSendOtp"
+          >
+            {{countdown > 0 ? countdown + 's' : (otpSent ? '重新发送' : '获取验证码')}}
+          </button>
+        </view>
+      </block>
+
+      <button
+        class="primary-btn login-btn"
+        hover-class="hover-btn"
+        loading="{{submitting}}"
+        disabled="{{submitting}}"
+        bindtap="onEmailLogin"
+      >
+        登录
+      </button>
+
+      <view class="switch-row">
+        <view class="switch-link" hover-class="hover-plain" bindtap="onSwitchEmailMode">
+          {{emailMode === 'password' ? '忘记密码？使用验证码登录' : '使用密码登录'}}
+        </view>
+      </view>
+
+      <view class="alt-row">
+        <view class="alt-line"></view>
+        <text class="alt-text">其他方式</text>
+        <view class="alt-line"></view>
+      </view>
+      <view class="alt-entries">
+        <view class="alt-entry" hover-class="hover-plain" bindtap="onBackToWechat">
+          <t-icon name="chat" size="34rpx" color="#1677ff" />
+          <text>微信一键登录</text>
+        </view>
+        <view class="alt-entry" hover-class="hover-plain" bindtap="onUseBindCode">
+          <t-icon name="gift-1" size="34rpx" color="#1677ff" />
+          <text>使用绑定码</text>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

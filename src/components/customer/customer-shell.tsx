@@ -1,13 +1,10 @@
 "use client";
 
-import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
 import {
   AppBar,
-  Avatar,
   Box,
   Button,
   Container,
@@ -18,8 +15,6 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
-  Menu,
-  MenuItem,
   Stack,
   Toolbar,
   Typography,
@@ -28,13 +23,11 @@ import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import HomeWorkOutlinedIcon from "@mui/icons-material/HomeWorkOutlined";
 import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
 import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
-import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
-import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
 import type {
   CustomerSpaceOption,
   CustomerUser,
 } from "@/components/customer/customer-types";
-import { authClient } from "@/lib/auth-client";
+import { AccountMenu } from "@/components/shared/account-menu";
 import { NotificationMenu } from "@/components/shared/notification-menu";
 import { GlobalRealtimeSound } from "@/components/shared/global-realtime-sound";
 import { NavigationUnreadBadge } from "@/components/shared/navigation-unread-badge";
@@ -67,10 +60,7 @@ export function CustomerShell({
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const router = useRouter();
-  const queryClient = useQueryClient();
   const pathname = usePathname();
-  const [accountAnchor, setAccountAnchor] = useState<null | HTMLElement>(null);
   const [navigationUnread, setNavigationUnread] =
     useState<NavigationUnreadState>(EMPTY_NAVIGATION_UNREAD);
   const canManageMembers = spaces.some((space) => space.role === "OWNER");
@@ -97,8 +87,8 @@ export function CustomerShell({
         elevation={0}
         sx={{ borderBottom: "1px solid", borderColor: "divider" }}
       >
-        <Container maxWidth={false} sx={{ px: { xs: 2, md: 5 } }}>
-          <Toolbar disableGutters sx={{ minHeight: { xs: 64, md: 76 } }}>
+        <Container maxWidth={false} sx={{ px: { xs: 2, md: 3.5 } }}>
+          <Toolbar disableGutters sx={{ "&": { minHeight: { xs: 56, md: 64 } } }}>
             <IconButton
               aria-label="打开导航"
               onClick={() => setDrawerOpen(true)}
@@ -167,36 +157,7 @@ export function CustomerShell({
                 staff={false}
                 onUnreadStateChange={setNavigationUnread}
               />
-              <Stack
-                component="button"
-                type="button"
-                direction="row"
-                spacing={1}
-                onClick={(event) => setAccountAnchor(event.currentTarget)}
-                sx={{
-                  alignItems: "center",
-                  border: 0,
-                  bgcolor: "transparent",
-                  color: "text.primary",
-                  cursor: "pointer",
-                  p: 0.5,
-                }}
-              >
-                <Avatar
-                  src={resolveAvatarSrc(user.image, user.name, user.id)}
-                  alt={user.name}
-                  sx={{ width: 36, height: 36, bgcolor: "action.selected" }}
-                >
-                  {user.name.slice(0, 1)}
-                </Avatar>
-                <Typography sx={{ display: { xs: "none", md: "block" } }}>
-                  {user.name}
-                </Typography>
-                <KeyboardArrowDownOutlinedIcon
-                  fontSize="small"
-                  sx={{ display: { xs: "none", md: "block" } }}
-                />
-              </Stack>
+              <AccountMenu user={user} accountHref="/customer/account" />
             </Stack>
           </Toolbar>
         </Container>
@@ -210,9 +171,7 @@ export function CustomerShell({
         slotProps={{ paper: { sx: { width: 280 } } }}
       >
         <Box sx={{ px: 2.5, py: 2.5 }}>
-          <Typography sx={{ fontWeight: 650, fontSize: 18 }}>
-            客户中心
-          </Typography>
+          <Typography variant="h3">客户中心</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {user.email}
           </Typography>
@@ -251,60 +210,6 @@ export function CustomerShell({
           })}
         </List>
       </Drawer>
-
-      <Menu
-        anchorEl={accountAnchor}
-        open={Boolean(accountAnchor)}
-        onClose={() => setAccountAnchor(null)}
-        transformOrigin={{ horizontal: "right", vertical: "top" }}
-        anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
-        slotProps={{ paper: { sx: { minWidth: 280 } } }}
-      >
-        <Box sx={{ px: 2, py: 1.75, maxWidth: 320 }}>
-          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-            <Avatar
-              src={resolveAvatarSrc(user.image, user.name, user.id)}
-              alt={user.name}
-              sx={{ width: 40, height: 40, bgcolor: "action.selected" }}
-            >
-              {user.name.slice(0, 1)}
-            </Avatar>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontWeight: 700 }} noWrap>
-                {user.name}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {user.email}
-              </Typography>
-            </Box>
-          </Stack>
-        </Box>
-        <Divider />
-        <MenuItem
-          component={Link}
-          href="/customer/account"
-          onClick={() => setAccountAnchor(null)}
-        >
-          <ListItemIcon>
-            <ManageAccountsOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          个人设置
-        </MenuItem>
-        <Divider />
-        <MenuItem
-          onClick={async () => {
-            await authClient.signOut();
-            queryClient.clear();
-            router.replace("/login");
-            router.refresh();
-          }}
-        >
-          <ListItemIcon>
-            <LogoutOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          退出登录
-        </MenuItem>
-      </Menu>
     </Box>
   );
 }

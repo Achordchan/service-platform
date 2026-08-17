@@ -13,7 +13,9 @@ import {
   MenuItem,
   Stack,
   TextField,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import type {
   RoleGroupOption,
@@ -31,6 +33,9 @@ const teamMemberFormSchema = z.object({
   website: z.string().trim().max(200, "网站不能超过 200 个字符"),
   location: z.string().trim().max(120, "所在地不能超过 120 个字符"),
   contactNotes: z.string().trim().max(500, "备注不能超过 500 个字符"),
+});
+const editingTeamMemberFormSchema = teamMemberFormSchema.extend({
+  email: z.string().trim().max(160),
 });
 
 export type TeamMemberFormValues = z.infer<typeof teamMemberFormSchema>;
@@ -85,8 +90,12 @@ export function TeamMemberFormDialog({
   onChangeEmail: (member: TeamMemberView) => void;
   onDelete: (member: TeamMemberView) => void;
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const form = useForm<TeamMemberFormValues>({
-    resolver: zodResolver(teamMemberFormSchema),
+    resolver: zodResolver(
+      editing ? editingTeamMemberFormSchema : teamMemberFormSchema,
+    ),
     defaultValues: formValues(editing, roleGroups),
   });
   const busy = submitting || form.formState.isSubmitting;
@@ -97,6 +106,7 @@ export function TeamMemberFormDialog({
       onClose={busy ? undefined : onClose}
       fullWidth
       maxWidth="md"
+      fullScreen={mobile}
     >
       <Box component="form" onSubmit={form.handleSubmit(onSubmit)} noValidate>
         <DialogTitle>

@@ -1,0 +1,32 @@
+<!-- 共享视觉组件：骨架屏 / 空状态 / 错误状态（图标使用 TDesign） -->
+
+<template name="skeleton-list">
+  <block wx:for="{{count}}" wx:key="*this">
+    <view class="skeleton-card">
+      <view class="skeleton skeleton-title"></view>
+      <view class="skeleton skeleton-line"></view>
+      <view class="skeleton skeleton-line-short"></view>
+    </view>
+  </block>
+</template>
+
+<template name="state-empty">
+  <view class="state-block">
+    <view class="state-badge badge-neutral">
+      <t-icon name="{{icon}}" size="56rpx" color="#98a2b3" />
+    </view>
+    <view class="state-title">{{title}}</view>
+    <view class="state-desc" wx:if="{{desc}}">{{desc}}</view>
+  </view>
+</template>
+
+<template name="state-error">
+  <view class="state-block">
+    <view class="state-badge badge-error">
+      <t-icon name="error-circle" size="56rpx" color="#d14343" />
+    </view>
+    <view class="state-title">{{title}}</view>
+    <view class="state-desc" wx:if="{{desc}}">{{desc}}</view>
+    <view wx:if="{{retry}}" class="state-action" hover-class="hover-plain" bindtap="onRetry">重新加载</view>
+  </view>
+</template>

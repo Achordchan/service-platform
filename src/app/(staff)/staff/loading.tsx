@@ -1,8 +1,9 @@
-import { Box, Container, Skeleton, Stack } from "@mui/material";
+import { Box, Skeleton, Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 
 export default function StaffLoading() {
   return (
-    <Container maxWidth={false} sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}>
+    <PageContainer>
       <Stack spacing={3}>
         <Box>
           <Skeleton variant="text" width={220} height={52} />
@@ -11,6 +12,6 @@ export default function StaffLoading() {
         <Skeleton variant="rounded" height={76} />
         <Skeleton variant="rounded" height={520} />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

@@ -31,10 +31,8 @@ export async function listNotificationDeliveryRules(actor: Actor) {
   assertAllowed(actor.isPlatformAdmin);
   await ensurePluginInstallations();
   return withActorDb(actor, async (tx) => {
-    const [stored, riskOperational] = await Promise.all([
-      tx.notificationDeliveryRule.findMany(),
-      isContentRiskOperational(tx),
-    ]);
+    const stored = await tx.notificationDeliveryRule.findMany();
+    const riskOperational = await isContentRiskOperational(tx);
     const byKey = new Map<string, NotificationDeliveryRuleState>(
       stored.map((rule) => [rule.key, rule]),
     );
@@ -121,10 +119,8 @@ export async function updateNotificationDeliveryRules(
       resourceId: "platform",
       metadata: { keys: [...uniqueKeys] },
     });
-    const [stored, riskOperational] = await Promise.all([
-      listRulesInTx(tx),
-      isContentRiskOperational(tx),
-    ]);
+    const stored = await listRulesInTx(tx);
+    const riskOperational = await isContentRiskOperational(tx);
     return visibleDefinitions(
       new Map<string, NotificationDeliveryRuleState>(
         stored.map((rule) => [rule.key, rule]),
@@ -171,16 +167,14 @@ function visibleDefinitions(
 async function isContentRiskOperational(
   tx: import("@/generated/prisma/client").Prisma.TransactionClient,
 ) {
-  const [installation, runtime] = await Promise.all([
-    tx.pluginInstallation.findUnique({
-      where: { key: "content-contact-risk" },
-      select: { enabled: true, healthStatus: true },
-    }),
-    tx.contentRiskRuntimeState.findUnique({
-      where: { pluginKey: "content-contact-risk" },
-      select: { bypassedAt: true },
-    }),
-  ]);
+  const installation = await tx.pluginInstallation.findUnique({
+    where: { key: "content-contact-risk" },
+    select: { enabled: true, healthStatus: true },
+  });
+  const runtime = await tx.contentRiskRuntimeState.findUnique({
+    where: { pluginKey: "content-contact-risk" },
+    select: { bypassedAt: true },
+  });
   return Boolean(
     installation?.enabled &&
       installation.healthStatus === "READY" &&

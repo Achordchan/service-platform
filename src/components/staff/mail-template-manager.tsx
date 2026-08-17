@@ -18,7 +18,9 @@ import {
   Stack,
   TextField,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import { useAppConfirm } from "@/components/shared/confirm-provider";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -227,16 +229,17 @@ function MailTemplateEditor({
       />
 
       <Box
-        sx={{
+        sx={(theme) => ({
           p: { xs: 2, sm: 3 },
-          bgcolor: "#f3f5f7",
+          bgcolor: "grey.100",
           overflow: "hidden",
-        }}
+          ...theme.applyStyles("dark", { bgcolor: "grey.900" }),
+        })}
       >
         <Typography variant="overline" color="text.secondary">
           预览
         </Typography>
-        <Typography sx={{ mt: 0.5, fontWeight: 700 }}>
+        <Typography sx={{ mt: 0.5, fontWeight: 650 }}>
           {renderSample(subject)}
         </Typography>
         <Typography variant="body2" color="text.secondary">
@@ -259,14 +262,14 @@ function MailTemplateEditor({
               borderColor: "divider",
               color: "primary.main",
               fontSize: 15,
-              fontWeight: 700,
+              fontWeight: 650,
             }}
           >
             服务支持中心
           </Typography>
           <Typography
             variant="h3"
-            sx={{ fontSize: { xs: 23, sm: 26 }, fontWeight: 700, lineHeight: 1.4 }}
+            sx={{ fontSize: { xs: 23, sm: 26 }, fontWeight: 650, lineHeight: 1.4 }}
           >
             {renderSample(heading)}
           </Typography>
@@ -356,6 +359,8 @@ export function MailTemplateManager({
   currentAdminEmail: string;
   embedded?: boolean;
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const toast = useToast();
   const [templates, setTemplates] = useState(initialTemplates);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -365,7 +370,7 @@ export function MailTemplateManager({
     <>
       {!embedded ? (
         <Box sx={{ px: { xs: 2, sm: 2.5 }, py: 2.25 }}>
-          <Typography sx={{ fontWeight: 700 }}>邮件模板</Typography>
+          <Typography sx={{ fontWeight: 650 }}>邮件模板</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {templates.length} 个模板
           </Typography>
@@ -438,6 +443,7 @@ export function MailTemplateManager({
         fullWidth
         maxWidth="md"
         scroll="paper"
+        fullScreen={mobile}
       >
         <DialogTitle>
           {selectedTemplate?.name ?? "邮件模板"}

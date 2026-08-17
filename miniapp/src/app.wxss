@@ -1,0 +1,356 @@
+/* 设计 token 派生自 Web 端 src/theme/theme.ts，双端保持同一套产品视觉。WXSS 仅支持块注释 */
+page {
+  /* 品牌与文字 */
+  --brand: #1677ff;
+  --brand-pressed: #0958d9;
+  --brand-soft: rgba(22, 119, 255, 0.08);
+  --text-primary: #1d1d1f;
+  --text-secondary: #667085;
+  --text-tertiary: #98a2b3;
+
+  /* 状态色 */
+  --success: #16a466;
+  --success-soft: rgba(22, 164, 102, 0.1);
+  --warning: #d98b16;
+  --warning-soft: rgba(217, 139, 22, 0.12);
+  --error: #d14343;
+  --error-soft: rgba(209, 67, 67, 0.08);
+  --info: #1677ff;
+
+  /* 表面与结构 */
+  --page-bg: #f5f6f8;
+  --card-bg: #ffffff;
+  --card-radius: 24rpx;
+  --card-border: 1rpx solid rgba(16, 24, 40, 0.06);
+  --card-shadow: 0 1rpx 2rpx rgba(16, 24, 40, 0.04), 0 6rpx 20rpx rgba(16, 24, 40, 0.03);
+  --divider: rgba(16, 24, 40, 0.08);
+
+  /* 间距节奏（4 的倍数） */
+  --space-1: 8rpx;
+  --space-2: 16rpx;
+  --space-3: 24rpx;
+  --space-4: 32rpx;
+  --space-5: 48rpx;
+  --space-6: 64rpx;
+
+  background: var(--page-bg);
+  color: var(--text-primary);
+  font-size: 28rpx;
+  line-height: 1.6;
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ———— 卡片 ———— */
+.card {
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  border: var(--card-border);
+  box-shadow: var(--card-shadow);
+  padding: 28rpx;
+  margin: 20rpx 24rpx;
+}
+
+.card-press {
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.hover-card {
+  transform: scale(0.985);
+  box-shadow: 0 2rpx 8rpx rgba(16, 24, 40, 0.06);
+}
+
+.card-title {
+  font-size: 30rpx;
+  font-weight: 650;
+}
+
+.section-title {
+  font-weight: 650;
+  font-size: 28rpx;
+  margin-bottom: 12rpx;
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+  font-size: 26rpx;
+}
+
+/* ———— 按钮 ———— */
+.primary-btn {
+  background: var(--brand);
+  color: #ffffff;
+  border-radius: 16rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  padding: 20rpx 0;
+  text-align: center;
+  border: none;
+  transition: background 0.12s ease;
+}
+
+.primary-btn::after {
+  border: none;
+}
+
+.primary-btn[disabled] {
+  background: rgba(22, 119, 255, 0.4);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.hover-btn {
+  background: var(--brand-pressed);
+}
+
+.plain-btn {
+  background: var(--brand-soft);
+  color: var(--brand);
+  border-radius: 16rpx;
+  font-size: 30rpx;
+  font-weight: 600;
+  padding: 20rpx 0;
+  text-align: center;
+  border: none;
+  transition: opacity 0.12s ease;
+}
+
+.plain-btn::after {
+  border: none;
+}
+
+.plain-btn[disabled] {
+  opacity: 0.5;
+  color: var(--brand);
+}
+
+.hover-plain {
+  opacity: 0.75;
+}
+
+.btn-block {
+  display: block;
+  width: 100%;
+}
+
+/* ———— 表单 ———— */
+.input {
+  background: var(--page-bg);
+  border: 2rpx solid transparent;
+  border-radius: 16rpx;
+  padding: 20rpx 24rpx;
+  font-size: 28rpx;
+  margin-bottom: 20rpx;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.input-focus {
+  border-color: var(--brand);
+  background: var(--card-bg);
+}
+
+.form-label {
+  font-size: 26rpx;
+  color: var(--text-secondary);
+  margin-bottom: 10rpx;
+  display: block;
+  font-weight: 500;
+}
+
+/* ———— 状态标签 ———— */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 22rpx;
+  border-radius: 999rpx;
+  padding: 4rpx 18rpx;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.tag-success { background: var(--success-soft); color: var(--success); }
+.tag-warning { background: var(--warning-soft); color: var(--warning); }
+.tag-info { background: var(--brand-soft); color: var(--info); }
+.tag-error { background: var(--error-soft); color: var(--error); }
+.tag-neutral { background: rgba(102, 112, 133, 0.12); color: var(--text-secondary); }
+
+/* ———— 骨架屏 ———— */
+@keyframes skeleton-breathe {
+  0% { opacity: 1; }
+  50% { opacity: 0.45; }
+  100% { opacity: 1; }
+}
+
+.skeleton {
+  background: rgba(16, 24, 40, 0.06);
+  border-radius: 10rpx;
+  animation: skeleton-breathe 1.4s ease-in-out infinite;
+}
+
+.skeleton-card {
+  background: var(--card-bg);
+  border-radius: var(--card-radius);
+  border: var(--card-border);
+  padding: 28rpx;
+  margin: 20rpx 24rpx;
+}
+
+.skeleton-title {
+  height: 32rpx;
+  width: 55%;
+  margin-bottom: 20rpx;
+}
+
+.skeleton-line {
+  height: 24rpx;
+  width: 90%;
+  margin-bottom: 14rpx;
+}
+
+.skeleton-line-short {
+  height: 24rpx;
+  width: 40%;
+  margin-bottom: 14rpx;
+}
+
+/* ———— 空状态 / 错误状态 ———— */
+.state-block {
+  text-align: center;
+  padding: 100rpx 48rpx;
+}
+
+.state-badge {
+  width: 120rpx;
+  height: 120rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 28rpx;
+}
+
+.badge-neutral {
+  background: rgba(102, 112, 133, 0.1);
+}
+
+.badge-error {
+  background: var(--error-soft);
+}
+
+.state-glyph {
+  font-size: 48rpx;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.badge-error .state-glyph {
+  color: var(--error);
+  font-size: 56rpx;
+}
+
+/* 文件类型徽章：从 emoji 改为扩展名标签 */
+.file-ext {
+  flex-shrink: 0;
+  min-width: 76rpx;
+  text-align: center;
+  font-size: 20rpx;
+  font-weight: 700;
+  letter-spacing: 1rpx;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: 10rpx;
+  padding: 8rpx 10rpx;
+}
+
+.file-ext-image {
+  color: var(--success);
+  background: var(--success-soft);
+}
+
+/* 纯 CSS chevron 箭头（替代 › 字符） */
+.chevron {
+  width: 14rpx;
+  height: 14rpx;
+  border-right: 3rpx solid var(--text-tertiary);
+  border-top: 3rpx solid var(--text-tertiary);
+  transform: rotate(45deg);
+  flex-shrink: 0;
+}
+
+/* 纯 CSS 下拉三角（替代 ▾） */
+.caret-down {
+  width: 0;
+  height: 0;
+  border-left: 9rpx solid transparent;
+  border-right: 9rpx solid transparent;
+  border-top: 12rpx solid var(--text-tertiary);
+  margin-left: 10rpx;
+  flex-shrink: 0;
+}
+
+.state-title {
+  font-size: 30rpx;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 10rpx;
+}
+
+.state-desc {
+  font-size: 25rpx;
+  color: var(--text-secondary);
+  margin-bottom: 28rpx;
+}
+
+.state-action {
+  display: inline-block;
+  color: var(--brand);
+  font-size: 27rpx;
+  font-weight: 500;
+  padding: 12rpx 44rpx;
+  border: 2rpx solid var(--brand);
+  border-radius: 999rpx;
+}
+
+.error-banner {
+  background: var(--error-soft);
+  color: var(--error);
+  border-radius: 14rpx;
+  padding: 18rpx 22rpx;
+  font-size: 26rpx;
+  margin: 20rpx 24rpx;
+  line-height: 1.5;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 100rpx 40rpx;
+  color: var(--text-secondary);
+  font-size: 26rpx;
+}
+
+/* ———— 进度 ———— */
+.progress-track {
+  height: 12rpx;
+  background: rgba(16, 24, 40, 0.08);
+  border-radius: 999rpx;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4096ff, var(--brand));
+  border-radius: 999rpx;
+  transition: width 0.4s ease;
+}
+
+.progress-text {
+  font-size: 24rpx;
+  color: var(--text-secondary);
+}
+
+.load-more {
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 24rpx;
+  padding: 28rpx;
+}

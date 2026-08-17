@@ -225,42 +225,44 @@ enum SupportPlaybookCategory {
 }
 
 model User {
-  id                      String            @id @default(cuid())
-  name                    String
-  email                   String            @unique
-  emailVerified           Boolean           @default(false)
-  image                   String?
-  platformRole            PlatformRole      @default(CUSTOMER)
-  phone                   String?
-  company                 String?
-  jobTitle                String?
-  wechat                  String?
-  website                 String?
-  location                String?
-  contactNotes            String?
-  roleGroupId             String?
-  soundNotificationsEnabled Boolean         @default(true)
-  requestEmailNotificationsEnabled Boolean  @default(true)
-  themePreference         ThemePreference    @default(SYSTEM)
-  deletedAt               DateTime?
-  createdAt               DateTime          @default(now())
-  platformSettingsUpdated PlatformSetting[] @relation("PlatformSettingUpdater")
-  updatedAt               DateTime          @updatedAt
+  id                               String            @id @default(cuid())
+  name                             String
+  email                            String            @unique
+  emailVerified                    Boolean           @default(false)
+  image                            String?
+  platformRole                     PlatformRole      @default(CUSTOMER)
+  phone                            String?
+  company                          String?
+  jobTitle                         String?
+  wechat                           String?
+  website                          String?
+  location                         String?
+  contactNotes                     String?
+  roleGroupId                      String?
+  soundNotificationsEnabled        Boolean           @default(true)
+  requestEmailNotificationsEnabled Boolean           @default(true)
+  themePreference                  ThemePreference   @default(SYSTEM)
+  deletedAt                        DateTime?
+  createdAt                        DateTime          @default(now())
+  platformSettingsUpdated          PlatformSetting[] @relation("PlatformSettingUpdater")
+  updatedAt                        DateTime          @updatedAt
 
-  roleGroup                  RoleGroup?             @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
+  roleGroup                  RoleGroup?                   @relation(fields: [roleGroupId], references: [id], onDelete: SetNull)
   sessions                   Session[]
   accounts                   Account[]
   memberships                Membership[]
-  ownedSpaces                CustomerSpace[]        @relation("SpaceOwner")
-  invitationsCreated         Invitation[]           @relation("InvitationCreator")
-  staffInvitationsCreated    StaffInvitation[]      @relation("StaffInvitationCreator")
-  projectsCreated            Project[]              @relation("ProjectCreator")
+  ownedSpaces                CustomerSpace[]              @relation("SpaceOwner")
+  invitationsCreated         Invitation[]                 @relation("InvitationCreator")
+  staffInvitationsCreated    StaffInvitation[]            @relation("StaffInvitationCreator")
+  projectsCreated            Project[]                    @relation("ProjectCreator")
   projectAssignments         ProjectStaff[]
-  milestonesCreated          Milestone[]            @relation("MilestoneCreator")
+  milestonesCreated          Milestone[]                  @relation("MilestoneCreator")
   projectUpdates             ProjectUpdate[]
   updateComments             UpdateComment[]
-  requestsCreated            ServiceRequest[]       @relation("RequestCreator")
-  requestsAssigned           ServiceRequest[]       @relation("RequestAssignee")
+  projectUpdateRevisions     ProjectUpdateRevision[]      @relation("ProjectUpdateRevisionEditor")
+  updateCommentRevisions     UpdateCommentRevision[]      @relation("UpdateCommentRevisionEditor")
+  requestsCreated            ServiceRequest[]             @relation("RequestCreator")
+  requestsAssigned           ServiceRequest[]             @relation("RequestAssignee")
   requestAssignees           RequestAssignee[]
   requestMessages            RequestMessage[]
   requestPresences           RequestPresence[]
@@ -268,12 +270,18 @@ model User {
   notifications              Notification[]
   auditLogs                  AuditLog[]
   mailTemplatesUpdated       MailTemplateOverride[]
-  supportPlaybooksUpdated    SupportPlaybook[]      @relation("SupportPlaybookUpdater")
-  notificationRulesUpdated  NotificationDeliveryRule[] @relation("NotificationDeliveryRuleUpdater")
-  emailChanges               UserEmailChange[]      @relation("EmailChangeUser")
-  emailChangesRequested      UserEmailChange[]      @relation("EmailChangeRequester")
-  pluginInstallationsUpdated PluginInstallation[]   @relation("PluginInstallationUpdater")
-  pluginRunsRequested        PluginRun[]            @relation("PluginRunRequester")
+  supportPlaybooksUpdated    SupportPlaybook[]            @relation("SupportPlaybookUpdater")
+  notificationRulesUpdated   NotificationDeliveryRule[]   @relation("NotificationDeliveryRuleUpdater")
+  emailChanges               UserEmailChange[]            @relation("EmailChangeUser")
+  emailChangesRequested      UserEmailChange[]            @relation("EmailChangeRequester")
+  pluginInstallationsUpdated PluginInstallation[]         @relation("PluginInstallationUpdater")
+  pluginRunsRequested        PluginRun[]                  @relation("PluginRunRequester")
+  notificationPreferences    UserNotificationPreference[]
+  wechatBinding              WechatBinding?
+  wechatBindingCodes         WechatBindingCode[]
+  wechatBindingCodesCreated  WechatBindingCode[]          @relation("WechatBindingCodeCreator")
+  miniappSessions            MiniappSession[]
+  wechatSubscribeGrants      WechatSubscribeGrant[]
 
   @@index([roleGroupId])
   @@index([deletedAt, platformRole])
@@ -322,6 +330,109 @@ model Verification {
   updatedAt  DateTime @updatedAt
 
   @@index([identifier])
+}
+
+// 微信小程序：微信身份与客户账号的当前有效绑定（一对一）。
+// 解绑即删除记录、历史通过 AuditLog 留存，避免占用 openid/userId 唯一键。
+model WechatBinding {
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  openid      String    @unique
+  unionid     String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  lastLoginAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+// 微信小程序：管理员签发的一次性绑定码（仅保存哈希，明文只在生成时返回一次）。
+model WechatBindingCode {
+  id           String    @id @default(cuid())
+  userId       String
+  codeHash     String    @unique
+  expiresAt    DateTime
+  usedAt       DateTime?
+  revokedAt    DateTime?
+  usedByOpenid String?
+  createdById  String
+  createdAt    DateTime  @default(now())
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdBy User @relation("WechatBindingCodeCreator", fields: [createdById], references: [id])
+
+  @@index([userId, createdAt])
+}
+
+// 微信小程序会话：Bearer token 仅存哈希，与 better-auth Session 分离。
+model MiniappSession {
+  id         String    @id @default(cuid())
+  tokenHash  String    @unique
+  userId     String
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  lastSeenAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+// 微信小程序：code2Session 成功但尚未绑定的待绑定票据（短时效、单次使用）。
+model MiniappAuthTicket {
+  id           String    @id @default(cuid())
+  ticketHash   String    @unique
+  openid       String
+  unionid      String?
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  otpSentCount Int       @default(0)
+
+  @@index([openid, createdAt])
+}
+
+// 网页版扫码登录：Web 生成二维码票据，小程序扫码确认后换取 better-auth 会话。
+model WebQrLoginTicket {
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  status      String    @default("PENDING") // PENDING | CONFIRMED | CONSUMED | EXPIRED
+  userId      String?
+  expiresAt   DateTime
+  confirmedAt DateTime?
+  consumedAt  DateTime?
+  // 创建票据浏览器的绑定 cookie 哈希（防登录 CSRF：票据被诱导到他人浏览器时轮询被拒）
+  bindHash    String?
+  // 已消费票据的一次性重签标记（轮询响应丢失时最多补签一次）
+  reissuedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([status, createdAt])
+}
+
+// 微信小程序：按 openid 的绑定尝试防暴力计数与锁定。
+model WechatBindGuard {
+  openid      String    @id
+  failCount   Int       @default(0)
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+}
+
+// 微信订阅消息授权额度：客户端上报仅作状态参考，发送前服务端校验并按微信实际结果修正。
+model WechatSubscribeGrant {
+  id             String    @id @default(cuid())
+  userId         String
+  templateKey    String
+  remaining      Int       @default(0)
+  updatedAt      DateTime  @updatedAt
+  lastReportedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, templateKey])
 }
 
 model CustomerSpace {
@@ -430,13 +541,15 @@ model RoleGroup {
 }
 
 model ServiceType {
-  id          String   @id @default(cuid())
-  key         String   @unique
-  name        String
-  description String?
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                   String   @id @default(cuid())
+  key                  String   @unique
+  name                 String
+  description          String?
+  active               Boolean  @default(true)
+  slaResponseMinutes   Int?
+  slaResolutionMinutes Int?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   requestCategories RequestCategory[]
   projects          Project[]
@@ -538,9 +651,10 @@ model ProjectUpdate {
   createdAt  DateTime          @default(now())
   updatedAt  DateTime          @updatedAt
 
-  project     Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  author      User            @relation(fields: [authorId], references: [id])
+  project     Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author      User                    @relation(fields: [authorId], references: [id])
   comments    UpdateComment[]
+  revisions   ProjectUpdateRevision[]
   attachments Attachment[]
 
   @@index([projectId, createdAt])
@@ -555,11 +669,41 @@ model UpdateComment {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  projectUpdate ProjectUpdate @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
-  author        User          @relation(fields: [authorId], references: [id])
+  projectUpdate ProjectUpdate           @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  author        User                    @relation(fields: [authorId], references: [id])
+  revisions     UpdateCommentRevision[]
   attachments   Attachment[]
 
   @@index([projectUpdateId, createdAt])
+}
+
+model ProjectUpdateRevision {
+  id              String            @id @default(cuid())
+  projectUpdateId String
+  title           String
+  body            String
+  visibility      ContentVisibility
+  editedAt        DateTime          @default(now())
+  editedById      String
+
+  projectUpdate ProjectUpdate @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  editedBy      User          @relation("ProjectUpdateRevisionEditor", fields: [editedById], references: [id])
+
+  @@index([projectUpdateId, editedAt])
+}
+
+model UpdateCommentRevision {
+  id              String            @id @default(cuid())
+  updateCommentId String
+  body            String
+  visibility      ContentVisibility
+  editedAt        DateTime          @default(now())
+  editedById      String
+
+  updateComment UpdateComment @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
+  editedBy      User          @relation("UpdateCommentRevisionEditor", fields: [editedById], references: [id])
+
+  @@index([updateCommentId, editedAt])
 }
 
 model ServiceRequest {
@@ -574,6 +718,9 @@ model ServiceRequest {
   createdById                String?
   createdByExternalContactId String?
   assigneeId                 String?
+  clientMutationKey          String?
+  firstRespondedAt           DateTime?
+  dueAt                      DateTime?
   resolvedAt                 DateTime?
   closedAt                   DateTime?
   archivedAt                 DateTime?
@@ -596,9 +743,11 @@ model ServiceRequest {
   events                   EventRecord[]
   dingTalkRobotDeliveries  DingTalkRobotDelivery[]
 
+  @@unique([createdById, clientMutationKey])
   @@index([projectId, status])
   @@index([projectId, archivedAt, status])
   @@index([assigneeId, status])
+  @@index([dueAt])
   @@index([status, resolvedAt])
   @@index([createdByExternalContactId, createdAt])
 }
@@ -628,6 +777,7 @@ model RequestMessage {
   authorId                String?
   externalAuthorId        String?
   replyToMessageId        String?
+  clientMutationKey       String?
   supportPlaybookKey      String?
   supportPlaybookSnapshot Json?
   createdAt               DateTime          @default(now())
@@ -640,6 +790,7 @@ model RequestMessage {
   replies        RequestMessage[] @relation("RequestMessageReplies")
   attachments    Attachment[]
 
+  @@unique([authorId, clientMutationKey])
   @@index([serviceRequestId, createdAt])
   @@index([replyToMessageId])
   @@index([externalAuthorId, createdAt])
@@ -685,35 +836,35 @@ model Attachment {
 }
 
 model Notification {
-  id               String           @id @default(cuid())
-  type             NotificationType
-  title            String
-  body             String
-  readAt           DateTime?
-  aggregationKey   String?
-  occurrenceCount  Int              @default(1)
-  emailDueAt       DateTime?
-  emailClaimedAt   DateTime?
-  emailLastSentOccurrenceCount Int   @default(0)
-  userId           String
-  customerSpaceId  String?
-  projectId        String?
-  serviceRequestId String?
-  sourceType       String?
-  sourceId         String?
-  contentRiskReviewId String?
-  contentRiskEmailDueAt DateTime?
+  id                                 String           @id @default(cuid())
+  type                               NotificationType
+  title                              String
+  body                               String
+  readAt                             DateTime?
+  aggregationKey                     String?
+  occurrenceCount                    Int              @default(1)
+  emailDueAt                         DateTime?
+  emailClaimedAt                     DateTime?
+  emailLastSentOccurrenceCount       Int              @default(0)
+  userId                             String
+  customerSpaceId                    String?
+  projectId                          String?
+  serviceRequestId                   String?
+  sourceType                         String?
+  sourceId                           String?
+  contentRiskReviewId                String?
+  contentRiskEmailDueAt              DateTime?
   contentRiskReadAtBeforeSuppression DateTime?
-  contentRiskBodyBeforeSuppression String?
-  contentRiskSuppressed Boolean @default(false)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @default(now())
+  contentRiskBodyBeforeSuppression   String?
+  contentRiskSuppressed              Boolean          @default(false)
+  createdAt                          DateTime         @default(now())
+  updatedAt                          DateTime         @default(now())
 
   user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   customerSpace  CustomerSpace?  @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
   project        Project?        @relation(fields: [projectId], references: [id], onDelete: Cascade)
   serviceRequest ServiceRequest? @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  mailMessages    MailMessage[]
+  mailMessages   MailMessage[]
 
   @@unique([userId, aggregationKey])
   @@index([userId, readAt, createdAt])
@@ -724,15 +875,53 @@ model Notification {
 
 model NotificationDeliveryRule {
   key                 String   @id
-  notificationEnabled Boolean @default(true)
-  soundEnabled         Boolean @default(true)
-  emailEnabled         Boolean @default(false)
-  dingtalkEnabled      Boolean @default(false)
-  updatedAt            DateTime @updatedAt
-  updatedById          String?
-  updatedBy            User?   @relation("NotificationDeliveryRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+  notificationEnabled Boolean  @default(true)
+  soundEnabled        Boolean  @default(true)
+  emailEnabled        Boolean  @default(false)
+  dingtalkEnabled     Boolean  @default(false)
+  wechatEnabled       Boolean  @default(false)
+  updatedAt           DateTime @updatedAt
+  updatedById         String?
+  updatedBy           User?    @relation("NotificationDeliveryRuleUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@index([updatedAt])
+}
+
+// 微信小程序订阅消息投递（仿 DingTalkRobotDelivery 的 outbox 模式）。
+// 只是提醒渠道：入队失败不影响业务，发送失败按 nextAttemptAt 重试，超限 FAILED。
+model WechatSubscribeMessageDelivery {
+  id            String    @id @default(cuid())
+  eventKey      String    @unique
+  templateKey   String
+  userId        String
+  requestId     String?
+  title         String
+  body          String
+  page          String?
+  status        String    @default("PENDING")
+  attemptCount  Int       @default(0)
+  nextAttemptAt DateTime?
+  lastAttemptAt DateTime?
+  lastError     String?
+  deliveredAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([status, nextAttemptAt])
+  @@index([userId, createdAt])
+}
+
+model UserNotificationPreference {
+  id           String   @id @default(cuid())
+  userId       String
+  ruleKey      String
+  emailEnabled Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ruleKey])
 }
 
 model RequestPresence {
@@ -796,6 +985,9 @@ model AuditLog {
   @@index([actorId, createdAt])
   @@index([externalActorId, createdAt])
   @@index([customerSpaceId, createdAt])
+  @@index([createdAt(sort: Desc)])
+  @@index([action])
+  @@index([resourceType])
 }
 
 model PlatformSetting {
@@ -858,17 +1050,17 @@ model UserEmailChange {
 }
 
 model PluginInstallation {
-  key           String    @id
-  version       String
-  enabled       Boolean   @default(false)
-  config        Json
+  key                     String    @id
+  version                 String
+  enabled                 Boolean   @default(false)
+  config                  Json
   secretConfigEncrypted   String?
   healthConfigFingerprint String?
-  healthStatus  String    @default("UNKNOWN")
-  lastCheckedAt DateTime?
-  lastError     String?
-  updatedAt     DateTime  @updatedAt
-  updatedById   String?
+  healthStatus            String    @default("UNKNOWN")
+  lastCheckedAt           DateTime?
+  lastError               String?
+  updatedAt               DateTime  @updatedAt
+  updatedById             String?
 
   updatedBy       User?                  @relation("PluginInstallationUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
   runs            PluginRun[]
@@ -877,14 +1069,14 @@ model PluginInstallation {
 }
 
 model ContentRiskRuntimeState {
-  pluginKey                String   @id
-  activationId            String
-  enabledAt               DateTime
-  bypassedAt              DateTime?
-  capabilityReport        Json?
-  unsupportedNotified     Json?
-  createdAt               DateTime @default(now())
-  updatedAt               DateTime @updatedAt
+  pluginKey           String    @id
+  activationId        String
+  enabledAt           DateTime
+  bypassedAt          DateTime?
+  capabilityReport    Json?
+  unsupportedNotified Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([activationId])
 }
@@ -949,21 +1141,21 @@ model ContentRiskReview {
 }
 
 model DingTalkRobotDelivery {
-  id            String         @id
-  eventKey      String         @unique
-  eventType     String
-  requestId     String?
+  id                  String          @id
+  eventKey            String          @unique
+  eventType           String
+  requestId           String?
   contentRiskReviewId String?
-  payload       Json
-  status        String         @default("PENDING")
-  attemptCount  Int            @default(0)
-  nextAttemptAt DateTime?
-  lastAttemptAt DateTime?
-  lastError     String?
-  deliveredAt   DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  request       ServiceRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  payload             Json
+  status              String          @default("PENDING")
+  attemptCount        Int             @default(0)
+  nextAttemptAt       DateTime?
+  lastAttemptAt       DateTime?
+  lastError           String?
+  deliveredAt         DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  request             ServiceRequest? @relation(fields: [requestId], references: [id], onDelete: Cascade)
 
   @@index([status, nextAttemptAt])
   @@index([requestId, createdAt])
@@ -1218,34 +1410,34 @@ model PluginResourceState {
 }
 
 model MailMessage {
-  id             String              @id @default(cuid())
-  toEmail        String
-  templateKey    String?
-  subject        String
-  previewText    String?
-  heading        String
-  body           String
-  actionLabel    String?
-  actionUrl      String?
-  sendAfter      DateTime            @default(now())
-  idempotencyKey String?             @unique
-  notificationId String?
+  id                          String              @id @default(cuid())
+  toEmail                     String
+  templateKey                 String?
+  subject                     String
+  previewText                 String?
+  heading                     String
+  body                        String
+  actionLabel                 String?
+  actionUrl                   String?
+  sendAfter                   DateTime            @default(now())
+  idempotencyKey              String?             @unique
+  notificationId              String?
   notificationOccurrenceCount Int?
-  sourceType     String?
-  sourceId       String?
-  contentRiskReviewId String?
-  deliveryMode   MailDeliveryMode    @default(LOCAL_OUTBOX)
-  status         MailMessageStatus   @default(QUEUED)
-  attemptCount   Int                 @default(0)
-  lastAttemptAt  DateTime?
-  errorMessage   String?
-  providerId     String?
-  sentAt         DateTime?
-  lastEventAt    DateTime?
-  createdAt      DateTime            @default(now())
-  updatedAt      DateTime            @updatedAt
-  providerEvents MailProviderEvent[]
-  notification   Notification?       @relation(fields: [notificationId], references: [id], onDelete: SetNull)
+  sourceType                  String?
+  sourceId                    String?
+  contentRiskReviewId         String?
+  deliveryMode                MailDeliveryMode    @default(LOCAL_OUTBOX)
+  status                      MailMessageStatus   @default(QUEUED)
+  attemptCount                Int                 @default(0)
+  lastAttemptAt               DateTime?
+  errorMessage                String?
+  providerId                  String?
+  sentAt                      DateTime?
+  lastEventAt                 DateTime?
+  createdAt                   DateTime            @default(now())
+  updatedAt                   DateTime            @updatedAt
+  providerEvents              MailProviderEvent[]
+  notification                Notification?       @relation(fields: [notificationId], references: [id], onDelete: SetNull)
 
   @@index([status, createdAt])
   @@index([status, sendAfter])

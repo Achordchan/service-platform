@@ -229,12 +229,11 @@ export function ProjectTable({
 
   return (
     <Stack spacing={2}>
-      <Paper variant="outlined" sx={{ p: { xs: 1.5, md: 2 } }}>
-        <Stack
-          direction={{ xs: "column", lg: "row" }}
-          spacing={1.5}
-          sx={{ alignItems: { lg: "center" } }}
-        >
+      <Stack
+        direction={{ xs: "column", lg: "row" }}
+        spacing={1.5}
+        sx={{ alignItems: { lg: "center" }, pb: 1, borderBottom: "1px solid", borderColor: "divider" }}
+      >
           <TextField
             value={keyword}
             onChange={(event) => setKeyword(event.target.value)}
@@ -310,7 +309,6 @@ export function ProjectTable({
             </Button>
           ) : null}
         </Stack>
-      </Paper>
 
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
         <Box

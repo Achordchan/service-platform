@@ -5,36 +5,9 @@ import type {
   RequestPriority,
   RequestStatus,
 } from "@/components/staff/staff-types";
+import { statusColorFor, statusLabelFor } from "@/lib/status-config";
 
 type StatusValue = ProjectStatus | MilestoneStatus | RequestStatus;
-
-const labels: Record<StatusValue, string> = {
-  DRAFT: "待接入",
-  ACTIVE: "进行中",
-  PAUSED: "已暂停",
-  COMPLETED: "已完成",
-  EXPIRED: "已到期",
-  NOT_STARTED: "未开始",
-  IN_PROGRESS: "处理中",
-  PENDING: "待处理",
-  WAITING_CUSTOMER: "等待客户",
-  RESOLVED: "已解决",
-  CLOSED: "已关闭",
-};
-
-const colors: Record<StatusValue, string> = {
-  DRAFT: "#98a2b3",
-  ACTIVE: "#12b76a",
-  PAUSED: "#f79009",
-  COMPLETED: "#12b76a",
-  EXPIRED: "#667085",
-  NOT_STARTED: "#98a2b3",
-  IN_PROGRESS: "#1677ff",
-  PENDING: "#f79009",
-  WAITING_CUSTOMER: "#7f56d9",
-  RESOLVED: "#12b76a",
-  CLOSED: "#667085",
-};
 
 const priorityLabels: Record<RequestPriority, string> = {
   LOW: "低",
@@ -57,12 +30,12 @@ export function StaffStatus({
           width: compact ? 7 : 8,
           height: compact ? 7 : 8,
           borderRadius: "50%",
-          bgcolor: colors[value],
+          bgcolor: statusColorFor(value),
           flex: "0 0 auto",
         }}
       />
       <Typography variant={compact ? "body2" : "body1"} sx={{ whiteSpace: "nowrap" }}>
-        {labels[value]}
+        {statusLabelFor(value)}
       </Typography>
     </Stack>
   );
@@ -88,5 +61,5 @@ export function PriorityChip({ value }: { value: RequestPriority }) {
 }
 
 export function statusLabel(value: StatusValue) {
-  return labels[value];
+  return statusLabelFor(value);
 }

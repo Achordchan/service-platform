@@ -745,6 +745,14 @@ export async function addRequestMessage(
   requestId: string,
   input: CreateRequestMessageInput,
 ) {
+  if (input.clientMutationKey) {
+    const existing = await findRequestMessageByMutationKey(
+      actor,
+      requestId,
+      input.clientMutationKey,
+    );
+    if (existing) return existing;
+  }
   if (input.visibility === "CUSTOMER_VISIBLE") {
     const preflight = await withActorDb(actor, async (tx) => ({
       request: await findRequestContext(tx, requestId, actor.id),
@@ -840,6 +848,7 @@ export async function addRequestMessage(
         serviceRequestId: request.id,
         authorId: actor.id,
         replyToMessageId,
+        clientMutationKey: input.clientMutationKey ?? null,
         supportPlaybookKey: supportPlaybook?.key,
         supportPlaybookSnapshot: supportPlaybook
           ? (snapshotSupportReplyPlaybook(
@@ -859,6 +868,12 @@ export async function addRequestMessage(
         updatedAt: true,
       },
     });
+    if (actor.isStaff && input.visibility === "CUSTOMER_VISIBLE") {
+      await tx.serviceRequest.updateMany({
+        where: { id: request.id, firstRespondedAt: null },
+        data: { firstRespondedAt: message.createdAt },
+      });
+    }
     await claimUserInlineAttachments(
       tx,
       actor,
@@ -1003,6 +1018,17 @@ export async function addRequestMessage(
         delivery.feedback,
       ),
     };
+  }).catch(async (error: unknown) => {
+    // 并发同 key：另一请求已写入，唯一约束兜底后返回已有消息
+    if (input.clientMutationKey && isPrismaUniqueViolationError(error)) {
+      const existing = await findRequestMessageByMutationKey(
+        actor,
+        requestId,
+        input.clientMutationKey,
+      );
+      if (existing) return { ...existing, externalMail: null };
+    }
+    throw error;
   });
   const externalMailQueued = await enqueueExternalRequestMail(result.externalMail);
   return {
@@ -1016,6 +1042,68 @@ export async function addRequestMessage(
         }
       : result.deliveryFeedback,
   };
+}
+
+export async function findRequestMessageByMutationKey(
+  actor: Actor,
+  requestId: string,
+  clientMutationKey: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    // 查询作用域对齐唯一约束 (authorId, clientMutationKey)；
+    // 命中后校验所属工单一致，避免同 key 换工单重试时静默返回/500。
+    const message = await tx.requestMessage.findFirst({
+      where: {
+        authorId: actor.id,
+        clientMutationKey,
+      },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        body: true,
+        visibility: true,
+        authorId: true,
+        replyToMessageId: true,
+        supportPlaybookKey: true,
+        supportPlaybookSnapshot: true,
+        createdAt: true,
+        updatedAt: true,
+        serviceRequestId: true,
+      },
+    });
+    if (!message) return null;
+    if (message.serviceRequestId !== requestId) {
+      throw conflict(
+        "IDEMPOTENCY_KEY_CONFLICT",
+        "重复提交标识与目标工单不一致，请刷新后重试",
+      );
+    }
+    const request = await tx.serviceRequest.findUnique({
+      where: { id: requestId },
+      select: { status: true },
+    });
+    const { serviceRequestId, ...messageSummary } = message;
+    void serviceRequestId;
+    return {
+      message: messageSummary,
+      requestStatus: request?.status ?? ("PENDING" as const),
+      deliveryFeedback: {
+        notificationCount: 0,
+        emailCount: 0,
+        emailTiming: null,
+        dingtalkQueued: false,
+      },
+    };
+  });
+}
+
+function isPrismaUniqueViolationError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 export async function confirmRequestClosed(actor: Actor, requestId: string) {

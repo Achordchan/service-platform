@@ -14,12 +14,14 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  IconButton,
   InputAdornment,
   LinearProgress,
   MenuItem,
   Paper,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
@@ -172,42 +174,48 @@ export function CustomerSpaceTable({
         headerName: "操作",
         sortable: false,
         filterable: false,
-        minWidth: 270,
+        minWidth: 130,
         display: "flex",
         renderCell: ({ row }) => (
-          <Stack direction="row" spacing={0.5}>
-            <Button
-              size="small"
-              startIcon={<ManageAccountsOutlinedIcon />}
-              onClick={(event) => {
-                event.stopPropagation();
-                setAccountsTarget(row);
-              }}
-            >
-              账号
-            </Button>
-            <Button
-              size="small"
-              startIcon={<EditOutlinedIcon />}
-              onClick={(event) => {
-                event.stopPropagation();
-                openEditor(row);
-              }}
-            >
-              编辑
-            </Button>
-            <Button
-              size="small"
-              color="inherit"
-              startIcon={<DeleteOutlinedIcon />}
-              disabled={submitting}
-              onClick={(event) => {
-                event.stopPropagation();
-                removeSpace(row);
-              }}
-            >
-              删除
-            </Button>
+          <Stack direction="row" spacing={0.25}>
+            <Tooltip title="账号管理">
+              <IconButton
+                size="small"
+                aria-label="账号管理"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setAccountsTarget(row);
+                }}
+              >
+                <ManageAccountsOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="编辑">
+              <IconButton
+                size="small"
+                aria-label="编辑"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openEditor(row);
+                }}
+              >
+                <EditOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="删除">
+              <IconButton
+                size="small"
+                color="inherit"
+                aria-label="删除"
+                disabled={submitting}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  removeSpace(row);
+                }}
+              >
+                <DeleteOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
           </Stack>
         ),
       },

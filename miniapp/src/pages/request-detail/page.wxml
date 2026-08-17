@@ -1,0 +1,160 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{icon: loadErrorIcon, title: loadErrorTitle, desc: loadError, retry: canRetry}}"
+  />
+
+  <block wx:elif="{{request}}">
+    <!-- 基本信息卡片 -->
+    <view class="hero">
+      <view class="info-head">
+        <view class="info-number">{{request.number}}</view>
+        <view class="tag tag-{{statusTone}}">{{statusLabel}}</view>
+      </view>
+      <view class="info-title">{{request.title}}</view>
+      <view class="info-grid">
+        <view class="info-item"><text class="info-label">项目</text><text class="info-value">{{request.project.title}}</text></view>
+        <view class="info-item"><text class="info-label">分类</text><text class="info-value">{{request.category.name}}</text></view>
+        <view class="info-item">
+          <text class="info-label">优先级</text>
+          <text class="info-value priority-{{request.priority}}">{{priorityLabel}}</text>
+        </view>
+        <view class="info-item"><text class="info-label">负责人</text><text class="info-value">{{request.assignee ? request.assignee.name : '待指派'}}</text></view>
+      </view>
+    </view>
+
+    <!-- 对话消息流 -->
+    <view wx:if="{{messages.length === 0}}" class="chat-empty">对话开始后消息会显示在这里</view>
+    <scroll-view
+      wx:else
+      class="chat-scroll"
+      scroll-y
+      scroll-into-view="msg-{{messages.length > 0 ? messages[messages.length - 1].id : ''}}"
+    >
+      <view
+        wx:for="{{messages}}"
+        wx:key="id"
+        id="msg-{{item.id}}"
+        class="msg-row {{item.isMine ? 'msg-mine' : ''}}"
+        data-index="{{index}}"
+        bindlongpress="onLongPressMessage"
+      >
+        <view class="bubble {{item.isMine ? 'bubble-mine' : ''}} {{item.isSystem ? 'bubble-system' : ''}}">
+          <view wx:if="{{item.isSystem}}" class="system-text">{{item.bodyText}}</view>
+
+          <view wx:elif="{{item.revoked}}" class="revoked-notice">
+            <t-icon name="error-circle" size="30rpx" color="#d14343" />
+            <text class="revoked-text">{{item.revokedText}}</text>
+          </view>
+
+          <block wx:else>
+            <view class="msg-author">{{item.authorName}} · {{item.timeText}}</view>
+            <view wx:if="{{item.replyPreview}}" class="reply-quote">
+              <view class="reply-quote-label">回复</view>
+              <view class="reply-quote-body">{{item.replyPreview}}</view>
+            </view>
+            <rich-text class="msg-body" nodes="{{item.body}}"></rich-text>
+            <view wx:if="{{item.images.length > 0}}" class="msg-files">
+              <view
+                wx:for="{{item.images}}"
+                wx:for-item="image"
+                wx:key="id"
+                class="msg-file msg-file-image"
+                hover-class="hover-card"
+                data-id="{{image.id}}"
+                bindtap="onOpenImage"
+              >
+                <t-icon name="image" size="40rpx" color="#16a466" />
+                <view class="file-name">{{image.name}}</view>
+                <view class="file-size">点击预览</view>
+              </view>
+            </view>
+            <view wx:if="{{item.files.length > 0}}" class="msg-files">
+              <view
+                wx:for="{{item.files}}"
+                wx:for-item="file"
+                wx:key="id"
+                class="msg-file"
+                hover-class="hover-card"
+                data-id="{{file.id}}"
+                bindtap="onOpenFile"
+              >
+                <t-icon name="file" size="40rpx" color="#1677ff" />
+                <view class="file-name">{{file.name}}</view>
+                <view class="file-size">{{file.size}}</view>
+              </view>
+            </view>
+            <view wx:if="{{item.reviewing}}" class="reviewing-hint">内容已发送，正在进行安全复查</view>
+          </block>
+        </view>
+      </view>
+      <view class="chat-bottom-spacer"></view>
+    </scroll-view>
+
+    <!-- 工单级附件（创建时上传、未挂到具体消息） -->
+    <view wx:if="{{request.attachments.length > 0}}" class="card">
+      <view class="section-title">工单附件</view>
+      <view class="msg-files">
+        <view
+          wx:for="{{request.attachments}}"
+          wx:key="id"
+          class="msg-file"
+          hover-class="hover-card"
+          data-id="{{item.id}}"
+          bindtap="onOpenFile"
+        >
+          <t-icon name="file" size="40rpx" color="#1677ff" />
+            <view class="file-name">{{item.originalName}}</view>
+            <view class="file-size">{{item.sizeText}}</view>
+        </view>
+      </view>
+    </view>
+  </block>
+
+  <!-- 底部回复栏 -->
+  <view wx:if="{{request}}" class="reply-bar">
+    <view wx:if="{{request.contentRiskUiEnabled}}" class="risk-notice">
+      <t-icon name="info-circle" size="28rpx" color="#98a2b3" />
+      <text class="risk-notice-text">请勿发送联系方式或引导站外沟通、交易。平台无法保障站外沟通与交易安全，由此产生的风险和损失由相关方自行承担。</text>
+    </view>
+    <view wx:if="{{replyTarget}}" class="reply-target">
+      <view class="reply-target-text">回复 {{replyTarget.authorName}}</view>
+      <view class="reply-target-cancel" hover-class="hover-plain" bindtap="onCancelReplyTarget">取消</view>
+    </view>
+    <view wx:if="{{replyFiles.length > 0}}" class="reply-files">
+      <view wx:for="{{replyFiles}}" wx:key="localPath" class="reply-file">
+        <text>{{item.fileName}}</text>
+        <text class="reply-file-remove" data-index="{{index}}" bindtap="onRemoveReplyFile">移除</text>
+      </view>
+    </view>
+    <view class="reply-input-row">
+      <view class="reply-attach" hover-class="hover-plain" bindtap="onAddReplyFile">
+        <t-icon name="file-attachment" size="40rpx" color="#667085" />
+      </view>
+      <textarea
+        class="reply-input"
+        value="{{replyText}}"
+        auto-height
+        maxlength="15000"
+        placeholder="输入回复…"
+        placeholder-class="reply-placeholder"
+        bindinput="onReplyInput"
+      ></textarea>
+      <button
+        class="send-btn"
+        size="mini"
+        hover-class="hover-btn"
+        loading="{{sending}}"
+        disabled="{{sending}}"
+        bindtap="onSend"
+      >
+        发送
+      </button>
+    </view>
+  </view>
+</view>

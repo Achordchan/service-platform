@@ -32,7 +32,7 @@ export function TeamWorkspace({
         <Tab value="members" label={`成员 ${members.length}`} />
         <Tab value="roles" label={`角色与权限 ${roleGroups.length}`} />
       </Tabs>
-      <Box sx={{ pt: 2.5 }}>
+      <Box sx={{ pt: 2 }}>
         {tab === "members" ? (
           <TeamManager
             members={members}

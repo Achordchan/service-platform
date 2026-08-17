@@ -21,6 +21,12 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour12: false,
 });
 
+function editedSuffix(createdAt: string, updatedAt: string) {
+  const wasEdited =
+    new Date(updatedAt).getTime() - new Date(createdAt).getTime() > 60_000;
+  return wasEdited ? ` · 重新编辑于 ${dateFormatter.format(new Date(updatedAt))}` : "";
+}
+
 export function ProjectUpdates({
   updates,
   compact = false,
@@ -82,6 +88,7 @@ export function ProjectUpdates({
                 >
                   {update.authorName} ·{" "}
                   {dateFormatter.format(new Date(update.createdAt))}
+                  {editedSuffix(update.createdAt, update.updatedAt)}
                 </Typography>
               </Box>
             </Stack>
@@ -127,6 +134,7 @@ export function ProjectUpdates({
                   </Box>
                   <Typography variant="body2" color="text.secondary">
                     {dateFormatter.format(new Date(update.createdAt))}
+                    {editedSuffix(update.createdAt, update.updatedAt)}
                   </Typography>
                 </Stack>
                 {update.contentRiskStatus === "PENDING" ? (
@@ -165,6 +173,7 @@ export function ProjectUpdates({
                         >
                           <Typography variant="body2" sx={{ fontWeight: 650 }}>
                             {comment.authorName}
+                            {editedSuffix(comment.createdAt, comment.updatedAt)}
                           </Typography>
                           {comment.contentRiskStatus === "REVOKED" ? (
                             <ContentRiskStatusLine
@@ -173,9 +182,10 @@ export function ProjectUpdates({
                             />
                           ) : (
                             <>
-                              <Typography sx={{ mt: 0.5 }}>
-                                {comment.body}
-                              </Typography>
+                              <CollapsibleText
+                                text={comment.body}
+                                maxLines={6}
+                              />
                               <ContentRiskStatusLine
                                 status={comment.contentRiskStatus}
                                 pluginEnabled={contentRiskEnabled}

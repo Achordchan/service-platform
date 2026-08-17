@@ -1,0 +1,57 @@
+<view class="profile-page">
+  <view wx:if="{{loading}}" class="empty-state">加载中…</view>
+
+  <view wx:elif="{{loadError}}" class="empty-state">
+    <view>{{loadError}}</view>
+  </view>
+
+  <block wx:elif="{{me}}">
+    <!-- 空间与身份：低调高端，加大视觉占比 -->
+    <view class="identity-card">
+      <view class="identity-label">我的客户空间</view>
+      <view wx:for="{{me.customerSpaces}}" wx:key="id" class="identity-space">
+        <view class="identity-space-name">{{item.name}}</view>
+        <view class="identity-space-role">{{item.role === 'OWNER' ? '负责人' : '成员'}}</view>
+      </view>
+      <view class="identity-divider"></view>
+      <view class="identity-user">
+        <view class="identity-avatar">{{me.user.name[0]}}</view>
+        <view class="identity-user-main">
+          <view class="identity-user-name">{{me.user.name}}</view>
+          <view class="identity-user-email">{{me.user.email}}</view>
+        </view>
+        <view class="identity-bound {{me.wechatBinding ? '' : 'identity-bound-off'}}">
+          {{me.wechatBinding ? '微信已绑定' : '微信未绑定'}}
+        </view>
+      </view>
+    </view>
+
+    <view class="card link-card">
+      <view class="row" hover-class="hover-card" bindtap="onOpenProfileEdit">
+        <view class="row-left">
+          <t-icon name="user" size="38rpx" color="#1677ff" />
+          <text>个人资料</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+      <view class="row" hover-class="hover-card" bindtap="onOpenNotificationSettings">
+        <view class="row-left">
+          <t-icon name="setting-1" size="38rpx" color="#1677ff" />
+          <text>通知设置</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+      <view wx:if="{{me.customerSpaces.length > 0}}" class="row" hover-class="hover-card" bindtap="onOpenMembers">
+        <view class="row-left">
+          <t-icon name="usergroup" size="38rpx" color="#1677ff" />
+          <text>成员管理</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+    </view>
+
+    <view class="logout-wrap">
+      <button class="plain-btn logout-btn" hover-class="hover-plain" bindtap="onLogout">退出登录</button>
+    </view>
+  </block>
+</view>

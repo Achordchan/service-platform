@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import type {
   RoleGroupOption,
   StaffInviteView,
@@ -97,11 +98,8 @@ export default async function StaffTeamPage() {
   }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
-      <Stack spacing={3}>
+    <PageContainer>
+      <Stack spacing={2.5}>
         <StaffPageHeading title="团队" />
         <TeamWorkspace
           members={members}
@@ -110,6 +108,6 @@ export default async function StaffTeamPage() {
           roleGroups={roleGroupViews}
         />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

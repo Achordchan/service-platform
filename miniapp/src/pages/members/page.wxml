@@ -1,0 +1,73 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '无法查看', desc: loadError, retry: canRetry}}"
+  />
+
+  <block wx:elif="{{detail}}">
+    <view wx:if="{{isOwner}}" class="card">
+      <view class="card-title">邀请成员（{{detail.usage}}/{{detail.memberLimit}}）</view>
+      <view class="invite-row">
+        <input
+          class="input invite-input"
+          type="text"
+          value="{{inviteEmail}}"
+          placeholder="成员邮箱"
+          bindinput="onInviteEmailInput"
+        />
+        <button
+          class="plain-btn invite-btn"
+          size="mini"
+          hover-class="hover-plain"
+          loading="{{inviting}}"
+          disabled="{{inviting}}"
+          bindtap="onInvite"
+        >
+          发送邀请
+        </button>
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="card-title">当前成员</view>
+      <view
+        wx:for="{{detail.memberships}}"
+        wx:key="id"
+        class="member-row"
+      >
+        <view class="member-info">
+          <view class="member-name">
+            {{item.user.name}}
+            <text wx:if="{{item.role === 'OWNER'}}" class="owner-tag">负责人</text>
+            <text wx:if="{{item.user.wechatBinding}}" class="bound-tag">微信已绑定</text>
+          </view>
+          <view class="text-secondary">{{item.user.email}}</view>
+        </view>
+        <view
+          wx:if="{{isOwner && item.role !== 'OWNER'}}"
+          class="remove-btn"
+          data-id="{{item.id}}"
+          data-name="{{item.user.name}}"
+          bindtap="onRemoveMember"
+        >
+          移除
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{isOwner && detail.invitations.length > 0}}" class="card">
+      <view class="card-title">待接受邀请</view>
+      <view wx:for="{{detail.invitations}}" wx:key="id" class="member-row">
+        <view class="member-info">
+          <view class="member-name">{{item.email}}</view>
+          <view class="text-secondary">等待成员通过邮件链接接受</view>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

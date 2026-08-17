@@ -1,6 +1,7 @@
 packages:
   - "packages/*"
   - "plugins/*"
+  - "miniapp"
 
 allowBuilds:
   '@prisma/engines': true

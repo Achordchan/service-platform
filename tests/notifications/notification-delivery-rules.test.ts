@@ -106,12 +106,14 @@ describe("后台通知规则", () => {
       soundEnabled: true,
       emailEnabled: false,
       dingtalkEnabled: false,
+      wechatEnabled: false,
     });
     expect(defaultNotificationDeliveryRuleState("PROJECT_UPDATE")).toEqual({
       notificationEnabled: true,
       soundEnabled: true,
       emailEnabled: false,
       dingtalkEnabled: false,
+      wechatEnabled: false,
     });
     expect(
       findNotificationDeliveryRuleViolation([
@@ -125,6 +127,7 @@ describe("后台通知规则", () => {
       soundEnabled: true,
       emailEnabled: true,
       dingtalkEnabled: false,
+      wechatEnabled: false,
     });
   });
 
@@ -152,6 +155,7 @@ describe("后台通知规则", () => {
               soundEnabled: true,
               emailEnabled: false,
               dingtalkEnabled: false,
+              wechatEnabled: false,
             },
           ],
         ]),
@@ -168,6 +172,7 @@ describe("后台通知规则", () => {
               soundEnabled: true,
               emailEnabled: true,
               dingtalkEnabled: false,
+              wechatEnabled: false,
             },
           ],
         ]),

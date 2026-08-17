@@ -47,6 +47,7 @@ import type {
   RequestStatus,
 } from "@/components/staff/staff-types";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
+import { SlaIndicator } from "@/components/staff/sla-indicator";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -301,7 +302,7 @@ export function RequestDetailWorkspace({
           )}
         </Stack>
 
-        <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: 96 } }}>
+        <Stack spacing={2} sx={{ position: { lg: "sticky" }, top: { lg: 88 }, maxHeight: { lg: "calc(100vh - 104px)" }, overflowY: { lg: "auto" } }}>
           {canChangeStatus &&
           !request.archivedAt &&
           availableStatuses.length > 0 ? (
@@ -330,6 +331,30 @@ export function RequestDetailWorkspace({
             <Stack spacing={2.25} sx={{ mt: 2.5 }}>
               <DetailField label="状态" value={<StaffStatus value={request.status} />} />
               <DetailField label="优先级" value={<PriorityChip value={request.priority} />} />
+              {(request.dueAt || request.firstRespondedAt) && (
+                <DetailField
+                  label="SLA"
+                  value={
+                    <SlaIndicator
+                      dueAt={request.dueAt}
+                      firstRespondedAt={request.firstRespondedAt}
+                      status={request.status}
+                    />
+                  }
+                />
+              )}
+              {request.firstRespondedAt && (
+                <DetailField
+                  label="首响时间"
+                  value={dateFormatter.format(new Date(request.firstRespondedAt))}
+                />
+              )}
+              {request.dueAt && (
+                <DetailField
+                  label="截止时间"
+                  value={dateFormatter.format(new Date(request.dueAt))}
+                />
+              )}
               <DetailField label="客户" value={request.customerName} />
               <DetailField label="提交人" value={request.createdByName} />
               {request.externalContact ? (

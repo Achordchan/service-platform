@@ -206,7 +206,7 @@ export function NotificationDeliveryRulesPanel({
           }}
         >
           <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontWeight: 700 }}>未读 5 分钟后发送</Typography>
+            <Typography sx={{ fontWeight: 650 }}>未读 5 分钟后发送</Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.35 }}>
               开启后，邮件提醒会等待 5 分钟；期间用户已阅读则自动取消。关闭后，新邮件提醒会尽快发送。
             </Typography>
@@ -270,7 +270,7 @@ export function NotificationDeliveryRulesPanel({
                         input: { "aria-label": `${label}全部开关` },
                       }}
                     />
-                    <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 650 }}>
                       {label}
                     </Typography>
                   </Stack>
@@ -288,7 +288,7 @@ export function NotificationDeliveryRulesPanel({
                       rowSpan={group.length}
                       sx={{
                         bgcolor: "action.hover",
-                        fontWeight: 700,
+                        fontWeight: 650,
                         verticalAlign: "top",
                         pt: 2,
                       }}

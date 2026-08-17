@@ -87,10 +87,19 @@ describe("客户服务请求 DataGrid", () => {
   it("移动端仍保留原来的详情链接入口", () => {
     renderTable();
 
+    // 响应式双 DOM 同时渲染：桌面标题链接的可访问名只有标题本身，
+    // 移动端整行链接的名字还带请求编号——用编号区分，锚定移动端入口
     const mobileLink = screen.getByRole("link", {
-      name: /网站首页需要调整/,
+      name: /网站首页需要调整\s+REQ-001/,
     });
     expect(mobileLink.getAttribute("href")).toBe(
+      "/customer/requests/request-1",
+    );
+    // 桌面标题链接指向同一详情页
+    const desktopLink = screen.getByRole("link", {
+      name: "网站首页需要调整",
+    });
+    expect(desktopLink.getAttribute("href")).toBe(
       "/customer/requests/request-1",
     );
   });

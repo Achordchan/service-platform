@@ -44,8 +44,8 @@ export function ProjectOverview({
   const activeRequests = requests.filter((request) => !request.archivedAt);
 
   return (
-    <Stack spacing={3.5} sx={{ pt: 2.5 }}>
-      <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
+    <Stack spacing={3} sx={{ pt: 2 }}>
+      <Paper variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
         <Typography variant="h3">交付概况</Typography>
         <Box
           sx={{
@@ -53,20 +53,12 @@ export function ProjectOverview({
             gridTemplateColumns: {
               xs: "1fr",
               sm: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(5, minmax(0, 1fr))",
+              lg: "repeat(4, minmax(0, 1fr))",
             },
-            gap: 3,
-            mt: 3,
+            gap: 2.5,
+            mt: 2.5,
           }}
         >
-          <Box>
-            <Typography variant="body2" color="text.secondary">
-              客户
-            </Typography>
-            <Typography sx={{ mt: 0.75, fontWeight: 650 }}>
-              {project.customerSpace.name}
-            </Typography>
-          </Box>
           <Box>
             <Typography variant="body2" color="text.secondary">
               服务类型
@@ -113,7 +105,7 @@ export function ProjectOverview({
             <Stack spacing={1.25}>
               <Stack direction="row" sx={{ justifyContent: "space-between" }}>
                 <Typography sx={{ fontWeight: 650 }}>整体进度</Typography>
-                <Typography color="primary.main" sx={{ fontWeight: 700 }}>
+                <Typography color="primary.main" sx={{ fontWeight: 650 }}>
                   {project.progress}%
                 </Typography>
               </Stack>
@@ -134,9 +126,7 @@ export function ProjectOverview({
             gridTemplateColumns: {
               xs: "1fr",
               lg:
-                showMilestones && updatesEnabled
-                  ? "minmax(0, 1.45fr) minmax(320px, 0.95fr)"
-                  : "1fr",
+                showMilestones && updatesEnabled ? "minmax(0, 1fr) minmax(0, 1fr)" : "1fr",
             },
             gap: 4,
           }}

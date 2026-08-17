@@ -614,6 +614,7 @@ async function notificationMailStillSendable(message: {
         soundEnabled: true,
         emailEnabled: true,
         dingtalkEnabled: true,
+        wechatEnabled: true,
       },
     });
     const deliveryRuleByKey = new Map<string, NotificationDeliveryRuleState>(

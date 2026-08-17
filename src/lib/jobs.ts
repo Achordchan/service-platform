@@ -41,6 +41,11 @@ import {
 import {
   cleanupExpiredUniversalLaunchTickets,
 } from "@/modules/integrations/universal/ticket-service";
+import { cleanupExpiredMiniappIdentityData } from "@/modules/miniapp/identity-sweep-service";
+import {
+  listDueWechatSubscribeDeliveries,
+  processWechatSubscribeMessageDelivery,
+} from "@/modules/miniapp/wechat-subscribe-worker";
 import { cleanupAbandonedInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import {
   listDueUniversalWebhookDeliveries,
@@ -67,6 +72,9 @@ export const DINGTALK_ROBOT_SWEEP_JOB = "plugin-dingtalk-robot-sweep";
 export const REQUEST_AUTO_CLOSE_SWEEP_JOB = "request-auto-close-sweep";
 export const CONTENT_RISK_REVIEW_JOB = "plugin-content-risk-review";
 export const CONTENT_RISK_SWEEP_JOB = "plugin-content-risk-sweep";
+export const MINIAPP_IDENTITY_SWEEP_JOB = "miniapp-identity-sweep";
+export const WECHAT_SUBSCRIBE_MESSAGE_JOB = "wechat-subscribe-message";
+export const WECHAT_SUBSCRIBE_SWEEP_JOB = "wechat-subscribe-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -130,6 +138,9 @@ async function startBoss() {
   await boss.createQueue(DINGTALK_ROBOT_SWEEP_JOB);
   await boss.createQueue(REQUEST_AUTO_CLOSE_SWEEP_JOB);
   await boss.createQueue(CONTENT_RISK_REVIEW_JOB);
+  await boss.createQueue(MINIAPP_IDENTITY_SWEEP_JOB);
+  await boss.createQueue(WECHAT_SUBSCRIBE_MESSAGE_JOB);
+  await boss.createQueue(WECHAT_SUBSCRIBE_SWEEP_JOB);
   await boss.createQueue(CONTENT_RISK_SWEEP_JOB);
   return boss;
 }
@@ -604,6 +615,30 @@ async function queueDueUniversalWebhooks() {
   }
 }
 
+export async function queueWechatSubscribeMessageDelivery(
+  deliveryId: string,
+) {
+  const boss = await getBoss();
+  await boss.send(
+    WECHAT_SUBSCRIBE_MESSAGE_JOB,
+    { deliveryId },
+    {
+      retryLimit: 4,
+      retryDelay: 60,
+      retryBackoff: true,
+      singletonKey: deliveryId,
+      singletonSeconds: 30,
+    },
+  );
+}
+
+async function queueDueWechatSubscribeDeliveries() {
+  const deliveries = await listDueWechatSubscribeDeliveries();
+  for (const delivery of deliveries) {
+    await queueWechatSubscribeMessageDelivery(delivery.id);
+  }
+}
+
 export async function queueDingTalkRobotDelivery(
   deliveryId: string,
   startAfter?: Date | null,
@@ -679,6 +714,7 @@ async function startDatabaseListener() {
       await client.query("LISTEN service_platform_mail_outbox");
       await client.query("LISTEN service_platform_dingtalk_deliveries");
       await client.query("LISTEN service_platform_content_risk");
+      await client.query("LISTEN service_platform_wechat_deliveries");
     } catch (error) {
       await client.end().catch(() => undefined);
       throw error;
@@ -710,6 +746,14 @@ async function startDatabaseListener() {
         const reviewId = message.payload?.trim();
         if (!reviewId) return;
         void queueContentRiskReview(reviewId).catch(() => undefined);
+        return;
+      }
+      if (message.channel === "service_platform_wechat_deliveries") {
+        const deliveryId = message.payload?.trim();
+        if (!deliveryId) return;
+        void queueWechatSubscribeMessageDelivery(deliveryId).catch(
+          () => undefined,
+        );
       }
     });
     const handleDisconnect = () => {
@@ -749,6 +793,8 @@ export async function startMailWorker() {
     await boss.schedule(DINGTALK_ROBOT_SWEEP_JOB, "* * * * *");
     await boss.schedule(REQUEST_AUTO_CLOSE_SWEEP_JOB, "7 * * * *");
     await boss.schedule(CONTENT_RISK_SWEEP_JOB, "* * * * *");
+    await boss.schedule(MINIAPP_IDENTITY_SWEEP_JOB, "23 4 * * *");
+    await boss.schedule(WECHAT_SUBSCRIBE_SWEEP_JOB, "* * * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -851,6 +897,28 @@ export async function startMailWorker() {
       { batchSize: 1, localConcurrency: 1 },
       async () => {
         await cleanupExpiredUniversalLaunchTickets();
+      },
+    );
+    await boss.work(
+      MINIAPP_IDENTITY_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await cleanupExpiredMiniappIdentityData();
+      },
+    );
+    await boss.work(WECHAT_SUBSCRIBE_SWEEP_JOB, { batchSize: 1, localConcurrency: 1 }, async () => {
+      await queueDueWechatSubscribeDeliveries();
+    });
+    await boss.work(
+      WECHAT_SUBSCRIBE_MESSAGE_JOB,
+      { batchSize: 1, localConcurrency: 1, includeMetadata: true },
+      async (jobs) => {
+        for (const job of jobs as Array<{ data: { deliveryId: string }; retryCount?: number; retryLimit?: number }>) {
+          await processWechatSubscribeMessageDelivery(job.data.deliveryId, {
+            finalAttempt:
+              (job.retryCount ?? 0) >= (job.retryLimit ?? 0) && (job.retryLimit ?? 0) > 0,
+          });
+        }
       },
     );
     await boss.work(

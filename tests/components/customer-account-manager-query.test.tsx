@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CustomerAccountManagerDialog } from "@/components/staff/customer-account-manager-dialog";
@@ -8,9 +8,12 @@ import { ToastProvider } from "@/components/shared/toast-provider";
 import type { CustomerSpaceItem } from "@/components/staff/staff-types";
 
 const staffApiMock = vi.hoisted(() => vi.fn());
+const jsonRequestMock = vi.hoisted(() =>
+  vi.fn((method: string, body: unknown) => ({ method, json: body })),
+);
 
 vi.mock("@/components/staff/staff-api", () => ({
-  jsonRequest: vi.fn(),
+  jsonRequest: jsonRequestMock,
   staffApi: staffApiMock,
 }));
 
@@ -35,6 +38,47 @@ afterEach(() => {
 });
 
 describe("客户账号详情查询", () => {
+  it("邀请邮箱先清理首尾空格再校验和提交", async () => {
+    staffApiMock.mockImplementation((url: string) =>
+      url.endsWith("/invitations")
+        ? Promise.resolve(undefined)
+        : Promise.resolve({
+            id: "space-1",
+            name: "测试客户",
+            ownerId: "user-1",
+            memberLimit: 3,
+            memberships: [],
+            invitations: [],
+          }),
+    );
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <CustomerAccountManagerDialog
+            target={target}
+            onClose={vi.fn()}
+            onChanged={vi.fn()}
+          />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "邀请成员" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "登录邮箱" }), {
+      target: { value: "  MEMBER@EXAMPLE.TEST  " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发送邀请" }));
+
+    await waitFor(() =>
+      expect(jsonRequestMock).toHaveBeenCalledWith("POST", {
+        email: "member@example.test",
+      }),
+    );
+  });
+
   it("弹窗关闭后重新打开复用未过期缓存", async () => {
     staffApiMock.mockResolvedValue({
       id: "space-1",

@@ -1,0 +1,57 @@
+.page {
+  padding: 20rpx 0 60rpx;
+}
+
+.picker-text {
+  color: var(--text-primary);
+}
+
+.placeholder {
+  color: var(--text-secondary);
+}
+
+.textarea {
+  min-height: 240rpx;
+  width: auto;
+}
+
+.attach-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14rpx 0;
+}
+
+.attach-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 26rpx;
+}
+
+.attach-remove {
+  color: var(--error);
+  font-size: 24rpx;
+  margin-left: 20rpx;
+  flex-shrink: 0;
+}
+
+.attach-add {
+  border: 2rpx dashed rgba(16, 24, 40, 0.2);
+  border-radius: 14rpx;
+  text-align: center;
+  padding: 20rpx;
+  color: var(--text-secondary);
+  font-size: 26rpx;
+}
+
+.submit-btn {
+  margin-top: 36rpx;
+}
+
+.submit-hint {
+  text-align: center;
+  margin-top: 14rpx;
+  font-size: 22rpx;
+}

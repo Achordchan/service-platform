@@ -1,0 +1,79 @@
+<view class="page">
+  <view wx:if="{{error}}" class="error-banner">{{error}}</view>
+
+  <view class="card">
+    <view class="form-label">所属项目</view>
+    <picker
+      range="{{projects}}"
+      range-key="title"
+      value="{{projectIndex}}"
+      bindchange="onProjectChange"
+    >
+      <view class="input picker-text {{projectIndex >= 0 ? '' : 'placeholder'}}">
+        {{projectIndex >= 0 ? projects[projectIndex].title : '请选择项目'}}
+      </view>
+    </picker>
+
+    <block wx:if="{{projectIndex >= 0}}">
+      <view class="form-label">服务请求分类</view>
+      <picker
+        range="{{projects[projectIndex].categories}}"
+        range-key="name"
+        value="{{categoryIndex}}"
+        bindchange="onCategoryChange"
+      >
+        <view class="input picker-text {{categoryIndex >= 0 ? '' : 'placeholder'}}">
+          {{categoryIndex >= 0 ? projects[projectIndex].categories[categoryIndex].name : '请选择分类'}}
+        </view>
+      </picker>
+    </block>
+
+    <view class="form-label">标题</view>
+    <input
+      class="input"
+      value="{{title}}"
+      maxlength="160"
+      placeholder="一句话描述问题"
+      bindinput="onTitleInput"
+    />
+
+    <view class="form-label">问题描述</view>
+    <textarea
+      class="input textarea"
+      value="{{description}}"
+      maxlength="15000"
+      placeholder="请详细描述遇到的问题、复现步骤与期望结果"
+      bindinput="onDescriptionInput"
+    ></textarea>
+
+    <view class="form-label">优先级</view>
+    <picker
+      range="{{priorityOptions}}"
+      value="{{priorityIndex}}"
+      bindchange="onPriorityChange"
+    >
+      <view class="input picker-text">
+        {{priorityOptions[priorityIndex]}}
+      </view>
+    </picker>
+
+    <view class="form-label">附件（可选，最多 5 个）</view>
+    <view wx:for="{{attachments}}" wx:key="localPath" class="attach-row">
+      <view class="attach-name">{{item.fileName}}</view>
+      <view class="attach-remove" data-index="{{index}}" bindtap="onRemoveAttachment">移除</view>
+    </view>
+    <view class="attach-add" hover-class="hover-plain"
+      bindtap="onAddAttachment">＋ 从聊天中选择文件</view>
+
+    <button
+      class="primary-btn submit-btn"
+      hover-class="hover-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      提交服务请求
+    </button>
+
+  </view>
+</view>

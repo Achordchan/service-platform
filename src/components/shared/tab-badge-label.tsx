@@ -21,7 +21,7 @@ export function UnreadCountPill({ count }: { count: number }) {
         bgcolor: "error.main",
         color: "error.contrastText",
         fontSize: 10,
-        fontWeight: 700,
+        fontWeight: 650,
         lineHeight: 1,
       }}
     >

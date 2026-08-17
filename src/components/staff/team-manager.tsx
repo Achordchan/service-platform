@@ -245,7 +245,7 @@ export function TeamManager({
         <Paper variant="outlined" sx={{ p: { xs: 2.25, md: 3 } }}>
           <Typography
             variant="h2"
-            sx={{ mb: 2, fontSize: 20, fontWeight: 700 }}
+            sx={{ mb: 2, fontSize: 20, fontWeight: 650 }}
           >
             待处理邀请
           </Typography>

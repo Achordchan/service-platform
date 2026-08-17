@@ -337,7 +337,7 @@ export function PlatformSettingsManager({
                 <Typography variant="caption" color="text.secondary">
                   主题
                 </Typography>
-                <Typography sx={{ fontWeight: 700 }}>
+                <Typography sx={{ fontWeight: 650 }}>
                   {selectedMessage.subject}
                 </Typography>
                 {selectedMessage.previewText ? (
@@ -350,9 +350,7 @@ export function PlatformSettingsManager({
                 variant="outlined"
                 sx={{ p: { xs: 2, sm: 2.5 }, overflow: "hidden" }}
               >
-                <Typography variant="h3" sx={{ fontSize: 20, fontWeight: 700 }}>
-                  {selectedMessage.heading}
-                </Typography>
+                <Typography variant="h3">{selectedMessage.heading}</Typography>
                 <Typography
                   color="text.secondary"
                   sx={{

@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import { ProjectTable } from "@/components/staff/project-table";
 import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
@@ -80,11 +81,8 @@ export default async function StaffProjectsPage() {
   }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
-      <Stack spacing={3}>
+    <PageContainer>
+      <Stack spacing={2.5}>
         <RealtimeRouteRefresh mode="project-list" />
         <StaffPageHeading title="项目" />
         <ProjectTable
@@ -109,6 +107,6 @@ export default async function StaffProjectsPage() {
           externalConnectors={externalConnectors}
         />
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

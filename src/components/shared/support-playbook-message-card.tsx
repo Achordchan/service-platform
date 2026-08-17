@@ -37,7 +37,7 @@ export function SupportPlaybookMessageCard({
       <Box sx={{ minWidth: { xs: 0, sm: 240 }, maxWidth: 420 }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
           <MenuBookOutlinedIcon sx={{ fontSize: 19, color: secondaryColor }} />
-          <Typography sx={{ fontWeight: 700, color: primaryColor }}>
+          <Typography sx={{ fontWeight: 650, color: primaryColor }}>
             {playbook.title}
           </Typography>
         </Stack>

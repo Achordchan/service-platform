@@ -1,4 +1,4 @@
-import { Container } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import type { ServiceRequestSummary } from "@/components/customer/customer-types";
 import { ServiceRequestList } from "@/components/customer/service-request-list";
 import { RealtimeRouteRefresh } from "@/components/shared/realtime-route-refresh";
@@ -47,12 +47,9 @@ export default async function CustomerRequestsPage() {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}
-    >
+    <PageContainer>
       <RealtimeRouteRefresh mode="request-list" />
       <ServiceRequestList requests={requests} showHeading />
-    </Container>
+    </PageContainer>
   );
 }

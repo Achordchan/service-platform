@@ -71,7 +71,7 @@ export function RequestDetail({
         description={`${request.number} · ${request.projectTitle}`}
         status={
           <>
-            <StatusIndicator status={request.status} />
+            <StatusIndicator status={request.status} audience="CUSTOMER" />
             <RequestPresenceIndicator
               online={presence.counterpartOnline}
               label="服务人员在线"
@@ -154,7 +154,7 @@ export function RequestDetail({
                   状态
                 </Typography>
                 <Box sx={{ mt: 0.65 }}>
-                  <StatusIndicator status={request.status} />
+                  <StatusIndicator status={request.status} audience="CUSTOMER" />
                 </Box>
               </Box>
               <Box>

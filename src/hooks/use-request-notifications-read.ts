@@ -33,6 +33,8 @@ export function useRequestNotificationsRead(requestId: string) {
     }
 
     async function markRead() {
+      // 组件已卸载（用户离开该工单）后不再发请求，避免把刚离开页面的工单误标记
+      if (cancelled) return;
       if (!isActivelyViewingRequest()) {
         pendingCatchup = true;
         return;

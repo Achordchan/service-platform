@@ -1,0 +1,143 @@
+.login-page {
+  min-height: 100vh;
+  background: #ffffff;
+  padding: 0 56rpx;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 品牌区：纯排版 */
+.brand {
+  padding: 180rpx 0 96rpx;
+  text-align: left;
+}
+
+.brand-name {
+  font-size: 48rpx;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 3rpx;
+}
+
+.brand-rule {
+  width: 64rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: var(--brand);
+  margin-top: 24rpx;
+}
+
+/* 登录卡（无框，表单直排） */
+.login-card {
+  width: 100%;
+}
+
+.wechat-btn,
+.login-btn {
+  height: 96rpx;
+  border-radius: 20rpx;
+  font-size: 32rpx;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 分隔 */
+.alt-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  margin: 48rpx 0 32rpx;
+}
+
+.alt-line {
+  flex: 1;
+  height: 1rpx;
+  background: var(--divider);
+}
+
+.alt-text {
+  font-size: 23rpx;
+  color: var(--text-tertiary);
+}
+
+/* 备选入口 */
+.alt-entry {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12rpx;
+  font-size: 28rpx;
+  color: var(--brand);
+  padding: 22rpx 0;
+}
+
+.alt-entries {
+  display: flex;
+  gap: 24rpx;
+}
+
+.alt-entries .alt-entry {
+  flex: 1;
+  background: var(--page-bg);
+  border-radius: 16rpx;
+}
+
+.foot-hint {
+  text-align: center;
+  margin-top: 48rpx;
+  color: var(--text-tertiary);
+  font-size: 22rpx;
+}
+
+/* 邮箱视图 */
+.bind-tip {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+  background: var(--brand-soft);
+  border-radius: 14rpx;
+  padding: 18rpx 22rpx;
+  margin-bottom: 32rpx;
+  font-size: 23rpx;
+  color: var(--brand);
+  line-height: 1.6;
+}
+
+.otp-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  /* 行内输入已清 margin-bottom，整行补回与下方登录按钮的间距 */
+  margin-bottom: 32rpx;
+}
+
+.otp-input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.otp-btn {
+  flex-shrink: 0;
+  width: 230rpx;
+  padding: 22rpx 0;
+  font-size: 25rpx;
+  margin: 0;
+}
+
+.switch-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 26rpx;
+}
+
+.switch-link {
+  color: var(--brand);
+  font-size: 26rpx;
+}
+
+.input-placeholder {
+  color: var(--text-tertiary);
+}

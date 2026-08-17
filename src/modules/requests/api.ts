@@ -1,25 +1,24 @@
 import "server-only";
 
 import { ZodError } from "zod";
-import { resolveActor } from "@/lib/actor";
 import {
   unexpectedApiErrorResponse,
   type ApiErrorContext,
 } from "@/lib/api-error";
-import { getCurrentSession } from "@/lib/session";
+import { resolveApiActor } from "@/modules/http/api-actor";
 import { DomainError } from "@/modules/projects/errors";
 import { RequestDomainError } from "@/modules/requests/errors";
 
 export async function requireApiActor() {
-  const session = await getCurrentSession();
-  if (!session) {
-    throw new RequestDomainError("UNAUTHORIZED", "请先登录", 401);
+  const result = await resolveApiActor();
+  if (result.failure) {
+    throw new RequestDomainError(
+      result.failure.code,
+      result.failure.message,
+      401,
+    );
   }
-  const actor = await resolveActor(session.user.id);
-  if (!actor) {
-    throw new RequestDomainError("UNAUTHORIZED", "登录用户不存在", 401);
-  }
-  return actor;
+  return result.actor;
 }
 
 export function apiErrorResponse(

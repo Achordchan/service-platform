@@ -1,4 +1,5 @@
-import { Container, Stack } from "@mui/material";
+import { Stack } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 import type { ProjectSummary } from "@/components/customer/customer-types";
 import { PageHeading } from "@/components/customer/page-heading";
 import { ProjectList } from "@/components/customer/project-list";
@@ -43,10 +44,7 @@ export default async function CustomerProjectsPage() {
   }));
 
   return (
-    <Container
-      maxWidth={false}
-      sx={{ px: { xs: 2, md: 5 }, py: { xs: 3, md: 5 } }}
-    >
+    <PageContainer>
       <Stack spacing={4}>
         <RealtimeRouteRefresh mode="project-list" />
         <PageHeading
@@ -63,6 +61,6 @@ export default async function CustomerProjectsPage() {
           />
         )}
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

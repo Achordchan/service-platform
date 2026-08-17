@@ -1,16 +1,14 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ContentRiskPluginSettings } from "@/components/staff/content-risk-plugin-settings";
 import { ToastProvider } from "@/components/shared/toast-provider";
 
-const staffApiMock = vi.hoisted(() => vi.fn());
-
 vi.mock("@/components/staff/staff-api", () => ({
   jsonRequest: vi.fn(),
-  staffApi: staffApiMock,
+  staffApi: vi.fn(),
 }));
 
 afterEach(() => {
@@ -18,19 +16,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("内容审核工作区", () => {
-  it("只展示风控状态和历史入口，不展示插件配置字段", async () => {
-    staffApiMock.mockResolvedValue({
-      runtime: {
-        enabledAt: "2026-07-29T08:00:00.000Z",
-        bypassedAt: null,
-        capabilityReport: null,
-      },
-      counts: {},
-      stats: { averageDurationMs: null, sampledCompletedCount: 0 },
-      reviews: [],
-    });
-
+describe("ContentRiskPluginSettings", () => {
+  it("展示配置字段和保存按钮", () => {
     render(
       <QueryClientProvider
         client={
@@ -41,24 +28,24 @@ describe("内容审核工作区", () => {
       >
         <ToastProvider>
           <ContentRiskPluginSettings
-            enabled
-            healthStatus="READY"
             config={{
               baseUrl: "https://model.example.com",
               model: "gpt-5.4-mini",
               fullAuditEnabled: true,
             }}
-            readOnly
+            secrets={{ apiKey: "" }}
+            hasApiKey
+            onConfigChange={vi.fn()}
+            onSecretChange={vi.fn()}
+            onSave={vi.fn()}
           />
         </ToastProvider>
       </QueryClientProvider>,
     );
 
-    await waitFor(() => expect(staffApiMock).toHaveBeenCalledTimes(1));
-    expect(screen.getByText("风控正在运行")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "查看历史风控" })).toBeTruthy();
-    expect(screen.queryByLabelText("模型 Base URL")).toBeNull();
-    expect(screen.queryByLabelText("API Key")).toBeNull();
-    expect(screen.queryByRole("button", { name: "保存配置" })).toBeNull();
+    expect(screen.getByLabelText("模型 Base URL")).toBeTruthy();
+    expect(screen.getByLabelText("API Key")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存配置" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "获取模型" })).toBeTruthy();
   });
 });

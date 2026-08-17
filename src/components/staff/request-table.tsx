@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Box,
-  Button,
   Chip,
   InputAdornment,
   MenuItem,
@@ -15,13 +14,13 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import SearchOutlinedIcon from "@mui/icons-material/SearchOutlined";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import {
   PriorityChip,
   StaffStatus,
 } from "@/components/staff/staff-status";
+import { SlaIndicator } from "@/components/staff/sla-indicator";
 import {
   RequestAdvancedFilters,
 } from "@/components/staff/request-advanced-filters";
@@ -165,45 +164,38 @@ export function RequestTable({
         renderCell: ({ row }) => <StaffStatus value={row.status} compact />,
       },
       {
+        field: "sla",
+        headerName: "SLA",
+        minWidth: 120,
+        renderCell: ({ row }) => (
+          <SlaIndicator
+            dueAt={row.dueAt}
+            firstRespondedAt={row.firstRespondedAt}
+            status={row.status}
+            compact
+          />
+        ),
+      },
+      {
         field: "updatedAt",
         headerName: "更新时间",
         minWidth: 170,
         renderCell: ({ row }) =>
           dateFormatter.format(new Date(row.updatedAt)),
       },
-      {
-        field: "actions",
-        headerName: "操作",
-        sortable: false,
-        filterable: false,
-        minWidth: 110,
-        display: "flex",
-        renderCell: ({ row }) => (
-          <Button
-            size="small"
-            startIcon={<EditOutlinedIcon />}
-            onClick={(event) => {
-              event.stopPropagation();
-              router.push(`/staff/requests/${row.id}`);
-            }}
-          >
-            处理
-          </Button>
-        ),
-      },
     ],
-    [router, unread.requestUnreadCounts],
+    [unread.requestUnreadCounts],
   );
 
   return (
     <Stack spacing={2}>
       <Stack
-        direction={{ xs: "column", xl: "row" }}
+        direction={{ xs: "column", lg: "row" }}
         spacing={2}
         sx={{
           borderBottom: "1px solid",
           borderColor: "divider",
-          alignItems: { xs: "stretch", xl: "flex-end" },
+          alignItems: { xs: "stretch", lg: "flex-end" },
           justifyContent: "space-between",
         }}
       >
@@ -312,9 +304,9 @@ export function RequestTable({
             rows={rows}
             columns={columns}
             onRowClick={({ row }) => router.push(`/staff/requests/${row.id}`)}
-            pageSizeOptions={[10, 20, 50]}
+            pageSizeOptions={[20, 50]}
             initialState={{
-              pagination: { paginationModel: { pageSize: 10, page: 0 } },
+              pagination: { paginationModel: { pageSize: 20, page: 0 } },
               sorting: {
                 sortModel: [{ field: "updatedAt", sort: "desc" }],
               },

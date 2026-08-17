@@ -70,7 +70,7 @@ export function RequestReplyPreview({
           slotProps={{
             primary: {
               variant: "caption",
-              sx: { fontWeight: 700, color: "text.primary" },
+              sx: { fontWeight: 650, color: "text.primary" },
             },
             secondary: {
               variant: "body2",
@@ -117,7 +117,7 @@ export function RequestQuotedMessage({
         variant="caption"
         sx={{
           display: "block",
-          fontWeight: 700,
+          fontWeight: 650,
           color: inverted ? "rgba(255,255,255,0.9)" : "text.secondary",
         }}
       >

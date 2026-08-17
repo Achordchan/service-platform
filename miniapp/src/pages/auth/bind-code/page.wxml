@@ -1,0 +1,33 @@
+<view class="bind-page">
+  <view class="card">
+    <view class="card-title">输入绑定码</view>
+    <view class="text-secondary bind-desc">
+      绑定码由管理员生成，15 分钟内有效且只能使用一次。
+    </view>
+
+    <view wx:if="{{error}}" class="error-banner">{{error}}</view>
+
+    <view class="form-label">绑定码</view>
+    <input
+      class="input code-input"
+      type="text"
+      value="{{code}}"
+      placeholder="例如 8F3K-29DA"
+      bindinput="onCodeInput"
+    />
+
+    <button
+      class="primary-btn"
+      hover-class="hover-btn"
+      disabled="{{submitting}}"
+      loading="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      绑定
+    </button>
+  </view>
+
+  <view class="use-account text-secondary" bindtap="onUseAccount">
+    知道账号密码？使用邮箱登录
+  </view>
+</view>

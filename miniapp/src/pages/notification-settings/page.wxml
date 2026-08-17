@@ -1,0 +1,44 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '加载失败', desc: loadError, retry: true}}"
+  />
+
+  <block wx:else>
+    <view class="card">
+      <view class="setting-row">
+        <view>
+          <view class="setting-title">站内通知</view>
+          <view class="text-secondary">小程序消息中心与网页通知保持一致</view>
+        </view>
+      </view>
+      <view class="setting-row">
+        <view>
+          <view class="setting-title">提示音</view>
+          <view class="text-secondary">网页端收到通知时播放提示音</view>
+        </view>
+        <switch checked="{{soundEnabled}}" disabled="{{saving}}" bindchange="onToggleSound" color="#1677ff" />
+      </view>
+      <view class="setting-row">
+        <view>
+          <view class="setting-title">邮件通知</view>
+          <view class="text-secondary">工单有新回复时发送邮件提醒</view>
+        </view>
+        <switch checked="{{emailEnabled}}" disabled="{{saving}}" bindchange="onToggleEmail" color="#1677ff" />
+      </view>
+    </view>
+
+    <view class="card">
+      <view class="setting-title">微信提醒</view>
+      <view class="text-secondary wechat-desc">
+        开启后，工单有新回复、状态变化和项目动态时会通过微信服务提醒通知你（需要微信授权，每次授权支持接收一条提醒）。
+      </view>
+      <button class="primary-btn" hover-class="hover-btn" bindtap="onSubscribeReminders">开启微信提醒</button>
+    </view>
+  </block>
+</view>

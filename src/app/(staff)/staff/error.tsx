@@ -1,6 +1,7 @@
 "use client";
 
-import { Alert, Button, Container, Stack, Typography } from "@mui/material";
+import { Alert, Button, Stack, Typography } from "@mui/material";
+import { PageContainer } from "@/components/shared/page-container";
 
 export default function StaffError({
   error,
@@ -10,7 +11,7 @@ export default function StaffError({
   reset: () => void;
 }) {
   return (
-    <Container maxWidth={false} sx={{ px: { xs: 2, md: 3.5 }, py: { xs: 3, md: 4 } }}>
+    <PageContainer>
       <Stack spacing={2}>
         <Alert severity="error">页面加载失败，请重新尝试。</Alert>
         {error.digest ? (
@@ -22,6 +23,6 @@ export default function StaffError({
           重新加载
         </Button>
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

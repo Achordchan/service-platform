@@ -260,44 +260,39 @@ export function NotificationMenu({
               onClick={() => void openNotification(item)}
               sx={{
                 alignItems: "flex-start",
-                py: 1.5,
+                py: 1,
                 bgcolor: item.readAt ? "transparent" : "action.selected",
               }}
             >
               <ListItemText
-                primary={`${item.title}${
-                  (item.occurrenceCount ?? 1) > 1
-                    ? ` · ${item.occurrenceCount} 条`
-                    : ""
-                }`}
-                secondary={
-                  <Stack spacing={0.35} sx={{ mt: 0.5 }}>
-                    <Typography
-                      component="span"
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{
-                        display: "-webkit-box",
-                        WebkitLineClamp: 2,
-                        WebkitBoxOrient: "vertical",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {item.body}
+                primary={
+                  <Stack direction="row" sx={{ alignItems: "baseline", justifyContent: "space-between" }}>
+                    <Typography component="span" variant="body2" sx={{ fontWeight: item.readAt ? 600 : 650 }}>
+                      {`${item.title}${(item.occurrenceCount ?? 1) > 1 ? ` · ${item.occurrenceCount} 条` : ""}`}
                     </Typography>
-                    <Typography
-                      component="span"
-                      variant="caption"
-                      color="text.secondary"
-                    >
-                      {notificationTimeFormatter.format(
-                        new Date(item.updatedAt || item.createdAt),
-                      )}
+                    <Typography component="span" variant="caption" color="text.secondary" sx={{ flexShrink: 0, ml: 1 }}>
+                      {notificationTimeFormatter.format(new Date(item.updatedAt || item.createdAt))}
                     </Typography>
                   </Stack>
                 }
+                secondary={
+                  <Typography
+                    component="span"
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      mt: 0.25,
+                    }}
+                  >
+                    {item.body}
+                  </Typography>
+                }
                 slotProps={{
-                  primary: { sx: { fontWeight: item.readAt ? 500 : 650 } },
+                  primary: { component: "div" },
                   secondary: { component: "div" },
                 }}
               />

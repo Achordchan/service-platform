@@ -279,10 +279,10 @@ export function RequestChatThread({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        maxHeight: { xs: 460, md: 560 },
+        maxHeight: { xs: 460, md: "min(65vh, 640px)" },
         overscrollBehavior: "contain",
         isolation: "isolate",
-        minHeight: { xs: 320, md: 420 },
+        minHeight: { xs: 280, md: 360 },
       }}
     >
       {hiddenCount > 0 ? (
@@ -330,9 +330,9 @@ export function RequestChatThread({
           overscrollBehavior: "contain",
           px: { xs: 1.5, md: 2 },
           py: 2,
-          bgcolor: "#f7f8fa",
+          bgcolor: "grey.50",
           ...theme.applyStyles("dark", {
-            bgcolor: "#12161c",
+            bgcolor: "grey.900",
           }),
           touchAction: "pan-y",
         })}
@@ -348,7 +348,7 @@ export function RequestChatThread({
           event.stopPropagation();
         }}
       >
-        <Stack spacing={1.5}>
+        <Stack spacing={1}>
           {visibleMessages.map((message, index) => {
             const messageDate = new Date(message.createdAt);
             const previousMessage = visibleMessages[index - 1];
@@ -403,6 +403,15 @@ export function RequestChatThread({
             const isAdmin = message.authorPlatformRole === "PLATFORM_ADMIN";
             const isRevoked = message.contentRiskStatus === "REVOKED";
             const showRevokedPlaceholder = isRevoked && !canViewRevokedContent;
+            const isContinuation =
+              !showDateSeparator &&
+              previousMessage &&
+              !previousMessage.isSystem &&
+              previousMessage.authorId === message.authorId &&
+              previousMessage.visibility === message.visibility &&
+              messageDate.getTime() -
+                new Date(previousMessage.createdAt).getTime() <
+                120_000;
             const tone = isInternal
               ? "internal"
               : isSelf
@@ -424,6 +433,9 @@ export function RequestChatThread({
                   spacing={1.25}
                   sx={{ alignItems: "flex-end" }}
                 >
+                {isContinuation ? (
+                  <Box sx={{ width: 34, flexShrink: 0 }} />
+                ) : (
                 <Avatar
                   src={avatarSrc}
                   alt={message.authorName}
@@ -434,7 +446,7 @@ export function RequestChatThread({
                     bgcolor: isInternal
                       ? (theme) => alpha(theme.palette.warning.main, 0.16)
                       : isAdmin
-                        ? "#111827"
+                        ? "grey.800"
                         : isSelf
                           ? "primary.main"
                           : "action.selected",
@@ -447,6 +459,7 @@ export function RequestChatThread({
                 >
                   {message.authorName.slice(0, 1)}
                 </Avatar>
+                )}
                 <Box
                   sx={{
                     width: "fit-content",
@@ -471,6 +484,7 @@ export function RequestChatThread({
                     },
                   }}
                 >
+                  {!isContinuation && (
                   <Stack
                     direction={isSelf ? "row-reverse" : "row"}
                     spacing={1}
@@ -484,12 +498,15 @@ export function RequestChatThread({
                         icon={<VerifiedUserOutlinedIcon />}
                         label="管理员"
                         size="small"
-                        sx={{
+                        sx={(theme) => ({
                           height: 22,
-                          bgcolor: "#111827",
+                          bgcolor: "grey.800",
                           color: "common.white",
                           "& .MuiChip-icon": { color: "common.white" },
-                        }}
+                          ...theme.applyStyles("dark", {
+                            bgcolor: "grey.600",
+                          }),
+                        })}
                       />
                     ) : null}
                     {message.authorSourceKey ? (
@@ -546,6 +563,7 @@ export function RequestChatThread({
                       </Tooltip>
                     ) : null}
                   </Stack>
+                  )}
                   <Box
                     sx={{
                       display: "block",
@@ -566,7 +584,7 @@ export function RequestChatThread({
                           : isSelf
                             ? "primary.main"
                             : isAdmin
-                              ? "#111827"
+                              ? "grey.800"
                               : "background.paper",
                       color: showRevokedPlaceholder
                         ? "error.main"
@@ -581,7 +599,7 @@ export function RequestChatThread({
                           : isSelf
                             ? "primary.main"
                             : isAdmin
-                              ? "#111827"
+                              ? "grey.800"
                               : "divider",
                       boxShadow: showRevokedPlaceholder
                         ? "0 4px 14px rgba(239, 68, 68, 0.06)"
@@ -605,7 +623,7 @@ export function RequestChatThread({
                         mb: 0.75,
                         fontSize: "1rem",
                         lineHeight: 1.5,
-                        fontWeight: 750,
+                        fontWeight: 650,
                       },
                       "& ul, & ol": { my: 0.5, pl: 2.25 },
                       "& img": {

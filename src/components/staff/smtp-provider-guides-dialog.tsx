@@ -17,7 +17,9 @@ import {
   ListItemText,
   Stack,
   Typography,
+  useMediaQuery,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import {
   SMTP_PROVIDER_GUIDES,
   type SmtpProviderGuide,
@@ -32,6 +34,8 @@ export function SmtpProviderGuidesDialog({
   onClose: () => void;
   onApply: (guide: SmtpProviderGuide) => void;
 }) {
+  const theme = useTheme();
+  const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [selectedKey, setSelectedKey] = useState(
     SMTP_PROVIDER_GUIDES[0]!.key,
   );
@@ -40,7 +44,7 @@ export function SmtpProviderGuidesDialog({
     SMTP_PROVIDER_GUIDES[0]!;
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" scroll="paper">
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="md" scroll="paper" fullScreen={mobile}>
       <DialogTitle>常见 SMTP 接入教程</DialogTitle>
       <DialogContent dividers>
         <Box
@@ -62,7 +66,7 @@ export function SmtpProviderGuidesDialog({
                   primary={guide.name}
                   secondary={guide.summary}
                   slotProps={{
-                    primary: { sx: { fontWeight: 700 } },
+                    primary: { sx: { fontWeight: 650 } },
                     secondary: { sx: { mt: 0.35 } },
                   }}
                 />
@@ -103,13 +107,13 @@ export function SmtpProviderGuidesDialog({
             </Box>
             <Divider />
             <div>
-              <Typography sx={{ fontWeight: 700 }}>凭据</Typography>
+              <Typography sx={{ fontWeight: 650 }}>凭据</Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                 {selected.credentialHint}
               </Typography>
             </div>
             <div>
-              <Typography sx={{ fontWeight: 700 }}>接入步骤</Typography>
+              <Typography sx={{ fontWeight: 650 }}>接入步骤</Typography>
               <Stack component="ol" spacing={1} sx={{ pl: 2.5, mb: 0 }}>
                 {selected.steps.map((step) => (
                   <Typography component="li" variant="body2" key={step}>

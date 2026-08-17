@@ -258,7 +258,7 @@ export function DingTalkTemplateSettings({
                 <Typography variant="overline" color="text.secondary">
                   消息预览
                 </Typography>
-                <Typography sx={{ mt: 0.5, fontWeight: 700, fontSize: 18 }}>
+                <Typography sx={{ mt: 0.5, fontWeight: 650, fontSize: 18 }}>
                   {DINGTALK_ROBOT_KEYWORD}：{renderSample(title)}
                 </Typography>
                 <Typography

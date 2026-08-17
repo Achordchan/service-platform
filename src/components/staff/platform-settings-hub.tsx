@@ -65,7 +65,7 @@ function SettingsRow({
           useFlexGap
           sx={{ alignItems: "center", flexWrap: "wrap" }}
         >
-          <Typography sx={{ fontWeight: 700 }}>{title}</Typography>
+          <Typography sx={{ fontWeight: 650 }}>{title}</Typography>
           {status}
         </Stack>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -118,7 +118,7 @@ function SettingsDisclosure({
         }}
       >
         <Box sx={{ minWidth: 0 }}>
-          <Typography sx={{ fontWeight: 700 }}>{title}</Typography>
+          <Typography sx={{ fontWeight: 650 }}>{title}</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             {summary}
           </Typography>

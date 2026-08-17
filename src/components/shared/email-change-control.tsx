@@ -193,7 +193,7 @@ export function EmailChangeControl({
             bgcolor: "rgba(217,139,22,0.04)",
           }}
         >
-          <Typography sx={{ fontWeight: 700 }}>等待新邮箱确认</Typography>
+          <Typography sx={{ fontWeight: 650 }}>等待新邮箱确认</Typography>
           <Typography variant="body2">新邮箱：{pending.newEmail}</Typography>
           <Typography variant="body2" color="text.secondary">
             验证有效期至：

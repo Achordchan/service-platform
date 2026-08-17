@@ -163,7 +163,7 @@ export async function createDueNotificationMailMessages() {
         notificationEnabled: true,
         soundEnabled: true,
         emailEnabled: true,
-        dingtalkEnabled: true,
+        dingtalkEnabled: true,        wechatEnabled: true,
       },
     });
     const deliveryRuleByKey = new Map<string, NotificationDeliveryRuleState>(

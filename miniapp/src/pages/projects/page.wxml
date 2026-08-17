@@ -1,0 +1,80 @@
+<import src="/components/states.wxml" />
+
+<view class="page">
+  <view class="home-header">
+    <view class="greeting">{{greeting}}</view>
+    <view class="date-text">{{dateText}}</view>
+  </view>
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '加载失败', desc: loadError, retry: true}}"
+  />
+
+  <template
+    wx:elif="{{projects.length === 0}}"
+    is="state-empty"
+    data="{{icon: 'folder', title: '暂无服务项目', desc: '项目开通后会展示在这里'}}"
+  />
+
+  <block wx:else>
+    <!-- 单项目为主的布局：主卡撑满信息密度，快捷入口直达高频操作 -->
+    <view
+      wx:for="{{projects}}"
+      wx:key="id"
+      class="project-hero card card-press"
+      hover-class="hover-card"
+      hover-stay-time="80"
+      data-id="{{item.id}}"
+      bindtap="onOpenProject"
+    >
+      <view class="hero-head">
+        <view class="hero-accent"></view>
+        <view class="hero-head-main">
+          <view class="hero-title">{{item.title}}</view>
+          <view class="hero-meta-row">
+            <view class="hero-type-chip">{{item.serviceType.name}}</view>
+            <view class="text-secondary hero-customer">{{item.customerSpace.name}}</view>
+          </view>
+        </view>
+        <view class="tag tag-{{item.statusTone}}">{{item.statusLabel}}</view>
+      </view>
+
+      <view wx:if="{{item.showProgress && item.progress > 0}}" class="hero-progress">
+        <view class="progress-track">
+          <view class="progress-fill" style="width: {{item.progress}}%"></view>
+        </view>
+        <view class="progress-text">进度 {{item.progress}}%</view>
+      </view>
+      <view wx:elif="{{item.currentStage}}" class="hero-stage">
+        <text class="hero-stage-label">当前阶段</text>
+        <text class="hero-stage-value">{{item.currentStage}}</text>
+      </view>
+
+      <view class="hero-stats">
+        <view class="hero-stat">
+          <view class="hero-stat-num">{{item._count.requests}}</view>
+          <view class="hero-stat-label">服务请求</view>
+        </view>
+        <view class="hero-stat-divider"></view>
+        <view class="hero-stat">
+          <view class="hero-stat-num">{{item._count.updates}}</view>
+          <view class="hero-stat-label">项目动态</view>
+        </view>
+        <view class="hero-stat-divider"></view>
+        <view class="hero-stat">
+          <view class="hero-stat-num">{{item.progressDetails.completed}}/{{item.progressDetails.total}}</view>
+          <view class="hero-stat-label">里程碑</view>
+        </view>
+      </view>
+
+      <view wx:if="{{item.staff.length > 0}}" class="hero-pm">
+        <text class="text-secondary">项目经理</text>
+        <text class="hero-pm-name">{{item.staff[0].user.name}}</text>
+      </view>
+      <view class="hero-footer text-secondary">更新于 {{item.updatedText}} · 点击查看详情</view>
+    </view>
+  </block>
+</view>

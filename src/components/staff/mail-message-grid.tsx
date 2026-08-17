@@ -4,6 +4,11 @@ import { useMemo } from "react";
 import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import type { MailMessageView } from "@/components/staff/platform-settings-types";
+import MailOutlineOutlinedIcon from "@mui/icons-material/MailOutlineOutlined";
+import { gridHeight, gridSx } from "@/lib/data-grid-styles";
+import { gridNoRowsOverlay } from "@/components/shared/data-grid-empty-overlay";
+
+const noRows = gridNoRowsOverlay("暂无邮件记录", <MailOutlineOutlinedIcon />);
 
 const statusLabel: Record<MailMessageView["status"], string> = {
   QUEUED: "排队中",
@@ -40,9 +45,6 @@ export const deliveryModeLabel: Record<
   SMTP: "SMTP",
 };
 
-function gridHeight(rowCount: number) {
-  return Math.min(620, Math.max(220, rowCount * 96 + 112));
-}
 
 export function MailMessageGrid({
   rows,
@@ -128,7 +130,7 @@ export function MailMessageGrid({
                 <Typography
                   color="error"
                   variant="caption"
-                  sx={{ fontWeight: 700 }}
+                  sx={{ fontWeight: 650 }}
                 >
                   已逾期超过 2 分钟
                 </Typography>
@@ -209,32 +211,150 @@ export function MailMessageGrid({
   );
 
   return (
-    <Box sx={{ width: "100%", height: gridHeight(rows.length) }}>
-      <DataGrid
-        aria-label="邮件发送记录"
-        rows={rows}
-        columns={columns}
-        getRowHeight={() => "auto"}
-        getEstimatedRowHeight={() => 96}
-        pageSizeOptions={[10, 20, 50]}
-        initialState={{
-          pagination: { paginationModel: { pageSize: 10, page: 0 } },
-        }}
-        disableRowSelectionOnClick
-        hideFooter={rows.length <= 10}
-        localeText={{ noRowsLabel: "暂无邮件记录" }}
+    <>
+      <Box
         sx={{
-          border: 0,
-          "& .MuiDataGrid-cell": {
-            display: "flex",
-            alignItems: "center",
-            py: 1,
-          },
-          "& .MuiDataGrid-columnHeaderTitle": { fontWeight: 650 },
-          "& .MuiDataGrid-columnHeaders": { borderBottomColor: "divider" },
-          "& .MuiDataGrid-footerContainer": { borderTopColor: "divider" },
+          display: { xs: "none", md: "block" },
+          width: "100%",
+          height: gridHeight(rows.length, 96),
         }}
-      />
-    </Box>
+      >
+        <DataGrid
+          aria-label="邮件发送记录"
+          rows={rows}
+          columns={columns}
+          getRowHeight={() => "auto"}
+          getEstimatedRowHeight={() => 96}
+          pageSizeOptions={[10, 20, 50]}
+          initialState={{
+            pagination: { paginationModel: { pageSize: 10, page: 0 } },
+          }}
+          disableRowSelectionOnClick
+          hideFooter={rows.length <= 10}
+          slots={{ noRowsOverlay: noRows }}
+          sx={gridSx}
+        />
+      </Box>
+
+      <Stack sx={{ display: { xs: "flex", md: "none" } }}>
+        {rows.map((row) => {
+          const overdue =
+            row.status === "QUEUED" &&
+            new Date(row.sendAfter).getTime() <=
+              asOfTimestamp - 2 * 60 * 1000;
+
+          return (
+            <Box
+              key={row.id}
+              sx={{
+                py: 1.5,
+                px: 2,
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                "&:last-child": { borderBottom: 0 },
+              }}
+            >
+              <Stack
+                direction="row"
+                sx={{
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  gap: 1,
+                }}
+              >
+                <Typography sx={{ fontWeight: 650, minWidth: 0 }} noWrap>
+                  {row.subject}
+                </Typography>
+                <Chip
+                  size="small"
+                  label={statusLabel[row.status]}
+                  color={statusColor[row.status]}
+                  sx={{ flexShrink: 0 }}
+                />
+              </Stack>
+
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                noWrap
+              >
+                {row.heading}
+              </Typography>
+
+              <Typography variant="caption" color="text.secondary">
+                {row.toEmail} · {deliveryModeLabel[row.deliveryMode]} ·{" "}
+                {new Date(row.createdAt).toLocaleString("zh-CN")}
+              </Typography>
+
+              {(row.errorMessage || overdue) && (
+                <Stack spacing={0.25} sx={{ mt: 0.5 }}>
+                  {row.errorMessage && (
+                    <Typography color="error" variant="caption">
+                      {row.errorMessage}
+                    </Typography>
+                  )}
+                  {overdue && (
+                    <Typography
+                      color="error"
+                      variant="caption"
+                      sx={{ fontWeight: 650 }}
+                    >
+                      已逾期超过 2 分钟
+                    </Typography>
+                  )}
+                </Stack>
+              )}
+
+              <Stack
+                direction="row"
+                spacing={0.5}
+                useFlexGap
+                sx={{ flexWrap: "wrap", mt: 1 }}
+              >
+                <Button size="small" onClick={() => onView(row)}>
+                  查看内容
+                </Button>
+                {row.actionUrl && (
+                  <Button
+                    size="small"
+                    href={row.actionUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    打开链接
+                  </Button>
+                )}
+                {(row.status === "QUEUED" ||
+                  row.status === "FAILED" ||
+                  row.status === "CANCELLED") && (
+                  <Button
+                    size="small"
+                    disabled={messageAction !== null}
+                    onClick={() => onRetry(row.id)}
+                  >
+                    {messageAction === `${row.id}:retry` ? "入队中" : "重试"}
+                  </Button>
+                )}
+                {row.status === "QUEUED" && (
+                  <Button
+                    size="small"
+                    color="inherit"
+                    disabled={messageAction !== null}
+                    onClick={() => onCancel(row.id)}
+                  >
+                    {messageAction === `${row.id}:cancel` ? "取消中" : "取消"}
+                  </Button>
+                )}
+              </Stack>
+            </Box>
+          );
+        })}
+        {rows.length === 0 && (
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography color="text.secondary">暂无邮件记录</Typography>
+          </Box>
+        )}
+      </Stack>
+    </>
   );
 }

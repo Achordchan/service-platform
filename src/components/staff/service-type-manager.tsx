@@ -29,10 +29,31 @@ import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import DeleteOutlinedIcon from "@mui/icons-material/DeleteOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreOutlinedIcon from "@mui/icons-material/ExpandMoreOutlined";
+import CategoryOutlinedIcon from "@mui/icons-material/CategoryOutlined";
+import AccessTimeRoundedIcon from "@mui/icons-material/AccessTimeRounded";
 import { DeletionPreflightDialog } from "@/components/shared/deletion-preflight-dialog";
+import { EmptyState } from "@/components/shared/content-state";
 import { useToast } from "@/components/shared/toast-provider";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type { ServiceTypeItem } from "@/components/staff/staff-types";
+
+function formatSlaMinutes(minutes: number) {
+  if (minutes < 60) return `${minutes}分钟`;
+  if (minutes % 60 === 0) return `${minutes / 60}小时`;
+  return `${Math.floor(minutes / 60)}小时${minutes % 60}分`;
+}
+
+function slaLabel(st: ServiceTypeItem) {
+  const parts: string[] = [];
+  if (st.slaResponseMinutes) parts.push(`首响 ${formatSlaMinutes(st.slaResponseMinutes)}`);
+  if (st.slaResolutionMinutes) parts.push(`解决 ${formatSlaMinutes(st.slaResolutionMinutes)}`);
+  return parts.length > 0 ? parts.join(" / ") : null;
+}
+
+function parseSla(v: string) {
+  const n = Number(v);
+  return v === "" || Number.isNaN(n) || n < 1 ? null : n;
+}
 
 type DialogState =
   | { type: "service" }
@@ -50,15 +71,25 @@ const serviceCreateFormSchema = z.object({
   key: z.string().trim().min(2).max(50).regex(/^[a-z0-9]+(?:[-_][a-z0-9]+)*$/, "唯一标识格式不正确"),
   name: z.string().trim().min(1, "请填写服务类型名称").max(100),
   description: z.string().trim().max(1000),
+  slaResponseMinutes: z.string().trim(),
+  slaResolutionMinutes: z.string().trim(),
 });
-const editableTypeFormSchema = z.object({
+const serviceTypeFormSchema = z.object({
+  name: z.string().trim().min(1, "请填写名称").max(100),
+  description: z.string().trim().max(1000),
+  active: z.boolean(),
+  slaResponseMinutes: z.string().trim(),
+  slaResolutionMinutes: z.string().trim(),
+});
+const categoryFormSchema = z.object({
   name: z.string().trim().min(1, "请填写名称").max(100),
   description: z.string().trim().max(1000),
   active: z.boolean(),
 });
 
 type ServiceCreateFormValues = z.infer<typeof serviceCreateFormSchema>;
-type EditableTypeFormValues = z.infer<typeof editableTypeFormSchema>;
+type ServiceTypeFormValues = z.infer<typeof serviceTypeFormSchema>;
+type CategoryFormValues = z.infer<typeof categoryFormSchema>;
 
 export function ServiceTypeManager({
   serviceTypes,
@@ -77,18 +108,18 @@ export function ServiceTypeManager({
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const createServiceForm = useForm<ServiceCreateFormValues>({
     resolver: zodResolver(serviceCreateFormSchema),
-    defaultValues: { key: "", name: "", description: "" },
+    defaultValues: { key: "", name: "", description: "", slaResponseMinutes: "", slaResolutionMinutes: "" },
   });
-  const createCategoryForm = useForm<EditableTypeFormValues>({
-    resolver: zodResolver(editableTypeFormSchema),
+  const createCategoryForm = useForm<CategoryFormValues>({
+    resolver: zodResolver(categoryFormSchema),
     defaultValues: { name: "", description: "", active: true },
   });
-  const editServiceForm = useForm<EditableTypeFormValues>({
-    resolver: zodResolver(editableTypeFormSchema),
-    defaultValues: { name: "", description: "", active: true },
+  const editServiceForm = useForm<ServiceTypeFormValues>({
+    resolver: zodResolver(serviceTypeFormSchema),
+    defaultValues: { name: "", description: "", active: true, slaResponseMinutes: "", slaResolutionMinutes: "" },
   });
-  const editCategoryForm = useForm<EditableTypeFormValues>({
-    resolver: zodResolver(editableTypeFormSchema),
+  const editCategoryForm = useForm<CategoryFormValues>({
+    resolver: zodResolver(categoryFormSchema),
     defaultValues: { name: "", description: "", active: true },
   });
 
@@ -119,7 +150,14 @@ export function ServiceTypeManager({
     await execute(
       "/api/v1/admin/service-types",
       "POST",
-      { ...values, description: values.description || null, active: true },
+      {
+        key: values.key,
+        name: values.name,
+        description: values.description || null,
+        active: true,
+        slaResponseMinutes: parseSla(values.slaResponseMinutes),
+        slaResolutionMinutes: parseSla(values.slaResolutionMinutes),
+      },
       "服务类型已创建",
     );
   });
@@ -179,7 +217,13 @@ export function ServiceTypeManager({
     await execute(
       `/api/v1/admin/service-types/${editingService.id}`,
       "PATCH",
-      { ...values, description: values.description || null },
+      {
+        name: values.name,
+        description: values.description || null,
+        active: values.active,
+        slaResponseMinutes: parseSla(values.slaResponseMinutes),
+        slaResolutionMinutes: parseSla(values.slaResolutionMinutes),
+      },
       "服务类型已更新",
     );
   });
@@ -209,6 +253,8 @@ export function ServiceTypeManager({
       name: serviceType.name,
       description: serviceType.description || "",
       active: serviceType.active,
+      slaResponseMinutes: serviceType.slaResponseMinutes?.toString() ?? "",
+      slaResolutionMinutes: serviceType.slaResolutionMinutes?.toString() ?? "",
     });
     setEditingService(serviceType);
   }
@@ -281,9 +327,20 @@ export function ServiceTypeManager({
                       variant="outlined"
                     />
                   </Stack>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                    {serviceType.key} · {serviceType.categories.length} 个请求分类
-                  </Typography>
+                  <Stack direction="row" spacing={1} sx={{ alignItems: "center", mt: 0.5, flexWrap: "wrap" }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {serviceType.key} · {serviceType.categories.length} 个请求分类
+                    </Typography>
+                    {(() => { const sla = slaLabel(serviceType); return sla ? (
+                      <Chip
+                        icon={<AccessTimeRoundedIcon sx={{ fontSize: 14 }} />}
+                        label={sla}
+                        size="small"
+                        variant="outlined"
+                        sx={{ height: 22, fontSize: 11 }}
+                      />
+                    ) : null; })()}
+                  </Stack>
                 </Box>
                 <Typography
                   variant="body2"
@@ -417,7 +474,13 @@ export function ServiceTypeManager({
           </Accordion>
         ))}
         {serviceTypes.length === 0 ? (
-          <Alert severity="info">尚未创建服务类型。</Alert>
+          <EmptyState
+            icon={<CategoryOutlinedIcon />}
+            title="尚未创建服务类型"
+            description="创建服务类型后即可为其配置请求分类。"
+            actionLabel="新增服务类型"
+            onAction={openCreateService}
+          />
         ) : null}
       </Stack>
 
@@ -453,6 +516,40 @@ export function ServiceTypeManager({
                   <TextField {...field} label="服务说明" multiline minRows={3} error={Boolean(createServiceForm.formState.errors.description)} helperText={createServiceForm.formState.errors.description?.message} slotProps={{ htmlInput: { maxLength: 1000 } }} />
                 )}
               />
+              <Divider />
+              <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                SLA 时限配置（可选）
+              </Typography>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                <Controller
+                  name="slaResponseMinutes"
+                  control={createServiceForm.control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      label="首响时限（分钟）"
+                      type="number"
+                      fullWidth
+                      placeholder="例如 30"
+                      slotProps={{ htmlInput: { min: 1, max: 525600 } }}
+                    />
+                  )}
+                />
+                <Controller
+                  name="slaResolutionMinutes"
+                  control={createServiceForm.control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      label="解决时限（分钟）"
+                      type="number"
+                      fullWidth
+                      placeholder="例如 1440（24小时）"
+                      slotProps={{ htmlInput: { min: 1, max: 525600 } }}
+                    />
+                  )}
+                />
+              </Stack>
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -532,6 +629,43 @@ export function ServiceTypeManager({
                     <TextField {...field} label="说明" multiline minRows={2} error={Boolean(editServiceForm.formState.errors.description)} helperText={editServiceForm.formState.errors.description?.message} />
                   )}
                 />
+                <Divider />
+                <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                  SLA 时限配置
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: -1 }}>
+                  留空表示不限制。新建工单时将根据解决时限自动计算截止时间。
+                </Typography>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={2}>
+                  <Controller
+                    name="slaResponseMinutes"
+                    control={editServiceForm.control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="首响时限（分钟）"
+                        type="number"
+                        fullWidth
+                        placeholder="例如 30"
+                        slotProps={{ htmlInput: { min: 1, max: 525600 } }}
+                      />
+                    )}
+                  />
+                  <Controller
+                    name="slaResolutionMinutes"
+                    control={editServiceForm.control}
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        label="解决时限（分钟）"
+                        type="number"
+                        fullWidth
+                        placeholder="例如 1440（24小时）"
+                        slotProps={{ htmlInput: { min: 1, max: 525600 } }}
+                      />
+                    )}
+                  />
+                </Stack>
                 <Controller
                   name="active"
                   control={editServiceForm.control}

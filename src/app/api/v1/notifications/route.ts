@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireUserWithAccess } from "@/lib/session";
+import { requireApiActor } from "@/modules/projects/api-utils";
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -9,7 +9,9 @@ import {
 } from "@/modules/notifications/notification-service";
 
 export async function GET(request: Request) {
-  const { actor } = await requireUserWithAccess();
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+  const actor = auth.actor;
   const url = new URL(request.url);
   const limitValue = Number(url.searchParams.get("limit") ?? "30");
   const limit = Number.isFinite(limitValue) ? limitValue : 30;
@@ -22,7 +24,9 @@ export async function GET(request: Request) {
 }
 
 export async function PATCH(request: Request) {
-  const { actor } = await requireUserWithAccess();
+  const auth = await requireApiActor();
+  if (auth.response) return auth.response;
+  const actor = auth.actor;
   const body = (await request.json()) as {
     id?: string;
     all?: boolean;
