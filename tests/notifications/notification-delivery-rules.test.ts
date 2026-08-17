@@ -20,6 +20,7 @@ function rule(
     soundEnabled: true,
     emailEnabled: false,
     dingtalkEnabled: false,
+    wechatEnabled: false,
     ...input,
   };
 }
@@ -93,6 +94,16 @@ describe("后台通知规则", () => {
         rule({ key: "REQUEST_STATUS", dingtalkEnabled: true }),
       ]),
     ).toEqual(expect.objectContaining({ code: "DINGTALK_NOT_SUPPORTED" }));
+    expect(
+      findNotificationDeliveryRuleViolation([
+        rule({ key: "REQUEST_CREATED", wechatEnabled: true }),
+      ]),
+    ).toEqual(expect.objectContaining({ code: "WECHAT_NOT_SUPPORTED" }));
+    expect(
+      findNotificationDeliveryRuleViolation([
+        rule({ key: "REQUEST_PUBLIC_MESSAGE", wechatEnabled: true }),
+      ]),
+    ).toBeNull();
     expect(
       findNotificationDeliveryRuleViolation([
         rule({ key: "REQUEST_CREATED", dingtalkEnabled: true }),

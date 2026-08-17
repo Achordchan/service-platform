@@ -62,6 +62,7 @@ export async function updateNotificationDeliveryRules(
           soundEnabled: rule.soundEnabled,
           emailEnabled: rule.emailEnabled,
           dingtalkEnabled: rule.dingtalkEnabled,
+          wechatEnabled: rule.wechatEnabled,
           updatedById: actor.id,
         },
       });
