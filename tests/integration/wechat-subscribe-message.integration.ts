@@ -280,9 +280,12 @@ describe("微信订阅消息投递", () => {
       body: "<p>客户无额度。</p>",
       visibility: "CUSTOMER_VISIBLE",
     });
+    // 只数「新入队」的行：新 delivery 落库即 PENDING；本用例前序 it 已为同一
+    // 用户建过一条、现已 DELIVERED 的记录，若不按状态过滤会被 5 秒窗口一起数进来
     const afterNoGrant = await ownerPool.query<{ count: string }>(
       `SELECT COUNT(*)::text AS count FROM "WechatSubscribeMessageDelivery"
-       WHERE "userId" = $1 AND "createdAt" > NOW() - INTERVAL '5 seconds'`,
+       WHERE "userId" = $1 AND status = 'PENDING'
+         AND "createdAt" > NOW() - INTERVAL '5 seconds'`,
       [ownerAUserId],
     );
     expect(afterNoGrant.rows[0]?.count).toBe("0");

@@ -212,8 +212,8 @@ test("iframe 仅向可信父 Origin 发送受控状态消息", async ({ page }) 
 test("管理员可在项目页查看状态驱动的接入指南", async ({ page }) => {
   await page.goto("/login");
   await page.getByLabel("邮箱").fill("admin@local.test");
-  await page.getByLabel("密码").fill(password);
-  await page.getByRole("button", { name: "登录" }).click();
+  await page.getByLabel("密码", { exact: true }).fill(password);
+  await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.waitForURL(/\/staff\//);
 
   await page.goto(`/staff/projects/${projectId}`);
