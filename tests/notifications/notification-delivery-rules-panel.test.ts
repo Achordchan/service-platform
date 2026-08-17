@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { notificationRuleChannels } from "@/components/staff/notification-delivery-rules-panel";
 
 describe("通知规则通道条件渲染", () => {
-  it("钉钉插件未启用时完全隐藏钉钉通道", () => {
+  it("钉钉插件未启用时完全隐藏钉钉通道，微信通道常显", () => {
     expect(notificationRuleChannels(true, false).map(([channel]) => channel)).toEqual([
       "notificationEnabled",
       "soundEnabled",
       "emailEnabled",
+      "wechatEnabled",
     ]);
   });
 
@@ -16,6 +17,7 @@ describe("通知规则通道条件渲染", () => {
       "soundEnabled",
       "emailEnabled",
       "dingtalkEnabled",
+      "wechatEnabled",
     ]);
   });
 
@@ -24,6 +26,7 @@ describe("通知规则通道条件渲染", () => {
       "notificationEnabled",
       "soundEnabled",
       "dingtalkEnabled",
+      "wechatEnabled",
     ]);
   });
 });
