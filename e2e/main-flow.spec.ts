@@ -358,7 +358,9 @@ test.describe("主流程冒烟", () => {
       await mailTemplates.click();
     }
 
-    await adminPage.goto("/staff/service-types");
+    // 该路由是服务端 redirect()，默认等待 load 会与重定向抢占导致 ERR_ABORTED，
+    // 用 commit 让导航一提交即返回，随后按最终 URL 断言重定向结果
+    await adminPage.goto("/staff/service-types", { waitUntil: "commit" });
     await expect(adminPage).toHaveURL(/\/staff\/settings\?tab=services$/);
     await expect(
       adminPage.getByRole("tab", {
