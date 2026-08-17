@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
   Button,
@@ -67,9 +67,16 @@ export function ProjectTable({
   externalConnectors?: ProjectOption[];
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const toast = useToast();
   const [keyword, setKeyword] = useState("");
-  const [status, setStatus] = useState("ALL");
+  // 从仪表盘项目状态卡片带 ?status= 参数进入时，初始化对应筛选（仅接受已知状态值）
+  const [status, setStatus] = useState(() => {
+    const value = searchParams.get("status");
+    return value && projectStatusOptions.some((option) => option.value === value)
+      ? value
+      : "ALL";
+  });
   const [serviceTypeId, setServiceTypeId] = useState("ALL");
   const [kind, setKind] = useState("ALL");
   const [createOpen, setCreateOpen] = useState(false);

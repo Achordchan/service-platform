@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   Box,
   Chip,
@@ -29,6 +29,7 @@ import {
   defaultAdvancedFilters,
   filterRequestRows,
   type RequestAdvancedFilterValue,
+  type RequestSlaFilter,
 } from "@/components/staff/request-table-filters";
 import {
   TabBadgeLabel,
@@ -72,6 +73,12 @@ export function RequestTable({
   hideProjectFilter?: boolean;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // 从仪表盘 SLA 卡片带 ?sla= 参数进入时，初始化对应筛选，让落地列表与卡片计数一致
+  const [sla, setSla] = useState<RequestSlaFilter>(() => {
+    const value = searchParams.get("sla");
+    return value === "breached" || value === "at_risk" ? value : "ALL";
+  });
   const [status, setStatus] = useState<StatusFilter>("ALL");
   const { unread } = useUnreadNotifications();
   const [projectId, setProjectId] = useState("ALL");
@@ -91,8 +98,9 @@ export function RequestTable({
         customerKey,
         advanced: advancedFilters,
         keyword,
+        sla,
       }),
-    [advancedFilters, customerKey, keyword, projectId, requests, status],
+    [advancedFilters, customerKey, keyword, projectId, requests, sla, status],
   );
 
   const columns = useMemo<GridColDef<RequestListItem>[]>(
@@ -290,6 +298,25 @@ export function RequestTable({
           />
         </Stack>
       </Stack>
+
+      {sla !== "ALL" ? (
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+          <Typography variant="body2" color="text.secondary">
+            当前筛选
+          </Typography>
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            label={sla === "breached" ? "SLA 已超时" : "SLA 即将超时"}
+            onDelete={() => {
+              setSla("ALL");
+              // 同步清掉地址栏的 ?sla=，避免刷新后筛选“复活”
+              if (searchParams.get("sla")) router.replace("/staff/requests");
+            }}
+          />
+        </Stack>
+      ) : null}
 
       <Paper variant="outlined" sx={{ overflow: "hidden" }}>
         <Box

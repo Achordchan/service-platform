@@ -4,6 +4,7 @@ import {
   buildRequestFilterOptions,
   defaultAdvancedFilters,
   filterRequestRows,
+  matchesRequestSlaFilter,
 } from "@/components/staff/request-table-filters";
 
 const requests: RequestListItem[] = [
@@ -88,6 +89,45 @@ describe("服务请求筛选", () => {
     });
     expect(byAssignee.map((request) => request.id)).toEqual(["request-c"]);
     expect(unassigned.map((request) => request.id)).toEqual(["request-b"]);
+  });
+
+  it("SLA 筛选口径与仪表盘卡片一致：仅统计未闭合请求的超时/临近", () => {
+    const now = new Date("2026-07-18T12:00:00.000Z").getTime();
+    const breached = createRequest({
+      id: "sla-breached",
+      status: "PENDING",
+      dueAt: "2026-07-18T11:00:00.000Z", // 已过截止
+    });
+    const atRisk = createRequest({
+      id: "sla-at-risk",
+      status: "IN_PROGRESS",
+      dueAt: "2026-07-18T12:30:00.000Z", // 30 分钟后到期
+    });
+    const onTrack = createRequest({
+      id: "sla-on-track",
+      status: "PENDING",
+      dueAt: "2026-07-18T18:00:00.000Z", // 尚早
+    });
+    const closedButOverdue = createRequest({
+      id: "sla-closed",
+      status: "RESOLVED",
+      dueAt: "2026-07-18T11:00:00.000Z", // 已闭合，不计入
+    });
+    const noDueAt = createRequest({ id: "sla-none", status: "PENDING" });
+
+    expect(matchesRequestSlaFilter(breached, "breached", now)).toBe(true);
+    expect(matchesRequestSlaFilter(breached, "at_risk", now)).toBe(false);
+    expect(matchesRequestSlaFilter(atRisk, "at_risk", now)).toBe(true);
+    expect(matchesRequestSlaFilter(atRisk, "breached", now)).toBe(false);
+    expect(matchesRequestSlaFilter(onTrack, "breached", now)).toBe(false);
+    expect(matchesRequestSlaFilter(onTrack, "at_risk", now)).toBe(false);
+    expect(matchesRequestSlaFilter(closedButOverdue, "breached", now)).toBe(
+      false,
+    );
+    expect(matchesRequestSlaFilter(noDueAt, "breached", now)).toBe(false);
+    // ALL / 未设置：不施加 SLA 约束
+    expect(matchesRequestSlaFilter(closedButOverdue, "ALL", now)).toBe(true);
+    expect(matchesRequestSlaFilter(closedButOverdue, undefined, now)).toBe(true);
   });
 });
 
