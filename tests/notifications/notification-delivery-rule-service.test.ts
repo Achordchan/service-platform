@@ -56,6 +56,7 @@ beforeEach(() => {
       soundEnabled: true,
       emailEnabled: false,
       dingtalkEnabled: false,
+      wechatEnabled: false,
     },
   ]);
   mocks.pluginFindUnique.mockResolvedValue({
@@ -75,6 +76,7 @@ describe("通知规则状态驱动返回", () => {
           soundEnabled: true,
           emailEnabled: false,
           dingtalkEnabled: false,
+          wechatEnabled: false,
         },
       ],
     });

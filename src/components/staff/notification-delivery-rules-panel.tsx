@@ -25,13 +25,15 @@ type Channel =
   | "notificationEnabled"
   | "soundEnabled"
   | "emailEnabled"
-  | "dingtalkEnabled";
+  | "dingtalkEnabled"
+  | "wechatEnabled";
 
 const channelDefinitions = [
   ["notificationEnabled", "通知红点"],
   ["soundEnabled", "页面提示音"],
   ["emailEnabled", "邮件提醒"],
   ["dingtalkEnabled", "钉钉机器人"],
+  ["wechatEnabled", "微信消息"],
 ] as const satisfies ReadonlyArray<readonly [Channel, string]>;
 
 export function notificationRuleChannels(
@@ -51,6 +53,7 @@ function channelSupported(
 ) {
   if (channel === "emailEnabled") return rule.emailSupported;
   if (channel === "dingtalkEnabled") return rule.dingtalkSupported;
+  if (channel === "wechatEnabled") return rule.wechatSupported;
   return true;
 }
 
@@ -86,12 +89,14 @@ export function NotificationDeliveryRulesPanel({
               soundEnabled,
               emailEnabled,
               dingtalkEnabled,
+              wechatEnabled,
             }) => ({
               key,
               notificationEnabled,
               soundEnabled,
               emailEnabled,
               dingtalkEnabled,
+              wechatEnabled,
             }),
           ),
         }),
@@ -140,7 +145,8 @@ export function NotificationDeliveryRulesPanel({
       saved.notificationEnabled !== rule.notificationEnabled ||
       saved.soundEnabled !== rule.soundEnabled ||
       saved.emailEnabled !== rule.emailEnabled ||
-      saved.dingtalkEnabled !== rule.dingtalkEnabled
+      saved.dingtalkEnabled !== rule.dingtalkEnabled ||
+      saved.wechatEnabled !== rule.wechatEnabled
     );
   });
 

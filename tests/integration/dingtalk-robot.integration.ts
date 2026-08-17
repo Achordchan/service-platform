@@ -395,6 +395,7 @@ describe("钉钉机器人宿主接入", () => {
           soundEnabled: true,
           emailEnabled: true,
           dingtalkEnabled: false,
+          wechatEnabled: false,
         },
       ],
     });

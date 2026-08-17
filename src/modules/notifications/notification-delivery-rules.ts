@@ -69,6 +69,7 @@ export const updateNotificationDeliveryRulesSchema = z.object({
         soundEnabled: z.boolean(),
         emailEnabled: z.boolean(),
         dingtalkEnabled: z.boolean(),
+        wechatEnabled: z.boolean(),
       }),
     )
     .min(1)
@@ -121,6 +122,15 @@ export function findNotificationDeliveryRuleViolation(
       return {
         code: "DINGTALK_NOT_SUPPORTED",
         message: "该场景不支持钉钉机器人提醒",
+      } as const;
+    }
+    if (
+      !definitionByKey.get(rule.key)?.wechatSupported &&
+      rule.wechatEnabled
+    ) {
+      return {
+        code: "WECHAT_NOT_SUPPORTED",
+        message: "该场景不支持微信订阅消息提醒",
       } as const;
     }
   }
