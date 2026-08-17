@@ -21,7 +21,12 @@ export type SubscribeTemplateState = {
   persistent: boolean;
   /** 服务端剩余额度（后端额度接口未就绪时为 0） */
   remaining: number;
-  /** 长期授权或仍有额度即视为已订阅 */
+  /**
+   * 是否真正可收到提醒：以服务端剩余额度为准（remaining > 0），
+   * 与后端发送门槛（recordWechatSubscribeDelivery 的 grant.remaining）同源。
+   * persistent 只影响标签与静默补授权，不单独判定已订阅——否则「总是保持」
+   * 但额度已耗尽时会被误判为已开启，隐藏引导却一条都发不出去。
+   */
   subscribed: boolean;
 };
 
@@ -78,7 +83,8 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
         label: TEMPLATE_LABELS[template.templateKey] ?? template.templateKey,
         persistent,
         remaining,
-        subscribed: persistent || remaining > 0,
+        // 与后端发送门槛同源：仅剩余额度 > 0 才算真正能收到提醒
+        subscribed: remaining > 0,
       };
     },
   );
