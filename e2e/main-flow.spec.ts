@@ -857,13 +857,17 @@ test.describe("主流程冒烟", () => {
       .getByRole("button", { name: "回复并接手" })
       .click();
 
-    await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible();
+    // 「回复并接手」是全流程最重的一次写事务（回复+自动接手+通知投递），
+    // 慢 runner 高负载下端到端（落库→SSE 推送→渲染）可能超 15s，给实时投递更长窗口
+    await expect(customerPage.getByText("E2E 后台公开回复")).toBeVisible({
+      timeout: 30_000,
+    });
     await expect(
       customerPage
         .getByText("处理人", { exact: true })
         .locator("..")
         .getByText("李工程师", { exact: true }),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30_000 });
 
     const staffMessage = customerPage.getByText("E2E 后台公开回复");
     await staffMessage.hover();
