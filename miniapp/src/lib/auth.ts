@@ -2,6 +2,7 @@ import { eventSync } from "./events";
 import { ApiError, request } from "./request";
 import {
   beginAuthCheck,
+  cancelAuthWaiter,
   clearToken,
   markAuthenticated,
   markBindingRequired,
@@ -71,6 +72,14 @@ export function isLoggedIn(): boolean {
  */
 export function ensureLoggedIn(onReady?: () => void): boolean {
   return requireAuth(onReady);
+}
+
+/**
+ * 取消 ensureLoggedIn 挂起的 onReady：启动 SSE 的页面在 onHide/onUnload 调用，
+ * 避免校验完成后唤醒已隐藏页面的 activate（SSE 计数与监听器泄漏）。
+ */
+export function cancelPendingActivate(onReady: () => void) {
+  cancelAuthWaiter(onReady);
 }
 
 /**

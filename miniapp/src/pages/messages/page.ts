@@ -1,4 +1,4 @@
-import { ensureLoggedIn } from "../../lib/auth";
+import { ensureLoggedIn, cancelPendingActivate } from "../../lib/auth";
 import {
   listNotifications,
   markAllNotificationsRead,
@@ -21,33 +21,47 @@ Page({
     loadingMore: false,
   },
   boundEventHandler: null as ((events: Array<{ type: string }>) => void) | null,
+  // 校验中挂起的 activate；onHide/onUnload 需取消，避免隐藏后被唤醒启动 SSE
+  pendingActivate: null as (() => void) | null,
+  // 是否已真正 eventSync.start()：未启动就不得 stop()，否则会错减其他活跃页的计数
+  sseStarted: false,
 
   onLoad() {
     this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn(() => this.activate())) return;
+    const activate = () => this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
     this.activate();
   },
   activate() {
+    this.pendingActivate = null;
     ensureBadgeSync();
     if (this.boundEventHandler) {
       eventSync.on(this.boundEventHandler);
     }
     eventSync.start();
+    this.sseStarted = true;
     void this.reload();
   },
-  onHide() {
+  teardown() {
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
+    if (!this.sseStarted) return;
+    this.sseStarted = false;
     if (this.boundEventHandler) {
       eventSync.off(this.boundEventHandler);
     }
     eventSync.stop();
   },
+  onHide() {
+    this.teardown();
+  },
   onUnload() {
-    if (this.boundEventHandler) {
-      eventSync.off(this.boundEventHandler);
-    }
-    eventSync.stop();
+    this.teardown();
   },
   onRealtimeEvents(events: Array<{ type: string }>) {
     if (events.some((event) => event.type === "NOTIFICATION_CREATED")) {

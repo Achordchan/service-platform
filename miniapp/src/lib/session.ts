@@ -53,4 +53,9 @@ export function requireAuth(onReady?: () => void): boolean {
   return machine.requireAuth(onReady);
 }
 
+/** 页面 onHide/onUnload 取消挂起的 activate，避免隐藏后仍被唤醒启动 SSE */
+export function cancelAuthWaiter(onReady: () => void) {
+  machine.cancelWaiter(onReady);
+}
+
 export type { AuthState };

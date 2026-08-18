@@ -66,6 +66,19 @@ describe("AuthMachine 登录状态机", () => {
     expect(machine.getState()).toBe("binding_required");
   });
 
+  it("取消挂起的 waiter：页面隐藏后 setAuthenticated 不再唤醒它（防 SSE 泄漏）", () => {
+    const { machine } = makeMachine();
+    const hiddenPageActivate = vi.fn();
+    const visiblePageActivate = vi.fn();
+    machine.requireAuth(hiddenPageActivate);
+    machine.requireAuth(visiblePageActivate);
+    // 隐藏页在校验完成前 onHide 取消自己的 waiter
+    machine.cancelWaiter(hiddenPageActivate);
+    machine.setAuthenticated();
+    expect(hiddenPageActivate).not.toHaveBeenCalled();
+    expect(visiblePageActivate).toHaveBeenCalledTimes(1);
+  });
+
   it("重新登录后解锁单飞：可再次触发跳转", () => {
     const { machine, redirectToLogin } = makeMachine();
     machine.setAuthenticated();

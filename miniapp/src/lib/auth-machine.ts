@@ -85,6 +85,14 @@ export class AuthMachine {
     return false;
   }
 
+  /**
+   * 取消挂起的 onReady：页面在校验完成前被 onHide/onUnload 时调用，
+   * 避免已隐藏页面稍后被 flush 唤醒而启动 SSE（activePages 计数与监听器泄漏）。
+   */
+  cancelWaiter(onReady: () => void) {
+    this.readyWaiters.delete(onReady);
+  }
+
   private flushReady() {
     const waiters = [...this.readyWaiters];
     this.readyWaiters.clear();
