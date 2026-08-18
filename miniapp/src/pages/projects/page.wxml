@@ -1,6 +1,7 @@
 <import src="/components/states.wxml" />
 
 <view class="page">
+  <subscribe-banner />
   <view class="home-header">
     <view class="greeting">{{greeting}}</view>
     <view class="date-text">{{dateText}}</view>

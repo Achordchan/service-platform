@@ -162,7 +162,25 @@ export async function loginWithEmail(input: {
     auth: false,
   });
   if (probe.status === "SESSION_ISSUED") {
+    // 该微信已绑定某账号：微信身份是「一微信一账号」，此处必须校验签发的会话
+    // 与用户输入的邮箱一致，否则是「已绑其他账号」——不能静默把用户登进别的号。
     saveToken(probe.token);
+    let boundEmail = "";
+    try {
+      const me = await fetchMe();
+      boundEmail = me.user.email;
+    } catch {
+      // 拉取身份失败无法校验：会话已合法签发，放行避免误伤（弱网等边界）
+      return { alreadyBound: true };
+    }
+    if (boundEmail.trim().toLowerCase() !== input.email.trim().toLowerCase()) {
+      await logout();
+      throw new ApiError(0, {
+        code: "WECHAT_BOUND_TO_OTHER",
+        message:
+          "当前微信已绑定其他账号，无法用该邮箱登录。如需切换账号，请联系客服解绑后重试。",
+      });
+    }
     return { alreadyBound: true };
   }
   saveBindingTicket(probe.bindingTicket);

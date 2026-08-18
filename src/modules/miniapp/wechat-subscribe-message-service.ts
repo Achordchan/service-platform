@@ -197,6 +197,30 @@ const GRANT_REPORT_THROTTLE_MS = 60 * 1000;
 const GRANT_MAX_REMAINING = 30;
 
 /**
+ * 读取当前用户各订阅模板的剩余额度，供小程序展示真实订阅状态与顶部引导横幅。
+ * 与入队门槛（recordWechatSubscribeDelivery 里的 grant.remaining）同源：
+ * 无 grant 行视为 0，封顶 GRANT_MAX_REMAINING，保证前端判定与真实可发送额度一致。
+ */
+export async function listSubscribeGrants(
+  userId: string,
+): Promise<Array<{ templateKey: WechatTemplateKey; remaining: number }>> {
+  const rows = await prisma.wechatSubscribeGrant.findMany({
+    where: { userId },
+    select: { templateKey: true, remaining: true },
+  });
+  const remainingByKey = new Map(
+    rows.map((row) => [row.templateKey, row.remaining]),
+  );
+  return WECHAT_SUBSCRIBE_TEMPLATES.map((template) => ({
+    templateKey: template.templateKey,
+    remaining: Math.min(
+      Math.max(remainingByKey.get(template.templateKey) ?? 0, 0),
+      GRANT_MAX_REMAINING,
+    ),
+  }));
+}
+
+/**
  * 客户端上报 wx.requestSubscribeMessage 授权结果。
  * 上报只是「额度状态」而非权限凭证：同一模板 60s 内重复上报被节流，
  * 累计额度封顶；真实额度以微信发送结果修正（43101 未订阅时清零）。

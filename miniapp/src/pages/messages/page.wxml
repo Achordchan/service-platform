@@ -1,6 +1,7 @@
 <import src="/components/states.wxml" />
 
 <view class="page">
+  <subscribe-banner />
   <view class="toolbar">
     <view class="unread-hint text-secondary">
       {{totalUnread > 0 ? totalUnread + ' 条未读' : '消息都是已读状态'}}

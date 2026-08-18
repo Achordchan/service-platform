@@ -13,6 +13,7 @@ import {
   createMiniappSessionForCode,
 } from "@/modules/miniapp/wechat-binding-service";
 import {
+  listSubscribeGrants,
   reportSubscribeGrant,
   templateKeyForNotificationType,
 } from "@/modules/miniapp/wechat-subscribe-message-service";
@@ -329,6 +330,34 @@ describe("微信订阅消息投递", () => {
     const first = await reportSubscribeGrant(ownerAUserId, "REQUEST_STATUS");
     const second = await reportSubscribeGrant(ownerAUserId, "REQUEST_STATUS");
     expect(second.remaining).toBe(first.remaining);
+  });
+
+  it("listSubscribeGrants 返回全部模板额度，与 DB 同源", async () => {
+    // 先上报建行，再直改额度到确定值，避免 grant 行不存在时 UPDATE 落空
+    await reportSubscribeGrant(ownerAUserId, "PROJECT_UPDATE");
+    await ownerPool.query(
+      "UPDATE \"WechatSubscribeGrant\" SET remaining = 4 WHERE \"userId\" = $1 AND \"templateKey\" = 'PROJECT_UPDATE'",
+      [ownerAUserId],
+    );
+
+    const grants = await listSubscribeGrants(ownerAUserId);
+    // 始终覆盖三个正式模板，供前端合并判定
+    expect(grants.map((grant) => grant.templateKey).sort()).toEqual([
+      "PROJECT_UPDATE",
+      "REQUEST_REPLY",
+      "REQUEST_STATUS",
+    ]);
+    expect(
+      grants.find((grant) => grant.templateKey === "PROJECT_UPDATE")?.remaining,
+    ).toBe(4);
+    // 额度与 DB 行一致：逐一比对 REQUEST_STATUS
+    const dbStatus = await ownerPool.query<{ remaining: number }>(
+      'SELECT remaining FROM "WechatSubscribeGrant" WHERE "userId" = $1 AND "templateKey" = \'REQUEST_STATUS\'',
+      [ownerAUserId],
+    );
+    expect(
+      grants.find((grant) => grant.templateKey === "REQUEST_STATUS")?.remaining,
+    ).toBe(dbStatus.rows[0]?.remaining ?? 0);
   });
 
   it("卡在 PROCESSING 超过 15 分钟的投递会被重新捞起（僵尸回收）", async () => {

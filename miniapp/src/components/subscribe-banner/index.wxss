@@ -1,0 +1,64 @@
+.subscribe-banner {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin: 0 0 20rpx;
+  padding: 20rpx 24rpx;
+  border-radius: 20rpx;
+  background: var(--warning-soft);
+  border: 1rpx solid rgba(217, 139, 22, 0.24);
+}
+
+.subscribe-banner-icon {
+  flex-shrink: 0;
+}
+
+.subscribe-banner-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.subscribe-banner-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  color: #92590f;
+}
+
+.subscribe-banner-desc {
+  margin-top: 4rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: var(--warning);
+}
+
+.subscribe-banner-actions {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10rpx;
+}
+
+.subscribe-banner-enable {
+  padding: 10rpx 24rpx;
+  border-radius: 999rpx;
+  background: var(--warning);
+  color: #fff;
+  font-size: 24rpx;
+  text-align: center;
+}
+
+.subscribe-banner-enable-hover {
+  opacity: 0.85;
+}
+
+.subscribe-banner-ignore {
+  padding: 4rpx 24rpx;
+  color: var(--warning);
+  font-size: 22rpx;
+  text-align: center;
+}
+
+.subscribe-banner-ignore-hover {
+  opacity: 0.6;
+}
