@@ -1,4 +1,8 @@
 import { API_BASE_URL } from "../config";
+import { classifyRequestFailure } from "./net-error";
+import { handleUnauthorized } from "./session";
+
+export { clearToken } from "./session";
 
 export type ApiErrorShape = { code: string; message: string };
 
@@ -49,8 +53,9 @@ export function request<T>(
       success: (res) => {
         const body = res.data as ResponseBody<T> | undefined;
         if (res.statusCode === 401 && useAuth) {
-          clearToken();
-          wx.reLaunch({ url: "/pages/auth/login/page" });
+          // 并发 401 交给单飞处理：只清一次 token、只跳一次登录页；
+          // 本请求只返回统一的 UNAUTHORIZED，不再各自触发 reLaunch（避免打断在途请求）。
+          handleUnauthorized();
           reject(new ApiError(401, { code: "UNAUTHORIZED", message: "请重新登录" }));
           return;
         }
@@ -65,18 +70,12 @@ export function request<T>(
           ),
         );
       },
-      fail: () =>
-        reject(
-          new ApiError(0, {
-            code: "NETWORK_ERROR",
-            message: "网络不可用，请检查网络后重试",
-          }),
-        ),
+      // fail 精确分类：页面切换导致的 abort、超时、真实断网、其他错误各自不同文案，
+      // 不再把跳转 abort 统一显示成「网络不可用」。
+      fail: (err) => {
+        const info = classifyRequestFailure(err?.errMsg);
+        reject(new ApiError(0, info));
+      },
     });
   });
-}
-
-export function clearToken() {
-  wx.removeStorageSync("miniapp_token");
-  wx.removeStorageSync("miniapp_binding_ticket");
 }

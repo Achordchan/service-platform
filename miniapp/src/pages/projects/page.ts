@@ -31,7 +31,11 @@ Page({
     void this.load();
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    // 身份校验未完成时挂起 activate，校验通过后再启动业务请求
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     ensureBadgeSync();
     this.setData({ dateText: todayLabel() });
     void fetchMeCached()

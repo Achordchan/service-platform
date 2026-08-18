@@ -17,7 +17,10 @@ Page({
     lastLoginText: "",
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     ensureBadgeSync();
     void this.loadMe();
   },

@@ -1,5 +1,14 @@
 import { eventSync } from "./events";
-import { ApiError, clearToken, request } from "./request";
+import { ApiError, request } from "./request";
+import {
+  beginAuthCheck,
+  cancelAuthWaiter,
+  clearToken,
+  markAuthenticated,
+  markBindingRequired,
+  markUnauthenticated,
+  requireAuth,
+} from "./session";
 
 const TOKEN_KEY = "miniapp_token";
 const TICKET_KEY = "miniapp_binding_ticket";
@@ -35,6 +44,8 @@ export function saveToken(token: string) {
   wx.setStorageSync(TOKEN_KEY, token);
   wx.removeStorageSync(TICKET_KEY);
   clearCachedMe();
+  // 拿到会话即已登录：解锁跳转锁并置为已登录，放行挂起的业务加载
+  markAuthenticated();
   // 任何 token 变化（登录/绑定/被踢后重登）都意味着身份切换：重置事件游标，
   // 避免新账号从旧游标继续而跳过存量事件
   eventSync.reset();
@@ -52,11 +63,50 @@ export function isLoggedIn(): boolean {
   return Boolean(getToken());
 }
 
-/** 未登录时统一跳转登录页（Tab 页 onShow 调用） */
-export function ensureLoggedIn(): boolean {
-  if (isLoggedIn()) return true;
-  wx.reLaunch({ url: "/pages/auth/login/page" });
-  return false;
+/**
+ * 页面 onShow 门禁（Tab 页与详情页调用）。返回是否可以立即启动业务请求。
+ * - 已登录：返回 true，调用方立即加载
+ * - 校验中（启动首屏）：返回 false，并挂起 onReady，待校验通过后自动执行
+ * - 未绑定 / 正在跳转：返回 false，不启动业务请求，也不重复跳转
+ * - 未登录：单飞跳转登录页
+ */
+export function ensureLoggedIn(onReady?: () => void): boolean {
+  return requireAuth(onReady);
+}
+
+/**
+ * 取消 ensureLoggedIn 挂起的 onReady：启动 SSE 的页面在 onHide/onUnload 调用，
+ * 避免校验完成后唤醒已隐藏页面的 activate（SSE 计数与监听器泄漏）。
+ */
+export function cancelPendingActivate(onReady: () => void) {
+  cancelAuthWaiter(onReady);
+}
+
+/**
+ * 启动首屏身份校验（app.onLaunch 调用一次）。
+ * 校验完成前状态为 checking，业务请求不得启动（各页 onShow 挂起等待）。
+ * - 无本地 token：置未登录并跳登录页
+ * - token 有效：置已登录，放行挂起的加载
+ * - token 失效(401)：request 层单飞已清 token 并跳登录页
+ * - 弱网等无法确认：乐观置已登录，真失效由后续单飞 401 纠正
+ */
+export async function bootstrapAuth(): Promise<void> {
+  if (!getToken()) {
+    markUnauthenticated();
+    requireAuth();
+    return;
+  }
+  beginAuthCheck();
+  try {
+    await fetchMe();
+    markAuthenticated();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      // 401 已由 request.ts 单飞处理（clearToken + reLaunch），状态已置 redirecting
+      return;
+    }
+    markAuthenticated();
+  }
 }
 
 /**
@@ -104,7 +154,9 @@ export async function loginWithWechat(): Promise<LoginResult> {
   if (result.status === "SESSION_ISSUED") {
     saveToken(result.token);
   } else {
+    // 微信未绑定：进入账号验证态，业务请求（项目/工单/通知/Badge/SSE）不得启动
     saveBindingTicket(result.bindingTicket);
+    markBindingRequired();
   }
   return result;
 }
@@ -208,7 +260,19 @@ export async function ensureBindingTicket(): Promise<
     return { status: "ALREADY_BOUND" };
   }
   saveBindingTicket(probe.bindingTicket);
+  markBindingRequired();
   return { status: "READY" };
+}
+
+/**
+ * 绑定票据过期后重建：清旧票据，重新 wx.login + session 探测取新票据。
+ * 供绑定接口返回 BINDING_TICKET_INVALID 时调用，避免用户停留在持有失效票据的页面。
+ */
+export async function refreshBindingTicket(): Promise<
+  { status: "READY" } | { status: "ALREADY_BOUND" }
+> {
+  wx.removeStorageSync(TICKET_KEY);
+  return ensureBindingTicket();
 }
 
 /** 邮箱登录前的验证码发送（内部先确保有待绑定票据） */
@@ -254,6 +318,7 @@ export async function logout() {
   }
   clearToken();
   clearCachedMe();
+  markUnauthenticated();
   // 换号场景：旧游标对新账号无意义，重置避免跳过事件
   eventSync.reset();
 }

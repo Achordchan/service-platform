@@ -1,4 +1,4 @@
-import { ensureLoggedIn, fetchMeCached } from "../../lib/auth";
+import { ensureLoggedIn, fetchMeCached, cancelPendingActivate } from "../../lib/auth";
 import {
   getRequest,
   replyRequest,
@@ -72,6 +72,9 @@ Page({
   // 必须在 onLoad 里 bind 后再注册/注销
   boundEventHandler: null as ((events: Array<{ type: string; serviceRequestId: string | null }>) => void) | null,
   myUserId: "",
+  // 校验中挂起的 activate；未真正启动 SSE 前不得 stop()（配平计数）
+  pendingActivate: null as (() => void) | null,
+  sseStarted: false,
 
   onLoad(query: Record<string, string | undefined>) {
     this.setData({ requestId: query.id ?? "" });
@@ -87,33 +90,45 @@ Page({
       .catch(() => undefined);
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    const activate = () => this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
+    this.activate();
+  },
+  activate() {
+    this.pendingActivate = null;
     void this.load();
     // 活跃页面保持实时流：员工回复即时刷新（SSE，PRD §19）
     if (this.boundEventHandler) {
       eventSync.on(this.boundEventHandler);
     }
     eventSync.start();
+    this.sseStarted = true;
+  },
+  teardown() {
+    // 校验中挂起的 activate 需取消，避免隐藏后被唤醒启动 SSE；
+    // 未真正 start() 则不得 stop()，否则会错减其他活跃页的计数
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
+    if (this.sseStarted) {
+      this.sseStarted = false;
+      if (this.boundEventHandler) {
+        eventSync.off(this.boundEventHandler);
+      }
+      eventSync.stop();
+    }
+    if (this.markReadTimer) {
+      clearTimeout(this.markReadTimer);
+      this.markReadTimer = null;
+    }
   },
   onHide() {
-    if (this.boundEventHandler) {
-      eventSync.off(this.boundEventHandler);
-    }
-    eventSync.stop();
-    if (this.markReadTimer) {
-      clearTimeout(this.markReadTimer);
-      this.markReadTimer = null;
-    }
+    this.teardown();
   },
   onUnload() {
-    if (this.boundEventHandler) {
-      eventSync.off(this.boundEventHandler);
-    }
-    eventSync.stop();
-    if (this.markReadTimer) {
-      clearTimeout(this.markReadTimer);
-      this.markReadTimer = null;
-    }
+    this.teardown();
   },
   onPullDownRefresh() {
     void this.load().then(() => wx.stopPullDownRefresh());

@@ -28,7 +28,7 @@ Page({
     this.setData({ spaceId: query.id ?? "" });
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.load())) return;
     void this.load();
   },
   onPullDownRefresh() {
