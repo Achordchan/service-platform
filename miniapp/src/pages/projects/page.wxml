@@ -72,7 +72,7 @@
       </view>
 
       <view wx:if="{{item.staff.length > 0}}" class="hero-pm">
-        <text class="text-secondary">项目经理</text>
+        <text class="text-secondary">项目负责人</text>
         <text class="hero-pm-name">{{item.staff[0].user.name}}</text>
       </view>
       <view class="hero-footer text-secondary">更新于 {{item.updatedText}} · 点击查看详情</view>

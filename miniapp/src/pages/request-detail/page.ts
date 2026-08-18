@@ -10,6 +10,7 @@ import {
 } from "../../lib/api";
 import { ensureBadgeSync } from "../../lib/badge";
 import { eventSync } from "../../lib/events";
+import { pickAttachments } from "../../lib/pick-files";
 import {
   formatFileSize,
   REQUEST_STATUS_LABELS,
@@ -28,6 +29,7 @@ type ViewMessage = RequestMessage & {
   authorName: string;
   timeText: string;
   isMine: boolean;
+  isAdmin: boolean;
   bodyText: string;
   revoked: boolean;
   revokedText: string;
@@ -144,7 +146,9 @@ Page({
         event.type === "REQUEST_STATUS_CHANGED" ||
         event.type === "REQUEST_ASSIGNED" ||
         event.type === "REQUEST_UPDATED" ||
-        event.type === "NOTIFICATION_CREATED"
+        event.type === "NOTIFICATION_CREATED" ||
+        // 内容风控撤回/恢复：实时刷新才能立即显示「已被系统撤回」，无需手动下拉
+        event.type === "CONTENT_RISK_REVIEW_UPDATED"
       );
     };
     if (events.some(matches)) {
@@ -224,6 +228,8 @@ Page({
       authorName: message.author?.name ?? "系统",
       timeText: formatDateTime(message.createdAt),
       isMine: message.authorId !== null && message.authorId === this.myUserId,
+      // 对齐 Web：仅平台管理员消息加「管理员」标识
+      isAdmin: message.author?.platformRole === "PLATFORM_ADMIN",
       bodyText: htmlToText(message.body),
       revoked: message.contentRiskStatus === "REVOKED",
       // 文案对齐 Web：人工撤回带决策理由，自动撤回用通用原因
@@ -260,14 +266,31 @@ Page({
     this.setData({ replyText: event.detail.value });
   },
   onLongPressMessage(event: WechatMiniprogram.TouchEvent) {
-    const index = Number(event.currentTarget.dataset.index);
-    const message = this.data.messages[index];
-    if (!message || message.isSystem) return;
+    // 按消息 id 定位，避免下标错位；系统提示与已撤回内容无操作意义，直接忽略
+    const id = event.currentTarget.dataset.id as string;
+    const message = this.data.messages.find((item) => item.id === id);
+    if (!message || message.isSystem || message.revoked) return;
     wx.showActionSheet({
-      itemList: ["回复此消息"],
-      success: () => {
-        this.setData({ replyTarget: message });
+      itemList: ["回复此消息", "复制文本"],
+      success: (res) => {
+        if (res.tapIndex === 0) {
+          this.setData({ replyTarget: message });
+        } else if (res.tapIndex === 1) {
+          this.copyMessageText(message);
+        }
       },
+    });
+  },
+  copyMessageText(message: ViewMessage) {
+    const text = message.bodyText.trim();
+    if (!text) {
+      wx.showToast({ title: "没有可复制的文本", icon: "none" });
+      return;
+    }
+    // setClipboardData 成功会自带「已复制」系统提示，无需再 toast
+    wx.setClipboardData({
+      data: text,
+      fail: () => wx.showToast({ title: "复制失败", icon: "none" }),
     });
   },
   onCancelReplyTarget() {
@@ -278,24 +301,11 @@ Page({
       wx.showToast({ title: "最多 5 个附件", icon: "none" });
       return;
     }
-    try {
-      const chosen = await wx.chooseMessageFile({
-        count: 5 - this.data.replyFiles.length,
-        type: "file",
-      });
-      if (chosen.tempFiles.length === 0) return;
-      this.setData({
-        replyFiles: [
-          ...this.data.replyFiles,
-          ...chosen.tempFiles.map((file) => ({
-            localPath: file.path,
-            fileName: file.name || "附件",
-          })),
-        ],
-      });
-    } catch {
-      // 用户取消
-    }
+    const chosen = await pickAttachments(5 - this.data.replyFiles.length);
+    if (chosen.length === 0) return;
+    this.setData({
+      replyFiles: [...this.data.replyFiles, ...chosen],
+    });
   },
   onRemoveReplyFile(event: WechatMiniprogram.TouchEvent) {
     const index = Number(event.currentTarget.dataset.index);

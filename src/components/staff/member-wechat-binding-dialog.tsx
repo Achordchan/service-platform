@@ -54,6 +54,17 @@ export function MemberWechatBindingDialog({
     expiresAt: string;
   } | null>(null);
   const [unconfirming, setUnconfirming] = useState(false);
+  // 弹窗在不同成员间复用且不卸载：切换成员必须清掉上一个成员刚生成的明文码，
+  // 否则会把 A 的绑定码显示在 B 的弹窗里（跨客户串码）。
+  // React 官方「记录上次值、渲染期重置」模式，避免在 effect 里 setState。
+  const activeMembershipId = target?.membershipId ?? null;
+  const [trackedMembershipId, setTrackedMembershipId] =
+    useState(activeMembershipId);
+  if (trackedMembershipId !== activeMembershipId) {
+    setTrackedMembershipId(activeMembershipId);
+    setIssuedCode(null);
+    setUnconfirming(false);
+  }
   const statusUrl = target
     ? `/api/v1/admin/customer-spaces/${customerSpaceId}/members/${target.membershipId}/wechat-binding`
     : "";

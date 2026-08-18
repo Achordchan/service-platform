@@ -41,7 +41,7 @@
         wx:key="id"
         id="msg-{{item.id}}"
         class="msg-row {{item.isMine ? 'msg-mine' : ''}}"
-        data-index="{{index}}"
+        data-id="{{item.id}}"
         bindlongpress="onLongPressMessage"
       >
         <view class="bubble {{item.isMine ? 'bubble-mine' : ''}} {{item.isSystem ? 'bubble-system' : ''}}">
@@ -53,7 +53,11 @@
           </view>
 
           <block wx:else>
-            <view class="msg-author">{{item.authorName}} · {{item.timeText}}</view>
+            <view class="msg-author">
+              <text class="msg-author-name">{{item.authorName}}</text>
+              <text wx:if="{{item.isAdmin}}" class="msg-admin-badge">管理员</text>
+              <text class="msg-author-time"> · {{item.timeText}}</text>
+            </view>
             <view wx:if="{{item.replyPreview}}" class="reply-quote">
               <view class="reply-quote-label">回复</view>
               <view class="reply-quote-body">{{item.replyPreview}}</view>
@@ -123,7 +127,10 @@
       <text class="risk-notice-text">请勿发送联系方式或引导站外沟通、交易。平台无法保障站外沟通与交易安全，由此产生的风险和损失由相关方自行承担。</text>
     </view>
     <view wx:if="{{replyTarget}}" class="reply-target">
-      <view class="reply-target-text">回复 {{replyTarget.authorName}}</view>
+      <view class="reply-target-main">
+        <view class="reply-target-text">回复 {{replyTarget.authorName}}</view>
+        <view class="reply-target-preview">{{replyTarget.bodyText}}</view>
+      </view>
       <view class="reply-target-cancel" hover-class="hover-plain" bindtap="onCancelReplyTarget">取消</view>
     </view>
     <view wx:if="{{replyFiles.length > 0}}" class="reply-files">

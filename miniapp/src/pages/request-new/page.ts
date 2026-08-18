@@ -6,6 +6,7 @@ import {
   type ProjectSummary,
 } from "../../lib/api";
 import { escapeHtml, genMutationKey } from "../../lib/format";
+import { pickAttachments } from "../../lib/pick-files";
 
 // 下拉展示中文标签，提交时映射回英文枚举
 const PRIORITY_OPTIONS = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
@@ -94,24 +95,11 @@ Page({
       wx.showToast({ title: "最多 5 个附件", icon: "none" });
       return;
     }
-    try {
-      const chosen = await wx.chooseMessageFile({
-        count: 5 - this.data.attachments.length,
-        type: "file",
-      });
-      if (chosen.tempFiles.length === 0) return;
-      this.setData({
-        attachments: [
-          ...this.data.attachments,
-          ...chosen.tempFiles.map((file) => ({
-            localPath: file.path,
-            fileName: file.name || "附件",
-          })),
-        ],
-      });
-    } catch {
-      // 用户取消选择
-    }
+    const chosen = await pickAttachments(5 - this.data.attachments.length);
+    if (chosen.length === 0) return;
+    this.setData({
+      attachments: [...this.data.attachments, ...chosen],
+    });
   },
   onRemoveAttachment(event: WechatMiniprogram.TouchEvent) {
     const index = Number(event.currentTarget.dataset.index);

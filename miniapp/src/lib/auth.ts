@@ -188,6 +188,29 @@ export async function loginWithEmail(input: {
   return { alreadyBound: false, user: result.user };
 }
 
+/**
+ * 确保存在待绑定票据：绑定码/邮箱绑定都要求先有票据。
+ * 无票据时用 wx.login 探测建立；若该微信已绑定账号则直接登入并返回 ALREADY_BOUND，
+ * 调用方据此跳过绑定码直接进入（无需再输码）。
+ */
+export async function ensureBindingTicket(): Promise<
+  { status: "READY" } | { status: "ALREADY_BOUND" }
+> {
+  if (getBindingTicket()) return { status: "READY" };
+  const code = await wechatCode();
+  const probe = await request<LoginResult>("/api/miniapp/auth/session", {
+    method: "POST",
+    data: { code },
+    auth: false,
+  });
+  if (probe.status === "SESSION_ISSUED") {
+    saveToken(probe.token);
+    return { status: "ALREADY_BOUND" };
+  }
+  saveBindingTicket(probe.bindingTicket);
+  return { status: "READY" };
+}
+
 /** 邮箱登录前的验证码发送（内部先确保有待绑定票据） */
 export async function sendLoginOtp(email: string): Promise<void> {
   let ticket = getBindingTicket();
