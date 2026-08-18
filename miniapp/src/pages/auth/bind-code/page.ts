@@ -1,4 +1,15 @@
-import { bindWithCode, getPendingWebLogin } from "../../../lib/auth";
+import {
+  bindWithCode,
+  ensureBindingTicket,
+  getPendingWebLogin,
+} from "../../../lib/auth";
+
+/** 绑定/已登录后的落地页：扫码进入的回跳网页登录确认页，否则落到项目 Tab */
+function landing(): string {
+  return getPendingWebLogin()
+    ? "/pages/web-login/page"
+    : "/pages/projects/page";
+}
 
 Page({
   data: {
@@ -18,17 +29,32 @@ Page({
     }
     this.setData({ submitting: true, error: "" });
     try {
+      // 绑定码校验需要待绑定票据：进页面可能尚未做过微信探测，这里先确保建立。
+      // 若该微信已绑定账号则无需绑定码，直接登入。
+      const ticket = await ensureBindingTicket();
+      if (ticket.status === "ALREADY_BOUND") {
+        wx.showToast({ title: "该微信已绑定账号，已直接登录", icon: "none" });
+        wx.reLaunch({ url: landing() });
+        return;
+      }
       await bindWithCode(code);
-      // 扫码进入登录的用户绑定成功后回跳网页登录确认页，否则落到项目 Tab
-      wx.reLaunch({
-        url: getPendingWebLogin()
-          ? "/pages/web-login/page"
-          : "/pages/projects/page",
-      });
+      wx.reLaunch({ url: landing() });
     } catch (error) {
-      this.setData({
-        error: error instanceof Error ? error.message : "绑定失败，请重试",
-      });
+      const errorCode = (error as { code?: string }).code;
+      let message = error instanceof Error ? error.message : "绑定失败，请重试";
+      if (errorCode === "BINDING_CODE_INVALID") {
+        message = "绑定码无效或已过期，请联系管理员重新生成";
+      } else if (
+        errorCode === "BINDING_TICKET_INVALID" ||
+        errorCode === "BINDING_GONE"
+      ) {
+        message = "登录状态已过期，请退出小程序重新进入后再试";
+      } else if (errorCode === "VALIDATION_ERROR") {
+        message = "绑定码格式不正确，请核对后重试";
+      } else if (errorCode === "WECHAT_LOGIN_FAILED") {
+        message = "微信登录失败，请重试";
+      }
+      this.setData({ error: message });
     } finally {
       this.setData({ submitting: false });
     }

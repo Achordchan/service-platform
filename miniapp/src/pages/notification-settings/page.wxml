@@ -57,13 +57,13 @@
               size="32rpx"
               color="#12b76a"
             />
-            <text>{{item.subscribed ? (item.persistent ? '长期开启' : '已开启') : '未开启'}}</text>
+            <text>{{item.subscribed ? '长期开启' : '未开启'}}</text>
           </view>
         </view>
 
         <view wx:if="{{wechatAllSubscribed}}" class="wechat-all-on">
           <t-icon name="check-circle-filled" size="36rpx" color="#12b76a" />
-          <text>微信提醒已全部开启</text>
+          <text>微信提醒已长期开启</text>
         </view>
         <button
           wx:else
@@ -82,7 +82,7 @@
           bindtap="onSubscribeReminders"
         >再次授权</view>
         <view class="text-secondary wechat-hint">
-          微信限制每次授权仅接收一条提醒，勾选「总是保持以上选择」可长期开启。
+          微信一次性授权每次仅接收一条提醒，且无法查询是否用完；开启时勾选「总是保持以上选择」才会长期开启并在此显示为已开启。
         </view>
       </block>
 

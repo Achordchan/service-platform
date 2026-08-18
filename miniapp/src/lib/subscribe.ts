@@ -17,15 +17,17 @@ export type SubscribeTemplateState = {
   templateKey: WechatTemplateKey;
   templateId: string;
   label: string;
-  /** 用户勾选「总是保持」的长期授权（wx.getSetting 可读） */
+  /** 用户勾选「总是保持」的长期授权（wx.getSetting 实时可读，关闭即变 false） */
   persistent: boolean;
-  /** 服务端剩余额度（后端额度接口未就绪时为 0） */
+  /** 服务端剩余可发额度（一次性订阅每次发送消耗，发送遇 43101 归零） */
   remaining: number;
   /**
-   * 是否真正可收到提醒：以服务端剩余额度为准（remaining > 0），
-   * 与后端发送门槛（recordWechatSubscribeDelivery 的 grant.remaining）同源。
-   * persistent 只影响标签与静默补授权，不单独判定已订阅——否则「总是保持」
-   * 但额度已耗尽时会被误判为已开启，隐藏引导却一条都发不出去。
+   * 是否确认已开启：长期授权（persistent）且仍有可发额度（remaining>0），二者缺一不可。
+   * - 仅信 remaining：用户在微信「设置-订阅消息」里手动关闭后，后端并不知情、
+   *   remaining 停在旧值，会误报已开启（用户反馈的 bug）；persistent 由 wx.getSetting
+   *   实时读取，关闭后立即 false，纠正这一点。
+   * - 仅信 persistent：一次性额度用完（remaining=0）后服务端不再发、也不触发 43101
+   *   归零，会永远显示已开启却收不到；叠加 remaining>0 可在耗尽时回落并提示重新开启，自愈。
    */
   subscribed: boolean;
 };
@@ -83,8 +85,8 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
         label: TEMPLATE_LABELS[template.templateKey] ?? template.templateKey,
         persistent,
         remaining,
-        // 与后端发送门槛同源：仅剩余额度 > 0 才算真正能收到提醒
-        subscribed: remaining > 0,
+        // 长期授权(可确认关闭) 且 仍有可发额度(耗尽自愈)，二者兼备才算确认已开启
+        subscribed: persistent && remaining > 0,
       };
     },
   );

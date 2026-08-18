@@ -21,7 +21,7 @@
           <view class="meta-value">{{project.serviceType.name}}</view>
         </view>
         <view class="meta-item">
-          <view class="meta-label">项目经理</view>
+          <view class="meta-label">项目负责人</view>
           <view class="meta-value">
             {{project.staff.length > 0 ? project.staff[0].user.name : '待指派'}}
           </view>

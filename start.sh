@@ -6,7 +6,8 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 RUNTIME_DIR="$ROOT_DIR/.data/local-runtime"
 LOG_FILE="$RUNTIME_DIR/web.log"
 WORKER_LOG_FILE="$RUNTIME_DIR/worker.log"
-HOST="${HOST:-127.0.0.1}"
+# 默认对局域网开放，真机调试可直接 ./start.sh；只想回环用 HOST=127.0.0.1 ./start.sh
+HOST="${HOST:-0.0.0.0}"
 worker_pid=""
 web_pid=""
 
@@ -80,7 +81,9 @@ select_node_24
 
 [[ "$PORT" =~ ^[0-9]+$ ]] || fail "PORT 必须是数字。"
 (( PORT >= 1 && PORT <= 65535 )) || fail "PORT 必须在 1 到 65535 之间。"
-[[ "$HOST" == "127.0.0.1" || "$HOST" == "localhost" ]] || fail "HOST 只允许使用 127.0.0.1 或 localhost。"
+# 默认仅回环，安全；真机调试时用 HOST=0.0.0.0 ./start.sh 对局域网开放，手机方可连本机
+[[ "$HOST" == "127.0.0.1" || "$HOST" == "localhost" || "$HOST" == "0.0.0.0" ]] \
+  || fail "HOST 只允许使用 127.0.0.1、localhost 或 0.0.0.0（真机调试）。"
 
 command -v pnpm >/dev/null 2>&1 || fail "未找到 pnpm。"
 command -v lsof >/dev/null 2>&1 || fail "未找到 lsof。"
@@ -166,6 +169,14 @@ export BETTER_AUTH_URL="$LOCAL_APP_URL"
 export MAIL_INLINE_WORKER=false
 
 printf '\n本地服务将在前台运行： %s\n' "$LOCAL_APP_URL"
+if [[ "$HOST" == "0.0.0.0" ]]; then
+  lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
+  if [[ -n "$lan_ip" ]]; then
+    printf '真机调试：手机（同一 WiFi）请求 http://%s:%s ，把小程序 DEV_API_BASE_URL 指到这里。\n' "$lan_ip" "$PORT"
+  else
+    printf '真机调试：已对局域网开放，但未探测到局域网 IP，请手动查看本机 IP。\n'
+  fi
+fi
 printf '按 Ctrl+C 或关闭当前终端即可停止。\n'
 printf 'Web 日志：%s\n' "$LOG_FILE"
 printf '后台任务日志：%s\n\n' "$WORKER_LOG_FILE"
