@@ -46,7 +46,10 @@ Page({
     });
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     ensureBadgeSync();
     if (this.data.projects.length === 0) {
       void this.loadProjects();

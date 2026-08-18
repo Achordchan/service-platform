@@ -29,7 +29,7 @@
         <text>邮箱登录</text>
       </view>
     </view>
-    <view class="foot-hint">首次使用微信登录需验证已有客户账号</view>
+    <view class="foot-hint">首次登录需验证已有服务账号，验证成功后当前微信将自动绑定，以后可直接微信登录</view>
   </block>
 
   <!-- 邮箱登录视图 -->
@@ -37,7 +37,7 @@
     <view class="login-card">
       <view wx:if="{{needsBinding}}" class="bind-tip">
         <t-icon name="info-circle" size="30rpx" color="#1677ff" />
-        <text>当前微信尚未绑定账号，邮箱验证通过后将自动绑定，下次可直接一键登录</text>
+        <text>当前微信尚未绑定账号，请使用已有服务账号完成验证，验证成功后会自动绑定当前微信，下次可直接微信登录</text>
       </view>
 
       <view class="form-label">登录邮箱</view>

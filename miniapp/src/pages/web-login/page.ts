@@ -37,7 +37,10 @@ Page({
     });
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     if (this.data.pendingPayload && !this.data.result && !this.data.confirming) {
       // 已登录且票据在手，回跳暂存使命完成，清除以免影响后续普通登录
       clearPendingWebLogin();

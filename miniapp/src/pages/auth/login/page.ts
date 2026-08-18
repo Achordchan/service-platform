@@ -3,6 +3,7 @@ import {
   loginWithEmail,
   sendLoginOtp,
   getPendingWebLogin,
+  refreshBindingTicket,
 } from "../../../lib/auth";
 
 type EmailMode = "password" | "otp";
@@ -157,6 +158,10 @@ Page({
       } else if (code === "WECHAT_BOUND_TO_OTHER") {
         message =
           "当前微信已绑定其他账号，无法用该邮箱登录。如需切换账号，请联系客服解绑后重试。";
+      } else if (code === "BINDING_TICKET_INVALID") {
+        // 待绑定票据 10 分钟过期：后台静默重建新票据，用户重试即可，不显示网络错误
+        message = "登录验证已过期，请重新验证账号。";
+        void refreshBindingTicket().catch(() => undefined);
       }
       this.setData({ error: message });
     } finally {

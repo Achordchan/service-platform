@@ -25,7 +25,7 @@ Page({
     subscribing: false,
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.load())) return;
     void this.load();
   },
   onRetry() {

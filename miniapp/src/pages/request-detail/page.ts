@@ -87,7 +87,10 @@ Page({
       .catch(() => undefined);
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     void this.load();
     // 活跃页面保持实时流：员工回复即时刷新（SSE，PRD §19）
     if (this.boundEventHandler) {

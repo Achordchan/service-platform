@@ -2,6 +2,7 @@ import {
   bindWithCode,
   ensureBindingTicket,
   getPendingWebLogin,
+  refreshBindingTicket,
 } from "../../../lib/auth";
 
 /** 绑定/已登录后的落地页：扫码进入的回跳网页登录确认页，否则落到项目 Tab */
@@ -48,7 +49,9 @@ Page({
         errorCode === "BINDING_TICKET_INVALID" ||
         errorCode === "BINDING_GONE"
       ) {
-        message = "登录状态已过期，请退出小程序重新进入后再试";
+        // 票据 10 分钟过期：后台静默重建新票据，用户重试即可
+        message = "登录验证已过期，请重新验证账号后重试。";
+        void refreshBindingTicket().catch(() => undefined);
       } else if (errorCode === "VALIDATION_ERROR") {
         message = "绑定码格式不正确，请核对后重试";
       } else if (errorCode === "WECHAT_LOGIN_FAILED") {

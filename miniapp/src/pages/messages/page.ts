@@ -26,7 +26,10 @@ Page({
     this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn()) return;
+    if (!ensureLoggedIn(() => this.activate())) return;
+    this.activate();
+  },
+  activate() {
     ensureBadgeSync();
     if (this.boundEventHandler) {
       eventSync.on(this.boundEventHandler);
