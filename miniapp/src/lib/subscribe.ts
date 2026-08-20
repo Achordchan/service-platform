@@ -5,7 +5,10 @@ import {
   type SubscribeTemplateConfig,
   type WechatTemplateKey,
 } from "./api";
-import { selectTopUpTargets } from "./subscribe-topup";
+import {
+  isQuotaSnapshotStale,
+  selectTopUpTargets,
+} from "./subscribe-topup";
 
 // 订阅模板的中文名，用于设置页与引导文案（config 接口只回 key/id）
 const TEMPLATE_LABELS: Record<WechatTemplateKey, string> = {
@@ -69,6 +72,31 @@ function getSubscriptionsSetting(): Promise<Record<string, string>> {
   });
 }
 
+// ── 额度快照 ──
+// 点击回调里没时间再发请求，只能读缓存；快照连同读取时刻一起记，过期后不可再当真。
+
+let cachedTemplates: SubscribeTemplateState[] = [];
+/** 额度快照的读取时刻（0 表示无有效快照） */
+let quotaReadAt = 0;
+/** 最近一次拉起订阅授权的时刻，静默续额据此冷却 */
+let lastTopUpAt = 0;
+let hydrating = false;
+
+function applyCachedRemaining(
+  templateKey: WechatTemplateKey,
+  remaining: number,
+) {
+  cachedTemplates = cachedTemplates.map((template) =>
+    template.templateKey === templateKey
+      ? {
+          ...template,
+          remaining,
+          subscribed: isSubscribed(template.persistent, remaining),
+        }
+      : template,
+  );
+}
+
 /**
  * 汇总订阅真实状态：合并「已配置模板」「服务端剩余额度」「微信长期授权」。
  * 额度接口或 config 出错都降级为不阻断（configured=false / 空），调用方据此隐藏入口。
@@ -105,6 +133,8 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   ).length;
   // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
   cachedTemplates = templates;
+  // 拉取失败时 templates 为空：不标记为有效快照，让下次 onShow / 点击重试
+  quotaReadAt = templates.length > 0 ? Date.now() : 0;
   return {
     configured,
     templates,
@@ -143,6 +173,13 @@ export async function requestSubscribe(
       accepted += 1;
     }
   }
+  if (accepted > 0) {
+    // 横幅/设置页的显式授权同样占掉了服务端 60s 的上报节流窗口：不刷新冷却的话，
+    // 紧接着的静默续额会白拉一次微信额度、服务端却记不上（Codex P2）。
+    lastTopUpAt = Date.now();
+    // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
+    // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
+  }
   return accepted;
 }
 
@@ -155,23 +192,21 @@ export async function requestSubscribe(
  * 悄悄补额度——这就是下面这套的用途。个人开发者申请不到长期订阅模板，只能这样续。
  */
 
-/** 最近一次 fetchSubscribeState 的结果；点击回调里没时间再发请求，只能读缓存 */
-let cachedTemplates: SubscribeTemplateState[] = [];
-let lastTopUpAt = 0;
-
-function applyCachedRemaining(
-  templateKey: WechatTemplateKey,
-  remaining: number,
-) {
-  cachedTemplates = cachedTemplates.map((template) =>
-    template.templateKey === templateKey
-      ? {
-          ...template,
-          remaining,
-          subscribed: isSubscribed(template.persistent, remaining),
-        }
-      : template,
-  );
+/**
+ * 确保额度快照可用且新鲜；fire-and-forget，不阻塞调用方，失败下次重试。
+ * 订阅消息会把用户直接冷启到工单详情页（服务端 page 就指向该页），那条路径上
+ * 没有顶部横幅、没人写过缓存——不主动 hydrate 的话，详情页里的静默续额永远空转，
+ * 而这恰恰是刚被那条通知用掉最后一点额度、最需要续的时候（Codex P1）。
+ */
+export function ensureSubscribeStateCached(): void {
+  if (hydrating) return;
+  if (!isQuotaSnapshotStale(Date.now(), quotaReadAt)) return;
+  hydrating = true;
+  void fetchSubscribeState()
+    .catch(() => undefined)
+    .then(() => {
+      hydrating = false;
+    });
 }
 
 /**
@@ -179,11 +214,18 @@ function applyCachedRemaining(
  * 只续 persistent（已勾「总是保持以上选择」）的模板：混入未长期授权的模板会弹窗打扰。
  * 必须在点击回调的同步段调用——wx.requestSubscribeMessage 要求用户手势，await 之后就丢了，
  * 所以本函数全程不 await、也不返回 Promise，调用方直接 `topUpSubscribeQuota()` 即可。
- * 未登录 / 模板未配置时 cachedTemplates 为空，天然不会触发。
+ * 未登录 / 模板未配置时快照为空，天然不会触发。
  */
 export function topUpSubscribeQuota(): void {
+  // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow
+  ensureSubscribeStateCached();
   const now = Date.now();
-  const targets = selectTopUpTargets(cachedTemplates, now, lastTopUpAt);
+  const targets = selectTopUpTargets(
+    cachedTemplates,
+    now,
+    lastTopUpAt,
+    quotaReadAt,
+  );
   if (targets.length === 0) return;
   lastTopUpAt = now;
   // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢

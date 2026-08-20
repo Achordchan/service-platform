@@ -9,13 +9,15 @@
 // 服务端 reportSubscribeGrant 对同一模板节流 60s。客户端冷却取 90s 留余量，
 // 保证每次静默拉起都真能记上额度，而不是白拉一次被服务端节流丢掉。
 export const TOPUP_COOLDOWN_MS = 90 * 1000;
-// 与服务端 GRANT_MAX_REMAINING 对齐：已封顶就不必再拉起
+// 与服务端 GRANT_MAX_REMAINING 对齐：额度快照可信时，已封顶就不必再拉起
 export const TOPUP_MAX_REMAINING = 30;
+// 额度快照的信任期：投递扣减只发生在服务端，快照放久了就会偏高
+export const QUOTA_TRUST_MS = 5 * 60 * 1000;
 
 export type TopUpCandidate = {
   /** 用户勾了「总是保持以上选择」，wx.requestSubscribeMessage 才会静默返回 accept */
   persistent: boolean;
-  /** 服务端记账的剩余可发条数 */
+  /** 服务端记账的剩余可发条数（快照，见 quotaReadAt） */
   remaining: number;
 };
 
@@ -23,16 +25,26 @@ export type TopUpCandidate = {
  * 挑出本次该续额的模板；返回空数组表示这次点击不拉起授权。
  * - 冷却未过：跳过，避免每次点击都拉一遍还被服务端节流吃掉；
  * - 未长期授权（persistent=false）：必须排除，混进 tmplIds 会弹窗打扰用户；
- * - 额度已封顶：拉了也记不上，省掉。
+ * - 额度已封顶：仅当快照新鲜时才据此跳过。投递扣减只发生在服务端、不会回传，
+ *   一个过期的 30 会把长期停留的详情页永久挡在续额之外，所以过期就当未知、照续，
+ *   服务端封顶后回传真实额度，快照随之重新对齐。
  */
 export function selectTopUpTargets<T extends TopUpCandidate>(
   templates: readonly T[],
   now: number,
   lastTopUpAt: number,
+  quotaReadAt: number,
 ): T[] {
   if (now - lastTopUpAt < TOPUP_COOLDOWN_MS) return [];
+  const quotaFresh = now - quotaReadAt < QUOTA_TRUST_MS;
   return templates.filter(
     (template) =>
-      template.persistent && template.remaining < TOPUP_MAX_REMAINING,
+      template.persistent &&
+      (!quotaFresh || template.remaining < TOPUP_MAX_REMAINING),
   );
+}
+
+/** 额度快照是否已过信任期，需要重新拉一次真实额度 */
+export function isQuotaSnapshotStale(now: number, quotaReadAt: number): boolean {
+  return now - quotaReadAt >= QUOTA_TRUST_MS;
 }

@@ -24,7 +24,10 @@ import {
   type RequestPriorityValue,
 } from "../../lib/format";
 import { ApiError } from "../../lib/request";
-import { topUpSubscribeQuota } from "../../lib/subscribe";
+import {
+  ensureSubscribeStateCached,
+  topUpSubscribeQuota,
+} from "../../lib/subscribe";
 
 type ViewMessage = RequestMessage & {
   authorName: string;
@@ -98,6 +101,9 @@ Page({
   },
   activate() {
     this.pendingActivate = null;
+    // 订阅消息可直接冷启到本页，此时额度快照还没人写过；先补上，
+    // 否则 onSend 的静默续额是空转（详情页没有顶部引导横幅）
+    ensureSubscribeStateCached();
     void this.load();
     // 活跃页面保持实时流：员工回复即时刷新（SSE，PRD §19）
     if (this.boundEventHandler) {
