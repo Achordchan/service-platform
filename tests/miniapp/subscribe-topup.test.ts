@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   isQuotaSnapshotStale,
   selectTopUpTargets,
+  shouldHydrateQuota,
+  HYDRATE_RETRY_MS,
   QUOTA_TRUST_MS,
   TOPUP_COOLDOWN_MS,
   TOPUP_MAX_REMAINING,
@@ -109,5 +111,27 @@ describe("额度快照的信任期", () => {
 
   it("信任期长于续额冷却：不会每次续额都顺带重拉一次状态", () => {
     expect(QUOTA_TRUST_MS).toBeGreaterThan(TOPUP_COOLDOWN_MS);
+  });
+});
+
+describe("订阅状态的重拉时机", () => {
+  const STALE = NOW - QUOTA_TRUST_MS;
+
+  it("快照过期就重拉（冷启到工单详情页时 quotaReadAt=0）", () => {
+    expect(shouldHydrateQuota(NOW, 0, 0)).toBe(true);
+    expect(shouldHydrateQuota(NOW, STALE, 0)).toBe(true);
+  });
+
+  it("快照仍新鲜时不重拉", () => {
+    expect(shouldHydrateQuota(NOW, NOW, 0)).toBe(false);
+  });
+
+  it("快照始终无效时按重试间隔限流：旧基础库读不到 subscriptionsSetting 也不会每次点击都多打两个接口", () => {
+    expect(shouldHydrateQuota(NOW, 0, NOW - HYDRATE_RETRY_MS + 1)).toBe(false);
+    expect(shouldHydrateQuota(NOW, 0, NOW - HYDRATE_RETRY_MS)).toBe(true);
+  });
+
+  it("重试间隔短于快照信任期：无效快照要比过期快照更快被重拉", () => {
+    expect(HYDRATE_RETRY_MS).toBeLessThan(QUOTA_TRUST_MS);
   });
 });

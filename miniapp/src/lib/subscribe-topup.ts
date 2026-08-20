@@ -44,7 +44,21 @@ export function selectTopUpTargets<T extends TopUpCandidate>(
   );
 }
 
+// 快照无效时的重拉间隔。旧基础库可能永远读不到 subscriptionsSetting，
+// 快照会一直判为无效——没有这个下限，每次点击都要多打两个接口。
+export const HYDRATE_RETRY_MS = 30 * 1000;
+
 /** 额度快照是否已过信任期，需要重新拉一次真实额度 */
 export function isQuotaSnapshotStale(now: number, quotaReadAt: number): boolean {
   return now - quotaReadAt >= QUOTA_TRUST_MS;
+}
+
+/** 是否该重拉订阅状态：快照过期，且距上次尝试已过重试间隔 */
+export function shouldHydrateQuota(
+  now: number,
+  quotaReadAt: number,
+  lastHydrateAt: number,
+): boolean {
+  if (!isQuotaSnapshotStale(now, quotaReadAt)) return false;
+  return now - lastHydrateAt >= HYDRATE_RETRY_MS;
 }

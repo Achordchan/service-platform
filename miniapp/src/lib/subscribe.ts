@@ -6,8 +6,8 @@ import {
   type WechatTemplateKey,
 } from "./api";
 import {
-  isQuotaSnapshotStale,
   selectTopUpTargets,
+  shouldHydrateQuota,
 } from "./subscribe-topup";
 
 // 订阅模板的中文名，用于设置页与引导文案（config 接口只回 key/id）
@@ -69,8 +69,14 @@ function getSubscriptionsSetting(): Promise<SubscriptionsSettingResult> {
       withSubscriptions: true,
       success: (res) => {
         const setting = res.subscriptionsSetting;
+        // 成功回调里也可能不带这个字段（如不支持 withSubscriptions 的旧基础库）：
+        // 那是「没读到」而不是「没授权」，只有 mainSwitch 才是确凿的全关证据
+        if (!setting) {
+          resolve({ ok: false });
+          return;
+        }
         // mainSwitch 关闭是「读到了」的真实状态：全部未持久授权
-        if (!setting || setting.mainSwitch === false) {
+        if (setting.mainSwitch === false) {
           resolve({ ok: true, itemSettings: {} });
           return;
         }
@@ -92,6 +98,8 @@ let cachedTemplates: SubscribeTemplateState[] = [];
 let quotaReadAt = 0;
 /** 最近一次拉起订阅授权的时刻，静默续额据此冷却 */
 let lastTopUpAt = 0;
+/** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
+let lastHydrateAt = 0;
 let hydrating = false;
 
 function applyCachedRemaining(
@@ -125,10 +133,13 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   const remainingByKey = new Map(
     grantsResult.grants.map((grant) => [grant.templateKey, grant.remaining]),
   );
-  // getSetting 读失败时沿用上一份已知授权（须在覆盖 cachedTemplates 之前取）
+  // getSetting 读失败时沿用上一份已知授权（须在覆盖 cachedTemplates 之前取）。
+  // 必须按 templateId 存：微信的授权表就是以模板 ID 为键的，按 templateKey 存
+  // 会在运维轮换模板 ID 时把旧 ID 的「已长期授权」错安到新 ID 上，
+  // 于是静默续额会对着一个从未授权的模板弹窗。
   const knownPersistent = new Map(
     cachedTemplates.map((template) => [
-      template.templateKey,
+      template.templateId,
       template.persistent,
     ]),
   );
@@ -136,7 +147,7 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
     (template) => {
       const persistent = settingResult.ok
         ? settingResult.itemSettings[template.templateId] === "accept"
-        : (knownPersistent.get(template.templateKey) ?? false);
+        : (knownPersistent.get(template.templateId) ?? false);
       const remaining = remainingByKey.get(template.templateKey) ?? 0;
       return {
         templateKey: template.templateKey,
@@ -224,7 +235,9 @@ export async function requestSubscribe(
  */
 export function ensureSubscribeStateCached(): void {
   if (hydrating) return;
-  if (!isQuotaSnapshotStale(Date.now(), quotaReadAt)) return;
+  const now = Date.now();
+  if (!shouldHydrateQuota(now, quotaReadAt, lastHydrateAt)) return;
+  lastHydrateAt = now;
   hydrating = true;
   void fetchSubscribeState()
     .catch(() => undefined)
