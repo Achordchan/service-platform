@@ -5,6 +5,7 @@ import {
   type SubscribeTemplateConfig,
   type WechatTemplateKey,
 } from "./api";
+import { selectTopUpTargets } from "./subscribe-topup";
 
 // 订阅模板的中文名，用于设置页与引导文案（config 接口只回 key/id）
 const TEMPLATE_LABELS: Record<WechatTemplateKey, string> = {
@@ -40,6 +41,14 @@ export type SubscribeState = {
   /** 未订阅的模板数量 */
   missingCount: number;
 };
+
+/**
+ * 是否确认已开启：长期授权且仍有可发额度（判定理由见 SubscribeTemplateState.subscribed）。
+ * fetchSubscribeState 与静默续额回写共用这一处，避免两边的判定漂移。
+ */
+function isSubscribed(persistent: boolean, remaining: number): boolean {
+  return persistent && remaining > 0;
+}
 
 // wx.getSetting 的持久授权状态：itemSettings 以 templateId 为键
 function getSubscriptionsSetting(): Promise<Record<string, string>> {
@@ -86,7 +95,7 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
         persistent,
         remaining,
         // 长期授权(可确认关闭) 且 仍有可发额度(耗尽自愈)，二者兼备才算确认已开启
-        subscribed: persistent && remaining > 0,
+        subscribed: isSubscribed(persistent, remaining),
       };
     },
   );
@@ -94,6 +103,8 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   const missingCount = templates.filter(
     (template) => !template.subscribed,
   ).length;
+  // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
+  cachedTemplates = templates;
   return {
     configured,
     templates,
@@ -125,11 +136,58 @@ export async function requestSubscribe(
   let accepted = 0;
   for (const template of templates) {
     if (result[template.templateId] === "accept") {
-      await reportSubscribeGrant(template.templateKey).catch(() => undefined);
+      const granted = await reportSubscribeGrant(template.templateKey).catch(
+        () => null,
+      );
+      if (granted) applyCachedRemaining(template.templateKey, granted.remaining);
       accepted += 1;
     }
   }
   return accepted;
+}
+
+// ── 静默续额 ──
+
+/**
+ * 一次性订阅每次 accept 只够发一条：工单回复量最大、额度最先见底，用户会看到
+ * 「未开启」却从没取消过授权（用户实测反馈的 bug）。而勾过「总是保持以上选择」
+ * 后 wx.requestSubscribeMessage 静默返回 accept、不弹窗，可以在任意用户点击里
+ * 悄悄补额度——这就是下面这套的用途。个人开发者申请不到长期订阅模板，只能这样续。
+ */
+
+/** 最近一次 fetchSubscribeState 的结果；点击回调里没时间再发请求，只能读缓存 */
+let cachedTemplates: SubscribeTemplateState[] = [];
+let lastTopUpAt = 0;
+
+function applyCachedRemaining(
+  templateKey: WechatTemplateKey,
+  remaining: number,
+) {
+  cachedTemplates = cachedTemplates.map((template) =>
+    template.templateKey === templateKey
+      ? {
+          ...template,
+          remaining,
+          subscribed: isSubscribed(template.persistent, remaining),
+        }
+      : template,
+  );
+}
+
+/**
+ * 在用户点击回调里静默补订阅额度。
+ * 只续 persistent（已勾「总是保持以上选择」）的模板：混入未长期授权的模板会弹窗打扰。
+ * 必须在点击回调的同步段调用——wx.requestSubscribeMessage 要求用户手势，await 之后就丢了，
+ * 所以本函数全程不 await、也不返回 Promise，调用方直接 `topUpSubscribeQuota()` 即可。
+ * 未登录 / 模板未配置时 cachedTemplates 为空，天然不会触发。
+ */
+export function topUpSubscribeQuota(): void {
+  const now = Date.now();
+  const targets = selectTopUpTargets(cachedTemplates, now, lastTopUpAt);
+  if (targets.length === 0) return;
+  lastTopUpAt = now;
+  // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢
+  void requestSubscribe(targets).catch(() => undefined);
 }
 
 // ── 顶部引导横幅的忽略状态与首屏引导标记 ──

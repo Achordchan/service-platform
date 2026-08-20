@@ -8,6 +8,7 @@ import {
 import { eventSync } from "../../lib/events";
 import { ensureBadgeSync } from "../../lib/badge";
 import { formatRelative, notificationTargetTab } from "../../lib/format";
+import { topUpSubscribeQuota } from "../../lib/subscribe";
 
 Page({
   data: {
@@ -136,6 +137,7 @@ Page({
     }
   },
   async onTapItem(event: WechatMiniprogram.TouchEvent) {
+    topUpSubscribeQuota();
     const index = Number(event.currentTarget.dataset.index);
     const item = this.data.items[index];
     if (!item) return;

@@ -7,6 +7,7 @@ import {
 } from "../../lib/api";
 import { escapeHtml, genMutationKey } from "../../lib/format";
 import { pickAttachments } from "../../lib/pick-files";
+import { topUpSubscribeQuota } from "../../lib/subscribe";
 
 // 下拉展示中文标签，提交时映射回英文枚举
 const PRIORITY_OPTIONS = ["LOW", "NORMAL", "HIGH", "URGENT"] as const;
@@ -129,6 +130,7 @@ Page({
       this.setData({ error: "请描述问题" });
       return;
     }
+    topUpSubscribeQuota();
     this.setData({ submitting: true, error: "" });
     try {
       // 弱网防重复：同一 mutationKey 重试不会产生第二个工单

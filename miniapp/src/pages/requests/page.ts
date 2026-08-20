@@ -1,6 +1,7 @@
 import { ensureLoggedIn } from "../../lib/auth";
 import { ensureBadgeSync } from "../../lib/badge";
 import { listProjects, listRequests, type ServiceRequestSummary } from "../../lib/api";
+import { topUpSubscribeQuota } from "../../lib/subscribe";
 import {
   REQUEST_STATUS_LABELS,
   REQUEST_STATUS_TONES,
@@ -101,9 +102,12 @@ Page({
     void this.reload();
   },
   onNewRequest() {
+    topUpSubscribeQuota();
     wx.navigateTo({ url: "/pages/request-new/page" });
   },
   onOpenRequest(event: WechatMiniprogram.TouchEvent) {
+    // 列表点击是最高频的用户手势，用它给一次性订阅额度续命（已长期授权时无感）
+    topUpSubscribeQuota();
     const requestId = event.currentTarget.dataset.id as string;
     wx.navigateTo({ url: `/pages/request-detail/page?id=${requestId}` });
   },

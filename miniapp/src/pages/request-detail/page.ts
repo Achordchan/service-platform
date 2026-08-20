@@ -24,6 +24,7 @@ import {
   type RequestPriorityValue,
 } from "../../lib/format";
 import { ApiError } from "../../lib/request";
+import { topUpSubscribeQuota } from "../../lib/subscribe";
 
 type ViewMessage = RequestMessage & {
   authorName: string;
@@ -335,6 +336,8 @@ Page({
       wx.showToast({ title: "请输入回复内容或添加附件", icon: "none" });
       return;
     }
+    // 客户刚回复完，紧接着就会有客服回复的提醒——在这个手势里把额度续上
+    topUpSubscribeQuota();
     this.setData({ sending: true });
     const mutationKey = this.replyMutationKey;
     // 对齐 Web 端：纯附件回复的正文写「附件：文件名列表」，否则服务端 EMPTY_MESSAGE 拒绝
