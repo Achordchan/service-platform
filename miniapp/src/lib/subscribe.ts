@@ -53,21 +53,33 @@ function isSubscribed(persistent: boolean, remaining: number): boolean {
   return persistent && remaining > 0;
 }
 
-// wx.getSetting 的持久授权状态：itemSettings 以 templateId 为键
-function getSubscriptionsSetting(): Promise<Record<string, string>> {
+/**
+ * wx.getSetting 的读取结果。**读失败必须与「读到了但没授权」区分开**：
+ * 前者不能拿来断言用户没授权，否则一次瞬时失败就会把所有模板判成未授权
+ * ——横幅平白弹出，静默续额也会整段停摆（Codex P2）。
+ */
+type SubscriptionsSettingResult =
+  | { ok: true; itemSettings: Record<string, string> }
+  | { ok: false };
+
+// 持久授权状态：itemSettings 以 templateId 为键
+function getSubscriptionsSetting(): Promise<SubscriptionsSettingResult> {
   return new Promise((resolve) => {
     wx.getSetting({
       withSubscriptions: true,
       success: (res) => {
         const setting = res.subscriptionsSetting;
-        // mainSwitch 关闭时视为全部未持久授权
+        // mainSwitch 关闭是「读到了」的真实状态：全部未持久授权
         if (!setting || setting.mainSwitch === false) {
-          resolve({});
+          resolve({ ok: true, itemSettings: {} });
           return;
         }
-        resolve((setting.itemSettings ?? {}) as Record<string, string>);
+        resolve({
+          ok: true,
+          itemSettings: (setting.itemSettings ?? {}) as Record<string, string>,
+        });
       },
-      fail: () => resolve({}),
+      fail: () => resolve({ ok: false }),
     });
   });
 }
@@ -99,10 +111,11 @@ function applyCachedRemaining(
 
 /**
  * 汇总订阅真实状态：合并「已配置模板」「服务端剩余额度」「微信长期授权」。
- * 额度接口或 config 出错都降级为不阻断（configured=false / 空），调用方据此隐藏入口。
+ * 额度接口或 config 出错都降级为不阻断（configured=false / 空），调用方据此隐藏入口；
+ * 授权状态读失败则沿用上一份已知值，并把本次结果标记为无效快照等待重试。
  */
 export async function fetchSubscribeState(): Promise<SubscribeState> {
-  const [config, grantsResult, itemSettings] = await Promise.all([
+  const [config, grantsResult, settingResult] = await Promise.all([
     getSubscribeMessageConfig().catch(() => ({
       templates: [] as SubscribeTemplateConfig[],
     })),
@@ -112,9 +125,18 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   const remainingByKey = new Map(
     grantsResult.grants.map((grant) => [grant.templateKey, grant.remaining]),
   );
+  // getSetting 读失败时沿用上一份已知授权（须在覆盖 cachedTemplates 之前取）
+  const knownPersistent = new Map(
+    cachedTemplates.map((template) => [
+      template.templateKey,
+      template.persistent,
+    ]),
+  );
   const templates: SubscribeTemplateState[] = config.templates.map(
     (template) => {
-      const persistent = itemSettings[template.templateId] === "accept";
+      const persistent = settingResult.ok
+        ? settingResult.itemSettings[template.templateId] === "accept"
+        : (knownPersistent.get(template.templateKey) ?? false);
       const remaining = remainingByKey.get(template.templateKey) ?? 0;
       return {
         templateKey: template.templateKey,
@@ -133,8 +155,10 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   ).length;
   // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
   cachedTemplates = templates;
-  // 拉取失败时 templates 为空：不标记为有效快照，让下次 onShow / 点击重试
-  quotaReadAt = templates.length > 0 ? Date.now() : 0;
+  // 有效快照 = 拉到了模板 且 授权状态确实读到了。
+  // 任一不成立都不标记新鲜，让下次 onShow / 点击立刻重试，
+  // 而不是把一份残缺快照当真捂满整个信任期。
+  quotaReadAt = templates.length > 0 && settingResult.ok ? Date.now() : 0;
   return {
     configured,
     templates,
