@@ -312,8 +312,17 @@ export async function requestSubscribe(
   for (const template of templates) {
     const status = result[template.templateId];
     if (status === "accept") {
+      // 这个模板本就有一份没记上的旧额度（pending）时，横幅/设置页的显式订阅又拿到了
+      // 新的一份。reportGrantOrPend 成功会顺手 clearPendingGrant，等于拿「新额度记上了」
+      // 冒充把旧额度也结清——但两次 accept 撞在服务端 60s 节流里只记得上一份，旧的那份
+      // 就永久丢了（Codex P2）。记住它本来 pending，成功后重新挂回，让旧额度留到下一次
+      // 手势（过了节流）再补报，而不是被这次成功吞掉。
+      const wasPending = pendingGrantReports.has(template.templateKey);
       const reported = await reportGrantOrPend(template.templateKey);
-      if (reported) accepted += 1;
+      if (reported) {
+        accepted += 1;
+        if (wasPending) markPendingGrant(template.templateKey);
+      }
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
@@ -436,6 +445,28 @@ export function topUpSubscribeQuota(): void {
  */
 export function invalidateSubscribeAuthorization(): void {
   quotaReadAt = 0;
+}
+
+/**
+ * 账号切换（登录/绑定/换号后重登）时清空续额状态。冷却与 pending 都存在全局
+ * storage、不按账号隔离，模块级内存状态又会跨 reLaunch 残留（reLaunch 不重启 JS）：
+ * 换账号后旧账号的 pending 会用新账号的 token 补报，把额度记到别人头上、并删掉原
+ * 用户的补报；继承来的冷却也会压掉新账号的正常续额（Codex P2）。持久化与内存一起清。
+ * 由 auth.saveToken 注入触发（app.ts 接线），避免 auth ← subscribe 的循环依赖。
+ * 同一账号的重登也会走到这里，最多丢一份尚未补报的旧额度（remaining 少记 1，偏安全
+ * 方向，不会把未授权的消息发出去），与 eventSync.reset 在 saveToken 里的取舍一致。
+ */
+export function resetSubscribeState(): void {
+  cachedTemplates = [];
+  quotaReadAt = 0;
+  lastHydrateAt = 0;
+  lastTopUpAt = 0;
+  lastTopUpHydrated = false;
+  pendingGrantReports.clear();
+  pendingGrantReportsHydrated = false;
+  inFlightGrantReports.clear();
+  wx.removeStorageSync(LAST_TOPUP_KEY);
+  wx.removeStorageSync(PENDING_GRANTS_KEY);
 }
 
 // ── 顶部引导横幅的忽略状态与首屏引导标记 ──

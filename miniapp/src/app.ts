@@ -1,11 +1,17 @@
-import { bootstrapAuth } from "./lib/auth";
+import { bootstrapAuth, setIdentitySwitchHandler } from "./lib/auth";
 import { eventSync } from "./lib/events";
-import { invalidateSubscribeAuthorization } from "./lib/subscribe";
+import {
+  invalidateSubscribeAuthorization,
+  resetSubscribeState,
+} from "./lib/subscribe";
 
 let leftForeground = false;
 
 App({
   onLaunch() {
+    // 账号切换时清空续额状态（在此接线，避免 auth ← subscribe 循环依赖）。
+    // 登录/绑定都在 onLaunch 之后发生，注册早于任何 saveToken。
+    setIdentitySwitchHandler(resetSubscribeState);
     // 监听注册不依赖登录态：首次登录后的新用户同样需要断网恢复补拉
     wx.onNetworkStatusChange((result) => {
       if (result.isConnected) {

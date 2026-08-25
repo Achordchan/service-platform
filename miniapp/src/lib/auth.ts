@@ -40,6 +40,15 @@ export function getToken(): string {
   return (wx.getStorageSync(TOKEN_KEY) as string) || "";
 }
 
+/**
+ * 身份切换时要连带清理的副作用（订阅续额状态等）。由 app.ts 注入，
+ * 避免 auth ← subscribe 的循环依赖（subscribe → api → auth.getToken）。
+ */
+let onIdentitySwitch: (() => void) | null = null;
+export function setIdentitySwitchHandler(handler: () => void) {
+  onIdentitySwitch = handler;
+}
+
 export function saveToken(token: string) {
   wx.setStorageSync(TOKEN_KEY, token);
   wx.removeStorageSync(TICKET_KEY);
@@ -49,6 +58,8 @@ export function saveToken(token: string) {
   // 任何 token 变化（登录/绑定/被踢后重登）都意味着身份切换：重置事件游标，
   // 避免新账号从旧游标继续而跳过存量事件
   eventSync.reset();
+  // 同理清空续额状态：冷却/pending 是全局存储，不清会把旧账号的额度记到新账号头上（Codex P2）
+  onIdentitySwitch?.();
 }
 
 export function getBindingTicket(): string {
