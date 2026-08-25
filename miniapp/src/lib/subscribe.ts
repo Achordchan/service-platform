@@ -115,6 +115,12 @@ const inFlightGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
 let lastHydrateAt = 0;
 let hydrating = false;
+/**
+ * 身份代际：每次换账号（resetSubscribeState）自增。补报是 fire-and-forget，
+ * POST 在途时若换了账号，回调必须凭这个代际识别出「这是旧账号的结果」并整体作废，
+ * 否则会把旧账号的额度写进新账号状态（Codex P2）。
+ */
+let stateGeneration = 0;
 
 function getLastTopUpAt(): number {
   if (!lastTopUpHydrated) {
@@ -308,6 +314,9 @@ export async function requestSubscribe(
     }
     throw err;
   }
+  // 显式订阅前先 hydrate：冷启后 pending 只在 storage 里，不先灌进内存的话下面
+  // wasPending 的 .has() 会漏读，旧额度会被这次成功清掉且不再挂回（Codex P2）
+  hydratePendingGrantReports();
   let accepted = 0;
   for (const template of templates) {
     const status = result[template.templateId];
@@ -341,9 +350,13 @@ export async function requestSubscribe(
 }
 
 async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolean> {
+  const gen = stateGeneration;
   inFlightGrantReports.add(templateKey);
   try {
     const granted = await reportSubscribeGrant(templateKey).catch(() => null);
+    // POST 在途时换了账号：这次结果属于旧账号，任何回写都会污染新账号，整体作废（Codex P2）。
+    // in-flight 也不在此清：resetSubscribeState 已整体 clear，误删会动到新账号的同名 key。
+    if (gen !== stateGeneration) return false;
     if (granted) {
       applyCachedRemaining(templateKey, granted.remaining);
       clearPendingGrant(templateKey);
@@ -358,7 +371,8 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     markPendingGrant(templateKey);
     return false;
   } finally {
-    inFlightGrantReports.delete(templateKey);
+    // 仅同账号才清 in-flight：换账号后 reset 已清空，别误删新账号刚加的同名 key
+    if (gen === stateGeneration) inFlightGrantReports.delete(templateKey);
   }
 }
 
@@ -457,6 +471,8 @@ export function invalidateSubscribeAuthorization(): void {
  * 方向，不会把未授权的消息发出去），与 eventSync.reset 在 saveToken 里的取舍一致。
  */
 export function resetSubscribeState(): void {
+  // 先自增代际：在途的旧账号补报回调据此整体作废，不再回写新账号状态（Codex P2）
+  stateGeneration += 1;
   cachedTemplates = [];
   quotaReadAt = 0;
   lastHydrateAt = 0;
