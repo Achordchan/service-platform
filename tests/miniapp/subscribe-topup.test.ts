@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   isQuotaSnapshotStale,
+  selectPendingGrantReports,
   selectTopUpTargets,
   shouldHydrateQuota,
   HYDRATE_RETRY_MS,
@@ -131,5 +132,19 @@ describe("订阅状态的重拉时机", () => {
 
   it("重试间隔短于快照信任期：无效快照要比过期快照更快被重拉", () => {
     expect(HYDRATE_RETRY_MS).toBeLessThan(QUOTA_TRUST_MS);
+  });
+});
+
+describe("额度上报失败后的补报", () => {
+  it("只挑出待补报的模板，不把其他模板卷进来", () => {
+    expect(
+      keys(
+        selectPendingGrantReports([REPLY, STATUS, PROJECT], new Set(["REQUEST_STATUS"])),
+      ),
+    ).toEqual(["REQUEST_STATUS"]);
+  });
+
+  it("没有待补报时返回空，调用方据此不发 POST", () => {
+    expect(selectPendingGrantReports([REPLY, STATUS], new Set())).toEqual([]);
   });
 });

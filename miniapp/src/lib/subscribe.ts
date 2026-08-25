@@ -6,6 +6,7 @@ import {
   type WechatTemplateKey,
 } from "./api";
 import {
+  selectPendingGrantReports,
   selectTopUpTargets,
   shouldHydrateQuota,
 } from "./subscribe-topup";
@@ -98,6 +99,8 @@ let cachedTemplates: SubscribeTemplateState[] = [];
 let quotaReadAt = 0;
 /** 最近一次拉起订阅授权的时刻，静默续额据此冷却 */
 let lastTopUpAt = 0;
+/** 微信已 accept、额度 POST 却失败、等待下次手势补报的模板 */
+const pendingGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
 let lastHydrateAt = 0;
 let hydrating = false;
@@ -248,24 +251,15 @@ export async function requestSubscribe(
     throw err;
   }
   let accepted = 0;
-  let grantReportFailed = false;
   for (const template of templates) {
     const status = result[template.templateId];
     if (status === "accept") {
-      const granted = await reportSubscribeGrant(template.templateKey).catch(
-        () => null,
-      );
-      if (granted) {
-        applyCachedRemaining(template.templateKey, granted.remaining);
-        accepted += 1;
-      } else {
-        // 微信已经 accept，但额度没记上：不能按成功刷新冷却，
-        // 否则 90s 内再也补不上，投递闸门也用不到这次额度（Codex P2）
-        grantReportFailed = true;
-      }
+      const reported = await reportGrantOrPend(template.templateKey);
+      if (reported) accepted += 1;
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
+      pendingGrantReports.delete(template.templateKey);
       applyCachedPersistent(template.templateKey, false);
     }
   }
@@ -276,11 +270,21 @@ export async function requestSubscribe(
     // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
     // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
   }
-  if (grantReportFailed && accepted === 0) {
-    // 微信 accept 了但额度一个都没记上：让外层回滚冷却，下一个手势立刻重试
-    throw new Error("subscribe grant report failed");
-  }
   return accepted;
+}
+
+async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolean> {
+  const granted = await reportSubscribeGrant(templateKey).catch(() => null);
+  if (granted) {
+    applyCachedRemaining(templateKey, granted.remaining);
+    pendingGrantReports.delete(templateKey);
+    return true;
+  }
+  // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
+  // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
+  // 走 pending 队列，不被这次冷却挡住（Codex P2）。
+  pendingGrantReports.add(templateKey);
+  return false;
 }
 
 // ── 静默续额 ──
@@ -322,6 +326,16 @@ export function topUpSubscribeQuota(): void {
   // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow；
   // 本手势会因快照过期而放行不了（见 selectTopUpTargets），刷新完成后的下一次点击恢复
   ensureSubscribeStateCached();
+  const pending = selectPendingGrantReports(
+    cachedTemplates,
+    pendingGrantReports,
+  );
+  if (pending.length > 0) {
+    // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却
+    for (const template of pending) {
+      void reportGrantOrPend(template.templateKey);
+    }
+  }
   const now = Date.now();
   const targets = selectTopUpTargets(
     cachedTemplates,
@@ -337,6 +351,15 @@ export function topUpSubscribeQuota(): void {
   void requestSubscribe(targets).catch(() => {
     if (lastTopUpAt === now) lastTopUpAt = 0;
   });
+}
+
+/**
+ * 小程序从后台回到前台时作废授权快照。用户可能刚在微信「设置-订阅消息」里
+ * 关掉了某项，缓存里还是 persistent=true；不重读的话下一次手势会弹窗（Codex P2）。
+ * 额度本身仍可信，但授权与额度同属一份快照，只能整份作废，等下次手势 hydrate。
+ */
+export function invalidateSubscribeAuthorization(): void {
+  quotaReadAt = 0;
 }
 
 // ── 顶部引导横幅的忽略状态与首屏引导标记 ──

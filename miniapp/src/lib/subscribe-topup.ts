@@ -15,6 +15,7 @@ export const TOPUP_MAX_REMAINING = 30;
 export const QUOTA_TRUST_MS = 5 * 60 * 1000;
 
 export type TopUpCandidate = {
+  templateKey: string;
   /** 用户勾了「总是保持以上选择」，wx.requestSubscribeMessage 才会静默返回 accept */
   persistent: boolean;
   /** 服务端记账的剩余可发条数（快照，见 quotaReadAt） */
@@ -45,6 +46,18 @@ export function selectTopUpTargets<T extends TopUpCandidate>(
     (template) =>
       template.persistent && template.remaining < TOPUP_MAX_REMAINING,
   );
+}
+
+/**
+ * 微信已经 accept、额度 POST 却失败的模板：下一次手势只补报，不再拉起授权。
+ * 服务端 60s 节流对「没记上的那次」不生效，所以这里不走 90s 冷却。
+ */
+export function selectPendingGrantReports<T extends TopUpCandidate>(
+  templates: readonly T[],
+  pendingKeys: ReadonlySet<string>,
+): T[] {
+  if (pendingKeys.size === 0) return [];
+  return templates.filter((template) => pendingKeys.has(template.templateKey));
 }
 
 // 快照无效时的重拉间隔。旧基础库可能永远读不到 subscriptionsSetting，
