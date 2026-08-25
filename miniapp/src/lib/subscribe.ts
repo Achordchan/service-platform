@@ -114,7 +114,12 @@ let pendingGrantReportsHydrated = false;
 const inFlightGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
 let lastHydrateAt = 0;
-let hydrating = false;
+/**
+ * 正在进行 hydrate 的快照代际（-1 表示没有在途）。用代际而非布尔：换账号/作废会
+ * bump hydrateGeneration，此时陈旧的在途 fetch 结果反正会被写守卫丢弃，不能拿它挡住
+ * 本代际的重拉；陈旧完成也不得清掉新 fetch 的守卫（Codex P2）。
+ */
+let hydratingGeneration = -1;
 /**
  * 身份代际：每次换账号（resetSubscribeState）自增。补报是 fire-and-forget，
  * POST 在途时若换了账号，回调必须凭这个代际识别出「这是旧账号的结果」并整体作废，
@@ -420,15 +425,20 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
  * 而这恰恰是刚被那条通知用掉最后一点额度、最需要续的时候（Codex P1）。
  */
 export function ensureSubscribeStateCached(): void {
-  if (hydrating) return;
+  // 只在「当前代际已有在途 hydrate」时才跳过：陈旧代际的在途 fetch 结果反正会被丢弃，
+  // 换账号/作废后不能拿它挡住本代际的重拉，否则从设置返回后要等旧 fetch 完成、再等下
+  // 一次手势才能续额，这段窗口 quotaReadAt=0 续不了额（Codex P2）
+  if (hydratingGeneration === hydrateGeneration) return;
   const now = Date.now();
   if (!shouldHydrateQuota(now, quotaReadAt, lastHydrateAt)) return;
   lastHydrateAt = now;
-  hydrating = true;
+  const gen = hydrateGeneration;
+  hydratingGeneration = gen;
   void fetchSubscribeState()
     .catch(() => undefined)
     .then(() => {
-      hydrating = false;
+      // 仅当没有更新的代际接管在途标记时才清空，避免陈旧完成清掉新 fetch 的守卫
+      if (hydratingGeneration === gen) hydratingGeneration = -1;
     });
 }
 
