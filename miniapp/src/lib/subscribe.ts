@@ -121,6 +121,13 @@ let hydrating = false;
  * 否则会把旧账号的额度写进新账号状态（Codex P2）。
  */
 let stateGeneration = 0;
+/**
+ * 快照代际：换账号（reset）与从微信设置返回（invalidate）都自增。fetchSubscribeState
+ * 是异步的，若它跨越了一次作废才回来，无条件回写会把刚清掉的快照又填回并标新鲜——
+ * 新账号用上旧账号的额度、或过期的 persistent 又被信任 5 分钟而弹窗（Codex P2）。
+ * 与 stateGeneration 分开：本代际在 onShow 也自增，不能牵连补报回写的作废判定。
+ */
+let hydrateGeneration = 0;
 
 function getLastTopUpAt(): number {
   if (!lastTopUpHydrated) {
@@ -209,6 +216,9 @@ type GrantsResult =
  * 授权或额度读失败则沿用上一份已知值，并把本次结果标记为无效快照等待重试。
  */
 export async function fetchSubscribeState(): Promise<SubscribeState> {
+  // 记下发起时的快照代际：await 期间若发生换账号或 onShow 作废，回来就丢弃回写，
+  // 只把结果返回给调用方渲染，不污染供静默续额取用的模块缓存（Codex P2）
+  const gen = hydrateGeneration;
   const [config, grantsResult, settingResult] = await Promise.all([
     getSubscribeMessageConfig().catch(() => ({
       templates: [] as SubscribeTemplateConfig[],
@@ -257,16 +267,20 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   const missingCount = templates.filter(
     (template) => !template.subscribed,
   ).length;
-  // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
-  cachedTemplates = templates;
-  // 有效快照 = 拉到了模板 且 授权与额度都确实读到了。
-  // 任一不成立都不标记新鲜，让下次 onShow / 点击立刻重试，
-  // 而不是把一份残缺快照当真捂满整个信任期（Codex P2：额度读失败
-  // 若仍标新鲜，remaining 会被当成 0，已封顶的模板会被空拉一次）。
-  quotaReadAt =
-    templates.length > 0 && settingResult.ok && grantsResult.ok
-      ? Date.now()
-      : 0;
+  // 发起后若被换账号/onShow 作废（代际变了），这份结果已陈旧：只返回、不回写缓存，
+  // 否则会把刚清掉的快照又填回并标新鲜（Codex P2）
+  if (gen === hydrateGeneration) {
+    // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
+    cachedTemplates = templates;
+    // 有效快照 = 拉到了模板 且 授权与额度都确实读到了。
+    // 任一不成立都不标记新鲜，让下次 onShow / 点击立刻重试，
+    // 而不是把一份残缺快照当真捂满整个信任期（Codex P2：额度读失败
+    // 若仍标新鲜，remaining 会被当成 0，已封顶的模板会被空拉一次）。
+    quotaReadAt =
+      templates.length > 0 && settingResult.ok && grantsResult.ok
+        ? Date.now()
+        : 0;
+  }
   return {
     configured,
     templates,
@@ -286,6 +300,9 @@ export async function requestSubscribe(
     .map((template) => template.templateId)
     .filter(Boolean);
   if (tmplIds.length === 0) return 0;
+  // 记下发起时的身份代际：拉授权与逐个补报都是 await，其间若换账号，这些 accept 属于
+  // 旧账号，绝不能用新账号的 token 报上去。全程复检，切换即整段作废（Codex P2）
+  const gen = stateGeneration;
   let result: Record<string, string>;
   try {
     result = await new Promise<Record<string, string>>((resolve, reject) => {
@@ -304,7 +321,11 @@ export async function requestSubscribe(
     const errMsg = String(
       (err as { errMsg?: string } | undefined)?.errMsg ?? "",
     );
-    if (errCode === 20004 || errMsg.includes("20004")) {
+    // 20004 是旧账号主开关关闭的证据：换账号后回来就别再往新账号缓存上纠正（Codex P2）
+    if (
+      gen === stateGeneration &&
+      (errCode === 20004 || errMsg.includes("20004"))
+    ) {
       quotaReadAt = 0;
       cachedTemplates = cachedTemplates.map((template) =>
         template.persistent || template.subscribed
@@ -314,11 +335,15 @@ export async function requestSubscribe(
     }
     throw err;
   }
+  // 拉授权的 await 期间换了账号：这些 accept 属于旧账号，整段作废（Codex P2）
+  if (gen !== stateGeneration) return 0;
   // 显式订阅前先 hydrate：冷启后 pending 只在 storage 里，不先灌进内存的话下面
   // wasPending 的 .has() 会漏读，旧额度会被这次成功清掉且不再挂回（Codex P2）
   hydratePendingGrantReports();
   let accepted = 0;
   for (const template of templates) {
+    // 逐个补报是串行 await，其间也可能换账号：每轮开头复检，切换即停止处理（Codex P2）
+    if (gen !== stateGeneration) break;
     const status = result[template.templateId];
     if (status === "accept") {
       // 这个模板本就有一份没记上的旧额度（pending）时，横幅/设置页的显式订阅又拿到了
@@ -334,14 +359,17 @@ export async function requestSubscribe(
       }
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
-      // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
-      clearPendingGrant(template.templateKey);
+      // 就地纠正，后续手势不再把它选进静默续额（Codex P2）。
+      // 但不清 pending：pending 记的是这个模板此前已 accept、只是 POST 没记上的旧额度，
+      // 本次 reject 既没消费也没上报它，清掉就把那份旧额度永久丢了——旧额度仍走 POST 补报，
+      // 补报按 templateKey 走，与当前 persistent 无关（Codex P2）
       applyCachedPersistent(template.templateKey, false);
     }
   }
-  if (accepted > 0) {
+  if (accepted > 0 && gen === stateGeneration) {
     // 横幅/设置页的显式授权同样占掉了服务端 60s 的上报节流窗口：不刷新冷却的话，
     // 紧接着的静默续额会白拉一次微信额度、服务端却记不上（Codex P2）。
+    // 换账号后不写：这份冷却属于旧账号，落到新账号会平白压掉一次续额。
     setLastTopUpAt(Date.now());
     // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
     // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
@@ -459,6 +487,8 @@ export function topUpSubscribeQuota(): void {
  */
 export function invalidateSubscribeAuthorization(): void {
   quotaReadAt = 0;
+  // 自增快照代际：作废前发起、之后才回来的 fetch 不得把这份旧快照重新标新鲜（Codex P2）
+  hydrateGeneration += 1;
 }
 
 /**
@@ -473,6 +503,8 @@ export function invalidateSubscribeAuthorization(): void {
 export function resetSubscribeState(): void {
   // 先自增代际：在途的旧账号补报回调据此整体作废，不再回写新账号状态（Codex P2）
   stateGeneration += 1;
+  // 快照代际同样自增：换账号前发起、之后才回来的 fetch 不得填回旧账号快照（Codex P2）
+  hydrateGeneration += 1;
   cachedTemplates = [];
   quotaReadAt = 0;
   lastHydrateAt = 0;
