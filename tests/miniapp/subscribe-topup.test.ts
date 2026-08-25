@@ -71,21 +71,19 @@ describe("订阅额度静默续额的挑选规则", () => {
     ).toEqual(["REQUEST_REPLY"]);
   });
 
-  it("快照过期后「已封顶」不再是跳过理由：投递扣减只发生在服务端，过期的 30 会永久挡住续额", () => {
+  it("快照过期后整体不拉起：persistent 在缓存里可能停留任意久，拿它静默续额会对已关闭的订阅弹窗", () => {
     const full = { ...REPLY, remaining: TOPUP_MAX_REMAINING };
     const stale = NOW - QUOTA_TRUST_MS;
-    expect(keys(selectTopUpTargets([full], NOW, 0, stale))).toEqual([
-      "REQUEST_REPLY",
-    ]);
-    // 未长期授权仍然排除：过期不是放行弹窗的理由
+    expect(selectTopUpTargets([REPLY], NOW, 0, stale)).toEqual([]);
+    expect(selectTopUpTargets([full], NOW, 0, stale)).toEqual([]);
+    // 未长期授权同样排除
     expect(selectTopUpTargets([PROJECT], NOW, 0, stale)).toEqual([]);
   });
 
-  it("无快照（quotaReadAt=0，如冷启到工单详情页）按过期处理，照续", () => {
+  it("无快照（quotaReadAt=0，如冷启到工单详情页或 getSetting 读失败）同样先等 hydrate", () => {
     const full = { ...REPLY, remaining: TOPUP_MAX_REMAINING };
-    expect(keys(selectTopUpTargets([full], NOW, 0, 0))).toEqual([
-      "REQUEST_REPLY",
-    ]);
+    expect(selectTopUpTargets([full], NOW, 0, 0)).toEqual([]);
+    expect(selectTopUpTargets([REPLY], NOW, 0, 0)).toEqual([]);
   });
 
   it("全部模板都不满足时返回空数组（调用方据此不拉起授权）", () => {

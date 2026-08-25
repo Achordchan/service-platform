@@ -117,6 +117,21 @@ function applyCachedRemaining(
   );
 }
 
+function applyCachedPersistent(
+  templateKey: WechatTemplateKey,
+  persistent: boolean,
+) {
+  cachedTemplates = cachedTemplates.map((template) =>
+    template.templateKey === templateKey
+      ? {
+          ...template,
+          persistent,
+          subscribed: isSubscribed(persistent, template.remaining),
+        }
+      : template,
+  );
+}
+
 /**
  * 汇总订阅真实状态：合并「已配置模板」「服务端剩余额度」「微信长期授权」。
  * 额度接口或 config 出错都降级为不阻断（configured=false / 空），调用方据此隐藏入口；
@@ -189,23 +204,47 @@ export async function requestSubscribe(
     .map((template) => template.templateId)
     .filter(Boolean);
   if (tmplIds.length === 0) return 0;
-  const result = await new Promise<Record<string, string>>(
-    (resolve, reject) => {
+  let result: Record<string, string>;
+  try {
+    result = await new Promise<Record<string, string>>((resolve, reject) => {
       wx.requestSubscribeMessage({
         tmplIds,
         success: (res) => resolve(res as unknown as Record<string, string>),
         fail: reject,
       });
-    },
-  );
+    });
+  } catch (err) {
+    // 主开关被关（20004）是确凿的全关证据：纠正缓存并作废快照，后续手势
+    // 不再拿旧 persistent 去静默拉起（Codex P2）。瞬时失败（网络等）不改快照，
+    // 由 topUpSubscribeQuota 回滚冷却后让下一个手势立刻重试。
+    // 部分基础库把错误码只放在 errMsg 里，两种形态都认。
+    const errCode = (err as { errCode?: number } | undefined)?.errCode;
+    const errMsg = String(
+      (err as { errMsg?: string } | undefined)?.errMsg ?? "",
+    );
+    if (errCode === 20004 || errMsg.includes("20004")) {
+      quotaReadAt = 0;
+      cachedTemplates = cachedTemplates.map((template) =>
+        template.persistent || template.subscribed
+          ? { ...template, persistent: false, subscribed: false }
+          : template,
+      );
+    }
+    throw err;
+  }
   let accepted = 0;
   for (const template of templates) {
-    if (result[template.templateId] === "accept") {
+    const status = result[template.templateId];
+    if (status === "accept") {
       const granted = await reportSubscribeGrant(template.templateKey).catch(
         () => null,
       );
       if (granted) applyCachedRemaining(template.templateKey, granted.remaining);
       accepted += 1;
+    } else if (status) {
+      // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
+      // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
+      applyCachedPersistent(template.templateKey, false);
     }
   }
   if (accepted > 0) {
@@ -254,7 +293,8 @@ export function ensureSubscribeStateCached(): void {
  * 未登录 / 模板未配置时快照为空，天然不会触发。
  */
 export function topUpSubscribeQuota(): void {
-  // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow
+  // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow；
+  // 本手势会因快照过期而放行不了（见 selectTopUpTargets），刷新完成后的下一次点击恢复
   ensureSubscribeStateCached();
   const now = Date.now();
   const targets = selectTopUpTargets(
@@ -265,8 +305,12 @@ export function topUpSubscribeQuota(): void {
   );
   if (targets.length === 0) return;
   lastTopUpAt = now;
-  // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢
-  void requestSubscribe(targets).catch(() => undefined);
+  // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢。
+  // 拉起失败时什么都没拿到（弹窗没出现、额度没记上），回滚冷却让下一个手势
+  // 立刻能重试；仅当期间没有更新的冷却时才回滚，避免覆盖并发手势的时间戳（Codex P2）
+  void requestSubscribe(targets).catch(() => {
+    if (lastTopUpAt === now) lastTopUpAt = 0;
+  });
 }
 
 // ── 顶部引导横幅的忽略状态与首屏引导标记 ──

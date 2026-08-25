@@ -24,10 +24,14 @@ export type TopUpCandidate = {
 /**
  * 挑出本次该续额的模板；返回空数组表示这次点击不拉起授权。
  * - 冷却未过：跳过，避免每次点击都拉一遍还被服务端节流吃掉；
+ * - 快照无效或过信任期：整体跳过（Codex P2）。persistent 与额度同属一份快照，
+ *   缓存可能停留任意久，拿过期的 persistent 当「可静默拉起」的依据，用户一旦在
+ *   微信设置里关掉订阅就会当场弹窗。topUpSubscribeQuota 已顺手触发 hydrate，
+ *   刷新完成后的下一次点击自然恢复；
  * - 未长期授权（persistent=false）：必须排除，混进 tmplIds 会弹窗打扰用户；
- * - 额度已封顶：仅当快照新鲜时才据此跳过。投递扣减只发生在服务端、不会回传，
- *   一个过期的 30 会把长期停留的详情页永久挡在续额之外，所以过期就当未知、照续，
- *   服务端封顶后回传真实额度，快照随之重新对齐。
+ * - 额度已封顶：快照新鲜时才可据此跳过。投递扣减只发生在服务端、不会主动回传，
+ *   但信任期一过上面的规则就会强制重新 hydrate，带回服务端真实余额，
+ *   所以「过期的 30」只挡得住一个刷新周期，不会把页面永久挡在续额之外。
  */
 export function selectTopUpTargets<T extends TopUpCandidate>(
   templates: readonly T[],
@@ -36,11 +40,10 @@ export function selectTopUpTargets<T extends TopUpCandidate>(
   quotaReadAt: number,
 ): T[] {
   if (now - lastTopUpAt < TOPUP_COOLDOWN_MS) return [];
-  const quotaFresh = now - quotaReadAt < QUOTA_TRUST_MS;
+  if (isQuotaSnapshotStale(now, quotaReadAt)) return [];
   return templates.filter(
     (template) =>
-      template.persistent &&
-      (!quotaFresh || template.remaining < TOPUP_MAX_REMAINING),
+      template.persistent && template.remaining < TOPUP_MAX_REMAINING,
   );
 }
 
