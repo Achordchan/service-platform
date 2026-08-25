@@ -97,8 +97,10 @@ function getSubscriptionsSetting(): Promise<SubscriptionsSettingResult> {
 let cachedTemplates: SubscribeTemplateState[] = [];
 /** 额度快照的读取时刻（0 表示无有效快照） */
 let quotaReadAt = 0;
-/** 最近一次拉起订阅授权的时刻，静默续额据此冷却 */
+const LAST_TOPUP_KEY = "miniapp_subscribe_last_topup_at";
+/** 最近一次拉起订阅授权的时刻，静默续额据此冷却（跨进程要从本地存储恢复） */
 let lastTopUpAt = 0;
+let lastTopUpHydrated = false;
 /** 微信已 accept、额度 POST 却失败、等待下次手势补报的模板 */
 const pendingGrantReports = new Set<WechatTemplateKey>();
 /** 补报 POST 发出后尚未落地：跨手势也要从静默拉起里排除 */
@@ -106,6 +108,22 @@ const inFlightGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
 let lastHydrateAt = 0;
 let hydrating = false;
+
+function getLastTopUpAt(): number {
+  if (!lastTopUpHydrated) {
+    lastTopUpHydrated = true;
+    const ts = wx.getStorageSync(LAST_TOPUP_KEY);
+    if (typeof ts === "number" && ts > 0) lastTopUpAt = ts;
+  }
+  return lastTopUpAt;
+}
+
+function setLastTopUpAt(ts: number) {
+  lastTopUpHydrated = true;
+  lastTopUpAt = ts;
+  if (ts > 0) wx.setStorageSync(LAST_TOPUP_KEY, ts);
+  else wx.removeStorageSync(LAST_TOPUP_KEY);
+}
 
 function applyCachedRemaining(
   templateKey: WechatTemplateKey,
@@ -268,7 +286,7 @@ export async function requestSubscribe(
   if (accepted > 0) {
     // 横幅/设置页的显式授权同样占掉了服务端 60s 的上报节流窗口：不刷新冷却的话，
     // 紧接着的静默续额会白拉一次微信额度、服务端却记不上（Codex P2）。
-    lastTopUpAt = Date.now();
+    setLastTopUpAt(Date.now());
     // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
     // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
   }
@@ -282,6 +300,9 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     if (granted) {
       applyCachedRemaining(templateKey, granted.remaining);
       pendingGrantReports.delete(templateKey);
+      // 补报成功也占了服务端 60s 节流：不刷新冷却的话，冷却已过的下一次手势
+      // 会再 request，服务端把新额度吞掉（Codex P2）
+      setLastTopUpAt(Date.now());
       return true;
     }
     // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
@@ -355,17 +376,17 @@ export function topUpSubscribeQuota(): void {
   const targets = selectTopUpTargets(
     cachedTemplates,
     now,
-    lastTopUpAt,
+    getLastTopUpAt(),
     quotaReadAt,
     excludedKeys,
   );
   if (targets.length === 0) return;
-  lastTopUpAt = now;
+  setLastTopUpAt(now);
   // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢。
   // 拉起失败时什么都没拿到（弹窗没出现、额度没记上），回滚冷却让下一个手势
   // 立刻能重试；仅当期间没有更新的冷却时才回滚，避免覆盖并发手势的时间戳（Codex P2）
   void requestSubscribe(targets).catch(() => {
-    if (lastTopUpAt === now) lastTopUpAt = 0;
+    if (getLastTopUpAt() === now) setLastTopUpAt(0);
   });
 }
 
