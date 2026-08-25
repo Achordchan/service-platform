@@ -132,24 +132,27 @@ function applyCachedPersistent(
   );
 }
 
+type GrantsResult =
+  | { ok: true; grants: Array<{ templateKey: WechatTemplateKey; remaining: number }> }
+  | { ok: false };
+
 /**
  * 汇总订阅真实状态：合并「已配置模板」「服务端剩余额度」「微信长期授权」。
- * 额度接口或 config 出错都降级为不阻断（configured=false / 空），调用方据此隐藏入口；
- * 授权状态读失败则沿用上一份已知值，并把本次结果标记为无效快照等待重试。
+ * config 出错降级为不阻断（configured=false / 空），调用方据此隐藏入口；
+ * 授权或额度读失败则沿用上一份已知值，并把本次结果标记为无效快照等待重试。
  */
 export async function fetchSubscribeState(): Promise<SubscribeState> {
   const [config, grantsResult, settingResult] = await Promise.all([
     getSubscribeMessageConfig().catch(() => ({
       templates: [] as SubscribeTemplateConfig[],
     })),
-    getSubscribeGrants().catch(() => ({ grants: [] })),
+    getSubscribeGrants()
+      .then((result): GrantsResult => ({ ok: true, grants: result.grants }))
+      .catch((): GrantsResult => ({ ok: false })),
     getSubscriptionsSetting(),
   ]);
-  const remainingByKey = new Map(
-    grantsResult.grants.map((grant) => [grant.templateKey, grant.remaining]),
-  );
-  // getSetting 读失败时沿用上一份已知授权（须在覆盖 cachedTemplates 之前取）。
-  // 必须按 templateId 存：微信的授权表就是以模板 ID 为键的，按 templateKey 存
+  // getSetting / grants 读失败时沿用上一份已知值（须在覆盖 cachedTemplates 之前取）。
+  // 授权必须按 templateId 存：微信的授权表就是以模板 ID 为键的，按 templateKey 存
   // 会在运维轮换模板 ID 时把旧 ID 的「已长期授权」错安到新 ID 上，
   // 于是静默续额会对着一个从未授权的模板弹窗。
   const knownPersistent = new Map(
@@ -157,6 +160,14 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
       template.templateId,
       template.persistent,
     ]),
+  );
+  const remainingByKey = new Map(
+    grantsResult.ok
+      ? grantsResult.grants.map((grant) => [grant.templateKey, grant.remaining])
+      : cachedTemplates.map((template) => [
+          template.templateKey,
+          template.remaining,
+        ]),
   );
   const templates: SubscribeTemplateState[] = config.templates.map(
     (template) => {
@@ -181,10 +192,14 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   ).length;
   // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
   cachedTemplates = templates;
-  // 有效快照 = 拉到了模板 且 授权状态确实读到了。
+  // 有效快照 = 拉到了模板 且 授权与额度都确实读到了。
   // 任一不成立都不标记新鲜，让下次 onShow / 点击立刻重试，
-  // 而不是把一份残缺快照当真捂满整个信任期。
-  quotaReadAt = templates.length > 0 && settingResult.ok ? Date.now() : 0;
+  // 而不是把一份残缺快照当真捂满整个信任期（Codex P2：额度读失败
+  // 若仍标新鲜，remaining 会被当成 0，已封顶的模板会被空拉一次）。
+  quotaReadAt =
+    templates.length > 0 && settingResult.ok && grantsResult.ok
+      ? Date.now()
+      : 0;
   return {
     configured,
     templates,
