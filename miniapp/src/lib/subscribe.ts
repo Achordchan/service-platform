@@ -342,6 +342,7 @@ export function topUpSubscribeQuota(): void {
     now,
     lastTopUpAt,
     quotaReadAt,
+    pendingGrantReports,
   );
   if (targets.length === 0) return;
   lastTopUpAt = now;

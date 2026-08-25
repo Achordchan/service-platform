@@ -147,4 +147,18 @@ describe("额度上报失败后的补报", () => {
   it("没有待补报时返回空，调用方据此不发 POST", () => {
     expect(selectPendingGrantReports([REPLY, STATUS], new Set())).toEqual([]);
   });
+
+  it("待补报的模板不再进入静默拉起：冷却过期后也不能跟补报抢同一条微信额度", () => {
+    expect(
+      keys(
+        selectTopUpTargets(
+          [REPLY, STATUS],
+          NOW,
+          0,
+          FRESH,
+          new Set(["REQUEST_REPLY"]),
+        ),
+      ),
+    ).toEqual(["REQUEST_STATUS"]);
+  });
 });

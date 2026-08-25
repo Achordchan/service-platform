@@ -39,12 +39,15 @@ export function selectTopUpTargets<T extends TopUpCandidate>(
   now: number,
   lastTopUpAt: number,
   quotaReadAt: number,
+  pendingKeys: ReadonlySet<string> = new Set(),
 ): T[] {
   if (now - lastTopUpAt < TOPUP_COOLDOWN_MS) return [];
   if (isQuotaSnapshotStale(now, quotaReadAt)) return [];
   return templates.filter(
     (template) =>
-      template.persistent && template.remaining < TOPUP_MAX_REMAINING,
+      template.persistent &&
+      template.remaining < TOPUP_MAX_REMAINING &&
+      !pendingKeys.has(template.templateKey),
   );
 }
 
