@@ -489,6 +489,10 @@ export function invalidateSubscribeAuthorization(): void {
   quotaReadAt = 0;
   // 自增快照代际：作废前发起、之后才回来的 fetch 不得把这份旧快照重新标新鲜（Codex P2）
   hydrateGeneration += 1;
+  // 一并清掉重拉限流：不然刚 hydrate 过（lastHydrateAt 很近）就去改微信设置、返回后
+  // 最长 30s 内 shouldHydrateQuota 仍拒绝重拉，而 quotaReadAt=0 又让续额整体跳过，
+  // 这段窗口既拉不到新状态也续不了额。此处由 onShow 触发、低频，不会重蹈「每次点击都打接口」（Codex P2）
+  lastHydrateAt = 0;
 }
 
 /**
