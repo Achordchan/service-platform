@@ -64,20 +64,19 @@ export function selectPendingGrantReports<T extends TopUpCandidate>(
 }
 
 /**
- * 发出补报 POST 前把 key 从 pending 里拿走，避免两次手势把同一次额度报两次。
- * 服务端节流是先读后写，并发两次都能过 60s 检查，remaining 会多加 1。
- * 调用方在 POST 失败时把这些 key 放回去。
+ * 挑出尚未 in-flight 的待补报模板，并立刻标上 in-flight。
+ * pending 集合本身不动：存储里的 key 要等 POST 成功才清，进程被杀后还能补报。
+ * in-flight 只在同进程内挡住第二次手势，避免把同一次额度报两次。
  */
 export function takePendingGrantReports<T extends TopUpCandidate>(
   templates: readonly T[],
-  pendingKeys: Set<string>,
-  inFlightKeys: Set<string> = new Set(),
+  pendingKeys: ReadonlySet<string>,
+  inFlightKeys: Set<string>,
 ): T[] {
-  const selected = selectPendingGrantReports(templates, pendingKeys);
-  for (const template of selected) {
-    pendingKeys.delete(template.templateKey);
-    inFlightKeys.add(template.templateKey);
-  }
+  const selected = selectPendingGrantReports(templates, pendingKeys).filter(
+    (template) => !inFlightKeys.has(template.templateKey),
+  );
+  for (const template of selected) inFlightKeys.add(template.templateKey);
   return selected;
 }
 

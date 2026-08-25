@@ -133,6 +133,7 @@ function setLastTopUpAt(ts: number) {
 }
 
 function persistPendingGrantReports() {
+  hydratePendingGrantReports();
   const keys = [...pendingGrantReports];
   if (keys.length > 0) wx.setStorageSync(PENDING_GRANTS_KEY, keys);
   else wx.removeStorageSync(PENDING_GRANTS_KEY);
@@ -148,6 +149,18 @@ function hydratePendingGrantReports() {
       pendingGrantReports.add(key as WechatTemplateKey);
     }
   }
+}
+
+function markPendingGrant(templateKey: WechatTemplateKey) {
+  hydratePendingGrantReports();
+  pendingGrantReports.add(templateKey);
+  persistPendingGrantReports();
+}
+
+function clearPendingGrant(templateKey: WechatTemplateKey) {
+  hydratePendingGrantReports();
+  pendingGrantReports.delete(templateKey);
+  persistPendingGrantReports();
 }
 
 function applyCachedRemaining(
@@ -304,8 +317,7 @@ export async function requestSubscribe(
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
-      pendingGrantReports.delete(template.templateKey);
-      persistPendingGrantReports();
+      clearPendingGrant(template.templateKey);
       applyCachedPersistent(template.templateKey, false);
     }
   }
@@ -325,8 +337,7 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     const granted = await reportSubscribeGrant(templateKey).catch(() => null);
     if (granted) {
       applyCachedRemaining(templateKey, granted.remaining);
-      pendingGrantReports.delete(templateKey);
-      persistPendingGrantReports();
+      clearPendingGrant(templateKey);
       // 补报成功也占了服务端 60s 节流：不刷新冷却的话，冷却已过的下一次手势
       // 会再 request，服务端把新额度吞掉（Codex P2）
       setLastTopUpAt(Date.now());
@@ -335,8 +346,7 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
     // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
     // 走 pending 队列，不被这次冷却挡住（Codex P2）。
-    pendingGrantReports.add(templateKey);
-    persistPendingGrantReports();
+    markPendingGrant(templateKey);
     return false;
   } finally {
     inFlightGrantReports.delete(templateKey);
@@ -388,7 +398,6 @@ export function topUpSubscribeQuota(): void {
     pendingGrantReports,
     inFlightGrantReports,
   );
-  if (pending.length > 0) persistPendingGrantReports();
   if (pending.length > 0) {
     // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却。
     // 先从 pending 拿走再 POST，避免两次手势把同一次额度报两次（Codex P2）。

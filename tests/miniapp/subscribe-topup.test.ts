@@ -163,21 +163,22 @@ describe("额度上报失败后的补报", () => {
     ).toEqual(["REQUEST_STATUS"]);
   });
 
-  it("发出补报前把 key 从 pending 拿走，第二次手势不会把同一次额度再报一遍", () => {
+  it("发出补报前只标 in-flight，pending 仍保留，第二次手势不会把同一次额度再报一遍", () => {
     const pending = new Set(["REQUEST_REPLY", "REQUEST_STATUS"]);
-    expect(keys(takePendingGrantReports([REPLY, STATUS], pending))).toEqual([
-      "REQUEST_REPLY",
-      "REQUEST_STATUS",
-    ]);
-    expect(pending.size).toBe(0);
-    expect(takePendingGrantReports([REPLY, STATUS], pending)).toEqual([]);
+    const inFlight = new Set<string>();
+    expect(
+      keys(takePendingGrantReports([REPLY, STATUS], pending, inFlight)),
+    ).toEqual(["REQUEST_REPLY", "REQUEST_STATUS"]);
+    expect(pending.size).toBe(2);
+    expect(inFlight.size).toBe(2);
+    expect(takePendingGrantReports([REPLY, STATUS], pending, inFlight)).toEqual([]);
   });
 
-  it("刚拿走的 in-flight key 仍要从静默拉起里排除，避免同一次手势再 request", () => {
+  it("刚标上的 in-flight key 仍要从静默拉起里排除，避免同一次手势再 request", () => {
     const pending = new Set(["REQUEST_REPLY"]);
     const inFlight = new Set<string>();
     takePendingGrantReports([REPLY, STATUS], pending, inFlight);
-    expect(pending.size).toBe(0);
+    expect(pending.size).toBe(1);
     expect([...inFlight]).toEqual(["REQUEST_REPLY"]);
     expect(
       keys(selectTopUpTargets([REPLY, STATUS], NOW, 0, FRESH, inFlight)),
