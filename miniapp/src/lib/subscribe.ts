@@ -248,14 +248,21 @@ export async function requestSubscribe(
     throw err;
   }
   let accepted = 0;
+  let grantReportFailed = false;
   for (const template of templates) {
     const status = result[template.templateId];
     if (status === "accept") {
       const granted = await reportSubscribeGrant(template.templateKey).catch(
         () => null,
       );
-      if (granted) applyCachedRemaining(template.templateKey, granted.remaining);
-      accepted += 1;
+      if (granted) {
+        applyCachedRemaining(template.templateKey, granted.remaining);
+        accepted += 1;
+      } else {
+        // 微信已经 accept，但额度没记上：不能按成功刷新冷却，
+        // 否则 90s 内再也补不上，投递闸门也用不到这次额度（Codex P2）
+        grantReportFailed = true;
+      }
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
@@ -268,6 +275,10 @@ export async function requestSubscribe(
     lastTopUpAt = Date.now();
     // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
     // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
+  }
+  if (grantReportFailed && accepted === 0) {
+    // 微信 accept 了但额度一个都没记上：让外层回滚冷却，下一个手势立刻重试
+    throw new Error("subscribe grant report failed");
   }
   return accepted;
 }
