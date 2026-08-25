@@ -175,13 +175,12 @@ describe("额度上报失败后的补报", () => {
 
   it("刚拿走的 in-flight key 仍要从静默拉起里排除，避免同一次手势再 request", () => {
     const pending = new Set(["REQUEST_REPLY"]);
-    const taken = takePendingGrantReports([REPLY, STATUS], pending);
-    const excluded = new Set([
-      ...pending,
-      ...taken.map((template) => template.templateKey),
-    ]);
-    expect(keys(selectTopUpTargets([REPLY, STATUS], NOW, 0, FRESH, excluded))).toEqual(
-      ["REQUEST_STATUS"],
-    );
+    const inFlight = new Set<string>();
+    takePendingGrantReports([REPLY, STATUS], pending, inFlight);
+    expect(pending.size).toBe(0);
+    expect([...inFlight]).toEqual(["REQUEST_REPLY"]);
+    expect(
+      keys(selectTopUpTargets([REPLY, STATUS], NOW, 0, FRESH, inFlight)),
+    ).toEqual(["REQUEST_STATUS"]);
   });
 });

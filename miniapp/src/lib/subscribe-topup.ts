@@ -71,9 +71,13 @@ export function selectPendingGrantReports<T extends TopUpCandidate>(
 export function takePendingGrantReports<T extends TopUpCandidate>(
   templates: readonly T[],
   pendingKeys: Set<string>,
+  inFlightKeys: Set<string> = new Set(),
 ): T[] {
   const selected = selectPendingGrantReports(templates, pendingKeys);
-  for (const template of selected) pendingKeys.delete(template.templateKey);
+  for (const template of selected) {
+    pendingKeys.delete(template.templateKey);
+    inFlightKeys.add(template.templateKey);
+  }
   return selected;
 }
 

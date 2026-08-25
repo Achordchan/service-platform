@@ -101,6 +101,8 @@ let quotaReadAt = 0;
 let lastTopUpAt = 0;
 /** 微信已 accept、额度 POST 却失败、等待下次手势补报的模板 */
 const pendingGrantReports = new Set<WechatTemplateKey>();
+/** 补报 POST 发出后尚未落地：跨手势也要从静默拉起里排除 */
+const inFlightGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
 let lastHydrateAt = 0;
 let hydrating = false;
@@ -274,17 +276,22 @@ export async function requestSubscribe(
 }
 
 async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolean> {
-  const granted = await reportSubscribeGrant(templateKey).catch(() => null);
-  if (granted) {
-    applyCachedRemaining(templateKey, granted.remaining);
-    pendingGrantReports.delete(templateKey);
-    return true;
+  inFlightGrantReports.add(templateKey);
+  try {
+    const granted = await reportSubscribeGrant(templateKey).catch(() => null);
+    if (granted) {
+      applyCachedRemaining(templateKey, granted.remaining);
+      pendingGrantReports.delete(templateKey);
+      return true;
+    }
+    // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
+    // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
+    // 走 pending 队列，不被这次冷却挡住（Codex P2）。
+    pendingGrantReports.add(templateKey);
+    return false;
+  } finally {
+    inFlightGrantReports.delete(templateKey);
   }
-  // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
-  // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
-  // 走 pending 队列，不被这次冷却挡住（Codex P2）。
-  pendingGrantReports.add(templateKey);
-  return false;
 }
 
 // ── 静默续额 ──
@@ -329,6 +336,7 @@ export function topUpSubscribeQuota(): void {
   const pending = takePendingGrantReports(
     cachedTemplates,
     pendingGrantReports,
+    inFlightGrantReports,
   );
   if (pending.length > 0) {
     // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却。
@@ -338,11 +346,11 @@ export function topUpSubscribeQuota(): void {
     }
   }
   const now = Date.now();
-  // 刚拿走的 in-flight key 也要排除：否则冷却过期后同一次手势会再拉起授权，
-  // 补报 POST 若先落地，新的上报会被 60s 节流吃掉（Codex P2）
+  // pending + 正在飞的补报都排除：第二次手势不能在 POST 落地前再 request
+  // 同一个模板，否则会跟补报抢 60s 节流（Codex P2）
   const excludedKeys = new Set<string>([
     ...pendingGrantReports,
-    ...pending.map((template) => template.templateKey),
+    ...inFlightGrantReports,
   ]);
   const targets = selectTopUpTargets(
     cachedTemplates,
