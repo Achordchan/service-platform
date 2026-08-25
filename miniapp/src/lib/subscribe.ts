@@ -98,11 +98,18 @@ let cachedTemplates: SubscribeTemplateState[] = [];
 /** 额度快照的读取时刻（0 表示无有效快照） */
 let quotaReadAt = 0;
 const LAST_TOPUP_KEY = "miniapp_subscribe_last_topup_at";
+const PENDING_GRANTS_KEY = "miniapp_subscribe_pending_grants";
+const KNOWN_TEMPLATE_KEYS = new Set<WechatTemplateKey>([
+  "REQUEST_REPLY",
+  "REQUEST_STATUS",
+  "PROJECT_UPDATE",
+]);
 /** 最近一次拉起订阅授权的时刻，静默续额据此冷却（跨进程要从本地存储恢复） */
 let lastTopUpAt = 0;
 let lastTopUpHydrated = false;
 /** 微信已 accept、额度 POST 却失败、等待下次手势补报的模板 */
 const pendingGrantReports = new Set<WechatTemplateKey>();
+let pendingGrantReportsHydrated = false;
 /** 补报 POST 发出后尚未落地：跨手势也要从静默拉起里排除 */
 const inFlightGrantReports = new Set<WechatTemplateKey>();
 /** 最近一次尝试重拉订阅状态的时刻，给「快照始终无效」的客户端兜底限流 */
@@ -123,6 +130,24 @@ function setLastTopUpAt(ts: number) {
   lastTopUpAt = ts;
   if (ts > 0) wx.setStorageSync(LAST_TOPUP_KEY, ts);
   else wx.removeStorageSync(LAST_TOPUP_KEY);
+}
+
+function persistPendingGrantReports() {
+  const keys = [...pendingGrantReports];
+  if (keys.length > 0) wx.setStorageSync(PENDING_GRANTS_KEY, keys);
+  else wx.removeStorageSync(PENDING_GRANTS_KEY);
+}
+
+function hydratePendingGrantReports() {
+  if (pendingGrantReportsHydrated) return;
+  pendingGrantReportsHydrated = true;
+  const stored = wx.getStorageSync(PENDING_GRANTS_KEY);
+  if (!Array.isArray(stored)) return;
+  for (const key of stored) {
+    if (typeof key === "string" && KNOWN_TEMPLATE_KEYS.has(key as WechatTemplateKey)) {
+      pendingGrantReports.add(key as WechatTemplateKey);
+    }
+  }
 }
 
 function applyCachedRemaining(
@@ -280,6 +305,7 @@ export async function requestSubscribe(
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）
       pendingGrantReports.delete(template.templateKey);
+      persistPendingGrantReports();
       applyCachedPersistent(template.templateKey, false);
     }
   }
@@ -300,6 +326,7 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     if (granted) {
       applyCachedRemaining(templateKey, granted.remaining);
       pendingGrantReports.delete(templateKey);
+      persistPendingGrantReports();
       // 补报成功也占了服务端 60s 节流：不刷新冷却的话，冷却已过的下一次手势
       // 会再 request，服务端把新额度吞掉（Codex P2）
       setLastTopUpAt(Date.now());
@@ -309,6 +336,7 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
     // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
     // 走 pending 队列，不被这次冷却挡住（Codex P2）。
     pendingGrantReports.add(templateKey);
+    persistPendingGrantReports();
     return false;
   } finally {
     inFlightGrantReports.delete(templateKey);
@@ -354,11 +382,13 @@ export function topUpSubscribeQuota(): void {
   // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow；
   // 本手势会因快照过期而放行不了（见 selectTopUpTargets），刷新完成后的下一次点击恢复
   ensureSubscribeStateCached();
+  hydratePendingGrantReports();
   const pending = takePendingGrantReports(
     cachedTemplates,
     pendingGrantReports,
     inFlightGrantReports,
   );
+  if (pending.length > 0) persistPendingGrantReports();
   if (pending.length > 0) {
     // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却。
     // 先从 pending 拿走再 POST，避免两次手势把同一次额度报两次（Codex P2）。
