@@ -338,12 +338,18 @@ export function topUpSubscribeQuota(): void {
     }
   }
   const now = Date.now();
+  // 刚拿走的 in-flight key 也要排除：否则冷却过期后同一次手势会再拉起授权，
+  // 补报 POST 若先落地，新的上报会被 60s 节流吃掉（Codex P2）
+  const excludedKeys = new Set<string>([
+    ...pendingGrantReports,
+    ...pending.map((template) => template.templateKey),
+  ]);
   const targets = selectTopUpTargets(
     cachedTemplates,
     now,
     lastTopUpAt,
     quotaReadAt,
-    pendingGrantReports,
+    excludedKeys,
   );
   if (targets.length === 0) return;
   lastTopUpAt = now;
