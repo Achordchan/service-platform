@@ -6,9 +6,9 @@ import {
   type WechatTemplateKey,
 } from "./api";
 import {
-  selectPendingGrantReports,
   selectTopUpTargets,
   shouldHydrateQuota,
+  takePendingGrantReports,
 } from "./subscribe-topup";
 
 // 订阅模板的中文名，用于设置页与引导文案（config 接口只回 key/id）
@@ -326,12 +326,13 @@ export function topUpSubscribeQuota(): void {
   // 快照过期就顺手补一次，任何续额手势点都能自愈，不必逐页配 onShow；
   // 本手势会因快照过期而放行不了（见 selectTopUpTargets），刷新完成后的下一次点击恢复
   ensureSubscribeStateCached();
-  const pending = selectPendingGrantReports(
+  const pending = takePendingGrantReports(
     cachedTemplates,
     pendingGrantReports,
   );
   if (pending.length > 0) {
-    // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却
+    // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却。
+    // 先从 pending 拿走再 POST，避免两次手势把同一次额度报两次（Codex P2）。
     for (const template of pending) {
       void reportGrantOrPend(template.templateKey);
     }

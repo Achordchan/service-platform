@@ -63,6 +63,20 @@ export function selectPendingGrantReports<T extends TopUpCandidate>(
   return templates.filter((template) => pendingKeys.has(template.templateKey));
 }
 
+/**
+ * 发出补报 POST 前把 key 从 pending 里拿走，避免两次手势把同一次额度报两次。
+ * 服务端节流是先读后写，并发两次都能过 60s 检查，remaining 会多加 1。
+ * 调用方在 POST 失败时把这些 key 放回去。
+ */
+export function takePendingGrantReports<T extends TopUpCandidate>(
+  templates: readonly T[],
+  pendingKeys: Set<string>,
+): T[] {
+  const selected = selectPendingGrantReports(templates, pendingKeys);
+  for (const template of selected) pendingKeys.delete(template.templateKey);
+  return selected;
+}
+
 // 快照无效时的重拉间隔。旧基础库可能永远读不到 subscriptionsSetting，
 // 快照会一直判为无效——没有这个下限，每次点击都要多打两个接口。
 export const HYDRATE_RETRY_MS = 30 * 1000;

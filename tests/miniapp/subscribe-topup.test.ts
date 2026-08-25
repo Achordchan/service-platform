@@ -4,6 +4,7 @@ import {
   selectPendingGrantReports,
   selectTopUpTargets,
   shouldHydrateQuota,
+  takePendingGrantReports,
   HYDRATE_RETRY_MS,
   QUOTA_TRUST_MS,
   TOPUP_COOLDOWN_MS,
@@ -160,5 +161,15 @@ describe("额度上报失败后的补报", () => {
         ),
       ),
     ).toEqual(["REQUEST_STATUS"]);
+  });
+
+  it("发出补报前把 key 从 pending 拿走，第二次手势不会把同一次额度再报一遍", () => {
+    const pending = new Set(["REQUEST_REPLY", "REQUEST_STATUS"]);
+    expect(keys(takePendingGrantReports([REPLY, STATUS], pending))).toEqual([
+      "REQUEST_REPLY",
+      "REQUEST_STATUS",
+    ]);
+    expect(pending.size).toBe(0);
+    expect(takePendingGrantReports([REPLY, STATUS], pending)).toEqual([]);
   });
 });
