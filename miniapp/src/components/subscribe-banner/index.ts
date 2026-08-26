@@ -32,6 +32,9 @@ Component({
         return;
       }
       const state = await fetchSubscribeState().catch(() => null);
+      // 拉取途中被作废（换账号 / 从微信设置返回）：这份已陈旧，别动 UI，
+      // 否则会覆盖新一轮刚写好的授权状态（Codex P2）
+      if (state?.stale) return;
       // 未配置模板或已全部订阅：无需引导
       if (!state || !state.configured || state.allSubscribed) {
         this.setData({ visible: false });

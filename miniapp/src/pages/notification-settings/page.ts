@@ -38,6 +38,9 @@ Page({
         getNotificationPreferences(),
         fetchSubscribeState(),
       ]);
+      // 订阅状态拉取途中被作废（换账号 / 从微信设置返回）：这次 load 已被新一轮取代，
+      // 跳过写 UI，保留新一轮的结果；loading 等收尾由那一轮完成（Codex P2）
+      if (subscribeState.stale) return;
       this.setData({
         loading: false,
         soundEnabled: prefs.soundNotificationsEnabled,

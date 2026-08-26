@@ -44,6 +44,11 @@ export type SubscribeState = {
   allSubscribed: boolean;
   /** 未订阅的模板数量 */
   missingCount: number;
+  /**
+   * 本次结果是否在拉取途中被作废（换账号 / 从微信设置返回）。为 true 时数据可能陈旧，
+   * 页面应忽略、别写进 UI，否则陈旧完成会覆盖掉新一轮刚写好的授权状态（Codex P2）。
+   */
+  stale?: boolean;
 };
 
 /**
@@ -302,9 +307,10 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   const missingCount = templates.filter(
     (template) => !template.subscribed,
   ).length;
-  // 发起后若被换账号/onShow 作废（代际变了），这份结果已陈旧：只返回、不回写缓存，
-  // 否则会把刚清掉的快照又填回并标新鲜（Codex P2）
-  if (gen === hydrateGeneration) {
+  // 发起后若被换账号/onShow 作废（代际变了），这份结果已陈旧：不回写缓存、也标 stale
+  // 让页面忽略，否则既会把刚清掉的快照又填回并标新鲜，也会覆盖新一轮写好的 UI（Codex P2）
+  const stale = gen !== hydrateGeneration;
+  if (!stale) {
     // 供 topUpSubscribeQuota 在点击回调的同步段取用（那里来不及再发请求）
     cachedTemplates = templates;
     // 有效快照 = 拉到了模板 且 授权与额度都确实读到了。
@@ -321,6 +327,7 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
     templates,
     allSubscribed: configured && missingCount === 0,
     missingCount,
+    stale,
   };
 }
 
