@@ -107,8 +107,14 @@ const KNOWN_TEMPLATE_KEYS = new Set<WechatTemplateKey>([
 /** 最近一次拉起订阅授权的时刻，静默续额据此冷却（跨进程要从本地存储恢复） */
 let lastTopUpAt = 0;
 let lastTopUpHydrated = false;
-/** 微信已 accept、额度 POST 却失败、等待下次手势补报的模板 */
-const pendingGrantReports = new Set<WechatTemplateKey>();
+/**
+ * 微信已 accept、额度 POST 却失败、等待下次手势补报的模板。
+ * 值是这份额度被 accept 时的 templateId：微信的授权/额度是按模板 ID 给的，
+ * 而服务端补报按 templateKey 记账。运维轮换 WECHAT_TEMPLATE_*_ID 后，旧 ID 下拿到的
+ * 待补报额度若按 key 补记，会记到新 ID 的服务端配额上（投递用当前 ID，凭空多出可发额度）。
+ * 存下当时的 templateId，轮换后与当前配置不符即丢弃（Codex P2）。
+ */
+const pendingGrantReports = new Map<WechatTemplateKey, string>();
 let pendingGrantReportsHydrated = false;
 /** 补报 POST 发出后尚未落地：跨手势也要从静默拉起里排除 */
 const inFlightGrantReports = new Set<WechatTemplateKey>();
@@ -152,8 +158,9 @@ function setLastTopUpAt(ts: number) {
 
 function persistPendingGrantReports() {
   hydratePendingGrantReports();
-  const keys = [...pendingGrantReports];
-  if (keys.length > 0) wx.setStorageSync(PENDING_GRANTS_KEY, keys);
+  // 落 [templateKey, templateId] 对，跨重启也能识别 ID 轮换
+  const entries = [...pendingGrantReports.entries()];
+  if (entries.length > 0) wx.setStorageSync(PENDING_GRANTS_KEY, entries);
   else wx.removeStorageSync(PENDING_GRANTS_KEY);
 }
 
@@ -162,16 +169,22 @@ function hydratePendingGrantReports() {
   pendingGrantReportsHydrated = true;
   const stored = wx.getStorageSync(PENDING_GRANTS_KEY);
   if (!Array.isArray(stored)) return;
-  for (const key of stored) {
+  for (const entry of stored) {
+    // 新格式是 [key, templateId] 对；templateId 缺失（如旧格式遗留）存空串，
+    // 空串在轮换校验里按「未知、不丢弃」处理，避免误删
+    const [key, templateId] = Array.isArray(entry) ? entry : [entry, ""];
     if (typeof key === "string" && KNOWN_TEMPLATE_KEYS.has(key as WechatTemplateKey)) {
-      pendingGrantReports.add(key as WechatTemplateKey);
+      pendingGrantReports.set(
+        key as WechatTemplateKey,
+        typeof templateId === "string" ? templateId : "",
+      );
     }
   }
 }
 
-function markPendingGrant(templateKey: WechatTemplateKey) {
+function markPendingGrant(templateKey: WechatTemplateKey, templateId: string) {
   hydratePendingGrantReports();
-  pendingGrantReports.add(templateKey);
+  pendingGrantReports.set(templateKey, templateId);
   persistPendingGrantReports();
 }
 
@@ -179,6 +192,23 @@ function clearPendingGrant(templateKey: WechatTemplateKey) {
   hydratePendingGrantReports();
   pendingGrantReports.delete(templateKey);
   persistPendingGrantReports();
+}
+
+/**
+ * 丢弃 templateId 已随配置轮换而变的待补报：那份额度是旧 ID 下拿到的，
+ * 按 key 补记会记到新 ID 的服务端配额上、投递时 43101 才纠正（Codex P2）。
+ * 存的或当前的 templateId 未知（空串）时不丢，避免误删。
+ */
+function prunePendingGrantsForRotatedIds() {
+  hydratePendingGrantReports();
+  for (const [key, storedId] of [...pendingGrantReports.entries()]) {
+    const current = cachedTemplates.find(
+      (template) => template.templateKey === key,
+    )?.templateId;
+    if (storedId && current && current !== storedId) {
+      clearPendingGrant(key);
+    }
+  }
 }
 
 function applyCachedRemaining(
@@ -345,6 +375,8 @@ export async function requestSubscribe(
   // 显式订阅前先 hydrate：冷启后 pending 只在 storage 里，不先灌进内存的话下面
   // wasPending 的 .has() 会漏读，旧额度会被这次成功清掉且不再挂回（Codex P2）
   hydratePendingGrantReports();
+  // 并丢掉 templateId 已轮换的旧 pending，wasPending 只认当前 ID 的待补报（Codex P2）
+  prunePendingGrantsForRotatedIds();
   let accepted = 0;
   for (const template of templates) {
     // 逐个补报是串行 await，其间也可能换账号：每轮开头复检，切换即停止处理（Codex P2）
@@ -357,10 +389,13 @@ export async function requestSubscribe(
       // 就永久丢了（Codex P2）。记住它本来 pending，成功后重新挂回，让旧额度留到下一次
       // 手势（过了节流）再补报，而不是被这次成功吞掉。
       const wasPending = pendingGrantReports.has(template.templateKey);
-      const reported = await reportGrantOrPend(template.templateKey);
+      const reported = await reportGrantOrPend(
+        template.templateKey,
+        template.templateId,
+      );
       if (reported) {
         accepted += 1;
-        if (wasPending) markPendingGrant(template.templateKey);
+        if (wasPending) markPendingGrant(template.templateKey, template.templateId);
       }
     } else if (status) {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
@@ -382,7 +417,10 @@ export async function requestSubscribe(
   return accepted;
 }
 
-async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolean> {
+async function reportGrantOrPend(
+  templateKey: WechatTemplateKey,
+  templateId: string,
+): Promise<boolean> {
   const gen = stateGeneration;
   inFlightGrantReports.add(templateKey);
   try {
@@ -398,10 +436,10 @@ async function reportGrantOrPend(templateKey: WechatTemplateKey): Promise<boolea
       setLastTopUpAt(Date.now());
       return true;
     }
-    // 微信已经 accept，额度没记上：记下待补报，下次手势只 POST、不再拉起授权。
-    // 部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的模板
-    // 走 pending 队列，不被这次冷却挡住（Codex P2）。
-    markPendingGrant(templateKey);
+    // 微信已经 accept，额度没记上：记下待补报（连同当时的 templateId），下次手势只 POST、
+    // 不再拉起授权。部分成功时共享冷却仍会刷新（成功的那次占了服务端 60s 节流），失败的
+    // 模板走 pending 队列，不被这次冷却挡住（Codex P2）。
+    markPendingGrant(templateKey, templateId);
     return false;
   } finally {
     // 仅同账号才清 in-flight：换账号后 reset 已清空，别误删新账号刚加的同名 key
@@ -454,23 +492,25 @@ export function topUpSubscribeQuota(): void {
   // 本手势会因快照过期而放行不了（见 selectTopUpTargets），刷新完成后的下一次点击恢复
   ensureSubscribeStateCached();
   hydratePendingGrantReports();
+  // 补报前先丢掉 templateId 已随配置轮换的旧 pending，避免把旧 ID 的额度补记到新 ID（Codex P2）
+  prunePendingGrantsForRotatedIds();
   const pending = takePendingGrantReports(
     cachedTemplates,
-    pendingGrantReports,
+    new Set(pendingGrantReports.keys()),
     inFlightGrantReports,
   );
   if (pending.length > 0) {
     // 只补报，不再拉起授权：微信额度已经给过了，再 request 一次会占冷却。
     // 先从 pending 拿走再 POST，避免两次手势把同一次额度报两次（Codex P2）。
     for (const template of pending) {
-      void reportGrantOrPend(template.templateKey);
+      void reportGrantOrPend(template.templateKey, template.templateId);
     }
   }
   const now = Date.now();
   // pending + 正在飞的补报都排除：第二次手势不能在 POST 落地前再 request
   // 同一个模板，否则会跟补报抢 60s 节流（Codex P2）
   const excludedKeys = new Set<string>([
-    ...pendingGrantReports,
+    ...pendingGrantReports.keys(),
     ...inFlightGrantReports,
   ]);
   const targets = selectTopUpTargets(
