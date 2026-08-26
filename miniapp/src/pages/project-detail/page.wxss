@@ -53,6 +53,9 @@
 }
 
 .tab-bar {
+  /* 同 requests 的 .status-bar：content-box + 横向 padding 会溢出整页 */
+  box-sizing: border-box;
+  width: 100%;
   display: flex;
   white-space: nowrap;
   background: var(--card-bg);

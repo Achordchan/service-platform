@@ -4,6 +4,7 @@ import {
   listProjects,
   type ProjectSummary,
 } from "../../lib/api";
+import { topUpSubscribeQuota } from "../../lib/subscribe";
 import {
   PROJECT_STATUS_LABELS,
   PROJECT_STATUS_TONES,
@@ -74,6 +75,7 @@ Page({
     }
   },
   onOpenProject(event: WechatMiniprogram.TouchEvent) {
+    topUpSubscribeQuota();
     const projectId = event.currentTarget.dataset.id as string;
     wx.navigateTo({ url: `/pages/project-detail/page?id=${projectId}` });
   },

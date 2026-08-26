@@ -24,6 +24,10 @@ import {
   type RequestPriorityValue,
 } from "../../lib/format";
 import { ApiError } from "../../lib/request";
+import {
+  ensureSubscribeStateCached,
+  topUpSubscribeQuota,
+} from "../../lib/subscribe";
 
 type ViewMessage = RequestMessage & {
   authorName: string;
@@ -97,6 +101,9 @@ Page({
   },
   activate() {
     this.pendingActivate = null;
+    // 订阅消息可直接冷启到本页，此时额度快照还没人写过；先补上，
+    // 否则 onSend 的静默续额是空转（详情页没有顶部引导横幅）
+    ensureSubscribeStateCached();
     void this.load();
     // 活跃页面保持实时流：员工回复即时刷新（SSE，PRD §19）
     if (this.boundEventHandler) {
@@ -335,6 +342,8 @@ Page({
       wx.showToast({ title: "请输入回复内容或添加附件", icon: "none" });
       return;
     }
+    // 客户刚回复完，紧接着就会有客服回复的提醒——在这个手势里把额度续上
+    topUpSubscribeQuota();
     this.setData({ sending: true });
     const mutationKey = this.replyMutationKey;
     // 对齐 Web 端：纯附件回复的正文写「附件：文件名列表」，否则服务端 EMPTY_MESSAGE 拒绝

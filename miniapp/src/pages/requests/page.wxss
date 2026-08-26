@@ -37,6 +37,10 @@
 }
 
 .status-bar {
+  /* 项目无全局 border-box 重置：content-box 下横向 padding 会把 scroll-view
+     自身撑到 100%+32rpx，整页因此能左右拖动（筛选条本身的溢出由内部横滚承担） */
+  box-sizing: border-box;
+  width: 100%;
   white-space: nowrap;
   padding: 8rpx 16rpx 16rpx;
 }
