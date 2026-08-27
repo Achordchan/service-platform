@@ -3,6 +3,7 @@ export type ChatAttachment = {
   originalName: string;
   title?: string | null;
   note?: string | null;
+  previewStatus?: "PENDING" | "READY" | "FAILED" | null;
   mimeType: string;
   size: number;
   inline?: boolean;

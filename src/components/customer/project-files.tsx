@@ -111,16 +111,27 @@ export function ProjectFiles({
           </Box>
           {file.contentRiskStatus !== "REVOKED" ? (
             <Stack direction="row" spacing={0.5}>
-              {previewKindOfMimeType(file.mimeType) !== "unsupported" ? (
+              {previewKindOfMimeType(file.mimeType) !== "unsupported" ||
+              file.previewStatus === "READY" ? (
                 <IconButton
                   onClick={() =>
-                    setPreview({
-                      type: "remote",
-                      url: `/api/v1/attachments/${file.id}?disposition=inline`,
-                      downloadUrl: `/api/v1/attachments/${file.id}`,
-                      mimeType: file.mimeType,
-                      name: file.title?.trim() || file.originalName,
-                    })
+                    setPreview(
+                      previewKindOfMimeType(file.mimeType) === "unsupported"
+                        ? {
+                            type: "remote",
+                            url: `/api/v1/attachments/${file.id}?disposition=inline&variant=preview`,
+                            downloadUrl: `/api/v1/attachments/${file.id}`,
+                            mimeType: "application/pdf",
+                            name: file.title?.trim() || file.originalName,
+                          }
+                        : {
+                            type: "remote",
+                            url: `/api/v1/attachments/${file.id}?disposition=inline`,
+                            downloadUrl: `/api/v1/attachments/${file.id}`,
+                            mimeType: file.mimeType,
+                            name: file.title?.trim() || file.originalName,
+                          },
+                    )
                   }
                   aria-label={`预览 ${file.title?.trim() || file.originalName}`}
                 >

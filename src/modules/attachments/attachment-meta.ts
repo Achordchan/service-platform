@@ -75,3 +75,8 @@ export function isOfficePreviewMimeType(mimeType: string) {
 export function officePreviewExtension(mimeType: string) {
   return OFFICE_PREVIEW_MIME_EXTENSIONS.get(mimeType) ?? null;
 }
+
+// 上传链路：命中转换类型时把预览初始状态标记为 PENDING（其余类型无预览件概念）
+export function initialPreviewStatus(mimeType: string) {
+  return isOfficePreviewMimeType(mimeType) ? ("PENDING" as const) : null;
+}

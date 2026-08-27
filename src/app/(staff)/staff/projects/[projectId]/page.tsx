@@ -126,6 +126,7 @@ export default async function StaffProjectDetailPage({
       originalName: attachment.originalName,
       title: attachment.title,
       note: attachment.note,
+      previewStatus: attachment.previewStatus,
       mimeType: attachment.mimeType,
       size: attachment.size,
       visibility: attachment.visibility,

@@ -149,8 +149,3 @@ async function convertOfficeToPdf(buffer: Uint8Array, mimeType: string) {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
 }
-
-// 供上传链路复用：命中转换类型时把初始状态标记为 PENDING
-export function initialPreviewStatus(mimeType: string) {
-  return isOfficePreviewMimeType(mimeType) ? ("PENDING" as const) : null;
-}

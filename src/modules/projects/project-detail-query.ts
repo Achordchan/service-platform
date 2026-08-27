@@ -141,6 +141,7 @@ export async function loadProjectDetail(
             originalName: true,
             title: true,
             note: true,
+            previewStatus: true,
             mimeType: true,
             size: true,
             visibility: true,

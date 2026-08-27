@@ -28,11 +28,11 @@ import {
 } from "@/modules/attachments/attachment-validation";
 import {
   attachmentRiskText,
+  initialPreviewStatus,
   isOfficePreviewMimeType,
   normalizeAttachmentNote,
   normalizeAttachmentTitle,
 } from "@/modules/attachments/attachment-meta";
-import { initialPreviewStatus } from "@/modules/attachments/preview-render-service";
 import { queueAttachmentPreviewRender } from "@/lib/jobs";
 import {
   assertCanManageActiveProjectDelivery,
