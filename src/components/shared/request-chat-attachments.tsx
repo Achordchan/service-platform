@@ -67,42 +67,81 @@ function attachmentColors(tone: AttachmentTone) {
 
 function MessageImage({
   file,
+  tone,
   resolveUrl,
 }: {
   file: ChatAttachment;
+  tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
 }) {
   const inlineUrl = resolveUrl
     ? resolveUrl(file, true)
     : `/api/v1/attachments/${file.id}?disposition=inline`;
+  const colors = attachmentColors(tone);
+  const customTitle =
+    file.title?.trim() && file.title.trim() !== file.originalName
+      ? file.title.trim()
+      : "";
   return (
-    <Box
-      component="a"
-      href={inlineUrl}
-      target="_blank"
-      rel="noopener noreferrer"
-      sx={{
-        display: "block",
-        minWidth: 0,
-        overflow: "hidden",
-        borderRadius: 1.5,
-        color: "inherit",
-        textDecoration: "none",
-      }}
-    >
+    <Box sx={{ minWidth: 0 }}>
       <Box
-        component="img"
-        src={inlineUrl}
-        alt={attachmentDisplayName(file)}
-        loading="lazy"
+        component="a"
+        href={inlineUrl}
+        target="_blank"
+        rel="noopener noreferrer"
         sx={{
           display: "block",
-          width: "100%",
-          maxHeight: 240,
-          objectFit: "contain",
-          bgcolor: "rgba(15,23,42,0.06)",
+          minWidth: 0,
+          overflow: "hidden",
+          borderRadius: 1.5,
+          color: "inherit",
+          textDecoration: "none",
         }}
-      />
+      >
+        <Box
+          component="img"
+          src={inlineUrl}
+          alt={attachmentDisplayName(file)}
+          loading="lazy"
+          sx={{
+            display: "block",
+            width: "100%",
+            maxHeight: 240,
+            objectFit: "contain",
+            bgcolor: "rgba(15,23,42,0.06)",
+          }}
+        />
+      </Box>
+      {customTitle || file.note?.trim() ? (
+        <Box sx={{ px: 0.5, pt: 0.5 }}>
+          {customTitle ? (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                fontWeight: 600,
+                color: colors.primary,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {customTitle}
+            </Typography>
+          ) : null}
+          {file.note?.trim() ? (
+            <Typography
+              variant="caption"
+              sx={{
+                display: "block",
+                color: colors.secondary,
+                whiteSpace: "pre-wrap",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {file.note}
+            </Typography>
+          ) : null}
+        </Box>
+      ) : null}
     </Box>
   );
 }
@@ -213,7 +252,12 @@ export function RequestMessageAttachments({
           }}
         >
           {images.map((file) => (
-            <MessageImage key={file.id} file={file} resolveUrl={resolveUrl} />
+            <MessageImage
+              key={file.id}
+              file={file}
+              tone={tone}
+              resolveUrl={resolveUrl}
+            />
           ))}
         </Box>
       ) : null}

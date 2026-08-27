@@ -271,6 +271,9 @@ export function uploadAttachment(input: {
         ...(input.requestMessageId
           ? { requestMessageId: input.requestMessageId }
           : {}),
+        // wx.uploadFile 的 multipart 文件名取自临时路径（tmp_xxx.ext），
+        // 显式提交真实文件名供服务端覆盖 originalName/下载名
+        fileName: input.fileName,
         // 标题与文件名一致（未修改默认值）时不提交，展示端兜底 originalName
         ...(input.title && input.title !== input.fileName
           ? { title: input.title }
