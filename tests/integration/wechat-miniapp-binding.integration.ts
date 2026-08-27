@@ -5,7 +5,9 @@ import type { Actor } from "@/lib/actor";
 import { createCustomerSpace } from "@/modules/customer-spaces/customer-space-service";
 import { acceptInvitation } from "@/modules/invitations/invitation-service";
 import {
+  createOwnWechatBindingCode,
   createWechatBindingCode,
+  removeOwnWechatBinding,
   removeWechatBinding,
   revokeWechatBindingCode,
 } from "@/modules/miniapp/binding-code-service";
@@ -17,6 +19,7 @@ import {
   getMiniappMe,
   sendBindingOtp,
 } from "@/modules/miniapp/wechat-binding-service";
+import { reportSubscribeGrant } from "@/modules/miniapp/wechat-subscribe-message-service";
 import { resolveMiniappSessionFromAuthorization } from "@/modules/miniapp/session";
 import { hashBindingCode } from "@/modules/miniapp/miniapp-tokens";
 
@@ -51,6 +54,9 @@ const ids = {
   ownerMembershipId: "",
   memberMembershipId: "",
 };
+
+// 用例内自建的用户邮箱（随用例追加，统一在 afterAll 清理）
+const cleanupEmails: string[] = [];
 
 let admin: Actor;
 let member: Actor;
@@ -216,7 +222,7 @@ afterAll(async () => {
     ids.spaceId,
   ]);
   await ownerPool.query('DELETE FROM "User" WHERE email = ANY($1::text[])', [
-    [ids.ownerEmail, ids.memberEmail],
+    [ids.ownerEmail, ids.memberEmail, ...cleanupEmails],
   ]);
   await ownerPool.query('DELETE FROM "MailMessage" WHERE "toEmail" = ANY($1::text[])', [
     [ids.ownerEmail, ids.memberEmail],
@@ -571,5 +577,137 @@ describe("微信小程序登录与绑定", () => {
     await expect(
       createWechatBindingCode(member, ids.spaceId, ids.ownerMembershipId),
     ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+  });
+
+  it("自助生成绑定码并发时仍保持单一有效码", async () => {
+    // 自助路径不校验空间成员关系，直接用一个独立用户验证并发串行化
+    const email = `wx-self-${ids.run}@local.test`;
+    const selfUserId = (
+      await ownerPool.query<{ id: string }>(
+        `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+         VALUES ($1, '自助绑定码测试', $2, true, 'CUSTOMER', NOW(), NOW()) RETURNING id`,
+        [randomUUID(), email],
+      )
+    ).rows[0]!.id;
+    cleanupEmails.push(email);
+    const selfActor: Actor = {
+      id: selfUserId,
+      name: "自助绑定码测试",
+      email,
+      platformRole: "CUSTOMER",
+      isPlatformAdmin: false,
+      isStaff: false,
+    };
+
+    const [first, second] = await Promise.all([
+      createOwnWechatBindingCode(selfActor),
+      createOwnWechatBindingCode(selfActor),
+    ]);
+    expect(first.code).not.toBe(second.code);
+
+    // 先完成的请求返回的码必须被后完成的请求作废，最终只剩一条未撤销码
+    const rows = await ownerPool.query<{ revoked: boolean }>(
+      'SELECT ("revokedAt" IS NULL) AS revoked FROM "WechatBindingCode" WHERE "userId" = $1',
+      [selfUserId],
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.filter((row) => row.revoked)).toHaveLength(1);
+  });
+
+  it("解绑后本人残留的未使用绑定码全部作废且不可再用于绑定", async () => {
+    const email = `wx-unbind-${ids.run}@local.test`;
+    const unbindUserId = (
+      await ownerPool.query<{ id: string }>(
+        `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+         VALUES ($1, '解绑残留码测试', $2, true, 'CUSTOMER', NOW(), NOW()) RETURNING id`,
+        [randomUUID(), email],
+      )
+    ).rows[0]!.id;
+    cleanupEmails.push(email);
+    const unbindMembershipId = (
+      await ownerPool.query<{ id: string }>(
+        `INSERT INTO "Membership" (id, "customerSpaceId", "userId", role, "createdAt", "updatedAt")
+         VALUES ($1, $2, $3, 'MEMBER', NOW(), NOW()) RETURNING id`,
+        [randomUUID(), ids.spaceId, unbindUserId],
+      )
+    ).rows[0]!.id;
+    const unbindActor: Actor = {
+      id: unbindUserId,
+      name: "解绑残留码测试",
+      email,
+      platformRole: "CUSTOMER",
+      isPlatformAdmin: false,
+      isStaff: false,
+    };
+
+    // 绑定前自助生成一条；管理员另补一条备用（备用码可在绑定后继续存留）
+    const own = await createOwnWechatBindingCode(unbindActor);
+    const spare = await createWechatBindingCode(
+      admin,
+      ids.spaceId,
+      unbindMembershipId,
+    );
+
+    // 首次绑定消耗自助生成的码，此时名下仍剩一条活跃备用码
+    const login = await createMiniappSessionForCode(
+      { code: "any" },
+      fakeProvider(`it-openid-unbind-${ids.run}`),
+    );
+    expect(login.status).toBe("NEED_BINDING");
+    if (login.status !== "NEED_BINDING") return;
+    const bound = await bindTicketToCode({
+      bindingTicket: login.bindingTicket,
+      code: own.code.toLowerCase(),
+    });
+    expect(bound.user.id).toBe(unbindUserId);
+    const before = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatBindingCode" WHERE "userId" = $1 AND "usedAt" IS NULL AND "revokedAt" IS NULL',
+      [unbindUserId],
+    );
+    expect(before.rows[0]?.count).toBe(1);
+
+    // 订阅授权额度归属旧 openid：解绑也必须清空，防止换绑后拿残留额度误发
+    await ownerPool.query(
+      `INSERT INTO "WechatSubscribeGrant" (id, "userId", "templateKey", remaining, "updatedAt")
+       VALUES ($1, $2, 'STATUS_UPDATE', 5, NOW())`,
+      [randomUUID(), unbindUserId],
+    );
+
+    await expect(removeOwnWechatBinding(unbindActor)).resolves.toMatchObject({
+      removed: true,
+    });
+
+    // 解绑必须连带作废全部未使用码：否则持码人可把微信绑到刚解绑的账号上
+    const after = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatBindingCode" WHERE "userId" = $1 AND "usedAt" IS NULL AND "revokedAt" IS NULL',
+      [unbindUserId],
+    );
+    expect(after.rows[0]?.count).toBe(0);
+    const grantsLeft = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatSubscribeGrant" WHERE "userId" = $1',
+      [unbindUserId],
+    );
+    expect(grantsLeft.rows[0]?.count).toBe(0);
+
+    // 解绑后迟到的订阅上报不得重建孤儿额度（会变成换绑后的误发配额）
+    await expect(
+      reportSubscribeGrant(unbindUserId, "REQUEST_STATUS"),
+    ).resolves.toEqual({ remaining: 0 });
+    const grantsRebuilt = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatSubscribeGrant" WHERE "userId" = $1',
+      [unbindUserId],
+    );
+    expect(grantsRebuilt.rows[0]?.count).toBe(0);
+
+    // 未过期但已被解绑作废的备用码同样不能再完成绑定
+    const retry = await createMiniappSessionForCode(
+      { code: "any" },
+      fakeProvider(`it-openid-unbind-retry-${ids.run}`),
+    );
+    if (retry.status === "NEED_BINDING") {
+      await expect(
+        bindTicketToCode({ bindingTicket: retry.bindingTicket, code: spare.code }),
+      ).rejects.toMatchObject({ code: "BINDING_CODE_INVALID" });
+    }
   });
 });

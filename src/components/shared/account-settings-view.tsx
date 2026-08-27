@@ -12,6 +12,11 @@ import { prisma } from "@/lib/db";
 import { requireUserWithAccess } from "@/lib/session";
 import { getPendingUserEmailChange } from "@/modules/users/customer-email-change-service";
 import { getNotificationPreferences } from "@/modules/users/notification-preference-service";
+import { maskOpenid } from "@/modules/miniapp/miniapp-tokens";
+import {
+  WechatBindingSettings,
+  type WechatBindingSettingsStatus,
+} from "@/components/customer/wechat-binding-settings";
 
 /**
  * The customer and staff 个人设置 pages differ only in which page-heading
@@ -29,8 +34,13 @@ export async function AccountSettingsView({
   initialSection?: string;
 }) {
   const { session, actor } = await requireUserWithAccess();
-  const [profile, pendingEmailChange, credentialAccount, notificationPreferences] =
-    await Promise.all([
+  const [
+    profile,
+    pendingEmailChange,
+    credentialAccount,
+    notificationPreferences,
+    wechatBinding,
+  ] = await Promise.all([
       prisma.user.findUnique({
         where: { id: actor.id },
         select: {
@@ -44,6 +54,12 @@ export async function AccountSettingsView({
         select: { id: true },
       }),
       getNotificationPreferences(actor),
+      actor.isStaff
+        ? Promise.resolve(null)
+        : prisma.wechatBinding.findUnique({
+            where: { userId: actor.id },
+            select: { createdAt: true, lastLoginAt: true, openid: true },
+          }),
     ]);
 
   const sections: AccountSettingsSection[] = [
@@ -93,6 +109,24 @@ export async function AccountSettingsView({
       ),
     },
   ];
+
+  // 微信提醒仅对客户开放（小程序是客户端，员工不通过微信接收推送）
+  if (!actor.isStaff) {
+    const wechatStatus: WechatBindingSettingsStatus = wechatBinding
+      ? {
+          bound: true,
+          boundAt: wechatBinding.createdAt.toISOString(),
+          lastLoginAt: wechatBinding.lastLoginAt?.toISOString() ?? null,
+          openidMasked: maskOpenid(wechatBinding.openid),
+        }
+      : { bound: false };
+    sections.push({
+      key: "wechat",
+      label: "微信提醒",
+      description: "绑定微信小程序，及时接收项目进度推送",
+      content: <WechatBindingSettings status={wechatStatus} />,
+    });
+  }
 
   return (
     <PageContainer maxWidth="md">

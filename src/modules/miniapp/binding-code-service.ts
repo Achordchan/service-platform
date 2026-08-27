@@ -15,6 +15,11 @@ import {
 
 const MAX_ACTIVE_CODES_PER_USER = 3;
 
+// 绑定生命周期咨询锁的最长持有方是 worker 的微信网络发送（token+消息最多约 16s，
+// 加排队等锁更久）：竞争这把锁的解绑/发码事务 deadline 必须明显长于该窗口，
+// 否则用户可见的解绑/发码请求会直接在锁上超时报错。
+const LOCK_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 } as const;
+
 export type MemberWechatBindingStatus = {
   membership: { id: string; role: "OWNER" | "MEMBER" };
   user: { id: string; name: string; email: string };
@@ -88,6 +93,12 @@ export async function createWechatBindingCode(
   const codeData = createBindingCode();
   return withActorDb(actor, async (tx) => {
     const member = await loadSpaceMember(tx, actor, customerSpaceId, membershipId);
+    // 与解绑/自助发码共用同一把 per-user 咨询锁：管理员路径同样不能在
+    // 解绑事务的作废快照之后骑缝插入幸存码，也顺带保住「活跃码 ≤3」上限的
+    // count+create 检查不被并发展成超发。
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${member.userId}`}))
+    `;
     const activeCount = await tx.wechatBindingCode.count({
       where: {
         userId: member.userId,
@@ -129,7 +140,7 @@ export async function createWechatBindingCode(
       createdAt: created.createdAt,
       expiresAt: codeData.expiresAt,
     };
-  });
+  }, LOCK_TX_OPTIONS);
 }
 
 export async function revokeWechatBindingCode(
@@ -174,6 +185,12 @@ export async function removeWechatBinding(
   const removedAt = new Date();
   await withActorDb(actor, async (tx) => {
     const member = await loadSpaceMember(tx, actor, customerSpaceId, membershipId);
+    // 与两类发码路径共用同一把 per-user 咨询锁，保证「解绑」与「发码」全序：
+    // 否则发码事务可在解绑作废语句的快照之后插入并先提交，幸存的活码
+    // 会让刚解绑的账号立刻暴露在持码人接管的窗口下（同 createOwnWechatBindingCode）。
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${member.userId}`}))
+    `;
     const binding = await tx.wechatBinding.findUnique({
       where: { userId: member.userId },
       select: { id: true, openid: true },
@@ -185,6 +202,17 @@ export async function removeWechatBinding(
     // 留下绑定已解除但仍有 30 天有效期的孤儿会话。
     await tx.wechatBinding.delete({ where: { id: binding.id } });
     await tx.miniappSession.deleteMany({ where: { userId: member.userId } });
+    // 解除绑定即清空未使用绑定码：绑定动作只校验「账号当前未绑定」，
+    // 残留的有效码可被任何持码人在 TTL 内抢先绑到刚解绑的账号上接管会话。
+    const revokedPending = await tx.wechatBindingCode.updateMany({
+      where: { userId: member.userId, usedAt: null, revokedAt: null },
+      data: { revokedAt: removedAt },
+    });
+    // 订阅授权额度按 user+templateKey 记账，实际归属旧 openid；换绑后 worker
+    // 会拿残留额度向新 openid 发送，第一条注定 43101 失败丢通知，一并清零。
+    const clearedGrants = await tx.wechatSubscribeGrant.deleteMany({
+      where: { userId: member.userId },
+    });
     await writeAuditLog(tx, actor, {
       action: "WECHAT_BINDING_REMOVED",
       resourceType: "WechatBinding",
@@ -194,10 +222,100 @@ export async function removeWechatBinding(
         userId: member.userId,
         email: member.userEmail,
         openid: maskOpenid(binding.openid),
+        revokedBindingCodes: revokedPending.count,
+        clearedSubscribeGrants: clearedGrants.count,
       },
     });
-  });
+  }, LOCK_TX_OPTIONS);
   return { removedAt };
+}
+
+/**
+ * 客户在 Web 端自助解绑「自己」的微信（无需空间所有者/管理员）。
+ * WechatBinding 未启用 RLS，权限靠这里只操作 userId=actor.id 来保证；
+ * 删除顺序与作废语义与 removeWechatBinding 一致（含清空未使用绑定码）。
+ */
+export async function removeOwnWechatBinding(
+  actor: Actor,
+): Promise<{ removed: boolean }> {
+  return withActorDb(actor, async (tx) => {
+    // 与发码路径同一把 per-user 锁，防「解绑 vs 发码」骑缝产生幸存活码（见 removeWechatBinding）
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${actor.id}`}))
+    `;
+    const binding = await tx.wechatBinding.findUnique({
+      where: { userId: actor.id },
+      select: { id: true, openid: true },
+    });
+    if (!binding) return { removed: false };
+    const now = new Date();
+    await tx.wechatBinding.delete({ where: { id: binding.id } });
+    await tx.miniappSession.deleteMany({ where: { userId: actor.id } });
+    const revokedPending = await tx.wechatBindingCode.updateMany({
+      where: { userId: actor.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: now },
+    });
+    // 清空旧 openid 名下的订阅授权额度（归属不随换绑延续），避免换绑后首条通知 43101 丢失
+    const clearedGrants = await tx.wechatSubscribeGrant.deleteMany({
+      where: { userId: actor.id },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "WECHAT_BINDING_REMOVED",
+      resourceType: "WechatBinding",
+      resourceId: binding.id,
+      metadata: {
+        userId: actor.id,
+        self: true,
+        openid: maskOpenid(binding.openid),
+        revokedBindingCodes: revokedPending.count,
+        clearedSubscribeGrants: clearedGrants.count,
+      },
+    });
+    return { removed: true };
+  }, LOCK_TX_OPTIONS);
+}
+
+/**
+ * 客户在 Web 端自助为「自己」生成绑定码，到小程序输入即可绑定微信。
+ * 先作废本人此前未使用的绑定码，保证任一时刻只有一个有效码，也不会触达数量上限。
+ *
+ * 「作废旧码 + 插入新码」无法只靠行锁维持单一有效码：READ COMMITTED 下两个
+ * 并发请求的 updateMany 都发生在对方插入之前，各自插入的新码互不可见，
+ * 结果留下两个未撤销码。这里按用户取事务级咨询锁串行化同用户的生成请求。
+ */
+export async function createOwnWechatBindingCode(
+  actor: Actor,
+): Promise<{ code: string; expiresAt: Date }> {
+  const codeData = createBindingCode();
+  return withActorDb(actor, async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${actor.id}`}))
+    `;
+    await tx.wechatBindingCode.updateMany({
+      where: { userId: actor.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const created = await tx.wechatBindingCode.create({
+      data: {
+        userId: actor.id,
+        codeHash: codeData.codeHash,
+        expiresAt: codeData.expiresAt,
+        createdById: actor.id,
+      },
+      select: { id: true },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "WECHAT_BINDING_CODE_CREATED",
+      resourceType: "WechatBindingCode",
+      resourceId: created.id,
+      metadata: {
+        userId: actor.id,
+        self: true,
+        expiresAt: codeData.expiresAt.toISOString(),
+      },
+    });
+    return { code: codeData.code, expiresAt: codeData.expiresAt };
+  }, LOCK_TX_OPTIONS);
 }
 
 type Tx = Parameters<Parameters<typeof withActorDb>[1]>[0];
