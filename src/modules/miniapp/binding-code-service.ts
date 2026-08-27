@@ -185,6 +185,12 @@ export async function removeWechatBinding(
     // 留下绑定已解除但仍有 30 天有效期的孤儿会话。
     await tx.wechatBinding.delete({ where: { id: binding.id } });
     await tx.miniappSession.deleteMany({ where: { userId: member.userId } });
+    // 解除绑定即清空未使用绑定码：绑定动作只校验「账号当前未绑定」，
+    // 残留的有效码可被任何持码人在 TTL 内抢先绑到刚解绑的账号上接管会话。
+    const revokedPending = await tx.wechatBindingCode.updateMany({
+      where: { userId: member.userId, usedAt: null, revokedAt: null },
+      data: { revokedAt: removedAt },
+    });
     await writeAuditLog(tx, actor, {
       action: "WECHAT_BINDING_REMOVED",
       resourceType: "WechatBinding",
@@ -194,6 +200,7 @@ export async function removeWechatBinding(
         userId: member.userId,
         email: member.userEmail,
         openid: maskOpenid(binding.openid),
+        revokedBindingCodes: revokedPending.count,
       },
     });
   });
@@ -203,7 +210,7 @@ export async function removeWechatBinding(
 /**
  * 客户在 Web 端自助解绑「自己」的微信（无需空间所有者/管理员）。
  * WechatBinding 未启用 RLS，权限靠这里只操作 userId=actor.id 来保证；
- * 删除顺序与 removeWechatBinding 一致：先删绑定取行锁、再删会话，避免孤儿会话。
+ * 删除顺序与作废语义与 removeWechatBinding 一致（含清空未使用绑定码）。
  */
 export async function removeOwnWechatBinding(
   actor: Actor,
@@ -214,8 +221,13 @@ export async function removeOwnWechatBinding(
       select: { id: true, openid: true },
     });
     if (!binding) return { removed: false };
+    const now = new Date();
     await tx.wechatBinding.delete({ where: { id: binding.id } });
     await tx.miniappSession.deleteMany({ where: { userId: actor.id } });
+    const revokedPending = await tx.wechatBindingCode.updateMany({
+      where: { userId: actor.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: now },
+    });
     await writeAuditLog(tx, actor, {
       action: "WECHAT_BINDING_REMOVED",
       resourceType: "WechatBinding",
@@ -224,6 +236,7 @@ export async function removeOwnWechatBinding(
         userId: actor.id,
         self: true,
         openid: maskOpenid(binding.openid),
+        revokedBindingCodes: revokedPending.count,
       },
     });
     return { removed: true };
