@@ -1,16 +1,29 @@
+"use client";
+
+import { useState } from "react";
 import {
-  Avatar,
   Box,
+  Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Divider,
   Paper,
   Stack,
   Typography,
 } from "@mui/material";
 import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import type { ProjectUpdate } from "@/components/customer/customer-types";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
+import {
+  extractInlineAttachmentIds,
+  htmlToPlainText,
+} from "@/lib/message-content";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -36,6 +49,7 @@ export function ProjectUpdates({
   compact?: boolean;
   contentRiskEnabled?: boolean;
 }) {
+  const [detail, setDetail] = useState<ProjectUpdate | null>(null);
   const visibleUpdates = compact ? updates.slice(0, 3) : updates;
   if (visibleUpdates.length === 0) {
     return (
@@ -46,10 +60,10 @@ export function ProjectUpdates({
     );
   }
 
-  return (
-    <Stack spacing={compact ? 0 : 2}>
-      {visibleUpdates.map((update, index) =>
-        compact ? (
+  if (compact) {
+    return (
+      <Stack spacing={0}>
+        {visibleUpdates.map((update, index) => (
           <Box
             key={update.id}
             sx={{
@@ -93,115 +107,238 @@ export function ProjectUpdates({
               </Box>
             </Stack>
           </Box>
-        ) : (
-          <Paper
-            key={update.id}
-            variant="outlined"
-            sx={{ p: { xs: 2.25, md: 3 } }}
-          >
-            <Stack direction="row" spacing={1.5}>
-              <Avatar
-                sx={{
-                  width: 38,
-                  height: 38,
-                  bgcolor: "action.selected",
-                  color: "primary.main",
-                  fontSize: 15,
-                }}
-              >
-                {update.authorName.slice(0, 1)}
-              </Avatar>
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Stack
-                  direction={{ xs: "column", sm: "row" }}
-                  spacing={0.5}
-                  sx={{ justifyContent: "space-between" }}
-                >
-                  <Box>
-                    {update.contentRiskStatus === "REVOKED" ? (
-                      <ContentRiskStatusLine
-                        status="REVOKED"
-                        pluginEnabled={contentRiskEnabled}
-                      />
-                    ) : (
-                      <Typography sx={{ fontWeight: 650, fontSize: 17 }}>
-                        {update.title}
-                      </Typography>
-                    )}
-                    <Typography variant="body2" color="text.secondary">
-                      {update.authorName}
-                    </Typography>
-                  </Box>
-                  <Typography variant="body2" color="text.secondary">
-                    {dateFormatter.format(new Date(update.createdAt))}
-                    {editedSuffix(update.createdAt, update.updatedAt)}
+        ))}
+      </Stack>
+    );
+  }
+
+  return (
+    <>
+      <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+        {visibleUpdates.map((update, index) => {
+          const revoked = update.contentRiskStatus === "REVOKED";
+          const preview = htmlToPlainText(update.body);
+          const hasImages =
+            extractInlineAttachmentIds(update.body).length > 0 ||
+            /<img\b/i.test(update.body);
+          const replyCount = update.comments.length;
+          return (
+            <Box
+              key={update.id}
+              sx={{
+                p: { xs: 1.25, md: 1.5 },
+                display: "grid",
+                gridTemplateColumns: {
+                  xs: "minmax(0, 1fr)",
+                  md: "minmax(0, 1fr) minmax(190px, auto)",
+                },
+                columnGap: 3,
+                rowGap: 1.25,
+                borderBottom:
+                  index === visibleUpdates.length - 1 ? 0 : "1px solid",
+                borderColor: "divider",
+                alignItems: "start",
+              }}
+            >
+              <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+                {revoked ? (
+                  <ContentRiskStatusLine
+                    status="REVOKED"
+                    pluginEnabled={contentRiskEnabled}
+                  />
+                ) : (
+                  <Typography sx={{ fontWeight: 650 }}>
+                    {update.title}
                   </Typography>
-                </Stack>
-                {update.contentRiskStatus === "PENDING" ? (
+                )}
+                {!revoked && update.contentRiskStatus === "PENDING" ? (
                   <ContentRiskStatusLine
                     status="PENDING"
                     pluginEnabled={contentRiskEnabled}
                   />
                 ) : null}
-                {update.contentRiskStatus !== "REVOKED" ? (
-                  <CollapsibleText text={update.body} maxLines={12} />
+                {!revoked && preview ? (
+                  <Typography
+                    color="text.secondary"
+                    sx={{
+                      lineHeight: 1.7,
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 2,
+                      overflow: "hidden",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {preview}
+                  </Typography>
                 ) : null}
-                {update.contentRiskStatus !== "REVOKED" && update.comments.length > 0 ? (
-                  <>
-                    <Divider sx={{ my: 2 }} />
-                    <Stack
-                      direction="row"
-                      spacing={1}
-                      sx={{ alignItems: "center" }}
+                {!revoked && hasImages ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    sx={{ alignItems: "center", color: "text.secondary" }}
+                  >
+                    <ImageOutlinedIcon sx={{ fontSize: 17 }} />
+                    <Typography variant="body2">
+                      包含图片，请查看详情
+                    </Typography>
+                  </Stack>
+                ) : null}
+                {!revoked && replyCount > 0 ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    sx={{ alignItems: "center", color: "text.secondary" }}
+                  >
+                    <ChatBubbleOutlineOutlinedIcon sx={{ fontSize: 17 }} />
+                    <Typography variant="body2">
+                      {replyCount} 条回复
+                    </Typography>
+                  </Stack>
+                ) : null}
+              </Stack>
+              <Stack
+                spacing={0.75}
+                sx={{
+                  minWidth: 0,
+                  pt: { xs: 1.25, md: 0 },
+                  borderTop: { xs: "1px solid", md: 0 },
+                  borderColor: "divider",
+                  alignItems: { xs: "flex-start", md: "flex-end" },
+                  textAlign: { xs: "left", md: "right" },
+                }}
+              >
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {update.authorName}
+                  </Typography>
+                </Box>
+                <Box>
+                  <Typography variant="body2" color="text.secondary">
+                    {dateFormatter.format(new Date(update.createdAt))}
+                    {editedSuffix(update.createdAt, update.updatedAt)}
+                  </Typography>
+                </Box>
+                {!revoked && (preview || hasImages || replyCount > 0) ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    useFlexGap
+                    sx={{
+                      width: "100%",
+                      alignItems: "center",
+                      justifyContent: { xs: "flex-start", md: "flex-end" },
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <Button
+                      size="small"
+                      color="primary"
+                      startIcon={<VisibilityOutlinedIcon />}
+                      onClick={() => setDetail(update)}
                     >
-                      <ChatBubbleOutlineOutlinedIcon
-                        sx={{ fontSize: 18, color: "text.secondary" }}
-                      />
-                      <Typography variant="body2" color="text.secondary">
-                        {update.comments.length} 条回复
-                      </Typography>
-                    </Stack>
-                    <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-                      {update.comments.map((comment) => (
-                        <Box
-                          key={comment.id}
-                          sx={{
-                            p: 1.75,
-                            borderRadius: 1.5,
-                            bgcolor: "action.hover",
-                          }}
-                        >
-                          <Typography variant="body2" sx={{ fontWeight: 650 }}>
-                            {comment.authorName}
-                            {editedSuffix(comment.createdAt, comment.updatedAt)}
-                          </Typography>
-                          {comment.contentRiskStatus === "REVOKED" ? (
+                      查看详情
+                    </Button>
+                  </Stack>
+                ) : null}
+              </Stack>
+            </Box>
+          );
+        })}
+      </Paper>
+
+      <Dialog
+        open={Boolean(detail)}
+        onClose={() => setDetail(null)}
+        fullWidth
+        maxWidth="md"
+        slotProps={{
+          paper: { sx: { maxHeight: "calc(100dvh - 48px)" } },
+        }}
+      >
+        <DialogTitle>{detail?.title}</DialogTitle>
+        <DialogContent dividers sx={{ overflowY: "auto" }}>
+          {detail ? (
+            <Stack spacing={2}>
+              <Stack
+                direction="row"
+                spacing={2}
+                useFlexGap
+                sx={{ alignItems: "center", flexWrap: "wrap" }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  {detail.authorName}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {dateFormatter.format(new Date(detail.createdAt))}
+                  {editedSuffix(detail.createdAt, detail.updatedAt)}
+                </Typography>
+              </Stack>
+              {detail.contentRiskStatus === "PENDING" ? (
+                <ContentRiskStatusLine
+                  status="PENDING"
+                  pluginEnabled={contentRiskEnabled}
+                />
+              ) : null}
+              <CollapsibleText text={detail.body} collapsible={false} />
+              {detail.comments.length > 0 ? (
+                <>
+                  <Divider />
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{ alignItems: "center" }}
+                  >
+                    <ChatBubbleOutlineOutlinedIcon
+                      sx={{ fontSize: 18, color: "text.secondary" }}
+                    />
+                    <Typography variant="body2" color="text.secondary">
+                      {detail.comments.length} 条回复
+                    </Typography>
+                  </Stack>
+                  <Stack spacing={1.5}>
+                    {detail.comments.map((comment) => (
+                      <Box
+                        key={comment.id}
+                        sx={{
+                          p: 1.75,
+                          borderRadius: 1.5,
+                          bgcolor: "action.hover",
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ fontWeight: 650 }}>
+                          {comment.authorName}
+                          {editedSuffix(comment.createdAt, comment.updatedAt)}
+                        </Typography>
+                        {comment.contentRiskStatus === "REVOKED" ? (
+                          <ContentRiskStatusLine
+                            status="REVOKED"
+                            pluginEnabled={contentRiskEnabled}
+                          />
+                        ) : (
+                          <>
+                            <CollapsibleText
+                              text={comment.body}
+                              maxLines={6}
+                            />
                             <ContentRiskStatusLine
-                              status="REVOKED"
+                              status={comment.contentRiskStatus}
                               pluginEnabled={contentRiskEnabled}
                             />
-                          ) : (
-                            <>
-                              <CollapsibleText
-                                text={comment.body}
-                                maxLines={6}
-                              />
-                              <ContentRiskStatusLine
-                                status={comment.contentRiskStatus}
-                                pluginEnabled={contentRiskEnabled}
-                              />
-                            </>
-                          )}
-                        </Box>
-                      ))}
-                    </Stack>
-                  </>
-                ) : null}
-              </Box>
+                          </>
+                        )}
+                      </Box>
+                    ))}
+                  </Stack>
+                </>
+              ) : null}
             </Stack>
-          </Paper>
-        ),
-      )}
-    </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setDetail(null)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 }

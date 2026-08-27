@@ -2,19 +2,22 @@
 
 import { useEffect, useState } from "react";
 import {
-  Box,
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Button,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   Stack,
   Typography,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import { staffApi } from "@/components/staff/staff-api";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
+import { htmlToPlainText, truncatePlainText } from "@/lib/message-content";
 
 const dateTimeFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -99,21 +102,61 @@ export function UpdateHistoryDialog({
         ) : !revisions || revisions.length === 0 ? (
           <Typography color="text.secondary">暂无历史版本。</Typography>
         ) : (
-          <Stack divider={<Divider />} spacing={2}>
-            {revisions.map((revision) => (
-              <Box key={revision.id}>
-                <Typography variant="body2" color="text.secondary">
-                  {revision.editedByName} ·{" "}
-                  {dateTimeFormatter.format(new Date(revision.editedAt))}
-                </Typography>
-                {revision.title ? (
-                  <Typography sx={{ fontWeight: 650, mt: 0.5 }}>
-                    {revision.title}
-                  </Typography>
-                ) : null}
-                <CollapsibleText text={revision.body} maxLines={6} />
-              </Box>
-            ))}
+          <Stack spacing={1}>
+            <Typography variant="body2" color="text.secondary">
+              共 {revisions.length} 个历史版本，点击任一版本展开查看当时全文。
+            </Typography>
+            {revisions.map((revision) => {
+              const preview = truncatePlainText(
+                htmlToPlainText(revision.body),
+                60,
+              );
+              return (
+                <Accordion
+                  key={revision.id}
+                  disableGutters
+                  elevation={0}
+                  sx={{
+                    border: "1px solid",
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    "&:before": { display: "none" },
+                    "&.Mui-expanded": { m: 0 },
+                  }}
+                >
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Stack spacing={0.25} sx={{ minWidth: 0, width: "100%" }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {revision.editedByName} ·{" "}
+                        {dateTimeFormatter.format(new Date(revision.editedAt))}
+                        {revision.visibility === "INTERNAL" ? " · 内部" : ""}
+                      </Typography>
+                      {preview ? (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {preview}
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ pt: 0 }}>
+                    {revision.title ? (
+                      <Typography sx={{ fontWeight: 650, mb: 1 }}>
+                        {revision.title}
+                      </Typography>
+                    ) : null}
+                    <CollapsibleText text={revision.body} collapsible={false} />
+                  </AccordionDetails>
+                </Accordion>
+              );
+            })}
           </Stack>
         )}
       </DialogContent>

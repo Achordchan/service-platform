@@ -87,7 +87,6 @@ select_node_24
 
 command -v pnpm >/dev/null 2>&1 || fail "未找到 pnpm。"
 command -v lsof >/dev/null 2>&1 || fail "未找到 lsof。"
-command -v pg_isready >/dev/null 2>&1 || fail "未找到 PostgreSQL 客户端 pg_isready。"
 
 [[ -f .env ]] || fail "缺少 .env，请先根据 .env.example 创建本地配置。"
 [[ -d node_modules ]] || fail "依赖尚未安装，请先执行 pnpm install。"
@@ -151,8 +150,42 @@ NODE
 )" || fail "无法读取本地数据库配置。"
 
 IFS=$'\t' read -r database_host database_port database_name <<< "$database_info"
-if ! pg_isready -q -t 3 -h "$database_host" -p "$database_port" -d "$database_name"; then
-  fail "PostgreSQL 未就绪（${database_host}:${database_port}/${database_name}）。请先启动本地 PostgreSQL 16。"
+
+# 就绪探测优先用宿主 pg_isready；纯 Docker 环境可能没有本地 PostgreSQL 客户端，
+# 此时退回容器内 pg_isready（经由本脚本管理的 compose 服务），最后以 TCP 连通兜底。
+probe_db_ready() {
+  local timeout="${1:-3}"
+  if command -v pg_isready >/dev/null 2>&1; then
+    pg_isready -q -t "$timeout" -h "$database_host" -p "$database_port" -d "$database_name"
+    return
+  fi
+  if [[ "$database_host" == "localhost" || "$database_host" == "127.0.0.1" ]] \
+    && command -v docker >/dev/null 2>&1 \
+    && docker compose ps -q postgres 2>/dev/null | grep -q .; then
+    docker compose exec -T postgres \
+      pg_isready -q -t "$timeout" -U postgres -d "$database_name"
+    return
+  fi
+  (echo > "/dev/tcp/$database_host/$database_port") 2>/dev/null
+}
+
+# 本地数据库跑在 Docker 容器里（docker-compose.yml，postgres:16 映射 5438）。
+# 若容器未就绪则尝试拉起；遵循“只启动不停止、不接管 brew 等共享服务”的原则，
+# docker 出问题也不硬失败，最终仍以下方就绪探测为准（保留 brew 等其它部署方式）。
+if [[ -f docker-compose.yml ]] && command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    if ! probe_db_ready 1; then
+      printf '本地数据库容器未就绪，正在通过 docker compose 拉起...\n'
+      docker compose up -d --wait postgres \
+        || printf '警告：docker compose 拉起失败，继续按现有数据库探测。\n' >&2
+    fi
+  else
+    printf '提示：检测到 docker-compose.yml 但 Docker 未运行；本地库在容器中，请先启动 Docker Desktop。\n' >&2
+  fi
+fi
+
+if ! probe_db_ready 3; then
+  fail "PostgreSQL 未就绪（${database_host}:${database_port}/${database_name}）。请先启动本地数据库（Docker：docker compose up -d）。"
 fi
 
 printf 'Node.js：%s\n' "$(node -v)"

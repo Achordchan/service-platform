@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
   fireEvent,
@@ -116,5 +117,67 @@ describe("登录方式", () => {
     await waitFor(() =>
       expect(queryClient.getQueryData(["private-user-data"])).toBeUndefined(),
     );
+  });
+
+  it("密码请求在途时锁定模式切换，成功后不产生第二次提交", async () => {
+    let resolveLogin!: (value?: unknown) => void;
+    authMocks.signInEmail.mockImplementation(
+      () => new Promise((resolve) => (resolveLogin = resolve)),
+    );
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderLoginForm(true);
+
+    fireEvent.change(screen.getByLabelText("邮箱"), {
+      target: { value: "user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    // 在途期间：模式按钮全部禁用，防止另一模式携同一个 Turnstile token 提交
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "密码登录" })).toBeDisabled(),
+    );
+    expect(screen.getByRole("button", { name: "邮箱验证码登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "微信扫码登录" })).toBeDisabled();
+
+    // 必须按成功登录结算（{ data: {}, error: null }）：resolve 无值会让
+    // 生产代码在 result.error 处抛错、走 catch 路径提前解锁，测试形同虚设。
+    // 成功路径不显式解锁：锁定保持到 dashboard 导航卸载本页，
+    // 已消费的 token 在导航完成前没有可再提交的入口——结算后模式按钮仍禁用
+    resolveLogin({ data: {}, error: null });
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "邮箱验证码登录" }),
+      ).toBeDisabled(),
+    );
+    expect(authMocks.signInEmail).toHaveBeenCalledTimes(1);
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("密码登录网络异常时提示并可恢复，不再悬挂旧 token 状态", async () => {
+    authMocks.signInEmail.mockRejectedValue(new Error("network down"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderLoginForm(false);
+
+    fireEvent.change(screen.getByLabelText("邮箱"), {
+      target: { value: "user@example.com" },
+    });
+    fireEvent.change(screen.getByLabelText("密码"), {
+      target: { value: "password" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+    // 异常路径必须收敛为可见错误（内部同时重置挑战以便重试），而非 unhandled rejection
+    await waitFor(() => {
+      expect(screen.getByText("登录暂时不可用，请检查网络后重试")).toBeTruthy();
+    });
+    expect(screen.getByRole("button", { name: "登录" })).toBeEnabled();
+    expect(consoleError.mock.calls.some(([message]) => String(message).includes("unhandled"))).toBe(
+      false,
+    );
+    consoleError.mockRestore();
   });
 });

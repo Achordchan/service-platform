@@ -68,6 +68,10 @@ export function LoginForm({
     setTurnstileToken(null);
     setTurnstileResetSignal((count) => count + 1);
   }
+  // Turnstile token 是一次性资源，且各登录模式共用同一个挑战：
+  // 任一鉴权请求在途时必须禁用其余提交入口与模式切换，否则切换模式后
+  // 发出的请求会携带同一个 token，后到者在 siteverify 处因已被消费而失败。
+  const [authInFlight, setAuthInFlight] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const [resendSeconds, setResendSeconds] = useState(0);
   const passwordForm = useForm<PasswordFormData>({
@@ -100,36 +104,56 @@ export function LoginForm({
 
   const submitPassword = handleSubmit(async (data) => {
     passwordForm.clearErrors("root");
-    consumeTurnstileToken();
-    const result = await authClient.signIn.email({
-      email: data.email,
-      password: data.password,
-      rememberMe: true,
-      cfTurnstileToken: turnstileToken ?? undefined,
-    } as Parameters<typeof authClient.signIn.email>[0]);
-    if (result.error) {
+    setAuthInFlight(true);
+    const token = turnstileToken;
+    let succeeded = false;
+    try {
+      const result = await authClient.signIn.email({
+        email: data.email,
+        password: data.password,
+        rememberMe: true,
+        cfTurnstileToken: token ?? undefined,
+      } as Parameters<typeof authClient.signIn.email>[0]);
+      if (result.error) {
+        // 仅失败后重置挑战以便重试取新 token；成功会立即跳转，无需再转一圈
+        consumeTurnstileToken();
+        passwordForm.setError("root", {
+          message:
+            result.error.code === "INVALID_ORIGIN"
+              ? loginError(result.error.code)
+              : "邮箱或密码不正确",
+        });
+        return;
+      }
+      finishLogin();
+      succeeded = true;
+    } catch {
+      // 断网等异常路径下请求可能已被服务端消费过 token，必须重置挑战，
+      // 否则重试会复用旧 token 而 403（错误信息还会误显示为密码错误）
+      consumeTurnstileToken();
       passwordForm.setError("root", {
-        message:
-          result.error.code === "INVALID_ORIGIN"
-            ? loginError(result.error.code)
-            : "邮箱或密码不正确",
+        message: "登录暂时不可用，请检查网络后重试",
       });
-      return;
+    } finally {
+      // 成功后保持锁定直到页面卸载：dashboard 导航期间表单仍挂载，
+      // 若解锁，已消费的 token 仍可被再次提交，用 403 错误覆盖成功状态
+      if (!succeeded) setAuthInFlight(false);
     }
-    finishLogin();
   });
 
   const sendOtp = otpForm.handleSubmit(async (data) => {
     const email = data.email.trim().toLowerCase();
     otpForm.clearErrors();
-    consumeTurnstileToken();
+    setAuthInFlight(true);
+    const token = turnstileToken;
     try {
       const result = await authClient.emailOtp.sendVerificationOtp({
         email,
         type: "sign-in",
-        cfTurnstileToken: turnstileToken ?? undefined,
+        cfTurnstileToken: token ?? undefined,
       } as Parameters<typeof authClient.emailOtp.sendVerificationOtp>[0]);
       if (result.error) {
+        consumeTurnstileToken();
         otpForm.setError("root", { message: otpSendError(result.error) });
         return;
       }
@@ -137,10 +161,15 @@ export function LoginForm({
       setOtpSent(true);
       otpForm.setValue("otp", "");
       setResendSeconds(60);
+      // 发送成功后仍停留在本页，下一步「验证并登录」需要新 token，故此处重置挑战
+      consumeTurnstileToken();
     } catch {
+      consumeTurnstileToken();
       otpForm.setError("root", {
         message: "验证码暂时无法发送，请稍后重试",
       });
+    } finally {
+      setAuthInFlight(false);
     }
   });
 
@@ -152,29 +181,38 @@ export function LoginForm({
       return;
     }
     otpForm.clearErrors("root");
-    consumeTurnstileToken();
+    setAuthInFlight(true);
+    const token = turnstileToken;
+    let succeeded = false;
     try {
       const result = await authClient.signIn.emailOtp({
         email,
         otp,
-        cfTurnstileToken: turnstileToken ?? undefined,
+        cfTurnstileToken: token ?? undefined,
       } as Parameters<typeof authClient.signIn.emailOtp>[0]);
       if (result.error) {
+        // 仅失败后重置以便用新 token 重试；成功会跳转，无需再转
+        consumeTurnstileToken();
         otpForm.setError("root", {
           message: loginError(result.error.code),
         });
         return;
       }
       finishLogin();
+      succeeded = true;
     } catch {
+      consumeTurnstileToken();
       otpForm.setError("root", {
         message: "验证码登录失败，请稍后重试",
       });
+    } finally {
+      // 与 submitPassword 一致：成功后保持锁定直到页面卸载
+      if (!succeeded) setAuthInFlight(false);
     }
   });
 
   function changeMode(nextMode: LoginMode | null) {
-    if (!nextMode) return;
+    if (!nextMode || authInFlight) return;
     setMode(nextMode);
   }
 
@@ -194,6 +232,7 @@ export function LoginForm({
         exclusive
         fullWidth
         size="small"
+        disabled={authInFlight}
         onChange={(_, nextMode: LoginMode | null) => changeMode(nextMode)}
         aria-label="登录方式"
       >
@@ -266,7 +305,7 @@ export function LoginForm({
             type="submit"
             variant="contained"
             size="large"
-            disabled={isSubmitting || turnstilePending}
+            disabled={isSubmitting || authInFlight || turnstilePending}
             sx={{ mt: 0.5, py: 1.15, fontWeight: 650 }}
           >
             {isSubmitting ? "正在登录" : "登录"}
@@ -344,7 +383,7 @@ export function LoginForm({
                 <Button
                   variant="outlined"
                   onClick={() => void sendOtp()}
-                  disabled={otpBusy || resendSeconds > 0}
+                  disabled={otpBusy || authInFlight || resendSeconds > 0}
                   fullWidth
                 >
                   {resendSeconds > 0
@@ -358,7 +397,7 @@ export function LoginForm({
                     otpForm.setValue("otp", "");
                     otpForm.clearErrors();
                   }}
-                  disabled={otpBusy}
+                  disabled={otpBusy || authInFlight}
                   fullWidth
                 >
                   修改邮箱
@@ -370,7 +409,7 @@ export function LoginForm({
             type="submit"
             variant="contained"
             size="large"
-            disabled={otpBusy || turnstilePending}
+            disabled={otpBusy || authInFlight || turnstilePending}
             sx={{ mt: 0.5, py: 1.15, fontWeight: 650 }}
           >
             {otpBusy

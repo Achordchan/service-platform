@@ -1,0 +1,30 @@
+name: service-platform
+
+# 仅本机开发使用。生产走线上既有 PostgreSQL，不依赖本文件。
+# 通过 127.0.0.1:5438 暴露，与 .env 的 DATABASE_URL / DATABASE_MIGRATION_URL / JOB_DATABASE_URL 对应。
+# 认证用 trust（仅回环暴露），等价于原本地 brew 的 local trust，故连接串可省略密码。
+services:
+  postgres:
+    image: postgres:16
+    container_name: service-platform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: service_platform
+      POSTGRES_HOST_AUTH_METHOD: trust
+      TZ: Asia/Shanghai
+    ports:
+      - "127.0.0.1:5438:5432"
+    volumes:
+      - service_platform_pg_data:/var/lib/postgresql/data
+      - ./docker/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d service_platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+
+volumes:
+  service_platform_pg_data:
