@@ -142,15 +142,16 @@ describe("登录方式", () => {
     expect(screen.getByRole("button", { name: "邮箱验证码登录" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "微信扫码登录" })).toBeDisabled();
 
-    // 成功路径不再显式解锁：锁定保持到 dashboard 导航卸载本页，
-    // 已消费的 token 在导航完成前没有可再提交的入口
-    resolveLogin();
+    // 必须按成功登录结算（{ data: {}, error: null }）：resolve 无值会让
+    // 生产代码在 result.error 处抛错、走 catch 路径提前解锁，测试形同虚设。
+    // 成功路径不显式解锁：锁定保持到 dashboard 导航卸载本页，
+    // 已消费的 token 在导航完成前没有可再提交的入口——结算后模式按钮仍禁用
+    resolveLogin({ data: {}, error: null });
     await waitFor(() =>
-      expect(authMocks.signInEmail).toHaveBeenCalledTimes(1),
+      expect(
+        screen.getByRole("button", { name: "邮箱验证码登录" }),
+      ).toBeDisabled(),
     );
-    for (let i = 0; i < 5; i++) {
-      await Promise.resolve();
-    }
     expect(authMocks.signInEmail).toHaveBeenCalledTimes(1);
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
