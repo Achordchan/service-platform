@@ -419,12 +419,11 @@ Page({
     this.setData({ sending: true });
     const mutationKey = this.replyMutationKey;
     // 对齐 Web 端：纯附件回复的正文写「附件：文件名列表」，否则服务端 EMPTY_MESSAGE 拒绝
-    // 正文用原始文件名而非自定义标题：标题可能随附件被风控撤回，不能残留正文
+    // 纯附件回复用文件名无关的占位哨兵「附件」（对齐 Web ATTACHMENT_ONLY_MESSAGE_SENTINEL）：
+    // 不把可变文件名写进不可变正文，引用预览改从实时附件列表重建
     const bodyHtml = text
       ? `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`
-      : `<p>附件：${this.data.replyFiles
-          .map((file) => escapeHtml(file.fileName))
-          .join("、") || "文件"}</p>`;
+      : `<p>附件</p>`;
     try {
       const result = await replyRequest(this.data.requestId, {
         body: bodyHtml,

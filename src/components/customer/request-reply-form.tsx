@@ -197,11 +197,8 @@ export function RequestReplyForm({
         jsonRequest("POST", {
           body: hasMeaningfulHtml(values.body)
             ? values.body
-            // 正文用原始文件名而非自定义标题：标题可能随附件被风控撤回，
-            // 不能残留在永久消息正文里
-            : buildAttachmentOnlyMessage(
-                values.files.map((draft) => draft.file.name),
-              ),
+            // 纯附件回复用文件名无关的占位哨兵（不把可变文件名写进不可变正文）
+            : buildAttachmentOnlyMessage(),
           visibility: "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
         }),

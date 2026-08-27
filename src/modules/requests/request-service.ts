@@ -24,7 +24,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
-  htmlToPlainText,
+  isAttachmentOnlyBody,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -737,19 +737,16 @@ export function getRequest(actor: Actor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
-    // 服务端权威判定「纯附件占位正文」：用过滤前的完整附件列表全等比对，
-    // 前端据此决定引用预览是否用附件当前标题重建（不再对正文做启发式猜测）
+    // 服务端权威判定「纯附件占位正文」：文件名无关的哨兵（见 isAttachmentOnlyBody），
+    // 前端据此下发标志决定引用预览是否从实时附件列表重建，不再依赖正文里的文件名
+    // （改名/撤回/部分上传失败都不影响判定）
     const isAttachmentPlaceholderBody = (
       message: (typeof messages)[number],
     ) => {
-      const files = (attachmentsByMessageId.get(message.id) ?? []).filter(
-        (attachment) => !attachment.inline,
-      );
-      if (files.length === 0) return false;
-      return (
-        htmlToPlainText(message.body).trim() ===
-        `附件：${files.map((attachment) => attachment.originalName).join("、")}`
-      );
+      const hasNonInline = (
+        attachmentsByMessageId.get(message.id) ?? []
+      ).some((attachment) => !attachment.inline);
+      return isAttachmentOnlyBody(message.body, hasNonInline);
     };
     return {
       ...summary,

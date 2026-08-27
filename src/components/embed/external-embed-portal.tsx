@@ -119,6 +119,7 @@ type RequestDetailView = RequestSummary & {
     isSystem: boolean;
     isInitial: boolean;
     supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
+    bodyIsAttachmentPlaceholder?: boolean;
     replyToMessageId: string | null;
     createdAt: string;
     author: ApiAuthor;
@@ -130,6 +131,7 @@ type RequestDetailView = RequestSummary & {
     replyTo: null | {
       id: string;
       body: string;
+      bodyIsAttachmentPlaceholder?: boolean;
       visibility: "CUSTOMER_VISIBLE";
       author: ApiAuthor;
       attachments: Array<{
@@ -682,11 +684,13 @@ function ExternalEmbedPortal({
     isSystem: message.isSystem,
     isInitial: message.isInitial,
     supportPlaybook: message.supportPlaybook,
+    bodyIsAttachmentPlaceholder: message.bodyIsAttachmentPlaceholder,
     visibility: message.visibility,
     replyToMessageId: message.replyToMessageId,
     replyTo: message.replyTo ? {
       id: message.replyTo.id,
       body: message.replyTo.body,
+      bodyIsAttachmentPlaceholder: message.replyTo.bodyIsAttachmentPlaceholder,
       authorId: message.replyTo.author.id,
       authorName: message.replyTo.author.name,
       visibility: message.replyTo.visibility,
@@ -1000,10 +1004,8 @@ function EmbedReplyComposer({
         body: JSON.stringify({
           body: hasMeaningfulHtml(values.body)
             ? values.body
-            // 正文用原始文件名而非自定义标题（同 request-reply-form 的撤回残留考量）
-            : `附件：${values.files
-                .map((draft) => draft.file.name)
-                .join("、")}`,
+            // 纯附件回复用文件名无关的占位哨兵「附件」（对齐 buildAttachmentOnlyMessage）
+            : "附件",
           replyToMessageId: replyTarget?.id,
         }),
       });

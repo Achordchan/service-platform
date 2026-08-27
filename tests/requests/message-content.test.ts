@@ -22,9 +22,8 @@ describe("请求消息摘要", () => {
   });
 
   it("附件占位内容会转义文件名", () => {
-    expect(buildAttachmentOnlyMessage(['a<script>.txt', "截图.png"])).toBe(
-      "<p>附件：a&lt;script&gt;.txt、截图.png</p>",
-    );
+    // 占位正文不再含文件名（可变文件名不写进不可变正文）
+    expect(buildAttachmentOnlyMessage()).toBe("<p>附件</p>");
   });
 
   it("标题转义不会生成可执行 HTML", () => {

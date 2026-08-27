@@ -8,7 +8,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
-  htmlToPlainText,
+  isAttachmentOnlyBody,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -612,18 +612,14 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
-    // 与客户/员工序列化一致：服务端权威判定「纯附件占位正文」
+    // 与客户/员工序列化一致：文件名无关的哨兵判定纯附件占位（见 isAttachmentOnlyBody）
     const isAttachmentPlaceholderBody = (
       message: (typeof messages)[number],
     ) => {
-      const files = (attachmentsByMessageId.get(message.id) ?? []).filter(
-        (attachment) => !attachment.inline,
-      );
-      if (files.length === 0) return false;
-      return (
-        htmlToPlainText(message.body).trim() ===
-        `附件：${files.map((attachment) => attachment.originalName).join("、")}`
-      );
+      const hasNonInline = (
+        attachmentsByMessageId.get(message.id) ?? []
+      ).some((attachment) => !attachment.inline);
+      return isAttachmentOnlyBody(message.body, hasNonInline);
     };
     const serializedMessages = messages.map((message) => {
       const contentRiskStatus = messageRiskStatus(message);
