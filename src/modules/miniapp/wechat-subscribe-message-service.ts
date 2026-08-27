@@ -267,5 +267,5 @@ export async function reportSubscribeGrant(
       select: { remaining: true },
     });
     return { remaining: Math.min(updated.remaining, GRANT_MAX_REMAINING) };
-  });
+  }, { maxWait: 10_000, timeout: 60_000 });
 }

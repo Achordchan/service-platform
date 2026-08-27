@@ -15,6 +15,11 @@ import {
 
 const MAX_ACTIVE_CODES_PER_USER = 3;
 
+// 绑定生命周期咨询锁的最长持有方是 worker 的微信网络发送（token+消息最多约 16s，
+// 加排队等锁更久）：竞争这把锁的解绑/发码事务 deadline 必须明显长于该窗口，
+// 否则用户可见的解绑/发码请求会直接在锁上超时报错。
+const LOCK_TX_OPTIONS = { maxWait: 10_000, timeout: 60_000 } as const;
+
 export type MemberWechatBindingStatus = {
   membership: { id: string; role: "OWNER" | "MEMBER" };
   user: { id: string; name: string; email: string };
@@ -135,7 +140,7 @@ export async function createWechatBindingCode(
       createdAt: created.createdAt,
       expiresAt: codeData.expiresAt,
     };
-  });
+  }, LOCK_TX_OPTIONS);
 }
 
 export async function revokeWechatBindingCode(
@@ -221,7 +226,7 @@ export async function removeWechatBinding(
         clearedSubscribeGrants: clearedGrants.count,
       },
     });
-  });
+  }, LOCK_TX_OPTIONS);
   return { removedAt };
 }
 
@@ -267,7 +272,7 @@ export async function removeOwnWechatBinding(
       },
     });
     return { removed: true };
-  });
+  }, LOCK_TX_OPTIONS);
 }
 
 /**
@@ -310,7 +315,7 @@ export async function createOwnWechatBindingCode(
       },
     });
     return { code: codeData.code, expiresAt: codeData.expiresAt };
-  });
+  }, LOCK_TX_OPTIONS);
 }
 
 type Tx = Parameters<Parameters<typeof withActorDb>[1]>[0];

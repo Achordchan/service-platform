@@ -216,6 +216,19 @@ export async function processWechatSubscribeMessageDelivery(
           });
           return;
         }
+        if (result.outcome === "FATAL") {
+          // 无效 openid（40003）/模板（40037）等不可恢复错误：重试必然再失败，
+          // 立即定稿 FAILED，不做无谓的重复外发
+          await tx.wechatSubscribeMessageDelivery.update({
+            where: { id: delivery.id },
+            data: {
+              status: "FAILED",
+              lastError: result.message.slice(0, 500),
+              deliveredAt: null,
+            },
+          });
+          return;
+        }
         const isFinal =
           options.finalAttempt || delivery.attemptCount >= MAX_ATTEMPTS;
         if (isFinal) {
