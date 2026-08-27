@@ -56,9 +56,10 @@ type AttachmentMetaLite = {
 };
 
 /**
- * 纯附件回复的正文是「附件：<原文件名列表>」占位（对齐 Web buildAttachmentOnlyMessage）。
- * 预览文本用当前附件列表精确重构占位串比对，命中才替换为附件当前标题；
- * 用户自己写的以「附件：」开头的真实正文不受影响。
+ * 纯附件回复的正文是「附件：<原文件名列表>」占位（对齐 Web replyText）。
+ * 附件可能部分失败/被撤回导致幸存列表比生成时短，故不做全等重构，而是
+ * 要求幸存附件的原文件名全部出现在正文列表里才认定为占位；命中后用全部
+ * 幸存附件的当前标题重建预览。真实正文不含附件文件名，不会被误判。
  */
 function attachmentAwarePreview(
   bodyText: string,
@@ -69,15 +70,19 @@ function attachmentAwarePreview(
   }>,
 ) {
   const files = attachments.filter((att) => !att.inline);
-  const first = files[0];
-  if (!first) return bodyText;
-  const placeholder = `附件：${files
-    .map((att) => att.originalName)
-    .join("、")}`;
-  if (!bodyText || bodyText === placeholder) {
-    return `附件：${first.title || first.originalName}`;
+  if (files.length === 0) return bodyText;
+  let generated = !bodyText;
+  if (!generated && bodyText.startsWith("附件：")) {
+    const names = bodyText
+      .slice("附件：".length)
+      .split("、")
+      .map((name) => name.trim());
+    generated = files.every((att) => names.includes(att.originalName));
   }
-  return bodyText;
+  if (!generated) return bodyText;
+  return `附件：${files
+    .map((att) => att.title || att.originalName)
+    .join("、")}`;
 }
 
 Page({

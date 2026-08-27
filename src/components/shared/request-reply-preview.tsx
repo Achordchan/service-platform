@@ -18,6 +18,29 @@ import type {
 } from "@/components/shared/request-chat-types";
 import { htmlToPlainText, truncatePlainText } from "@/lib/message-content";
 
+/**
+ * 判定正文是否为纯附件回复的生成占位（「附件：<原文件名列表>」，见
+ * buildAttachmentOnlyMessage）。附件可能部分上传失败或被风控撤回，
+ * 幸存列表会比生成时短，因此不做全等重构，而是要求「幸存附件的原文件名
+ * 全部出现在正文列表里」——真实正文（如「附件：请查看以下材料」）不含
+ * 附件文件名，不会被误判。
+ */
+function isGeneratedAttachmentPlaceholder(
+  plainText: string,
+  files: Array<{ originalName: string }>,
+) {
+  if (files.length === 0) return false;
+  if (!plainText || plainText === "（附件）") return true;
+  if (!plainText.startsWith("附件：")) return false;
+  const names = new Set(
+    plainText
+      .slice("附件：".length)
+      .split("、")
+      .map((name) => name.trim()),
+  );
+  return files.every((file) => names.has(file.originalName));
+}
+
 function replyText(
   message: Pick<ChatReplyReference, "body" | "attachments">,
 ) {
@@ -25,27 +48,20 @@ function replyText(
   const files = message.attachments.filter(
     (attachment) => !attachment.inline,
   );
-  const fileName = files[0]
-    ? files[0].title?.trim() || files[0].originalName
-    : "";
-  // 纯附件回复的正文是「附件：<原文件名列表>」占位（buildAttachmentOnlyMessage
-  // 生成）。用当前附件列表精确重构占位串比对：命中才替换为附件当前标题——
-  // 用户自己写的以「附件：」开头的真实正文不受影响
-  const generatedPlaceholder = `附件：${files
-    .map((attachment) => attachment.originalName)
-    .join("、")}`;
-  if (
-    fileName &&
-    (!plainText ||
-      plainText === "（附件）" ||
-      plainText === generatedPlaceholder)
-  ) {
-    return `附件：${fileName}`;
+  // 命中占位时用全部幸存附件的当前标题重建预览：标题修改、部分失败、
+  // 单附件撤回都能即时反映
+  if (isGeneratedAttachmentPlaceholder(plainText, files)) {
+    return truncatePlainText(
+      `附件：${files
+        .map((file) => file.title?.trim() || file.originalName)
+        .join("、")}`,
+      120,
+    );
   }
   if (plainText && plainText !== "（附件）") {
     return truncatePlainText(plainText, 120);
   }
-  return fileName ? `附件：${fileName}` : "原消息无文字内容";
+  return "原消息无文字内容";
 }
 
 export function RequestReplyPreview({
