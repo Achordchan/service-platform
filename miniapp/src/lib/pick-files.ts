@@ -1,11 +1,11 @@
 export type PickedFile = { localPath: string; fileName: string };
 
-// chooseMedia 的临时路径通常形如 .../xxxx.jpg，尽量取原文件名，取不到再兜底带扩展名
+// chooseMedia 的临时路径通常形如 .../xxxx.jpg，尽量取原文件名；无扩展名时
+// 兜底 .jpg（该名字会作为 originalName 持久化，服务端按魔数校验真实类型）
 function deriveImageName(path: string, index: number): string {
   const base = path.split("/").pop() ?? "";
   if (base.includes(".")) return base;
-  const ext = base.split(".").pop() || "jpg";
-  return `图片_${Date.now()}_${index}.${ext}`;
+  return `图片_${Date.now()}_${index}.jpg`;
 }
 
 // 仅图片：后端附件校验与平台策略暂不支持视频类型，选视频会在消息创建后被拒、

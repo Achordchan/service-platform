@@ -39,7 +39,7 @@ type ViewMessage = RequestMessage & {
   revokedText: string;
   reviewing: boolean;
   replyPreview: string;
-  images: Array<{ id: string; name: string }>;
+  images: Array<{ id: string; name: string; note: string }>;
   files: Array<{ id: string; name: string; size: string; note: string }>;
 };
 
@@ -287,6 +287,7 @@ Page({
         .map((att) => ({
           id: att.id,
           name: att.title || att.originalName,
+          note: att.note || "",
         })),
       files: attachments
         .filter((att) => !att.mimeType.startsWith("image/"))
