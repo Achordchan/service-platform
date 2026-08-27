@@ -22,13 +22,21 @@ function replyText(
   message: Pick<ChatReplyReference, "body" | "attachments">,
 ) {
   const plainText = htmlToPlainText(message.body);
-  if (plainText && plainText !== "（附件）") {
-    return truncatePlainText(plainText, 120);
-  }
   const file = message.attachments.find(
     (attachment) => !attachment.inline,
   );
   const fileName = file ? file.title?.trim() || file.originalName : "";
+  // 纯附件回复的正文是「附件：<原文件名>」占位（见 buildAttachmentOnlyMessage），
+  // 引用预览优先用附件当前标题——标题修改与风控过滤都能即时反映
+  if (
+    fileName &&
+    (!plainText || plainText === "（附件）" || plainText.startsWith("附件："))
+  ) {
+    return `附件：${fileName}`;
+  }
+  if (plainText && plainText !== "（附件）") {
+    return truncatePlainText(plainText, 120);
+  }
   return fileName ? `附件：${fileName}` : "原消息无文字内容";
 }
 
