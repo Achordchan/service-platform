@@ -200,6 +200,72 @@ export async function removeWechatBinding(
   return { removedAt };
 }
 
+/**
+ * 客户在 Web 端自助解绑「自己」的微信（无需空间所有者/管理员）。
+ * WechatBinding 未启用 RLS，权限靠这里只操作 userId=actor.id 来保证；
+ * 删除顺序与 removeWechatBinding 一致：先删绑定取行锁、再删会话，避免孤儿会话。
+ */
+export async function removeOwnWechatBinding(
+  actor: Actor,
+): Promise<{ removed: boolean }> {
+  return withActorDb(actor, async (tx) => {
+    const binding = await tx.wechatBinding.findUnique({
+      where: { userId: actor.id },
+      select: { id: true, openid: true },
+    });
+    if (!binding) return { removed: false };
+    await tx.wechatBinding.delete({ where: { id: binding.id } });
+    await tx.miniappSession.deleteMany({ where: { userId: actor.id } });
+    await writeAuditLog(tx, actor, {
+      action: "WECHAT_BINDING_REMOVED",
+      resourceType: "WechatBinding",
+      resourceId: binding.id,
+      metadata: {
+        userId: actor.id,
+        self: true,
+        openid: maskOpenid(binding.openid),
+      },
+    });
+    return { removed: true };
+  });
+}
+
+/**
+ * 客户在 Web 端自助为「自己」生成绑定码，到小程序输入即可绑定微信。
+ * 先作废本人此前未使用的绑定码，保证任一时刻只有一个有效码，也不会触达数量上限。
+ */
+export async function createOwnWechatBindingCode(
+  actor: Actor,
+): Promise<{ code: string; expiresAt: Date }> {
+  const codeData = createBindingCode();
+  return withActorDb(actor, async (tx) => {
+    await tx.wechatBindingCode.updateMany({
+      where: { userId: actor.id, usedAt: null, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    const created = await tx.wechatBindingCode.create({
+      data: {
+        userId: actor.id,
+        codeHash: codeData.codeHash,
+        expiresAt: codeData.expiresAt,
+        createdById: actor.id,
+      },
+      select: { id: true },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "WECHAT_BINDING_CODE_CREATED",
+      resourceType: "WechatBindingCode",
+      resourceId: created.id,
+      metadata: {
+        userId: actor.id,
+        self: true,
+        expiresAt: codeData.expiresAt.toISOString(),
+      },
+    });
+    return { code: codeData.code, expiresAt: codeData.expiresAt };
+  });
+}
+
 type Tx = Parameters<Parameters<typeof withActorDb>[1]>[0];
 
 async function loadSpaceMember(
