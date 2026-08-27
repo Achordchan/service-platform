@@ -174,6 +174,12 @@ export async function removeWechatBinding(
   const removedAt = new Date();
   await withActorDb(actor, async (tx) => {
     const member = await loadSpaceMember(tx, actor, customerSpaceId, membershipId);
+    // 与两类发码路径共用同一把 per-user 咨询锁，保证「解绑」与「发码」全序：
+    // 否则发码事务可在解绑作废语句的快照之后插入并先提交，幸存的活码
+    // 会让刚解绑的账号立刻暴露在持码人接管的窗口下（同 createOwnWechatBindingCode）。
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${member.userId}`}))
+    `;
     const binding = await tx.wechatBinding.findUnique({
       where: { userId: member.userId },
       select: { id: true, openid: true },
@@ -191,6 +197,11 @@ export async function removeWechatBinding(
       where: { userId: member.userId, usedAt: null, revokedAt: null },
       data: { revokedAt: removedAt },
     });
+    // 订阅授权额度按 user+templateKey 记账，实际归属旧 openid；换绑后 worker
+    // 会拿残留额度向新 openid 发送，第一条注定 43101 失败丢通知，一并清零。
+    const clearedGrants = await tx.wechatSubscribeGrant.deleteMany({
+      where: { userId: member.userId },
+    });
     await writeAuditLog(tx, actor, {
       action: "WECHAT_BINDING_REMOVED",
       resourceType: "WechatBinding",
@@ -201,6 +212,7 @@ export async function removeWechatBinding(
         email: member.userEmail,
         openid: maskOpenid(binding.openid),
         revokedBindingCodes: revokedPending.count,
+        clearedSubscribeGrants: clearedGrants.count,
       },
     });
   });
@@ -216,6 +228,10 @@ export async function removeOwnWechatBinding(
   actor: Actor,
 ): Promise<{ removed: boolean }> {
   return withActorDb(actor, async (tx) => {
+    // 与发码路径同一把 per-user 锁，防「解绑 vs 发码」骑缝产生幸存活码（见 removeWechatBinding）
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${actor.id}`}))
+    `;
     const binding = await tx.wechatBinding.findUnique({
       where: { userId: actor.id },
       select: { id: true, openid: true },
@@ -228,6 +244,10 @@ export async function removeOwnWechatBinding(
       where: { userId: actor.id, usedAt: null, revokedAt: null },
       data: { revokedAt: now },
     });
+    // 清空旧 openid 名下的订阅授权额度（归属不随换绑延续），避免换绑后首条通知 43101 丢失
+    const clearedGrants = await tx.wechatSubscribeGrant.deleteMany({
+      where: { userId: actor.id },
+    });
     await writeAuditLog(tx, actor, {
       action: "WECHAT_BINDING_REMOVED",
       resourceType: "WechatBinding",
@@ -237,6 +257,7 @@ export async function removeOwnWechatBinding(
         self: true,
         openid: maskOpenid(binding.openid),
         revokedBindingCodes: revokedPending.count,
+        clearedSubscribeGrants: clearedGrants.count,
       },
     });
     return { removed: true };

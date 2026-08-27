@@ -665,6 +665,13 @@ describe("微信小程序登录与绑定", () => {
     );
     expect(before.rows[0]?.count).toBe(1);
 
+    // 订阅授权额度归属旧 openid：解绑也必须清空，防止换绑后拿残留额度误发
+    await ownerPool.query(
+      `INSERT INTO "WechatSubscribeGrant" (id, "userId", "templateKey", remaining, "updatedAt")
+       VALUES ($1, $2, 'STATUS_UPDATE', 5, NOW())`,
+      [randomUUID(), unbindUserId],
+    );
+
     await expect(removeOwnWechatBinding(unbindActor)).resolves.toMatchObject({
       removed: true,
     });
@@ -675,6 +682,11 @@ describe("微信小程序登录与绑定", () => {
       [unbindUserId],
     );
     expect(after.rows[0]?.count).toBe(0);
+    const grantsLeft = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatSubscribeGrant" WHERE "userId" = $1',
+      [unbindUserId],
+    );
+    expect(grantsLeft.rows[0]?.count).toBe(0);
 
     // 未过期但已被解绑作废的备用码同样不能再完成绑定
     const retry = await createMiniappSessionForCode(
