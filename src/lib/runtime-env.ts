@@ -101,6 +101,7 @@ function readEnvSource() {
         "http://localhost:3000",
       APP_URL: process.env.APP_URL ?? "http://localhost:3000",
       UPLOAD_DIR: process.env.UPLOAD_DIR,
+      SOFFICE_PATH: process.env.SOFFICE_PATH,
       PLATFORM_SECRET_ENCRYPTION_KEY:
         process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
       SMTP_HOST: process.env.SMTP_HOST,
@@ -133,6 +134,7 @@ function readEnvSource() {
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     APP_URL: process.env.APP_URL,
     UPLOAD_DIR: process.env.UPLOAD_DIR,
+    SOFFICE_PATH: process.env.SOFFICE_PATH,
     PLATFORM_SECRET_ENCRYPTION_KEY:
       process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
     SMTP_HOST: process.env.SMTP_HOST,

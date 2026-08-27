@@ -1358,7 +1358,7 @@ async function deleteObsoleteSnapshotAttachments(
         ? { id: { notIn: [...new Set(keepAttachmentIds)] } }
         : {}),
     },
-    select: { id: true, storageKey: true },
+    select: { id: true, storageKey: true, previewStorageKey: true },
   });
   if (obsolete.length === 0) return [];
   await tx.contentRiskState.deleteMany({
@@ -1370,7 +1370,11 @@ async function deleteObsoleteSnapshotAttachments(
   await tx.attachment.deleteMany({
     where: { id: { in: obsolete.map((attachment) => attachment.id) } },
   });
-  return obsolete.map((attachment) => attachment.storageKey);
+  return obsolete.flatMap((attachment) =>
+    [attachment.storageKey, attachment.previewStorageKey].filter(
+      (value): value is string => Boolean(value),
+    ),
+  );
 }
 
 async function removeRiskAttachmentFiles(

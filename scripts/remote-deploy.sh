@@ -167,16 +167,27 @@ ensure_universal_request_body_limits() {
 
 ensure_libreoffice() {
   # Office 附件转 PDF 预览件依赖 LibreOffice（worker 调 soffice --headless）。
-  # 幂等：已安装则跳过；apt 失败不中断部署（预览任务会标记 FAILED，附件仍可下载）。
+  # 幂等：逐包检查（只看 soffice 可执行文件会漏掉缺失的格式模块）；
+  # apt 失败不中断部署（预览任务会标记 FAILED，附件仍可下载）。
+  local packages=(
+    libreoffice-writer
+    libreoffice-calc
+    libreoffice-impress
+    fonts-noto-cjk
+  )
   local need_install=0
+  local pkg
+  for pkg in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "install ok installed"; then
+      need_install=1
+      break
+    fi
+  done
   if ! command -v soffice >/dev/null 2>&1; then
     need_install=1
   fi
-  if ! dpkg -s fonts-noto-cjk >/dev/null 2>&1; then
-    need_install=1
-  fi
   if [[ "${need_install}" == "0" ]]; then
-    echo "[deploy] libreoffice + fonts-noto-cjk already installed"
+    echo "[deploy] libreoffice (writer/calc/impress) + fonts-noto-cjk already installed"
     return 0
   fi
   echo "[deploy] installing libreoffice (writer/calc/impress) + fonts-noto-cjk"
