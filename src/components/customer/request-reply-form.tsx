@@ -197,10 +197,10 @@ export function RequestReplyForm({
         jsonRequest("POST", {
           body: hasMeaningfulHtml(values.body)
             ? values.body
+            // 正文用原始文件名而非自定义标题：标题可能随附件被风控撤回，
+            // 不能残留在永久消息正文里
             : buildAttachmentOnlyMessage(
-                values.files.map(
-                  (draft) => draft.title.trim() || draft.file.name,
-                ),
+                values.files.map((draft) => draft.file.name),
               ),
           visibility: "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,

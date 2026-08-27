@@ -1000,8 +1000,9 @@ function EmbedReplyComposer({
         body: JSON.stringify({
           body: hasMeaningfulHtml(values.body)
             ? values.body
+            // 正文用原始文件名而非自定义标题（同 request-reply-form 的撤回残留考量）
             : `附件：${values.files
-                .map((draft) => draft.title.trim() || draft.file.name)
+                .map((draft) => draft.file.name)
                 .join("、")}`,
           replyToMessageId: replyTarget?.id,
         }),

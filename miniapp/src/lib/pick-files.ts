@@ -1,11 +1,19 @@
 export type PickedFile = { localPath: string; fileName: string };
 
 // chooseMedia 的临时路径通常形如 .../xxxx.jpg，尽量取原文件名；无扩展名时
-// 兜底 .jpg（该名字会作为 originalName 持久化，服务端按魔数校验真实类型）
-function deriveImageName(path: string, index: number): string {
+// 用 getImageInfo 探测真实图片类型再命名（该名字会作为 originalName 持久化）
+async function deriveImageName(path: string, index: number): Promise<string> {
   const base = path.split("/").pop() ?? "";
   if (base.includes(".")) return base;
-  return `图片_${Date.now()}_${index}.jpg`;
+  const type = await new Promise<string>((resolve) => {
+    wx.getImageInfo({
+      src: path,
+      success: (res) => resolve(res.type || "jpg"),
+      fail: () => resolve("jpg"),
+    });
+  });
+  const ext = type === "jpeg" ? "jpg" : type;
+  return `图片_${Date.now()}_${index}.${ext}`;
 }
 
 // 仅图片：后端附件校验与平台策略暂不支持视频类型，选视频会在消息创建后被拒、
@@ -17,13 +25,14 @@ function chooseLocalImage(count: number): Promise<PickedFile[]> {
       mediaType: ["image"],
       sourceType: ["album", "camera"],
       sizeType: ["original", "compressed"],
-      success: (res) =>
-        resolve(
-          res.tempFiles.map((file, index) => ({
+      success: (res) => {
+        void Promise.all(
+          res.tempFiles.map(async (file, index) => ({
             localPath: file.tempFilePath,
-            fileName: deriveImageName(file.tempFilePath, index),
+            fileName: await deriveImageName(file.tempFilePath, index),
           })),
-        ),
+        ).then(resolve);
+      },
       fail: () => resolve([]),
     });
   });
