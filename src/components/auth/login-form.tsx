@@ -100,14 +100,16 @@ export function LoginForm({
 
   const submitPassword = handleSubmit(async (data) => {
     passwordForm.clearErrors("root");
-    consumeTurnstileToken();
+    const token = turnstileToken;
     const result = await authClient.signIn.email({
       email: data.email,
       password: data.password,
       rememberMe: true,
-      cfTurnstileToken: turnstileToken ?? undefined,
+      cfTurnstileToken: token ?? undefined,
     } as Parameters<typeof authClient.signIn.email>[0]);
     if (result.error) {
+      // 仅失败后重置挑战以便重试取新 token；成功会立即跳转，无需再转一圈
+      consumeTurnstileToken();
       passwordForm.setError("root", {
         message:
           result.error.code === "INVALID_ORIGIN"
@@ -122,14 +124,15 @@ export function LoginForm({
   const sendOtp = otpForm.handleSubmit(async (data) => {
     const email = data.email.trim().toLowerCase();
     otpForm.clearErrors();
-    consumeTurnstileToken();
+    const token = turnstileToken;
     try {
       const result = await authClient.emailOtp.sendVerificationOtp({
         email,
         type: "sign-in",
-        cfTurnstileToken: turnstileToken ?? undefined,
+        cfTurnstileToken: token ?? undefined,
       } as Parameters<typeof authClient.emailOtp.sendVerificationOtp>[0]);
       if (result.error) {
+        consumeTurnstileToken();
         otpForm.setError("root", { message: otpSendError(result.error) });
         return;
       }
@@ -137,7 +140,10 @@ export function LoginForm({
       setOtpSent(true);
       otpForm.setValue("otp", "");
       setResendSeconds(60);
+      // 发送成功后仍停留在本页，下一步「验证并登录」需要新 token，故此处重置挑战
+      consumeTurnstileToken();
     } catch {
+      consumeTurnstileToken();
       otpForm.setError("root", {
         message: "验证码暂时无法发送，请稍后重试",
       });
@@ -152,14 +158,16 @@ export function LoginForm({
       return;
     }
     otpForm.clearErrors("root");
-    consumeTurnstileToken();
+    const token = turnstileToken;
     try {
       const result = await authClient.signIn.emailOtp({
         email,
         otp,
-        cfTurnstileToken: turnstileToken ?? undefined,
+        cfTurnstileToken: token ?? undefined,
       } as Parameters<typeof authClient.signIn.emailOtp>[0]);
       if (result.error) {
+        // 仅失败后重置以便用新 token 重试；成功会跳转，无需再转
+        consumeTurnstileToken();
         otpForm.setError("root", {
           message: loginError(result.error.code),
         });
@@ -167,6 +175,7 @@ export function LoginForm({
       }
       finishLogin();
     } catch {
+      consumeTurnstileToken();
       otpForm.setError("root", {
         message: "验证码登录失败，请稍后重试",
       });

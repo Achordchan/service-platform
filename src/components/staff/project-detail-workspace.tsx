@@ -29,12 +29,19 @@ import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
+import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
-import { hasMeaningfulHtml } from "@/lib/message-content";
+import {
+  extractInlineAttachmentIds,
+  hasMeaningfulHtml,
+  htmlToPlainText,
+} from "@/lib/message-content";
 import { ProjectStaffManager } from "@/components/staff/project-staff-manager";
 import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
@@ -196,6 +203,7 @@ export function ProjectDetailWorkspace({
     update: ProjectUpdate;
     comment: CommentItem;
   } | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
 
@@ -223,6 +231,10 @@ export function ProjectDetailWorkspace({
   });
   const activeTab = tab;
   const deliveryActive = isProjectDeliveryActive(project.status);
+  const detailUpdate =
+    detailId != null
+      ? project.updates.find((item) => item.id === detailId) ?? null
+      : null;
   const { unread } = useUnreadNotifications();
   const { mutate: markRead } = useMarkNotificationsRead();
   const requestIdSet = new Set(requests.map((item) => item.id));
@@ -488,165 +500,362 @@ export function ProjectDetailWorkspace({
       ) : null}
 
       {activeTab === "updates" && deliveryActive ? (
-        <Stack spacing={1.5}>
-          {project.updates.map((update) => (
-            <Paper key={update.id} variant="outlined" sx={{ p: { xs: 2, md: 2.5 } }}>
-              <Stack
-                direction="row"
-                spacing={1}
-                sx={{ alignItems: "flex-start", justifyContent: "space-between" }}
-              >
-                <Box sx={{ minWidth: 0 }}>
-                  <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                    {update.contentRiskStatus === "REVOKED" ? (
-                      <ContentRiskStatusLine
-                        status="REVOKED"
-                        pluginEnabled={Boolean(project.contentRiskUiEnabled)}
-                      />
-                    ) : (
-                      <Typography variant="h3" sx={{ overflowWrap: "anywhere" }}>
-                        {update.title}
-                      </Typography>
-                    )}
-                    {update.visibility === "INTERNAL" ? (
-                      <LockOutlinedIcon fontSize="small" color="action" />
-                    ) : null}
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
-                    {update.authorName} · {dateFormatter.format(new Date(update.createdAt))}
-                    {update.hasEditHistory ? (
-                      <EditedAtLabel
-                        updatedAt={update.updatedAt}
-                        onClick={() =>
-                          setHistoryTarget({
-                            kind: "update",
-                            projectId: project.id,
-                            projectUpdateId: update.id,
-                            label: update.title,
-                          })
-                        }
-                      />
-                    ) : null}
-                  </Typography>
-                </Box>
-                {canPublishUpdate ? (
-                  <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-                    <Tooltip title="编辑进度">
-                      <span>
-                        <IconButton
-                          size="small"
-                          aria-label={`编辑进度 ${update.title}`}
-                          onClick={() => openEditUpdate(update)}
-                          disabled={update.contentRiskStatus === "REVOKED"}
-                        >
-                          <EditOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                    <Tooltip title="删除进度">
-                      <span>
-                        <IconButton
-                          size="small"
-                          color="error"
-                          aria-label={`删除进度 ${update.title}`}
-                          onClick={() => setDeleteTarget(update)}
-                          disabled={deleting}
-                        >
-                          <DeleteOutlineOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </span>
-                    </Tooltip>
-                  </Stack>
-                ) : null}
-              </Stack>
-              {update.contentRiskStatus === "PENDING" ? (
-                <ContentRiskStatusLine
-                  status="PENDING"
-                  pluginEnabled={Boolean(project.contentRiskUiEnabled)}
-                />
-              ) : null}
-              {update.contentRiskStatus !== "REVOKED" ? (
-                <CollapsibleText text={update.body} maxLines={16} />
-              ) : null}
-              {update.contentRiskStatus !== "REVOKED" && update.comments.length > 0 ? (
-                <Stack
-                  spacing={1.5}
-                  sx={{
-                    mt: 2.5,
-                    pl: 2,
-                    borderLeft: "2px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  {update.comments.map((comment) => (
-                    <Box key={comment.id}>
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        sx={{ alignItems: "flex-start", justifyContent: "space-between" }}
-                      >
-                        <Typography variant="body2" sx={{ fontWeight: 650 }}>
-                          {comment.authorName}
-                          {comment.visibility === "INTERNAL" ? " · 内部评论" : ""}
-                          {comment.hasEditHistory ? (
-                            <EditedAtLabel
-                              updatedAt={comment.updatedAt}
-                              onClick={() =>
-                                setHistoryTarget({
-                                  kind: "comment",
-                                  projectId: project.id,
-                                  projectUpdateId: update.id,
-                                  updateCommentId: comment.id,
-                                  label: `${update.title} · 评论`,
-                                })
-                              }
-                            />
-                          ) : null}
-                        </Typography>
-                        {(canEditProject || comment.authorId === currentUserId) &&
-                        comment.contentRiskStatus !== "REVOKED" ? (
-                          <Tooltip title="编辑评论">
-                            <span>
-                              <IconButton
-                                size="small"
-                                aria-label="编辑评论"
-                                onClick={() => openEditComment(update, comment)}
-                                sx={{ flexShrink: 0 }}
-                              >
-                                <EditOutlinedIcon fontSize="small" />
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        ) : null}
-                      </Stack>
-                      {comment.contentRiskStatus === "REVOKED" ? (
+        <Stack spacing={2}>
+          {project.updates.length > 0 ? (
+            <Paper variant="outlined" sx={{ overflow: "hidden" }}>
+              {project.updates.map((update, index) => {
+                const revoked = update.contentRiskStatus === "REVOKED";
+                const preview = htmlToPlainText(update.body);
+                const hasImages =
+                  extractInlineAttachmentIds(update.body).length > 0 ||
+                  /<img\b/i.test(update.body);
+                const replyCount = update.comments.length;
+                return (
+                  <Box
+                    key={update.id}
+                    sx={{
+                      p: { xs: 1.25, md: 1.5 },
+                      display: "grid",
+                      gridTemplateColumns: {
+                        xs: "minmax(0, 1fr)",
+                        md: "minmax(0, 1fr) minmax(190px, auto)",
+                      },
+                      columnGap: 3,
+                      rowGap: 1.25,
+                      borderBottom:
+                        index === project.updates.length - 1 ? 0 : "1px solid",
+                      borderColor: "divider",
+                      alignItems: "start",
+                    }}
+                  >
+                    <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+                      {revoked ? (
                         <ContentRiskStatusLine
                           status="REVOKED"
                           pluginEnabled={Boolean(project.contentRiskUiEnabled)}
                         />
                       ) : (
-                        <>
-                          <CollapsibleText
-                            text={comment.body}
-                            maxLines={6}
-                          />
-                          <ContentRiskStatusLine
-                            status={comment.contentRiskStatus}
-                            pluginEnabled={Boolean(project.contentRiskUiEnabled)}
-                          />
-                        </>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          useFlexGap
+                          sx={{ alignItems: "center", flexWrap: "wrap" }}
+                        >
+                          <Typography
+                            sx={{ fontWeight: 650, overflowWrap: "anywhere" }}
+                          >
+                            {update.title}
+                          </Typography>
+                          {update.visibility === "INTERNAL" ? (
+                            <LockOutlinedIcon fontSize="small" color="action" />
+                          ) : null}
+                        </Stack>
                       )}
-                    </Box>
-                  ))}
-                </Stack>
-              ) : null}
+                      {!revoked && update.contentRiskStatus === "PENDING" ? (
+                        <ContentRiskStatusLine
+                          status="PENDING"
+                          pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                        />
+                      ) : null}
+                      {!revoked && preview ? (
+                        <Typography
+                          color="text.secondary"
+                          sx={{
+                            lineHeight: 1.7,
+                            display: "-webkit-box",
+                            WebkitBoxOrient: "vertical",
+                            WebkitLineClamp: 2,
+                            overflow: "hidden",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {preview}
+                        </Typography>
+                      ) : null}
+                      {!revoked && hasImages ? (
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          sx={{ alignItems: "center", color: "text.secondary" }}
+                        >
+                          <ImageOutlinedIcon sx={{ fontSize: 17 }} />
+                          <Typography variant="body2">
+                            包含图片，请查看详情
+                          </Typography>
+                        </Stack>
+                      ) : null}
+                      {!revoked && replyCount > 0 ? (
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          sx={{ alignItems: "center", color: "text.secondary" }}
+                        >
+                          <ChatBubbleOutlineOutlinedIcon sx={{ fontSize: 17 }} />
+                          <Typography variant="body2">
+                            {replyCount} 条回复
+                          </Typography>
+                        </Stack>
+                      ) : null}
+                    </Stack>
+                    <Stack
+                      spacing={0.75}
+                      sx={{
+                        minWidth: 0,
+                        pt: { xs: 1.25, md: 0 },
+                        borderTop: { xs: "1px solid", md: 0 },
+                        borderColor: "divider",
+                        alignItems: { xs: "flex-start", md: "flex-end" },
+                        textAlign: { xs: "left", md: "right" },
+                      }}
+                    >
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">
+                          {update.authorName}
+                        </Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">
+                          {dateTimeFormatter.format(new Date(update.createdAt))}
+                          {update.hasEditHistory ? (
+                            <EditedAtLabel
+                              updatedAt={update.updatedAt}
+                              onClick={() =>
+                                setHistoryTarget({
+                                  kind: "update",
+                                  projectId: project.id,
+                                  projectUpdateId: update.id,
+                                  label: update.title,
+                                })
+                              }
+                            />
+                          ) : null}
+                        </Typography>
+                      </Box>
+                      <Stack
+                        direction="row"
+                        spacing={0.75}
+                        useFlexGap
+                        sx={{
+                          width: "100%",
+                          alignItems: "center",
+                          justifyContent: { xs: "flex-start", md: "flex-end" },
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        {!revoked ? (
+                          <Button
+                            size="small"
+                            color="primary"
+                            startIcon={<VisibilityOutlinedIcon />}
+                            onClick={() => setDetailId(update.id)}
+                          >
+                            查看详情
+                          </Button>
+                        ) : null}
+                        {canPublishUpdate ? (
+                          <>
+                            <Tooltip title="编辑进度">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  aria-label={`编辑进度 ${update.title}`}
+                                  onClick={() => openEditUpdate(update)}
+                                  disabled={update.contentRiskStatus === "REVOKED"}
+                                >
+                                  <EditOutlinedIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                            <Tooltip title="删除进度">
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  aria-label={`删除进度 ${update.title}`}
+                                  onClick={() => setDeleteTarget(update)}
+                                  disabled={deleting}
+                                >
+                                  <DeleteOutlineOutlinedIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          </>
+                        ) : null}
+                      </Stack>
+                    </Stack>
+                  </Box>
+                );
+              })}
             </Paper>
-          ))}
-          {project.updates.length === 0 ? (
+          ) : (
             <Paper variant="outlined" sx={{ p: 0 }}>
               <EmptyState icon={<UpdateOutlinedIcon />} title="尚未发布项目进度" />
             </Paper>
-          ) : null}
+          )}
+
+          <Dialog
+            open={Boolean(detailUpdate)}
+            onClose={() => setDetailId(null)}
+            fullWidth
+            maxWidth="md"
+            slotProps={{
+              paper: { sx: { maxHeight: "calc(100dvh - 48px)" } },
+            }}
+          >
+            {detailUpdate ? (
+              <>
+                <DialogTitle>
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{ alignItems: "center" }}
+                  >
+                    <Box component="span" sx={{ overflowWrap: "anywhere" }}>
+                      {detailUpdate.title}
+                    </Box>
+                    {detailUpdate.visibility === "INTERNAL" ? (
+                      <LockOutlinedIcon fontSize="small" color="action" />
+                    ) : null}
+                  </Stack>
+                </DialogTitle>
+                <DialogContent dividers sx={{ overflowY: "auto" }}>
+                  <Stack spacing={2}>
+                    <Typography variant="body2" color="text.secondary">
+                      {detailUpdate.authorName} ·{" "}
+                      {dateFormatter.format(new Date(detailUpdate.createdAt))}
+                      {detailUpdate.hasEditHistory ? (
+                        <EditedAtLabel
+                          updatedAt={detailUpdate.updatedAt}
+                          onClick={() =>
+                            setHistoryTarget({
+                              kind: "update",
+                              projectId: project.id,
+                              projectUpdateId: detailUpdate.id,
+                              label: detailUpdate.title,
+                            })
+                          }
+                        />
+                      ) : null}
+                    </Typography>
+                    {detailUpdate.contentRiskStatus === "PENDING" ? (
+                      <ContentRiskStatusLine
+                        status="PENDING"
+                        pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                      />
+                    ) : null}
+                    <CollapsibleText
+                      text={detailUpdate.body}
+                      collapsible={false}
+                    />
+                    {detailUpdate.comments.length > 0 ? (
+                      <>
+                        <Divider />
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "center" }}
+                        >
+                          <ChatBubbleOutlineOutlinedIcon
+                            sx={{ fontSize: 18, color: "text.secondary" }}
+                          />
+                          <Typography variant="body2" color="text.secondary">
+                            {detailUpdate.comments.length} 条回复
+                          </Typography>
+                        </Stack>
+                        <Stack
+                          spacing={1.5}
+                          sx={{
+                            pl: 2,
+                            borderLeft: "2px solid",
+                            borderColor: "divider",
+                          }}
+                        >
+                          {detailUpdate.comments.map((comment) => (
+                            <Box key={comment.id}>
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                sx={{
+                                  alignItems: "flex-start",
+                                  justifyContent: "space-between",
+                                }}
+                              >
+                                <Typography
+                                  variant="body2"
+                                  sx={{ fontWeight: 650 }}
+                                >
+                                  {comment.authorName}
+                                  {comment.visibility === "INTERNAL"
+                                    ? " · 内部评论"
+                                    : ""}
+                                  {comment.hasEditHistory ? (
+                                    <EditedAtLabel
+                                      updatedAt={comment.updatedAt}
+                                      onClick={() =>
+                                        setHistoryTarget({
+                                          kind: "comment",
+                                          projectId: project.id,
+                                          projectUpdateId: detailUpdate.id,
+                                          updateCommentId: comment.id,
+                                          label: `${detailUpdate.title} · 评论`,
+                                        })
+                                      }
+                                    />
+                                  ) : null}
+                                </Typography>
+                                {(canEditProject ||
+                                  comment.authorId === currentUserId) &&
+                                comment.contentRiskStatus !== "REVOKED" ? (
+                                  <Tooltip title="编辑评论">
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        aria-label="编辑评论"
+                                        onClick={() =>
+                                          openEditComment(detailUpdate, comment)
+                                        }
+                                        sx={{ flexShrink: 0 }}
+                                      >
+                                        <EditOutlinedIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                ) : null}
+                              </Stack>
+                              {comment.contentRiskStatus === "REVOKED" ? (
+                                <ContentRiskStatusLine
+                                  status="REVOKED"
+                                  pluginEnabled={Boolean(
+                                    project.contentRiskUiEnabled,
+                                  )}
+                                />
+                              ) : (
+                                <>
+                                  <CollapsibleText
+                                    text={comment.body}
+                                    maxLines={6}
+                                  />
+                                  <ContentRiskStatusLine
+                                    status={comment.contentRiskStatus}
+                                    pluginEnabled={Boolean(
+                                      project.contentRiskUiEnabled,
+                                    )}
+                                  />
+                                </>
+                              )}
+                            </Box>
+                          ))}
+                        </Stack>
+                      </>
+                    ) : null}
+                  </Stack>
+                </DialogContent>
+                <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                  <Button onClick={() => setDetailId(null)}>关闭</Button>
+                </DialogActions>
+              </>
+            ) : null}
+          </Dialog>
 
           <Dialog
             open={Boolean(deleteTarget)}

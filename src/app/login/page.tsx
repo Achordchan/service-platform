@@ -1,7 +1,9 @@
+import { redirect } from "next/navigation";
 import { Alert, Stack } from "@mui/material";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { LoginForm } from "@/components/auth/login-form";
 import { env } from "@/lib/runtime-env";
+import { getCurrentSession } from "@/lib/session";
 import { isEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 
 export default async function LoginPage({
@@ -9,6 +11,10 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // 已登录用户不应再看到登录表单，与登录成功后的跳转保持一致（/dashboard 按角色分流）。
+  if (await getCurrentSession()) {
+    redirect("/dashboard");
+  }
   const params = await searchParams;
   const emailOtpEnabled = await isEmailOtpLoginAvailable();
   return (
