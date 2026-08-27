@@ -51,6 +51,7 @@ type AttachmentMetaLite = {
   mimeType: string;
   size: number;
   inline?: boolean;
+  contentRiskStatus?: string | null;
 };
 
 Page({
@@ -211,12 +212,15 @@ Page({
       );
       const decoratedRequest = {
         ...request,
-        attachments: request.attachments.map((att) => ({
-          ...att,
-          displayName: att.title || att.originalName,
-          note: att.note || "",
-          sizeText: formatFileSize(att.size),
-        })),
+        attachments: request.attachments
+          // 对齐 Web：被内容风控撤回的附件不展示（连元信息一起隐藏）
+          .filter((att) => att.contentRiskStatus !== "REVOKED")
+          .map((att) => ({
+            ...att,
+            displayName: att.title || att.originalName,
+            note: att.note || "",
+            sizeText: formatFileSize(att.size),
+          })),
       };
       this.setData({
         loading: false,
@@ -253,7 +257,10 @@ Page({
     }
   },
   decorateMessage(message: RequestMessage): ViewMessage {
-    const attachments: AttachmentMetaLite[] = message.attachments ?? [];
+    // 对齐 Web request-chat-thread：被内容风控撤回的附件（含标题/备注）不渲染
+    const attachments: AttachmentMetaLite[] = (
+      message.attachments ?? []
+    ).filter((att) => att.contentRiskStatus !== "REVOKED");
     return {
       ...message,
       authorName: message.author?.name ?? "系统",

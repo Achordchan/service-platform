@@ -85,6 +85,7 @@ export type AttachmentMeta = {
   mimeType: string;
   size: number;
   createdAt: string;
+  contentRiskStatus?: string | null;
 };
 
 export type RequestMessage = {

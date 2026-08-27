@@ -132,7 +132,12 @@ type RequestDetailView = RequestSummary & {
       body: string;
       visibility: "CUSTOMER_VISIBLE";
       author: ApiAuthor;
-      attachments: Array<{ id: string; originalName: string }>;
+      attachments: Array<{
+        id: string;
+        originalName: string;
+        title?: string | null;
+        inline?: boolean;
+      }>;
     };
   }>;
 };

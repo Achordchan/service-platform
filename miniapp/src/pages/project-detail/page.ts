@@ -182,13 +182,16 @@ Page({
           (tabs.some((tab) => tab.key === this.initialTab)
             ? (this.initialTab as TabKey)
             : "overview"),
-        files: (project.attachments ?? []).map((att) => ({
-          ...att,
-          displayName: att.title || att.originalName,
-          note: att.note || "",
-          ext: fileExtLabel(att.mimeType, att.originalName),
-          sizeText: formatFileSize(att.size),
-        })),
+        files: (project.attachments ?? [])
+          // 对齐 Web：被内容风控撤回的附件不展示
+          .filter((att) => att.contentRiskStatus !== "REVOKED")
+          .map((att) => ({
+            ...att,
+            displayName: att.title || att.originalName,
+            note: att.note || "",
+            ext: fileExtLabel(att.mimeType, att.originalName),
+            sizeText: formatFileSize(att.size),
+          })),
       });
       wx.setNavigationBarTitle({ title: project.title });
       const target = this.data.activeTab;

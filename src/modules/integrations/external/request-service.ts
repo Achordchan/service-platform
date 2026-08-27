@@ -689,6 +689,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
                       (attachment) => ({
                         id: attachment.id,
                         originalName: attachment.originalName,
+                        title: attachment.title,
                         inline: attachment.inline,
                       }),
                     ),
