@@ -13,3 +13,9 @@ BEGIN
   END IF;
 END
 $$;
+
+-- pg-boss 引导：worker 以 service_platform_jobs 运行 boss.start()，要建 pgboss schema，
+-- PG16 默认不给普通角色库级 CREATE（实证报 permission denied for database）。
+-- 与 scripts/prepare-integration-db.mjs 对测试库的授权口径一致；GRANT 幂等，
+-- 也便于既有数据卷手工补跑。
+GRANT CONNECT, CREATE ON DATABASE service_platform TO service_platform_jobs;
