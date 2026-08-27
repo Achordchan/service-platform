@@ -796,12 +796,21 @@ model RequestMessage {
   @@index([externalAuthorId, createdAt])
 }
 
+// Office 附件的 PDF 预览件生成状态；null = 该类型无需转换
+enum AttachmentPreviewStatus {
+  PENDING
+  READY
+  FAILED
+}
+
 model Attachment {
-  id                          String            @id @default(cuid())
+  id                          String                   @id @default(cuid())
   originalName                String
   title                       String?
   note                        String?
-  storageKey                  String            @unique
+  storageKey                  String                   @unique
+  previewStorageKey           String?
+  previewStatus               AttachmentPreviewStatus?
   mimeType                    String
   size                        Int
   visibility                  ContentVisibility @default(CUSTOMER_VISIBLE)
