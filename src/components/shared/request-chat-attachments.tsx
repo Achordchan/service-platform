@@ -204,6 +204,8 @@ function MessageFile({
             tabIndex: 0,
             onClick: openPreview,
             onKeyDown: (event: React.KeyboardEvent) => {
+              // 焦点在内部下载链接上时交还给链接的原生 Enter 行为
+              if (event.target !== event.currentTarget) return;
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 openPreview();
