@@ -106,6 +106,7 @@ export function LoginForm({
     passwordForm.clearErrors("root");
     setAuthInFlight(true);
     const token = turnstileToken;
+    let succeeded = false;
     try {
       const result = await authClient.signIn.email({
         email: data.email,
@@ -125,6 +126,7 @@ export function LoginForm({
         return;
       }
       finishLogin();
+      succeeded = true;
     } catch {
       // 断网等异常路径下请求可能已被服务端消费过 token，必须重置挑战，
       // 否则重试会复用旧 token 而 403（错误信息还会误显示为密码错误）
@@ -133,7 +135,9 @@ export function LoginForm({
         message: "登录暂时不可用，请检查网络后重试",
       });
     } finally {
-      setAuthInFlight(false);
+      // 成功后保持锁定直到页面卸载：dashboard 导航期间表单仍挂载，
+      // 若解锁，已消费的 token 仍可被再次提交，用 403 错误覆盖成功状态
+      if (!succeeded) setAuthInFlight(false);
     }
   });
 
@@ -179,6 +183,7 @@ export function LoginForm({
     otpForm.clearErrors("root");
     setAuthInFlight(true);
     const token = turnstileToken;
+    let succeeded = false;
     try {
       const result = await authClient.signIn.emailOtp({
         email,
@@ -194,13 +199,15 @@ export function LoginForm({
         return;
       }
       finishLogin();
+      succeeded = true;
     } catch {
       consumeTurnstileToken();
       otpForm.setError("root", {
         message: "验证码登录失败，请稍后重试",
       });
     } finally {
-      setAuthInFlight(false);
+      // 与 submitPassword 一致：成功后保持锁定直到页面卸载
+      if (!succeeded) setAuthInFlight(false);
     }
   });
 

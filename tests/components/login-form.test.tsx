@@ -119,7 +119,7 @@ describe("登录方式", () => {
     );
   });
 
-  it("密码请求在途时锁定登录模式切换与再次提交，结束后恢复", async () => {
+  it("密码请求在途时锁定模式切换，成功后不产生第二次提交", async () => {
     let resolveLogin!: (value?: unknown) => void;
     authMocks.signInEmail.mockImplementation(
       () => new Promise((resolve) => (resolveLogin = resolve)),
@@ -142,12 +142,16 @@ describe("登录方式", () => {
     expect(screen.getByRole("button", { name: "邮箱验证码登录" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "微信扫码登录" })).toBeDisabled();
 
+    // 成功路径不再显式解锁：锁定保持到 dashboard 导航卸载本页，
+    // 已消费的 token 在导航完成前没有可再提交的入口
     resolveLogin();
     await waitFor(() =>
-      expect(
-        screen.getByRole("button", { name: "邮箱验证码登录" }),
-      ).not.toBeDisabled(),
+      expect(authMocks.signInEmail).toHaveBeenCalledTimes(1),
     );
+    for (let i = 0; i < 5; i++) {
+      await Promise.resolve();
+    }
+    expect(authMocks.signInEmail).toHaveBeenCalledTimes(1);
     expect(consoleError).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });
