@@ -97,6 +97,8 @@ export type ProjectUpdate = {
 export type ProjectAttachment = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   createdAt: string;
@@ -134,6 +136,8 @@ export type ServiceRequestSummary = {
 export type RequestAttachment = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   createdAt: string;
@@ -162,6 +166,7 @@ export type RequestMessage = {
     attachments: Array<{
       id: string;
       originalName: string;
+      title?: string | null;
     }>;
   } | null;
   attachments: RequestAttachment[];

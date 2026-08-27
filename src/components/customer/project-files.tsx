@@ -79,18 +79,32 @@ export function ProjectFiles({
               />
             ) : (
               <Typography noWrap sx={{ fontWeight: 600 }}>
-                {file.originalName}
+                {file.title?.trim() || file.originalName}
               </Typography>
             )}
             <Typography variant="body2" color="text.secondary">
               {formatSize(file.size)} ·{" "}
               {dateFormatter.format(new Date(file.createdAt))}
+              {file.contentRiskStatus !== "REVOKED" &&
+              file.title?.trim() &&
+              file.title.trim() !== file.originalName
+                ? ` · ${file.originalName}`
+                : ""}
             </Typography>
+            {file.contentRiskStatus !== "REVOKED" && file.note?.trim() ? (
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+              >
+                {file.note}
+              </Typography>
+            ) : null}
           </Box>
           {file.contentRiskStatus !== "REVOKED" ? <IconButton
             component={Link}
             href={`/api/v1/attachments/${file.id}`}
-            aria-label={`下载 ${file.originalName}`}
+            aria-label={`下载 ${file.title?.trim() || file.originalName}`}
           >
             <DownloadOutlinedIcon />
           </IconButton> : null}

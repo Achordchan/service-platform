@@ -153,6 +153,8 @@ export type RequestListItem = {
 export type RequestAttachment = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   visibility: ContentVisibility;

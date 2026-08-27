@@ -6,7 +6,7 @@ import {
   type ProjectSummary,
 } from "../../lib/api";
 import { escapeHtml, genMutationKey } from "../../lib/format";
-import { pickAttachments } from "../../lib/pick-files";
+import { pickAttachments, previewLocalFile } from "../../lib/pick-files";
 import { topUpSubscribeQuota } from "../../lib/subscribe";
 
 // 下拉展示中文标签，提交时映射回英文枚举
@@ -29,6 +29,8 @@ Page({
     attachments: [] as Array<{
       localPath: string;
       fileName: string;
+      title: string;
+      note: string;
       attachmentId?: string;
     }>,
     submitting: false,
@@ -99,8 +101,25 @@ Page({
     const chosen = await pickAttachments(5 - this.data.attachments.length);
     if (chosen.length === 0) return;
     this.setData({
-      attachments: [...this.data.attachments, ...chosen],
+      attachments: [
+        ...this.data.attachments,
+        // 标题默认用文件名，用户可改；备注选填
+        ...chosen.map((file) => ({ ...file, title: file.fileName, note: "" })),
+      ],
     });
+  },
+  onPreviewAttachment(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const attachment = this.data.attachments[index];
+    if (attachment) previewLocalFile(attachment);
+  },
+  onAttachmentTitleInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`attachments[${index}].title`]: event.detail.value });
+  },
+  onAttachmentNoteInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`attachments[${index}].note`]: event.detail.value });
   },
   onRemoveAttachment(event: WechatMiniprogram.TouchEvent) {
     const index = Number(event.currentTarget.dataset.index);
@@ -149,6 +168,8 @@ Page({
             filePath: attachment.localPath,
             fileName: attachment.fileName,
             serviceRequestId: created.id,
+            title: attachment.title.trim(),
+            note: attachment.note.trim(),
           });
         } catch {
           attachFailed += 1;

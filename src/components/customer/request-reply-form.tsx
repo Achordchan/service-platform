@@ -41,6 +41,11 @@ import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
 import { apiRequest, jsonRequest } from "@/lib/api-client";
 import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
+import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
@@ -57,7 +62,7 @@ type ApiPayload = ApiResponsePayload<{
 const requestReplySchema = z
   .object({
     body: z.string(),
-    files: z.array(z.custom<File>()),
+    files: z.array(z.custom<AttachmentDraft>()),
   })
   .refine(
     ({ body, files }) => hasMeaningfulHtml(body) || files.length > 0,
@@ -162,11 +167,26 @@ export function RequestReplyForm({
     );
     if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      setValue("files", [...currentFiles, ...accepted], {
-        shouldDirty: true,
-        shouldValidate: true,
-      });
+      setValue(
+        "files",
+        [...currentFiles, ...createAttachmentDrafts(accepted)],
+        { shouldDirty: true, shouldValidate: true },
+      );
     }
+  }
+
+  function updateDraft(
+    index: number,
+    patch: Partial<Pick<AttachmentDraft, "title" | "note">>,
+  ) {
+    const currentFiles = getValues("files");
+    setValue(
+      "files",
+      currentFiles.map((draft, draftIndex) =>
+        draftIndex === index ? { ...draft, ...patch } : draft,
+      ),
+      { shouldDirty: true },
+    );
   }
 
   async function submitReply(values: RequestReplyValues) {
@@ -177,30 +197,35 @@ export function RequestReplyForm({
         jsonRequest("POST", {
           body: hasMeaningfulHtml(values.body)
             ? values.body
-            : buildAttachmentOnlyMessage(values.files.map((file) => file.name)),
+            : buildAttachmentOnlyMessage(
+                values.files.map(
+                  (draft) => draft.title.trim() || draft.file.name,
+                ),
+              ),
           visibility: "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
         }),
         "回复发送失败",
       );
       const messageId = result.message?.id;
-      let failedFiles: File[] = [];
+      let failedFiles: AttachmentDraft[] = [];
       if (attachmentsEnabled && values.files.length > 0) {
         if (!messageId) {
           failedFiles = values.files;
         } else {
           failedFiles = await uploadFilesBestEffort(
             values.files,
-            async (file) => {
+            async (draft) => {
               const formData = new FormData();
-              formData.append("file", file);
+              formData.append("file", draft.file);
               formData.append("serviceRequestId", requestId);
               formData.append("requestMessageId", messageId);
               formData.append("visibility", "CUSTOMER_VISIBLE");
+              appendDraftMeta(formData, draft);
               await apiRequest(
                 "/api/v1/attachments",
                 { method: "POST", body: formData },
-                `${file.name} 上传失败`,
+                `${draft.file.name} 上传失败`,
               );
             },
           );
@@ -210,7 +235,7 @@ export function RequestReplyForm({
       setEditorVersion((version) => version + 1);
       if (failedFiles.length > 0) {
         toast.warning(
-          `回复已发送，但附件上传失败：${fileNames(failedFiles)}。请重新添加附件。`,
+          `回复已发送，但附件上传失败：${fileNames(failedFiles.map((draft) => draft.file))}。请重新添加附件。`,
         );
       } else {
         toast.success("回复已发送");
@@ -392,7 +417,9 @@ export function RequestReplyForm({
         ) : null}
         {!resolvedGateVisible ? (
           <RequestAttachmentDrafts
-            files={files}
+            drafts={files}
+            disabled={isSubmitting}
+            onUpdate={updateDraft}
             onRemove={(index) =>
               setValue(
                 "files",

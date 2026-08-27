@@ -161,6 +161,8 @@ export default async function CustomerProjectPage({
     attachments: project.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
+      title: attachment.title,
+      note: attachment.note,
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),

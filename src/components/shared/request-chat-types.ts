@@ -1,6 +1,8 @@
 export type ChatAttachment = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   inline?: boolean;
@@ -18,6 +20,7 @@ export type ChatReplyReference = {
   attachments: Array<{
     id: string;
     originalName: string;
+    title?: string | null;
     inline?: boolean;
   }>;
 };

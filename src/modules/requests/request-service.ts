@@ -658,6 +658,8 @@ export function getRequest(actor: Actor, requestId: string) {
         id: true,
         requestMessageId: true,
         originalName: true,
+        title: true,
+        note: true,
         mimeType: true,
         size: true,
         inline: true,
@@ -789,6 +791,8 @@ export function getRequest(actor: Actor, requestId: string) {
             (attachment) => ({
               id: attachment.id,
               originalName: attachment.originalName,
+              title: attachment.title,
+              note: attachment.note,
               mimeType: attachment.mimeType,
               size: attachment.size,
               inline: attachment.inline,
@@ -825,6 +829,7 @@ export function getRequest(actor: Actor, requestId: string) {
                         (attachment) => ({
                           id: attachment.id,
                           originalName: attachment.originalName,
+                          title: attachment.title,
                           inline: attachment.inline,
                         }),
                       ),
@@ -839,6 +844,8 @@ export function getRequest(actor: Actor, requestId: string) {
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,
+          title: attachment.title,
+          note: attachment.note,
           mimeType: attachment.mimeType,
           size: attachment.size,
           visibility: attachment.visibility,

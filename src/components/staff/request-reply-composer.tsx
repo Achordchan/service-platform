@@ -34,6 +34,11 @@ import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import { markRequestLocalMutation } from "@/hooks/use-request-realtime";
 import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
+import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
@@ -43,7 +48,7 @@ const requestReplyComposerSchema = z
   .object({
     body: z.string(),
     internal: z.boolean(),
-    files: z.array(z.custom<File>()),
+    files: z.array(z.custom<AttachmentDraft>()),
   })
   .refine(
     ({ body, files }) => hasMeaningfulHtml(body) || files.length > 0,
@@ -115,11 +120,24 @@ export function RequestReplyComposer({
     const { accepted, error: validateError } = validateFiles(next, files.length);
     if (validateError) toast.warning(validateError);
     if (accepted.length > 0) {
-      setValue("files", [...files, ...accepted], {
+      setValue("files", [...files, ...createAttachmentDrafts(accepted)], {
         shouldDirty: true,
         shouldValidate: true,
       });
     }
+  }
+
+  function updateDraft(
+    index: number,
+    patch: Partial<Pick<AttachmentDraft, "title" | "note">>,
+  ) {
+    setValue(
+      "files",
+      files.map((draft, draftIndex) =>
+        draftIndex === index ? { ...draft, ...patch } : draft,
+      ),
+      { shouldDirty: true },
+    );
   }
 
   async function sendSupportPlaybook(playbookKey: string) {
@@ -164,22 +182,27 @@ export function RequestReplyComposer({
         jsonRequest("POST", {
           body: hasMeaningfulHtml(values.body)
             ? values.body
-            : buildAttachmentOnlyMessage(values.files.map((file) => file.name)),
+            : buildAttachmentOnlyMessage(
+                values.files.map(
+                  (draft) => draft.title.trim() || draft.file.name,
+                ),
+              ),
           visibility: submitInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
         }),
       );
       const failedFiles = await uploadFilesBestEffort(
         values.files,
-        async (file) => {
+        async (draft) => {
           const formData = new FormData();
-          formData.append("file", file);
+          formData.append("file", draft.file);
           formData.append("serviceRequestId", requestId);
           formData.append("requestMessageId", result.message.id);
           formData.append(
             "visibility",
             submitInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
           );
+          appendDraftMeta(formData, draft);
           await staffApi("/api/v1/attachments", {
             method: "POST",
             body: formData,
@@ -190,7 +213,7 @@ export function RequestReplyComposer({
       setEditorVersion((version) => version + 1);
       if (failedFiles.length > 0) {
         toast.warning(
-          `${submitInternal ? "内部备注已保存" : "回复已发送"}，但附件上传失败：${fileNames(failedFiles)}。请重新添加附件。`,
+          `${submitInternal ? "内部备注已保存" : "回复已发送"}，但附件上传失败：${fileNames(failedFiles.map((draft) => draft.file))}。请重新添加附件。`,
         );
       } else {
         toast.success(submitInternal ? "内部备注已保存" : "回复已发送");
@@ -341,7 +364,9 @@ export function RequestReplyComposer({
           可粘贴图片，单个附件最大 {policy.maxSizeMb}MB。
         </Typography>
         <RequestAttachmentDrafts
-          files={files}
+          drafts={files}
+          disabled={busy}
+          onUpdate={updateDraft}
           onRemove={(index) =>
             setValue(
               "files",

@@ -42,6 +42,8 @@ export async function POST(request: Request) {
         413,
       );
     }
+    const title = formData.get("title");
+    const note = formData.get("note");
     const data = await uploadExternalAttachment(session.actor, {
       fileName: file.name,
       claimedMimeType: file.type,
@@ -49,6 +51,8 @@ export async function POST(request: Request) {
       serviceRequestId,
       requestMessageId: requestMessageId || undefined,
       inline,
+      title: typeof title === "string" ? title : undefined,
+      note: typeof note === "string" ? note : undefined,
     }, {
       customerMemberNotificationsEnabled:
         session.connection.customerMemberNotificationsEnabled,

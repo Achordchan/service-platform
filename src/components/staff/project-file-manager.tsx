@@ -5,6 +5,11 @@ import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useRouter } from "next/navigation";
 import {
   Button,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  LinearProgress,
   MenuItem,
   Paper,
   Stack,
@@ -13,10 +18,15 @@ import {
 } from "@mui/material";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import {
   FilePickerButton,
   firstFileRejectionMessage,
 } from "@/components/shared/file-picker";
+import {
+  AttachmentPreviewDialog,
+  type PreviewSource,
+} from "@/components/shared/attachment-preview-dialog";
 import { useToast } from "@/components/shared/toast-provider";
 import {
   ContentRiskNotice,
@@ -27,6 +37,11 @@ import type {
   RequestAttachment,
 } from "@/components/staff/staff-types";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
+import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
 import { apiRequest } from "@/lib/api-client";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -53,14 +68,17 @@ export function ProjectFileManager({
   const { policy } = useAttachmentPolicy();
   const [visibility, setVisibility] =
     useState<ContentVisibility>("CUSTOMER_VISIBLE");
+  const [draft, setDraft] = useState<AttachmentDraft | null>(null);
+  const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [uploading, setUploading] = useState(false);
 
-  async function upload(file: File) {
+  async function upload(current: AttachmentDraft) {
     setUploading(true);
     const body = new FormData();
-    body.append("file", file);
+    body.append("file", current.file);
     body.append("projectId", projectId);
     body.append("visibility", visibility);
+    appendDraftMeta(body, current);
     try {
       const result = await apiRequest<{
         deliveryFeedback?: DeliveryFeedback | null;
@@ -71,6 +89,7 @@ export function ProjectFileManager({
           : "内部文件已上传",
       );
       toast.delivery(result.deliveryFeedback);
+      setDraft(null);
       router.refresh();
     } catch (uploadError) {
       toast.error(
@@ -112,13 +131,15 @@ export function ProjectFileManager({
               accept={policy.accept}
               maxSize={policy.maxSizeMb * 1024 * 1024}
               onFiles={([file]) => {
-                if (file) void upload(file);
+                if (file) {
+                  setDraft(createAttachmentDrafts([file])[0] ?? null);
+                }
               }}
               onRejected={(rejections) =>
                 toast.warning(firstFileRejectionMessage(rejections))
               }
             >
-              {uploading ? "正在上传" : "上传文件"}
+              选择文件
             </FilePickerButton>
             <Typography variant="body2" color="text.secondary">
               单个文件不超过 {policy.maxSizeMb}MB
@@ -152,7 +173,7 @@ export function ProjectFileManager({
                 <>
               <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
                 <Typography sx={{ fontWeight: 650 }}>
-                  {file.originalName}
+                  {file.title?.trim() || file.originalName}
                 </Typography>
                 {file.visibility === "INTERNAL" ? (
                   <LockOutlinedIcon fontSize="small" color="action" />
@@ -160,7 +181,19 @@ export function ProjectFileManager({
               </Stack>
               <Typography variant="body2" color="text.secondary">
                 {dateFormatter.format(new Date(file.createdAt))}
+                {file.title?.trim() && file.title.trim() !== file.originalName
+                  ? ` · ${file.originalName}`
+                  : ""}
               </Typography>
+              {file.note?.trim() ? (
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}
+                >
+                  {file.note}
+                </Typography>
+              ) : null}
                 </>
               )}
             </div>
@@ -182,6 +215,89 @@ export function ProjectFileManager({
           </Typography>
         ) : null}
       </Paper>
+
+      <Dialog
+        open={Boolean(draft)}
+        onClose={uploading ? undefined : () => setDraft(null)}
+        fullWidth
+        maxWidth="sm"
+      >
+        {uploading ? <LinearProgress /> : null}
+        <DialogTitle>上传项目文件</DialogTitle>
+        {draft ? (
+          <DialogContent>
+            <Stack spacing={2} sx={{ mt: 0.5 }}>
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: "center", minWidth: 0 }}
+              >
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  noWrap
+                  sx={{ flex: 1 }}
+                >
+                  {draft.file.name} ·{" "}
+                  {(draft.file.size / 1024 / 1024).toFixed(2)} MB
+                  {visibility === "INTERNAL" ? " · 仅内部可见" : " · 客户可见"}
+                </Typography>
+                <Button
+                  size="small"
+                  startIcon={<VisibilityOutlinedIcon />}
+                  onClick={() =>
+                    setPreview({ file: draft.file, title: draft.title })
+                  }
+                >
+                  预览
+                </Button>
+              </Stack>
+              <TextField
+                label="展示标题"
+                value={draft.title}
+                onChange={(event) =>
+                  setDraft({ ...draft, title: event.target.value })
+                }
+                fullWidth
+                disabled={uploading}
+                helperText="默认使用文件名，客户列表中按此标题展示"
+                slotProps={{ htmlInput: { maxLength: 160 } }}
+              />
+              <TextField
+                label="备注（可选）"
+                value={draft.note}
+                onChange={(event) =>
+                  setDraft({ ...draft, note: event.target.value })
+                }
+                fullWidth
+                multiline
+                minRows={2}
+                maxRows={4}
+                disabled={uploading}
+                slotProps={{ htmlInput: { maxLength: 500 } }}
+              />
+            </Stack>
+          </DialogContent>
+        ) : null}
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setDraft(null)} disabled={uploading}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              if (draft) void upload(draft);
+            }}
+            disabled={uploading}
+          >
+            {uploading ? "正在上传" : "确认上传"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <AttachmentPreviewDialog
+        source={preview}
+        onClose={() => setPreview(null)}
+      />
     </Stack>
   );
 }

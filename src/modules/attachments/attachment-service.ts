@@ -27,6 +27,11 @@ import {
   validateAttachmentFile,
 } from "@/modules/attachments/attachment-validation";
 import {
+  attachmentRiskText,
+  normalizeAttachmentNote,
+  normalizeAttachmentTitle,
+} from "@/modules/attachments/attachment-meta";
+import {
   assertCanManageActiveProjectDelivery,
   assertCanPublishActiveProjectUpdate,
   assertCanUploadActiveProjectFile,
@@ -63,6 +68,8 @@ export type UploadAttachmentInput = {
   requestMessageId?: string;
   visibility?: ContentVisibility;
   inline?: boolean;
+  title?: string;
+  note?: string;
 };
 
 export type UploadSupportPlaybookImageInput = {
@@ -144,6 +151,8 @@ export async function uploadRequestAttachment(
   if (input.inline && !validated.mimeType.startsWith("image/")) {
     throw badRequest("INLINE_IMAGE_REQUIRED", "正文中只能插入图片文件");
   }
+  const title = normalizeAttachmentTitle(input.title);
+  const note = normalizeAttachmentNote(input.note);
   await authorizeUpload(actor, input);
   if ((input.visibility ?? "CUSTOMER_VISIBLE") === "CUSTOMER_VISIBLE") {
     await enforceActorPublicContentRules(actor, {
@@ -152,7 +161,7 @@ export async function uploadRequestAttachment(
       projectId: null,
       serviceRequestId: input.serviceRequestId,
       snapshot: {
-        body: input.fileName,
+        body: attachmentRiskText(input.fileName, title, note),
         visibility: "CUSTOMER_VISIBLE",
       },
     });
@@ -172,6 +181,8 @@ export async function uploadRequestAttachment(
       const attachment = await tx.attachment.create({
         data: {
           originalName: normalizeFileName(input.fileName),
+          title,
+          note,
           storageKey,
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
@@ -186,6 +197,8 @@ export async function uploadRequestAttachment(
         select: {
           id: true,
           originalName: true,
+          title: true,
+          note: true,
           mimeType: true,
           size: true,
           visibility: true,
@@ -221,7 +234,11 @@ export async function uploadRequestAttachment(
         projectId: request.projectId,
         serviceRequestId: request.id,
         snapshot: {
-          body: attachment.originalName,
+          body: attachmentRiskText(
+            attachment.originalName,
+            attachment.title,
+            attachment.note,
+          ),
           visibility: attachment.visibility,
           attachmentIds: [attachment.id],
         },
@@ -250,7 +267,7 @@ export async function uploadRequestAttachment(
           notificationTitle: internal
             ? `${actor.name} 上传了内部附件`
             : `${actor.name} 上传了服务请求附件`,
-          notificationBody: attachment.originalName,
+          notificationBody: attachment.title ?? attachment.originalName,
           includeCustomers:
             !internal && includeCustomerMembersForRequest(request),
           includeExternalContact:
@@ -284,6 +301,8 @@ export type UploadProjectAttachmentInput = {
   projectId: string;
   visibility?: ContentVisibility;
   inlineContext?: "REQUEST_DESCRIPTION" | "PROJECT_UPDATE" | "MILESTONE";
+  title?: string;
+  note?: string;
 };
 
 export async function uploadProjectAttachment(
@@ -301,6 +320,8 @@ export async function uploadProjectAttachment(
   if (input.inlineContext && !validated.mimeType.startsWith("image/")) {
     throw badRequest("INLINE_IMAGE_REQUIRED", "正文中只能插入图片文件");
   }
+  const title = normalizeAttachmentTitle(input.title);
+  const note = normalizeAttachmentNote(input.note);
   const visibility = input.visibility ?? "CUSTOMER_VISIBLE";
   if (visibility === "CUSTOMER_VISIBLE") {
     await enforceActorPublicContentRules(actor, {
@@ -309,7 +330,7 @@ export async function uploadProjectAttachment(
       projectId: input.projectId,
       serviceRequestId: null,
       snapshot: {
-        body: input.fileName,
+        body: attachmentRiskText(input.fileName, title, note),
         visibility,
       },
     });
@@ -331,6 +352,8 @@ export async function uploadProjectAttachment(
       const attachment = await tx.attachment.create({
         data: {
           originalName: normalizeFileName(input.fileName),
+          title,
+          note,
           storageKey,
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
@@ -343,6 +366,8 @@ export async function uploadProjectAttachment(
         select: {
           id: true,
           originalName: true,
+          title: true,
+          note: true,
           mimeType: true,
           size: true,
           visibility: true,
@@ -377,7 +402,11 @@ export async function uploadProjectAttachment(
         projectId: project.projectId,
         serviceRequestId: null,
         snapshot: {
-          body: attachment.originalName,
+          body: attachmentRiskText(
+            attachment.originalName,
+            attachment.title,
+            attachment.note,
+          ),
           visibility: attachment.visibility,
           attachmentIds: [attachment.id],
         },
@@ -394,7 +423,7 @@ export async function uploadProjectAttachment(
           },
           notificationType: "PROJECT_FILE",
           notificationTitle: "项目新增文件",
-          notificationBody: attachment.originalName,
+          notificationBody: attachment.title ?? attachment.originalName,
           visibility: attachment.visibility,
           customerSpaceId: project.customerSpaceId,
           projectId: project.projectId,
@@ -696,3 +725,4 @@ function normalizeFileName(fileName: string) {
     .trim();
   return normalized.slice(0, 255) || "attachment";
 }
+

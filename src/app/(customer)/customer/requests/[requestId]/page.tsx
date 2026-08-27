@@ -46,6 +46,8 @@ export default async function CustomerRequestDetailPage({
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
+      title: attachment.title,
+      note: attachment.note,
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),
@@ -90,6 +92,8 @@ export default async function CustomerRequestDetailPage({
       attachments: message.attachments.map((attachment) => ({
         id: attachment.id,
         originalName: attachment.originalName,
+        title: attachment.title,
+        note: attachment.note,
         mimeType: attachment.mimeType,
         size: attachment.size,
         createdAt: attachment.createdAt.toISOString(),

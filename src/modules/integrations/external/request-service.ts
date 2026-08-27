@@ -484,6 +484,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         id: true,
         requestMessageId: true,
         originalName: true,
+        title: true,
+        note: true,
         mimeType: true,
         size: true,
         inline: true,
@@ -658,6 +660,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
           (attachment) => ({
             id: attachment.id,
             originalName: attachment.originalName,
+            title: attachment.title,
+            note: attachment.note,
             mimeType: attachment.mimeType,
             size: attachment.size,
             inline: attachment.inline,
@@ -712,6 +716,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,
+          title: attachment.title,
+          note: attachment.note,
           mimeType: attachment.mimeType,
           size: attachment.size,
           createdAt: attachment.createdAt,

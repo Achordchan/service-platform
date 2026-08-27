@@ -80,6 +80,8 @@ export type ProjectUpdate = {
 export type AttachmentMeta = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   createdAt: string;
@@ -254,6 +256,8 @@ export function uploadAttachment(input: {
   fileName: string;
   serviceRequestId: string;
   requestMessageId?: string;
+  title?: string;
+  note?: string;
 }): Promise<AttachmentMeta> {
   return new Promise((resolve, reject) => {
     wx.uploadFile({
@@ -266,6 +270,11 @@ export function uploadAttachment(input: {
         ...(input.requestMessageId
           ? { requestMessageId: input.requestMessageId }
           : {}),
+        // 标题与文件名一致（未修改默认值）时不提交，展示端兜底 originalName
+        ...(input.title && input.title !== input.fileName
+          ? { title: input.title }
+          : {}),
+        ...(input.note ? { note: input.note } : {}),
       },
       header: { Authorization: `Bearer ${getToken()}` },
       success: (res) => {

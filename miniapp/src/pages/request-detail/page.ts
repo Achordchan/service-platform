@@ -10,7 +10,7 @@ import {
 } from "../../lib/api";
 import { ensureBadgeSync } from "../../lib/badge";
 import { eventSync } from "../../lib/events";
-import { pickAttachments } from "../../lib/pick-files";
+import { pickAttachments, previewLocalFile } from "../../lib/pick-files";
 import {
   formatFileSize,
   REQUEST_STATUS_LABELS,
@@ -40,12 +40,14 @@ type ViewMessage = RequestMessage & {
   reviewing: boolean;
   replyPreview: string;
   images: Array<{ id: string; name: string }>;
-  files: Array<{ id: string; name: string; size: string }>;
+  files: Array<{ id: string; name: string; size: string; note: string }>;
 };
 
 type AttachmentMetaLite = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   inline?: boolean;
@@ -66,7 +68,12 @@ Page({
     // 回复状态
     replyText: "",
     replyTarget: null as ViewMessage | null,
-    replyFiles: [] as Array<{ localPath: string; fileName: string }>,
+    replyFiles: [] as Array<{
+      localPath: string;
+      fileName: string;
+      title: string;
+      note: string;
+    }>,
     sending: false,
     scrollTop: 0,
   },
@@ -206,6 +213,8 @@ Page({
         ...request,
         attachments: request.attachments.map((att) => ({
           ...att,
+          displayName: att.title || att.originalName,
+          note: att.note || "",
           sizeText: formatFileSize(att.size),
         })),
       };
@@ -270,14 +279,15 @@ Page({
         .filter((att) => att.mimeType.startsWith("image/"))
         .map((att) => ({
           id: att.id,
-          name: att.originalName,
+          name: att.title || att.originalName,
         })),
       files: attachments
         .filter((att) => !att.mimeType.startsWith("image/"))
         .map((att) => ({
           id: att.id,
-          name: att.originalName,
+          name: att.title || att.originalName,
           size: formatFileSize(att.size),
+          note: att.note || "",
         })),
     };
   },
@@ -326,8 +336,25 @@ Page({
     const chosen = await pickAttachments(5 - this.data.replyFiles.length);
     if (chosen.length === 0) return;
     this.setData({
-      replyFiles: [...this.data.replyFiles, ...chosen],
+      replyFiles: [
+        ...this.data.replyFiles,
+        // 标题默认用文件名，用户可改；备注选填
+        ...chosen.map((file) => ({ ...file, title: file.fileName, note: "" })),
+      ],
     });
+  },
+  onPreviewReplyFile(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const file = this.data.replyFiles[index];
+    if (file) previewLocalFile(file);
+  },
+  onReplyFileTitleInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`replyFiles[${index}].title`]: event.detail.value });
+  },
+  onReplyFileNoteInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`replyFiles[${index}].note`]: event.detail.value });
   },
   onRemoveReplyFile(event: WechatMiniprogram.TouchEvent) {
     const index = Number(event.currentTarget.dataset.index);
@@ -350,7 +377,7 @@ Page({
     const bodyHtml = text
       ? `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`
       : `<p>附件：${this.data.replyFiles
-          .map((file) => escapeHtml(file.fileName))
+          .map((file) => escapeHtml(file.title.trim() || file.fileName))
           .join("、") || "文件"}</p>`;
     try {
       const result = await replyRequest(this.data.requestId, {
@@ -368,6 +395,8 @@ Page({
             fileName: file.fileName,
             serviceRequestId: this.data.requestId,
             requestMessageId: result.message.id,
+            title: file.title.trim(),
+            note: file.note.trim(),
           });
         } catch {
           attachFailed += 1;

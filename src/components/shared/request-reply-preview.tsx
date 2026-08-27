@@ -25,9 +25,10 @@ function replyText(
   if (plainText && plainText !== "（附件）") {
     return truncatePlainText(plainText, 120);
   }
-  const fileName = message.attachments.find(
+  const file = message.attachments.find(
     (attachment) => !attachment.inline,
-  )?.originalName;
+  );
+  const fileName = file ? file.title?.trim() || file.originalName : "";
   return fileName ? `附件：${fileName}` : "原消息无文字内容";
 }
 

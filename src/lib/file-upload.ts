@@ -1,18 +1,18 @@
-export async function uploadFilesBestEffort(
-  files: readonly File[],
-  upload: (file: File) => Promise<unknown>,
+export async function uploadFilesBestEffort<T>(
+  items: readonly T[],
+  upload: (item: T) => Promise<unknown>,
 ) {
-  const failedFiles: File[] = [];
-  for (const file of files) {
+  const failed: T[] = [];
+  for (const item of items) {
     try {
-      await upload(file);
+      await upload(item);
     } catch {
-      failedFiles.push(file);
+      failed.push(item);
     }
   }
-  return failedFiles;
+  return failed;
 }
 
-export function fileNames(files: readonly File[]) {
+export function fileNames(files: readonly { name: string }[]) {
   return files.map((file) => file.name).join("、");
 }

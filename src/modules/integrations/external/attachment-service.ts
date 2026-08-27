@@ -12,6 +12,11 @@ import {
   writePrivateFile,
 } from "@/modules/attachments/private-storage";
 import { validateAttachmentFile } from "@/modules/attachments/attachment-validation";
+import {
+  attachmentRiskText,
+  normalizeAttachmentNote,
+  normalizeAttachmentTitle,
+} from "@/modules/attachments/attachment-meta";
 import { dispatchExternalRequestActivity } from "@/modules/notifications/notification-service";
 import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
 import { DomainError } from "@/modules/projects/errors";
@@ -28,6 +33,8 @@ type UploadInput = {
   serviceRequestId: string;
   requestMessageId?: string;
   inline?: boolean;
+  title?: string;
+  note?: string;
 };
 
 function normalizeFileName(fileName: string) {
@@ -120,13 +127,15 @@ export async function uploadExternalAttachment(
       422,
     );
   }
+  const title = normalizeAttachmentTitle(input.title);
+  const note = normalizeAttachmentNote(input.note);
   await enforceExternalPublicContentRules(actor, {
     targetType: "ATTACHMENT",
     customerSpaceId: authorized.request.project.customerSpaceId,
     projectId: authorized.request.projectId,
     serviceRequestId: authorized.request.id,
     snapshot: {
-      body: input.fileName,
+      body: attachmentRiskText(input.fileName, title, note),
       visibility: "CUSTOMER_VISIBLE",
     },
   });
@@ -173,6 +182,8 @@ export async function uploadExternalAttachment(
       const created = await tx.attachment.create({
         data: {
           originalName: normalizeFileName(input.fileName),
+          title,
+          note,
           storageKey,
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
@@ -187,6 +198,8 @@ export async function uploadExternalAttachment(
         select: {
           id: true,
           originalName: true,
+          title: true,
+          note: true,
           mimeType: true,
           size: true,
           visibility: true,
@@ -220,7 +233,11 @@ export async function uploadExternalAttachment(
         projectId: request.projectId,
         serviceRequestId: request.id,
         snapshot: {
-          body: created.originalName,
+          body: attachmentRiskText(
+            created.originalName,
+            created.title,
+            created.note,
+          ),
           visibility: "CUSTOMER_VISIBLE",
           attachmentIds: [created.id],
         },
@@ -251,7 +268,7 @@ export async function uploadExternalAttachment(
           },
           notificationType: "REQUEST_ATTACHMENT",
           notificationTitle: `${actor.name} 上传了服务请求附件`,
-          notificationBody: created.originalName,
+          notificationBody: created.title ?? created.originalName,
           includeCustomers: options.customerMemberNotificationsEnabled,
           relevantWorkerUserIds: workers,
           notifyProjectManagers: true,

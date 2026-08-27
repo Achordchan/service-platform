@@ -184,6 +184,8 @@ Page({
             : "overview"),
         files: (project.attachments ?? []).map((att) => ({
           ...att,
+          displayName: att.title || att.originalName,
+          note: att.note || "",
           ext: fileExtLabel(att.mimeType, att.originalName),
           sizeText: formatFileSize(att.size),
         })),

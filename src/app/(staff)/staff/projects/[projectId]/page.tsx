@@ -124,6 +124,8 @@ export default async function StaffProjectDetailPage({
     attachments: project.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
+      title: attachment.title,
+      note: attachment.note,
       mimeType: attachment.mimeType,
       size: attachment.size,
       visibility: attachment.visibility,

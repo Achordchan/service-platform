@@ -65,3 +65,37 @@ export function pickAttachments(remaining: number): Promise<PickedFile[]> {
     });
   });
 }
+
+const IMAGE_EXT = /\.(?:jpe?g|png|gif|webp)$/i;
+type OpenableDocType =
+  | "doc"
+  | "docx"
+  | "xls"
+  | "xlsx"
+  | "ppt"
+  | "pptx"
+  | "pdf";
+const DOC_EXT = /\.(doc|docx|xls|xlsx|ppt|pptx|pdf)$/i;
+
+/**
+ * 上传前本地预览：图片走 previewImage，Office/PDF 走 openDocument（显式给
+ * fileType，chooseMessageFile 的临时路径可能不带规范扩展名），其余格式提示不支持。
+ */
+export function previewLocalFile(file: PickedFile) {
+  if (IMAGE_EXT.test(file.fileName) || IMAGE_EXT.test(file.localPath)) {
+    wx.previewImage({ urls: [file.localPath] });
+    return;
+  }
+  const match = DOC_EXT.exec(file.fileName);
+  if (!match) {
+    wx.showToast({ title: "该格式暂不支持预览，可直接上传", icon: "none" });
+    return;
+  }
+  wx.openDocument({
+    filePath: file.localPath,
+    fileType: match[1].toLowerCase() as OpenableDocType,
+    showMenu: true,
+    fail: () =>
+      wx.showToast({ title: "该格式暂不支持预览，可直接上传", icon: "none" }),
+  });
+}

@@ -113,6 +113,8 @@ export default async function StaffRequestDetailPage({
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
+      title: attachment.title,
+      note: attachment.note,
       mimeType: attachment.mimeType,
       size: attachment.size,
       visibility: attachment.visibility,
@@ -181,6 +183,8 @@ export default async function StaffRequestDetailPage({
       attachments: message.attachments.map((attachment) => ({
         id: attachment.id,
         originalName: attachment.originalName,
+        title: attachment.title,
+        note: attachment.note,
         mimeType: attachment.mimeType,
         size: attachment.size,
         visibility: attachment.visibility,

@@ -32,6 +32,11 @@ import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
 import { apiRequest, jsonRequest } from "@/lib/api-client";
 import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
+import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import type {
   RequestPriority,
@@ -73,7 +78,7 @@ export function NewRequestForm({
   const router = useRouter();
   const toast = useToast();
   const { policy, validateFiles } = useAttachmentPolicy();
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<AttachmentDraft[]>([]);
   const [submitProgress, setSubmitProgress] = useState("");
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const {
@@ -109,8 +114,19 @@ export function NewRequestForm({
     const { accepted, error } = validateFiles(nextFiles, files.length);
     if (error) toast.warning(error);
     if (accepted.length > 0) {
-      setFiles((current) => [...current, ...accepted]);
+      setFiles((current) => [...current, ...createAttachmentDrafts(accepted)]);
     }
+  }
+
+  function updateDraft(
+    index: number,
+    patch: Partial<Pick<AttachmentDraft, "title" | "note">>,
+  ) {
+    setFiles((current) =>
+      current.map((draft, draftIndex) =>
+        draftIndex === index ? { ...draft, ...patch } : draft,
+      ),
+    );
   }
 
   async function onSubmit(values: FormValues) {
@@ -132,21 +148,22 @@ export function NewRequestForm({
       const initialMessageId = result.initialMessageId;
       if (files.length > 0) {
         setSubmitProgress(`正在上传附件（共 ${files.length} 个）`);
-        const failedFiles = await uploadFilesBestEffort(files, async (file) => {
+        const failedFiles = await uploadFilesBestEffort(files, async (draft) => {
           const formData = new FormData();
-          formData.append("file", file);
+          formData.append("file", draft.file);
           formData.append("serviceRequestId", requestId);
           formData.append("requestMessageId", initialMessageId);
           formData.append("visibility", "CUSTOMER_VISIBLE");
+          appendDraftMeta(formData, draft);
           await apiRequest(
             "/api/v1/attachments",
             { method: "POST", body: formData },
-            `${file.name} 上传失败，请进入服务请求后重新上传`,
+            `${draft.file.name} 上传失败，请进入服务请求后重新上传`,
           );
         });
         if (failedFiles.length > 0) {
           toast.warning(
-            `服务请求已创建，但附件上传失败：${fileNames(failedFiles)}。请进入服务请求重新添加。`,
+            `服务请求已创建，但附件上传失败：${fileNames(failedFiles.map((draft) => draft.file))}。请进入服务请求重新添加。`,
           );
           router.push(`/customer/requests/${requestId}`);
           return;
@@ -316,7 +333,9 @@ export function NewRequestForm({
           </Typography>
           <Box sx={{ mt: files.length > 0 ? 1.5 : 0 }}>
             <RequestAttachmentDrafts
-              files={files}
+              drafts={files}
+              disabled={isSubmitting}
+              onUpdate={updateDraft}
               onRemove={(index) =>
                 setFiles((current) =>
                   current.filter((_, fileIndex) => fileIndex !== index),

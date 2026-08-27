@@ -7,12 +7,19 @@ import {
   IconButton,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import type { ChatAttachment } from "@/components/shared/request-chat-types";
+import {
+  AttachmentPreviewDialog,
+  type PreviewSource,
+} from "@/components/shared/attachment-preview-dialog";
+import type { AttachmentDraft } from "@/lib/attachment-drafts";
 
 type AttachmentTone = "self" | "other" | "internal" | "admin";
 
@@ -31,6 +38,13 @@ function isDraftImage(file: File) {
     isImageMimeType(file.type) ||
     /\.(?:jpe?g|png|gif|webp)$/i.test(file.name)
   );
+}
+
+export function attachmentDisplayName(file: {
+  originalName: string;
+  title?: string | null;
+}) {
+  return file.title?.trim() || file.originalName;
 }
 
 function attachmentColors(tone: AttachmentTone) {
@@ -79,7 +93,7 @@ function MessageImage({
       <Box
         component="img"
         src={inlineUrl}
-        alt={file.originalName}
+        alt={attachmentDisplayName(file)}
         loading="lazy"
         sx={{
           display: "block",
@@ -105,6 +119,7 @@ function MessageFile({
   onDownload?: (file: ChatAttachment) => void;
 }) {
   const colors = attachmentColors(tone);
+  const displayName = attachmentDisplayName(file);
   return (
     <Stack
       direction="row"
@@ -127,12 +142,28 @@ function MessageFile({
           noWrap
           sx={{ fontWeight: 600, color: colors.primary }}
         >
-          {file.originalName}
+          {displayName}
         </Typography>
         <Typography variant="caption" sx={{ color: colors.secondary }}>
           {formatSize(file.size)}
+          {file.title?.trim() && file.title.trim() !== file.originalName
+            ? ` · ${file.originalName}`
+            : ""}
           {file.visibility === "INTERNAL" ? " · 内部附件" : ""}
         </Typography>
+        {file.note?.trim() ? (
+          <Typography
+            variant="caption"
+            sx={{
+              display: "block",
+              color: colors.secondary,
+              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {file.note}
+          </Typography>
+        ) : null}
       </Box>
       <IconButton
         {...(onDownload
@@ -143,7 +174,7 @@ function MessageFile({
                 ? resolveUrl(file, false)
                 : `/api/v1/attachments/${file.id}`,
             })}
-        aria-label={`下载 ${file.originalName}`}
+        aria-label={`下载 ${displayName}`}
         size="small"
         sx={{ color: colors.secondary }}
       >
@@ -235,13 +266,21 @@ function DraftThumbnail({ file }: { file: File }) {
 }
 
 export function RequestAttachmentDrafts({
-  files,
+  drafts,
   onRemove,
+  onUpdate,
+  disabled = false,
 }: {
-  files: File[];
+  drafts: AttachmentDraft[];
   onRemove: (index: number) => void;
+  onUpdate: (
+    index: number,
+    patch: Partial<Pick<AttachmentDraft, "title" | "note">>,
+  ) => void;
+  disabled?: boolean;
 }) {
-  if (files.length === 0) return null;
+  const [preview, setPreview] = useState<PreviewSource | null>(null);
+  if (drafts.length === 0) return null;
 
   return (
     <Paper
@@ -261,21 +300,29 @@ export function RequestAttachmentDrafts({
         <Typography variant="body2" sx={{ fontWeight: 650 }}>
           待发送附件
         </Typography>
-        <Chip size="small" label={`${files.length} 个`} />
+        <Chip size="small" label={`${drafts.length} 个`} />
+        <Typography variant="caption" color="text.secondary">
+          可修改展示标题、添加备注
+        </Typography>
       </Stack>
       <Stack spacing={0.75}>
-        {files.map((file, index) => (
+        {drafts.map((draft, index) => (
           <Paper
-            key={`${file.name}-${file.lastModified}-${file.size}-${file.type}-${index}`}
+            key={draft.id}
             variant="outlined"
-            sx={{ p: 0.75, bgcolor: "background.paper" }}
+            sx={{ p: 1, bgcolor: "background.paper" }}
           >
             <Stack
               direction="row"
               spacing={1.1}
-              sx={{ alignItems: "center" }}
+              sx={{ alignItems: "flex-start" }}
             >
               <Box
+                onClick={() =>
+                  setPreview({ file: draft.file, title: draft.title })
+                }
+                role="button"
+                aria-label={`预览 ${draft.file.name}`}
                 sx={{
                   width: 44,
                   height: 44,
@@ -285,30 +332,67 @@ export function RequestAttachmentDrafts({
                   overflow: "hidden",
                   borderRadius: 1,
                   bgcolor: "action.hover",
+                  cursor: "pointer",
                 }}
               >
-                <DraftThumbnail file={file} />
+                <DraftThumbnail file={draft.file} />
               </Box>
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography variant="body2" noWrap sx={{ fontWeight: 650 }}>
-                  {file.name}
+              <Stack spacing={0.75} sx={{ minWidth: 0, flex: 1 }}>
+                <TextField
+                  value={draft.title}
+                  onChange={(event) =>
+                    onUpdate(index, { title: event.target.value })
+                  }
+                  size="small"
+                  fullWidth
+                  label="展示标题"
+                  disabled={disabled}
+                  slotProps={{ htmlInput: { maxLength: 160 } }}
+                />
+                <TextField
+                  value={draft.note}
+                  onChange={(event) =>
+                    onUpdate(index, { note: event.target.value })
+                  }
+                  size="small"
+                  fullWidth
+                  multiline
+                  maxRows={3}
+                  label="备注（可选）"
+                  disabled={disabled}
+                  slotProps={{ htmlInput: { maxLength: 500 } }}
+                />
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {draft.file.name} · {formatSize(draft.file.size)}
                 </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {formatSize(file.size)}
-                  {isDraftImage(file) ? " · 图片预览" : ""}
-                </Typography>
-              </Box>
-              <IconButton
-                size="small"
-                onClick={() => onRemove(index)}
-                aria-label={`移除 ${file.name}`}
-              >
-                <CloseOutlinedIcon fontSize="small" />
-              </IconButton>
+              </Stack>
+              <Stack spacing={0.25}>
+                <IconButton
+                  size="small"
+                  onClick={() =>
+                    setPreview({ file: draft.file, title: draft.title })
+                  }
+                  aria-label={`预览 ${draft.file.name}`}
+                >
+                  <VisibilityOutlinedIcon fontSize="small" />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  onClick={() => onRemove(index)}
+                  disabled={disabled}
+                  aria-label={`移除 ${draft.file.name}`}
+                >
+                  <CloseOutlinedIcon fontSize="small" />
+                </IconButton>
+              </Stack>
             </Stack>
           </Paper>
         ))}
       </Stack>
+      <AttachmentPreviewDialog
+        source={preview}
+        onClose={() => setPreview(null)}
+      />
     </Paper>
   );
 }
