@@ -201,7 +201,14 @@ function MessageFile({
         ? {
             role: "button" as const,
             "aria-label": `预览 ${displayName}`,
+            tabIndex: 0,
             onClick: openPreview,
+            onKeyDown: (event: React.KeyboardEvent) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openPreview();
+              }
+            },
           }
         : {})}
       sx={{
