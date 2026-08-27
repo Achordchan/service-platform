@@ -224,34 +224,48 @@ export async function listSubscribeGrants(
  * 客户端上报 wx.requestSubscribeMessage 授权结果。
  * 上报只是「额度状态」而非权限凭证：同一模板 60s 内重复上报被节流，
  * 累计额度封顶；真实额度以微信发送结果修正（43101 未订阅时清零）。
+ *
+ * 上报与「解绑」必须全序：解绑会同事务删除全部授权（旧 openid 额度不延续），
+ * 并发上报若在删除后落库会重建孤儿额度，换绑后被 worker 当作可用配额误发。
+ * 这里取与绑定生命周期相同的 per-user 咨询锁，并在事务内重验绑定仍存在。
  */
 export async function reportSubscribeGrant(
   userId: string,
   templateKey: WechatTemplateKey,
 ): Promise<{ remaining: number }> {
-  const existing = await prisma.wechatSubscribeGrant.findUnique({
-    where: { userId_templateKey: { userId, templateKey } },
-    select: { remaining: true, lastReportedAt: true },
-  });
-  const now = new Date();
-  if (
-    existing?.lastReportedAt &&
-    now.getTime() - existing.lastReportedAt.getTime() < GRANT_REPORT_THROTTLE_MS
-  ) {
-    return { remaining: existing.remaining };
-  }
-  if (existing && existing.remaining >= GRANT_MAX_REMAINING) {
-    await prisma.wechatSubscribeGrant.update({
-      where: { userId_templateKey: { userId, templateKey } },
-      data: { lastReportedAt: now },
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${userId}`}))
+    `;
+    const binding = await tx.wechatBinding.findUnique({
+      where: { userId },
+      select: { id: true },
     });
-    return { remaining: existing.remaining };
-  }
-  const updated = await prisma.wechatSubscribeGrant.upsert({
-    where: { userId_templateKey: { userId, templateKey } },
-    create: { userId, templateKey, remaining: 1, lastReportedAt: now },
-    update: { remaining: { increment: 1 }, lastReportedAt: now },
-    select: { remaining: true },
+    if (!binding) return { remaining: 0 };
+    const existing = await tx.wechatSubscribeGrant.findUnique({
+      where: { userId_templateKey: { userId, templateKey } },
+      select: { remaining: true, lastReportedAt: true },
+    });
+    const now = new Date();
+    if (
+      existing?.lastReportedAt &&
+      now.getTime() - existing.lastReportedAt.getTime() < GRANT_REPORT_THROTTLE_MS
+    ) {
+      return { remaining: existing.remaining };
+    }
+    if (existing && existing.remaining >= GRANT_MAX_REMAINING) {
+      await tx.wechatSubscribeGrant.update({
+        where: { userId_templateKey: { userId, templateKey } },
+        data: { lastReportedAt: now },
+      });
+      return { remaining: existing.remaining };
+    }
+    const updated = await tx.wechatSubscribeGrant.upsert({
+      where: { userId_templateKey: { userId, templateKey } },
+      create: { userId, templateKey, remaining: 1, lastReportedAt: now },
+      update: { remaining: { increment: 1 }, lastReportedAt: now },
+      select: { remaining: true },
+    });
+    return { remaining: Math.min(updated.remaining, GRANT_MAX_REMAINING) };
   });
-  return { remaining: Math.min(updated.remaining, GRANT_MAX_REMAINING) };
 }

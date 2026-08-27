@@ -88,6 +88,12 @@ export async function createWechatBindingCode(
   const codeData = createBindingCode();
   return withActorDb(actor, async (tx) => {
     const member = await loadSpaceMember(tx, actor, customerSpaceId, membershipId);
+    // 与解绑/自助发码共用同一把 per-user 咨询锁：管理员路径同样不能在
+    // 解绑事务的作废快照之后骑缝插入幸存码，也顺带保住「活跃码 ≤3」上限的
+    // count+create 检查不被并发展成超发。
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${member.userId}`}))
+    `;
     const activeCount = await tx.wechatBindingCode.count({
       where: {
         userId: member.userId,

@@ -19,6 +19,7 @@ import {
   getMiniappMe,
   sendBindingOtp,
 } from "@/modules/miniapp/wechat-binding-service";
+import { reportSubscribeGrant } from "@/modules/miniapp/wechat-subscribe-message-service";
 import { resolveMiniappSessionFromAuthorization } from "@/modules/miniapp/session";
 import { hashBindingCode } from "@/modules/miniapp/miniapp-tokens";
 
@@ -687,6 +688,16 @@ describe("微信小程序登录与绑定", () => {
       [unbindUserId],
     );
     expect(grantsLeft.rows[0]?.count).toBe(0);
+
+    // 解绑后迟到的订阅上报不得重建孤儿额度（会变成换绑后的误发配额）
+    await expect(
+      reportSubscribeGrant(unbindUserId, "REQUEST_STATUS"),
+    ).resolves.toEqual({ remaining: 0 });
+    const grantsRebuilt = await ownerPool.query<{ count: number }>(
+      'SELECT count(*)::int AS count FROM "WechatSubscribeGrant" WHERE "userId" = $1',
+      [unbindUserId],
+    );
+    expect(grantsRebuilt.rows[0]?.count).toBe(0);
 
     // 未过期但已被解绑作废的备用码同样不能再完成绑定
     const retry = await createMiniappSessionForCode(
