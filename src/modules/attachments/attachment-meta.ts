@@ -36,6 +36,7 @@ export function attachmentRiskText(
 // 允许浏览器内联展示（在线预览）的类型白名单。
 // 刻意排除 html/svg 等可执行内容——附件校验层本就不放行它们，这里再兜一层。
 export function isInlinePreviewableMimeType(mimeType: string) {
+  if (mimeType === "image/svg+xml") return false;
   return (
     mimeType.startsWith("image/") ||
     mimeType === "application/pdf" ||
