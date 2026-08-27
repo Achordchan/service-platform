@@ -825,14 +825,18 @@ export function getRequest(actor: Actor, requestId: string) {
                 attachments:
                   !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
                     ? []
-                    : (attachmentsByMessageId.get(replyTo.id) ?? []).map(
-                        (attachment) => ({
+                    : (attachmentsByMessageId.get(replyTo.id) ?? [])
+                        // 单个附件被风控撤回时，引用预览也不能带出其文件名/标题
+                        .filter(
+                          (attachment) =>
+                            attachmentRiskStatus(attachment) !== "REVOKED",
+                        )
+                        .map((attachment) => ({
                           id: attachment.id,
                           originalName: attachment.originalName,
                           title: attachment.title,
                           inline: attachment.inline,
-                        }),
-                      ),
+                        })),
               }
             : null,
         };
