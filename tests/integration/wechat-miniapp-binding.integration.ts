@@ -5,6 +5,7 @@ import type { Actor } from "@/lib/actor";
 import { createCustomerSpace } from "@/modules/customer-spaces/customer-space-service";
 import { acceptInvitation } from "@/modules/invitations/invitation-service";
 import {
+  createOwnWechatBindingCode,
   createWechatBindingCode,
   removeWechatBinding,
   revokeWechatBindingCode,
@@ -51,6 +52,9 @@ const ids = {
   ownerMembershipId: "",
   memberMembershipId: "",
 };
+
+// 用例内自建的用户邮箱（随用例追加，统一在 afterAll 清理）
+const cleanupEmails: string[] = [];
 
 let admin: Actor;
 let member: Actor;
@@ -216,7 +220,7 @@ afterAll(async () => {
     ids.spaceId,
   ]);
   await ownerPool.query('DELETE FROM "User" WHERE email = ANY($1::text[])', [
-    [ids.ownerEmail, ids.memberEmail],
+    [ids.ownerEmail, ids.memberEmail, ...cleanupEmails],
   ]);
   await ownerPool.query('DELETE FROM "MailMessage" WHERE "toEmail" = ANY($1::text[])', [
     [ids.ownerEmail, ids.memberEmail],
@@ -571,5 +575,40 @@ describe("微信小程序登录与绑定", () => {
     await expect(
       createWechatBindingCode(member, ids.spaceId, ids.ownerMembershipId),
     ).rejects.toMatchObject({ code: "FORBIDDEN", status: 403 });
+  });
+
+  it("自助生成绑定码并发时仍保持单一有效码", async () => {
+    // 自助路径不校验空间成员关系，直接用一个独立用户验证并发串行化
+    const email = `wx-self-${ids.run}@local.test`;
+    const selfUserId = (
+      await ownerPool.query<{ id: string }>(
+        `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+         VALUES ($1, '自助绑定码测试', $2, true, 'CUSTOMER', NOW(), NOW()) RETURNING id`,
+        [randomUUID(), email],
+      )
+    ).rows[0]!.id;
+    cleanupEmails.push(email);
+    const selfActor: Actor = {
+      id: selfUserId,
+      name: "自助绑定码测试",
+      email,
+      platformRole: "CUSTOMER",
+      isPlatformAdmin: false,
+      isStaff: false,
+    };
+
+    const [first, second] = await Promise.all([
+      createOwnWechatBindingCode(selfActor),
+      createOwnWechatBindingCode(selfActor),
+    ]);
+    expect(first.code).not.toBe(second.code);
+
+    // 先完成的请求返回的码必须被后完成的请求作废，最终只剩一条未撤销码
+    const rows = await ownerPool.query<{ revoked: boolean }>(
+      'SELECT ("revokedAt" IS NULL) AS revoked FROM "WechatBindingCode" WHERE "userId" = $1',
+      [selfUserId],
+    );
+    expect(rows.rows).toHaveLength(2);
+    expect(rows.rows.filter((row) => row.revoked)).toHaveLength(1);
   });
 });

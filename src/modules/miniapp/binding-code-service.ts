@@ -233,12 +233,19 @@ export async function removeOwnWechatBinding(
 /**
  * 客户在 Web 端自助为「自己」生成绑定码，到小程序输入即可绑定微信。
  * 先作废本人此前未使用的绑定码，保证任一时刻只有一个有效码，也不会触达数量上限。
+ *
+ * 「作废旧码 + 插入新码」无法只靠行锁维持单一有效码：READ COMMITTED 下两个
+ * 并发请求的 updateMany 都发生在对方插入之前，各自插入的新码互不可见，
+ * 结果留下两个未撤销码。这里按用户取事务级咨询锁串行化同用户的生成请求。
  */
 export async function createOwnWechatBindingCode(
   actor: Actor,
 ): Promise<{ code: string; expiresAt: Date }> {
   const codeData = createBindingCode();
   return withActorDb(actor, async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${actor.id}`}))
+    `;
     await tx.wechatBindingCode.updateMany({
       where: { userId: actor.id, usedAt: null, revokedAt: null },
       data: { revokedAt: new Date() },
