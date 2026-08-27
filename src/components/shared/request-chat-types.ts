@@ -14,6 +14,8 @@ export type ChatAttachment = {
 export type ChatReplyReference = {
   id: string;
   body: string;
+  /** 服务端权威判定：正文是否为纯附件回复的生成占位（附件：<文件名列表>） */
+  bodyIsAttachmentPlaceholder?: boolean;
   authorId: string;
   authorName: string;
   visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
@@ -28,6 +30,7 @@ export type ChatReplyReference = {
 export type ChatMessage = {
   id: string;
   body: string;
+  bodyIsAttachmentPlaceholder?: boolean;
   authorId: string;
   authorName: string;
   authorImage?: string | null;
@@ -51,7 +54,12 @@ export type ChatMessage = {
 
 export type ChatReplyTarget = Pick<
   ChatMessage,
-  "id" | "body" | "authorName" | "visibility" | "attachments"
+  | "id"
+  | "body"
+  | "bodyIsAttachmentPlaceholder"
+  | "authorName"
+  | "visibility"
+  | "attachments"
 >;
 
 export type ChatReeditDraft = {

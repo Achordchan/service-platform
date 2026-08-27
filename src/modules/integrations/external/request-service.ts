@@ -8,6 +8,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
+  htmlToPlainText,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -611,6 +612,19 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
+    // 与客户/员工序列化一致：服务端权威判定「纯附件占位正文」
+    const isAttachmentPlaceholderBody = (
+      message: (typeof messages)[number],
+    ) => {
+      const files = (attachmentsByMessageId.get(message.id) ?? []).filter(
+        (attachment) => !attachment.inline,
+      );
+      if (files.length === 0) return false;
+      return (
+        htmlToPlainText(message.body).trim() ===
+        `附件：${files.map((attachment) => attachment.originalName).join("、")}`
+      );
+    };
     const serializedMessages = messages.map((message) => {
       const contentRiskStatus = messageRiskStatus(message);
       const contentRiskReason = contentRiskReasonFor(
@@ -627,6 +641,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         id: message.id,
         body:
           contentRiskStatus === "REVOKED" ? "该内容已撤回" : message.body,
+        bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(message),
         visibility: message.visibility,
         isSystem: message.isSystem,
         isInitial: message.isInitial,
@@ -679,6 +694,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
                 replyToRiskStatus === "REVOKED"
                   ? "该内容已撤回"
                   : replyTo.body,
+              bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(replyTo),
               visibility: replyTo.visibility,
               isSystem: replyTo.isSystem,
               author: serializeAuthor(authorFor(replyTo), actor),

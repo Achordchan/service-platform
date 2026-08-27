@@ -124,6 +124,7 @@ export default async function StaffRequestDetailPage({
     messages: request.messages.map((message) => ({
       id: message.id,
       body: message.body,
+      bodyIsAttachmentPlaceholder: message.bodyIsAttachmentPlaceholder,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
       supportPlaybook: message.supportPlaybook,
@@ -154,6 +155,8 @@ export default async function StaffRequestDetailPage({
         ? {
             id: message.replyTo.id,
             body: message.replyTo.body,
+            bodyIsAttachmentPlaceholder:
+              message.replyTo.bodyIsAttachmentPlaceholder,
             visibility: message.replyTo.visibility,
             authorId:
               message.replyTo.authorId ??

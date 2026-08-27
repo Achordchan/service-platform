@@ -56,6 +56,7 @@ export default async function CustomerRequestDetailPage({
     messages: request.messages.map((message) => ({
       id: message.id,
       body: message.body,
+      bodyIsAttachmentPlaceholder: message.bodyIsAttachmentPlaceholder,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
       supportPlaybook: message.supportPlaybook,
@@ -73,6 +74,8 @@ export default async function CustomerRequestDetailPage({
         ? {
             id: message.replyTo.id,
             body: message.replyTo.body,
+            bodyIsAttachmentPlaceholder:
+              message.replyTo.bodyIsAttachmentPlaceholder,
             authorId:
               message.replyTo.authorId ??
               message.replyTo.externalAuthorId ??

@@ -91,6 +91,8 @@ export type AttachmentMeta = {
 export type RequestMessage = {
   id: string;
   body: string;
+  /** 服务端权威判定：正文是否为纯附件回复的生成占位（附件：<文件名列表>） */
+  bodyIsAttachmentPlaceholder?: boolean;
   visibility: string;
   isSystem: boolean;
   isInitial: boolean;
@@ -105,6 +107,7 @@ export type RequestMessage = {
   replyTo: {
     id: string;
     body: string;
+    bodyIsAttachmentPlaceholder?: boolean;
     author: { id: string; name: string } | null;
     attachments?: Array<{
       id: string;

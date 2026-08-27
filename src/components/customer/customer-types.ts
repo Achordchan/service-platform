@@ -147,6 +147,7 @@ export type RequestAttachment = {
 export type RequestMessage = {
   id: string;
   body: string;
+  bodyIsAttachmentPlaceholder?: boolean;
   isSystem?: boolean;
   isInitial?: boolean;
   supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
@@ -160,6 +161,7 @@ export type RequestMessage = {
   replyTo?: {
     id: string;
     body: string;
+    bodyIsAttachmentPlaceholder?: boolean;
     authorId: string;
     authorName: string;
     authorSource?: "ACHORD" | "SUB2API" | "UNIVERSAL" | "SYSTEM";

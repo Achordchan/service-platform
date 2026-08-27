@@ -24,6 +24,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
+  htmlToPlainText,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -736,6 +737,20 @@ export function getRequest(actor: Actor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
+    // 服务端权威判定「纯附件占位正文」：用过滤前的完整附件列表全等比对，
+    // 前端据此决定引用预览是否用附件当前标题重建（不再对正文做启发式猜测）
+    const isAttachmentPlaceholderBody = (
+      message: (typeof messages)[number],
+    ) => {
+      const files = (attachmentsByMessageId.get(message.id) ?? []).filter(
+        (attachment) => !attachment.inline,
+      );
+      if (files.length === 0) return false;
+      return (
+        htmlToPlainText(message.body).trim() ===
+        `附件：${files.map((attachment) => attachment.originalName).join("、")}`
+      );
+    };
     return {
       ...summary,
       project,
@@ -763,6 +778,7 @@ export function getRequest(actor: Actor, requestId: string) {
             !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
               ? "该内容已撤回"
               : message.body,
+          bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(message),
           contentRiskStatus,
           contentRiskReason,
           reeditBody: canReeditRevokedMessage
@@ -811,6 +827,8 @@ export function getRequest(actor: Actor, requestId: string) {
                   !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
                     ? "该内容已撤回"
                     : replyTo.body,
+                bodyIsAttachmentPlaceholder:
+                  isAttachmentPlaceholderBody(replyTo),
                 visibility: replyTo.visibility,
                 isSystem: replyTo.isSystem,
                 authorId: replyTo.authorId,

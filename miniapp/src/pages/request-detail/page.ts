@@ -56,10 +56,9 @@ type AttachmentMetaLite = {
 };
 
 /**
- * 纯附件回复的正文是「附件：<原文件名列表>」占位（对齐 Web replyText）。
- * 附件可能部分失败/被撤回导致幸存列表比生成时短，故不做全等重构，而是
- * 要求幸存附件的原文件名全部出现在正文列表里才认定为占位；命中后用全部
- * 幸存附件的当前标题重建预览。真实正文不含附件文件名，不会被误判。
+ * 引用/回复目标的预览文本（对齐 Web replyText）：
+ * 「正文是否为纯附件占位」由服务端用过滤前的完整附件列表全等判定并下发，
+ * 前端不做启发式猜测；命中占位时用幸存附件的当前标题重建。
  */
 function attachmentAwarePreview(
   bodyText: string,
@@ -67,19 +66,15 @@ function attachmentAwarePreview(
     originalName: string;
     title?: string | null;
     inline?: boolean;
+    contentRiskStatus?: string | null;
   }>,
+  isPlaceholder: boolean | undefined,
 ) {
-  const files = attachments.filter((att) => !att.inline);
-  if (files.length === 0) return bodyText;
-  let generated = !bodyText;
-  if (!generated && bodyText.startsWith("附件：")) {
-    const names = bodyText
-      .slice("附件：".length)
-      .split("、")
-      .map((name) => name.trim());
-    generated = files.every((att) => names.includes(att.originalName));
-  }
-  if (!generated) return bodyText;
+  if (!isPlaceholder) return bodyText;
+  const files = attachments.filter(
+    (att) => !att.inline && att.contentRiskStatus !== "REVOKED",
+  );
+  if (files.length === 0) return "原消息附件已撤回";
   return `附件：${files
     .map((att) => att.title || att.originalName)
     .join("、")}`;
@@ -302,7 +297,11 @@ Page({
       isAdmin: message.author?.platformRole === "PLATFORM_ADMIN",
       bodyText,
       // 引用/回复目标的预览文本：纯附件占位正文优先显示附件当前标题（对齐 Web replyText）
-      previewText: attachmentAwarePreview(bodyText, attachments),
+      previewText: attachmentAwarePreview(
+        bodyText,
+        attachments,
+        message.bodyIsAttachmentPlaceholder,
+      ),
       revoked: message.contentRiskStatus === "REVOKED",
       // 文案对齐 Web：人工撤回带决策理由，自动撤回用通用原因
       revokedText:
@@ -317,6 +316,7 @@ Page({
         ? `${message.replyTo.author?.name ?? ""}: ${attachmentAwarePreview(
             htmlToText(message.replyTo.body),
             message.replyTo.attachments ?? [],
+            message.replyTo.bodyIsAttachmentPlaceholder,
           ).slice(0, 60)}`
         : "",
       images: attachments

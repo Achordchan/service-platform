@@ -187,6 +187,7 @@ export type RequestDetail = RequestListItem & {
   messages: Array<{
     id: string;
     body: string;
+    bodyIsAttachmentPlaceholder?: boolean;
     visibility: ContentVisibility;
     isSystem?: boolean;
     isInitial?: boolean;
@@ -203,6 +204,7 @@ export type RequestDetail = RequestListItem & {
     replyTo?: {
       id: string;
       body: string;
+      bodyIsAttachmentPlaceholder?: boolean;
       visibility: ContentVisibility;
       authorId: string;
       authorName: string;
