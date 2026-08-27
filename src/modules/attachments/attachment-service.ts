@@ -28,9 +28,12 @@ import {
 } from "@/modules/attachments/attachment-validation";
 import {
   attachmentRiskText,
+  isOfficePreviewMimeType,
   normalizeAttachmentNote,
   normalizeAttachmentTitle,
 } from "@/modules/attachments/attachment-meta";
+import { initialPreviewStatus } from "@/modules/attachments/preview-render-service";
+import { queueAttachmentPreviewRender } from "@/lib/jobs";
 import {
   assertCanManageActiveProjectDelivery,
   assertCanPublishActiveProjectUpdate,
@@ -184,6 +187,7 @@ export async function uploadRequestAttachment(
           title,
           note,
           storageKey,
+          previewStatus: initialPreviewStatus(validated.mimeType),
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
           visibility: context.visibility,
@@ -199,6 +203,7 @@ export async function uploadRequestAttachment(
           originalName: true,
           title: true,
           note: true,
+          previewStatus: true,
           mimeType: true,
           size: true,
           visibility: true,
@@ -291,6 +296,7 @@ export async function uploadRequestAttachment(
   if (["image/jpeg", "image/png"].includes(attachment.mimeType)) {
     await scheduleAttachmentPluginJobs(attachment.id);
   }
+  await queuePreviewRenderIfNeeded(attachment.id, attachment.mimeType);
   return attachment;
 }
 
@@ -355,6 +361,7 @@ export async function uploadProjectAttachment(
           title,
           note,
           storageKey,
+          previewStatus: initialPreviewStatus(validated.mimeType),
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
           visibility,
@@ -368,6 +375,7 @@ export async function uploadProjectAttachment(
           originalName: true,
           title: true,
           note: true,
+          previewStatus: true,
           mimeType: true,
           size: true,
           visibility: true,
@@ -440,13 +448,34 @@ export async function uploadProjectAttachment(
   if (["image/jpeg", "image/png"].includes(attachment.mimeType)) {
     await scheduleAttachmentPluginJobs(attachment.id);
   }
+  await queuePreviewRenderIfNeeded(attachment.id, attachment.mimeType);
   return attachment;
+}
+
+// 预览件生成是尽力而为：入队失败只记日志，不影响上传结果
+async function queuePreviewRenderIfNeeded(
+  attachmentId: string,
+  mimeType: string,
+) {
+  if (!isOfficePreviewMimeType(mimeType)) return;
+  try {
+    await queueAttachmentPreviewRender(attachmentId);
+  } catch (error) {
+    console.error(
+      "ACHORD_ATTACHMENT_PREVIEW_ENQUEUE_FAILED",
+      JSON.stringify({
+        event: "attachment.preview_enqueue_failed",
+        attachmentId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
 }
 
 export function readAttachmentDownload(
   actor: Actor,
   attachmentId: string,
-  options?: { inlinePreview?: boolean },
+  options?: { inlinePreview?: boolean; variant?: "preview" },
 ) {
   return withActorDb(actor, async (tx) => {
     const attachment = await tx.attachment.findUnique({
@@ -454,7 +483,10 @@ export function readAttachmentDownload(
       select: {
         id: true,
         originalName: true,
+        title: true,
         storageKey: true,
+        previewStorageKey: true,
+        previewStatus: true,
         mimeType: true,
         size: true,
         visibility: true,
@@ -541,7 +573,19 @@ export function readAttachmentDownload(
       }
     }
 
-    const buffer = await readPrivateFile(attachment.storageKey);
+    // variant=preview：读 Office 附件的派生 PDF 预览件（授权判定与原文件完全一致）
+    const usePreview = options?.variant === "preview";
+    if (
+      usePreview &&
+      (!attachment.previewStorageKey || attachment.previewStatus !== "READY")
+    ) {
+      throw notFound("该附件暂无可用预览");
+    }
+    const buffer = await readPrivateFile(
+      usePreview && attachment.previewStorageKey
+        ? attachment.previewStorageKey
+        : attachment.storageKey,
+    );
     const isInlineImagePreview =
       options?.inlinePreview === true &&
       attachment.mimeType.startsWith("image/");

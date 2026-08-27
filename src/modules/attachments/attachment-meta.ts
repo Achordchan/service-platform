@@ -51,3 +51,27 @@ export function isTextPreviewMimeType(mimeType: string) {
     mimeType === "application/json"
   );
 }
+
+// 需要异步转 PDF 才能在线预览的 Office 类型（转换由 LibreOffice headless 完成）
+const OFFICE_PREVIEW_MIME_EXTENSIONS = new Map([
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx",
+  ],
+  [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xlsx",
+  ],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx",
+  ],
+]);
+
+export function isOfficePreviewMimeType(mimeType: string) {
+  return OFFICE_PREVIEW_MIME_EXTENSIONS.has(mimeType);
+}
+
+export function officePreviewExtension(mimeType: string) {
+  return OFFICE_PREVIEW_MIME_EXTENSIONS.get(mimeType) ?? null;
+}

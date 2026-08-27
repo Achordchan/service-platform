@@ -14,6 +14,8 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.url(),
   APP_URL: z.url(),
   UPLOAD_DIR: z.string().default(".data/uploads"),
+  // LibreOffice 可执行文件路径（Office 附件转 PDF 预览件）；默认 PATH 中的 soffice
+  SOFFICE_PATH: z.string().min(1).optional(),
   PLATFORM_SECRET_ENCRYPTION_KEY: z
     .string()
     .refine((value) => {
