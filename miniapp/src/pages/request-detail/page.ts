@@ -35,6 +35,7 @@ type ViewMessage = RequestMessage & {
   isMine: boolean;
   isAdmin: boolean;
   bodyText: string;
+  previewText: string;
   revoked: boolean;
   revokedText: string;
   reviewing: boolean;
@@ -53,6 +54,31 @@ type AttachmentMetaLite = {
   inline?: boolean;
   contentRiskStatus?: string | null;
 };
+
+/**
+ * 纯附件回复的正文是「附件：<原文件名列表>」占位（对齐 Web buildAttachmentOnlyMessage）。
+ * 预览文本用当前附件列表精确重构占位串比对，命中才替换为附件当前标题；
+ * 用户自己写的以「附件：」开头的真实正文不受影响。
+ */
+function attachmentAwarePreview(
+  bodyText: string,
+  attachments: Array<{
+    originalName: string;
+    title?: string | null;
+    inline?: boolean;
+  }>,
+) {
+  const files = attachments.filter((att) => !att.inline);
+  const first = files[0];
+  if (!first) return bodyText;
+  const placeholder = `附件：${files
+    .map((att) => att.originalName)
+    .join("、")}`;
+  if (!bodyText || bodyText === placeholder) {
+    return `附件：${first.title || first.originalName}`;
+  }
+  return bodyText;
+}
 
 Page({
   data: {
@@ -261,6 +287,7 @@ Page({
     const attachments: AttachmentMetaLite[] = (
       message.attachments ?? []
     ).filter((att) => att.contentRiskStatus !== "REVOKED");
+    const bodyText = htmlToText(message.body);
     return {
       ...message,
       authorName: message.author?.name ?? "系统",
@@ -268,7 +295,9 @@ Page({
       isMine: message.authorId !== null && message.authorId === this.myUserId,
       // 对齐 Web：仅平台管理员消息加「管理员」标识
       isAdmin: message.author?.platformRole === "PLATFORM_ADMIN",
-      bodyText: htmlToText(message.body),
+      bodyText,
+      // 引用/回复目标的预览文本：纯附件占位正文优先显示附件当前标题（对齐 Web replyText）
+      previewText: attachmentAwarePreview(bodyText, attachments),
       revoked: message.contentRiskStatus === "REVOKED",
       // 文案对齐 Web：人工撤回带决策理由，自动撤回用通用原因
       revokedText:
@@ -280,7 +309,10 @@ Page({
           : "",
       reviewing: message.contentRiskStatus === "PENDING",
       replyPreview: message.replyTo
-        ? `${message.replyTo.author?.name ?? ""}: ${htmlToText(message.replyTo.body).slice(0, 60)}`
+        ? `${message.replyTo.author?.name ?? ""}: ${attachmentAwarePreview(
+            htmlToText(message.replyTo.body),
+            message.replyTo.attachments ?? [],
+          ).slice(0, 60)}`
         : "",
       images: attachments
         .filter((att) => att.mimeType.startsWith("image/"))

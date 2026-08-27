@@ -138,7 +138,7 @@
     <view wx:if="{{replyTarget}}" class="reply-target">
       <view class="reply-target-main">
         <view class="reply-target-text">回复 {{replyTarget.authorName}}</view>
-        <view class="reply-target-preview">{{replyTarget.bodyText}}</view>
+        <view class="reply-target-preview">{{replyTarget.previewText}}</view>
       </view>
       <view class="reply-target-cancel" hover-class="hover-plain" bindtap="onCancelReplyTarget">取消</view>
     </view>

@@ -22,15 +22,23 @@ function replyText(
   message: Pick<ChatReplyReference, "body" | "attachments">,
 ) {
   const plainText = htmlToPlainText(message.body);
-  const file = message.attachments.find(
+  const files = message.attachments.filter(
     (attachment) => !attachment.inline,
   );
-  const fileName = file ? file.title?.trim() || file.originalName : "";
-  // 纯附件回复的正文是「附件：<原文件名>」占位（见 buildAttachmentOnlyMessage），
-  // 引用预览优先用附件当前标题——标题修改与风控过滤都能即时反映
+  const fileName = files[0]
+    ? files[0].title?.trim() || files[0].originalName
+    : "";
+  // 纯附件回复的正文是「附件：<原文件名列表>」占位（buildAttachmentOnlyMessage
+  // 生成）。用当前附件列表精确重构占位串比对：命中才替换为附件当前标题——
+  // 用户自己写的以「附件：」开头的真实正文不受影响
+  const generatedPlaceholder = `附件：${files
+    .map((attachment) => attachment.originalName)
+    .join("、")}`;
   if (
     fileName &&
-    (!plainText || plainText === "（附件）" || plainText.startsWith("附件："))
+    (!plainText ||
+      plainText === "（附件）" ||
+      plainText === generatedPlaceholder)
   ) {
     return `附件：${fileName}`;
   }

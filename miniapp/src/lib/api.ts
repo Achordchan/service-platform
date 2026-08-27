@@ -106,6 +106,12 @@ export type RequestMessage = {
     id: string;
     body: string;
     author: { id: string; name: string } | null;
+    attachments?: Array<{
+      id: string;
+      originalName: string;
+      title?: string | null;
+      inline?: boolean;
+    }>;
   } | null;
 };
 
