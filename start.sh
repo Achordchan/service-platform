@@ -151,8 +151,24 @@ NODE
 )" || fail "无法读取本地数据库配置。"
 
 IFS=$'\t' read -r database_host database_port database_name <<< "$database_info"
+
+# 本地数据库跑在 Docker 容器里（docker-compose.yml，postgres:16 映射 5438）。
+# 若容器未就绪则尝试拉起；遵循“只启动不停止、不接管 brew 等共享服务”的原则，
+# docker 出问题也不硬失败，最终仍以下方 pg_isready 为准（保留 brew 等其它部署方式）。
+if [[ -f docker-compose.yml ]] && command -v docker >/dev/null 2>&1; then
+  if docker info >/dev/null 2>&1; then
+    if ! pg_isready -q -t 1 -h "$database_host" -p "$database_port" -d "$database_name"; then
+      printf '本地数据库容器未就绪，正在通过 docker compose 拉起...\n'
+      docker compose up -d --wait postgres \
+        || printf '警告：docker compose 拉起失败，继续按现有数据库探测。\n' >&2
+    fi
+  else
+    printf '提示：检测到 docker-compose.yml 但 Docker 未运行；本地库在容器中，请先启动 Docker Desktop。\n' >&2
+  fi
+fi
+
 if ! pg_isready -q -t 3 -h "$database_host" -p "$database_port" -d "$database_name"; then
-  fail "PostgreSQL 未就绪（${database_host}:${database_port}/${database_name}）。请先启动本地 PostgreSQL 16。"
+  fail "PostgreSQL 未就绪（${database_host}:${database_port}/${database_name}）。请先启动本地数据库（Docker：docker compose up -d）。"
 fi
 
 printf 'Node.js：%s\n' "$(node -v)"
