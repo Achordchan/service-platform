@@ -404,4 +404,53 @@ describe("微信订阅消息投递", () => {
     );
     expect(recovered.rows[0]?.status).toBe("DELIVERED");
   });
+
+  it("解绑后迟到投递不外发：绑定已删除时 SKIPPED 且 sender 不被调用", async () => {
+    await setWechatRule(true);
+    await ownerPool.query(
+      "UPDATE \"WechatSubscribeGrant\" SET remaining = 3 WHERE \"userId\" = $1 AND \"templateKey\" = 'REQUEST_REPLY'",
+      [ownerAUserId],
+    );
+    const created = await createRequest(ownerA, projectIds[0]!, {
+      title: "解绑竞态测试",
+      description: "<p>解绑后投递必须放弃外发。</p>",
+      categoryId: fixtureRefs.categoryId!,
+      priority: "NORMAL",
+    });
+    await addRequestMessage(admin, created.id, {
+      body: "<p>触发投递后立即解绑。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    const queued = await ownerPool.query<{ id: string }>(
+      "SELECT id FROM \"WechatSubscribeMessageDelivery\" WHERE \"userId\" = $1 ORDER BY \"createdAt\" DESC LIMIT 1",
+      [ownerAUserId],
+    );
+    const deliveryId = queued.rows[0]!.id;
+
+    // 模拟「worker 读旧绑定之后、发送之前」解绑完成：绑定与授权都被清掉
+    await ownerPool.query('DELETE FROM "WechatBinding" WHERE "userId" = $1', [
+      ownerAUserId,
+    ]);
+    await ownerPool.query(
+      'DELETE FROM "WechatSubscribeGrant" WHERE "userId" = $1',
+      [ownerAUserId],
+    );
+
+    let sendCalls = 0;
+    const spySender: WechatSubscribeSender = async (input) => {
+      sendCalls += 1;
+      sentInputs.push(input);
+      return { outcome: "SENT" };
+    };
+    await processWechatSubscribeMessageDelivery(deliveryId, {
+      send: spySender,
+    });
+    expect(sendCalls).toBe(0);
+    const skipped = await ownerPool.query<{ status: string; last_error: string | null }>(
+      'SELECT status, "lastError" AS last_error FROM "WechatSubscribeMessageDelivery" WHERE id = $1',
+      [deliveryId],
+    );
+    expect(skipped.rows[0]?.status).toBe("SKIPPED");
+    expect(skipped.rows[0]?.last_error).toContain("已解绑");
+  });
 });

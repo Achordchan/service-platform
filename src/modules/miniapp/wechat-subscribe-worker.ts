@@ -107,7 +107,10 @@ export async function processWechatSubscribeMessageDelivery(
       .catch(() => undefined);
 
   // —— 复查前置（入队后开关/额度可能已变化）——
-  if (!isWechatTemplateKey(delivery.templateKey)) {
+  const templateKey = isWechatTemplateKey(delivery.templateKey)
+    ? delivery.templateKey
+    : null;
+  if (!templateKey) {
     await finish("SKIPPED", "未知模板");
     return;
   }
@@ -133,37 +136,60 @@ export async function processWechatSubscribeMessageDelivery(
     await finish("SKIPPED", "用户已解绑微信");
     return;
   }
-  const grant = await prisma.wechatSubscribeGrant.findUnique({
-    where: {
-      userId_templateKey: {
-        userId: delivery.userId,
-        templateKey: delivery.templateKey,
-      },
-    },
-    select: { remaining: true },
-  });
-  if (!grant || grant.remaining <= 0) {
-    await finish("SKIPPED", "无剩余订阅额度");
-    return;
-  }
-  const templateId = templateIdFor(delivery.templateKey);
+  const templateId = templateIdFor(templateKey);
   if (!templateId) {
     await finish("SKIPPED", "订阅消息模板未配置");
     return;
   }
-
   // —— 发送与额度修正 ——
-  const result = await send({
-    openid: binding.openid,
-    templateId,
-    // 字段键按所选模板的实际布局构造（thing2/thing3、thing5/phrase1、thing1/thing10）
-    data: buildSubscribeMessageData(
-      delivery.templateKey,
-      delivery.title,
-      delivery.body,
-    ),
-    page: delivery.page,
+  // 读绑定到网络发送之间不能与解绑并发：否则解绑可在发送提交前完成，
+  // 通知仍按旧 openid 发出，把工单/项目内容泄露给已解绑的微信号。
+  // 这里取与绑定生命周期（发码/解绑/上报）相同的 per-user 咨询锁，
+  // 使「基于该绑定的发送」与解绑全序；锁最长持续一次微信 API 调用（8s 超时兜底）。
+  const sendOutcome = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtext(${`wechat-binding-code:${delivery.userId}`}))
+    `;
+    // 锁内重验：解绑可能已在我们排队等锁时提交，删除了绑定与授权
+    const bindingNow = await tx.wechatBinding.findUnique({
+      where: { userId: delivery.userId },
+      select: { openid: true },
+    });
+    if (!bindingNow) return { outcome: "UNBOUND" as const };
+    const grantNow = await tx.wechatSubscribeGrant.findUnique({
+      where: {
+        userId_templateKey: {
+          userId: delivery.userId,
+          templateKey,
+        },
+      },
+      select: { remaining: true },
+    });
+    if (!grantNow || grantNow.remaining <= 0) {
+      return { outcome: "NO_GRANT" as const };
+    }
+    // 发送发生在事务内、锁的保护之下：网络往返期间解绑事务会阻塞等锁
+    return send({
+      openid: bindingNow.openid,
+      templateId,
+      // 字段键按所选模板的实际布局构造（thing2/thing3、thing5/phrase1、thing1/thing10）
+      data: buildSubscribeMessageData(
+        templateKey,
+        delivery.title,
+        delivery.body,
+      ),
+      page: delivery.page,
+    });
   });
+  if (sendOutcome.outcome === "UNBOUND") {
+    await finish("SKIPPED", "用户已解绑微信");
+    return;
+  }
+  if (sendOutcome.outcome === "NO_GRANT") {
+    await finish("SKIPPED", "无剩余订阅额度");
+    return;
+  }
+  const result = sendOutcome;
   if (result.outcome === "SENT") {
     // 单事务完成「标记已投递 + 扣减额度」，避免两步间崩溃导致状态不一致。
     // 交互式顺序执行：数组形式 $transaction 会在同一客户端上并行发送两条查询（pg 重入警告）
@@ -180,7 +206,7 @@ export async function processWechatSubscribeMessageDelivery(
         await tx.wechatSubscribeGrant.updateMany({
           where: {
             userId: delivery.userId,
-            templateKey: delivery.templateKey,
+            templateKey,
             remaining: { gt: 0 },
           },
           data: { remaining: { decrement: 1 } },
