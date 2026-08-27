@@ -186,6 +186,8 @@
             class="file-row"
             hover-class="hover-card"
             data-id="{{item.id}}"
+            data-istext="{{item.isText}}"
+            data-name="{{item.displayName}}"
             bindtap="onOpenFile"
           >
             <view class="file-ext">{{item.ext}}</view>

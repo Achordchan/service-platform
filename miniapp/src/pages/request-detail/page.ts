@@ -13,6 +13,7 @@ import { eventSync } from "../../lib/events";
 import { pickAttachments, previewLocalFile } from "../../lib/pick-files";
 import {
   formatFileSize,
+  isTextAttachment,
   REQUEST_STATUS_LABELS,
   REQUEST_STATUS_TONES,
   REQUEST_PRIORITY_LABELS,
@@ -40,8 +41,14 @@ type ViewMessage = RequestMessage & {
   revokedText: string;
   reviewing: boolean;
   replyPreview: string;
-  images: Array<{ id: string; name: string; note: string }>;
-  files: Array<{ id: string; name: string; size: string; note: string }>;
+images: Array<{ id: string; name: string; note: string }>;
+  files: Array<{
+    id: string;
+    name: string;
+    size: string;
+    note: string;
+    isText: boolean;
+  }>;
 };
 
 type AttachmentMetaLite = {
@@ -246,6 +253,7 @@ Page({
             displayName: att.title || att.originalName,
             note: att.note || "",
             sizeText: formatFileSize(att.size),
+            isText: isTextAttachment(att.mimeType),
           })),
       };
       this.setData({
@@ -333,6 +341,7 @@ Page({
           name: att.title || att.originalName,
           size: formatFileSize(att.size),
           note: att.note || "",
+          isText: isTextAttachment(att.mimeType),
         })),
     };
   },
@@ -497,6 +506,13 @@ Page({
   },
   async onOpenFile(event: WechatMiniprogram.TouchEvent) {
     const fileId = event.currentTarget.dataset.id as string;
+    if (event.currentTarget.dataset.istext) {
+      const name = (event.currentTarget.dataset.name as string) || "";
+      wx.navigateTo({
+        url: `/pages/attachment-text/page?id=${fileId}&name=${encodeURIComponent(name)}`,
+      });
+      return;
+    }
     wx.showLoading({ title: "下载文件" });
     try {
       const localPath = await downloadAttachment(fileId);

@@ -17,6 +17,7 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import type { ChatAttachment } from "@/components/shared/request-chat-types";
 import {
   AttachmentPreviewDialog,
+  previewKindOfMimeType,
   type PreviewSource,
 } from "@/components/shared/attachment-preview-dialog";
 import type { AttachmentDraft } from "@/lib/attachment-drafts";
@@ -69,39 +70,53 @@ function MessageImage({
   file,
   tone,
   resolveUrl,
+  onPreview,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
+  onPreview: (source: PreviewSource) => void;
 }) {
   const inlineUrl = resolveUrl
     ? resolveUrl(file, true)
     : `/api/v1/attachments/${file.id}?disposition=inline`;
   const colors = attachmentColors(tone);
+  const displayName = attachmentDisplayName(file);
   const customTitle =
     file.title?.trim() && file.title.trim() !== file.originalName
       ? file.title.trim()
       : "";
   return (
     <Box sx={{ minWidth: 0 }}>
+      {/* 原生 button 保证键盘可达（Tab + Enter/Space 打开灯箱） */}
       <Box
-        component="a"
-        href={inlineUrl}
-        target="_blank"
-        rel="noopener noreferrer"
+        component="button"
+        type="button"
+        aria-label={`预览 ${displayName}`}
+        onClick={() =>
+          onPreview({
+            type: "remote",
+            url: inlineUrl,
+            mimeType: file.mimeType,
+            name: displayName,
+          })
+        }
         sx={{
           display: "block",
+          width: "100%",
           minWidth: 0,
           overflow: "hidden",
           borderRadius: 1.5,
-          color: "inherit",
-          textDecoration: "none",
+          border: 0,
+          p: 0,
+          bgcolor: "transparent",
+          cursor: "zoom-in",
         }}
       >
         <Box
           component="img"
           src={inlineUrl}
-          alt={attachmentDisplayName(file)}
+          alt={displayName}
           loading="lazy"
           sx={{
             display: "block",
@@ -113,7 +128,7 @@ function MessageImage({
         />
       </Box>
       {customTitle || file.note?.trim() ? (
-        <Box sx={{ px: 0.5, pt: 0.5 }}>
+        <Box sx={{ px: 0.5, pt: 0.5, textAlign: "left" }}>
           {customTitle ? (
             <Typography
               variant="caption"
@@ -151,18 +166,44 @@ function MessageFile({
   tone,
   resolveUrl,
   onDownload,
+  onPreview,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
+  onPreview?: (source: PreviewSource) => void;
 }) {
   const colors = attachmentColors(tone);
   const displayName = attachmentDisplayName(file);
+  // embed 门户（onDownload 注入）鉴权走请求头，弹层内联/文本加载不可用，保持仅下载
+  const previewable =
+    !onDownload &&
+    Boolean(onPreview) &&
+    previewKindOfMimeType(file.mimeType) !== "unsupported";
+  const openPreview = () =>
+    onPreview?.({
+      type: "remote",
+      url: resolveUrl
+        ? resolveUrl(file, true)
+        : `/api/v1/attachments/${file.id}?disposition=inline`,
+      downloadUrl: resolveUrl
+        ? resolveUrl(file, false)
+        : `/api/v1/attachments/${file.id}`,
+      mimeType: file.mimeType,
+      name: displayName,
+    });
   return (
     <Stack
       direction="row"
       spacing={1.25}
+      {...(previewable
+        ? {
+            role: "button" as const,
+            "aria-label": `预览 ${displayName}`,
+            onClick: openPreview,
+          }
+        : {})}
       sx={{
         alignItems: "center",
         p: 1.1,
@@ -170,6 +211,7 @@ function MessageFile({
         bgcolor: colors.background,
         border: "1px solid",
         borderColor: colors.border,
+        cursor: previewable ? "pointer" : "default",
       }}
     >
       <InsertDriveFileOutlinedIcon
@@ -206,12 +248,18 @@ function MessageFile({
       </Box>
       <IconButton
         {...(onDownload
-          ? { onClick: () => onDownload(file) }
+          ? {
+              onClick: (event: React.MouseEvent) => {
+                event.stopPropagation();
+                onDownload(file);
+              },
+            }
           : {
               component: "a" as const,
               href: resolveUrl
                 ? resolveUrl(file, false)
                 : `/api/v1/attachments/${file.id}`,
+              onClick: (event: React.MouseEvent) => event.stopPropagation(),
             })}
         aria-label={`下载 ${displayName}`}
         size="small"
@@ -234,6 +282,7 @@ export function RequestMessageAttachments({
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
 }) {
+  const [preview, setPreview] = useState<PreviewSource | null>(null);
   if (files.length === 0) return null;
   const images = files.filter((file) => isImageMimeType(file.mimeType));
   const documents = files.filter((file) => !isImageMimeType(file.mimeType));
@@ -257,6 +306,7 @@ export function RequestMessageAttachments({
               file={file}
               tone={tone}
               resolveUrl={resolveUrl}
+              onPreview={setPreview}
             />
           ))}
         </Box>
@@ -268,8 +318,13 @@ export function RequestMessageAttachments({
           tone={tone}
           resolveUrl={resolveUrl}
           onDownload={onDownload}
+          onPreview={setPreview}
         />
       ))}
+      <AttachmentPreviewDialog
+        source={preview}
+        onClose={() => setPreview(null)}
+      />
     </Stack>
   );
 }
@@ -363,7 +418,11 @@ export function RequestAttachmentDrafts({
             >
               <Box
                 onClick={() =>
-                  setPreview({ file: draft.file, title: draft.title })
+                  setPreview({
+                    type: "file",
+                    file: draft.file,
+                    title: draft.title,
+                  })
                 }
                 role="button"
                 aria-label={`预览 ${draft.file.name}`}
@@ -414,7 +473,11 @@ export function RequestAttachmentDrafts({
                 <IconButton
                   size="small"
                   onClick={() =>
-                    setPreview({ file: draft.file, title: draft.title })
+                    setPreview({
+                      type: "file",
+                      file: draft.file,
+                      title: draft.title,
+                    })
                   }
                   aria-label={`预览 ${draft.file.name}`}
                 >

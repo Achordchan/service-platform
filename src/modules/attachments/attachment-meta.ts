@@ -32,3 +32,22 @@ export function attachmentRiskText(
     .filter((value): value is string => Boolean(value))
     .join("\n");
 }
+
+// 允许浏览器内联展示（在线预览）的类型白名单。
+// 刻意排除 html/svg 等可执行内容——附件校验层本就不放行它们，这里再兜一层。
+export function isInlinePreviewableMimeType(mimeType: string) {
+  return (
+    mimeType.startsWith("image/") ||
+    mimeType === "application/pdf" ||
+    isTextPreviewMimeType(mimeType)
+  );
+}
+
+// 需要以文本形式渲染预览的类型（Web 弹层 / 小程序文本查看页）
+export function isTextPreviewMimeType(mimeType: string) {
+  return (
+    mimeType === "text/plain" ||
+    mimeType === "text/csv" ||
+    mimeType === "application/json"
+  );
+}

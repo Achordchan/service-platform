@@ -1,4 +1,5 @@
 import { readAttachmentDownload } from "@/modules/attachments/attachment-service";
+import { isInlinePreviewableMimeType } from "@/modules/attachments/attachment-meta";
 import {
   apiErrorResponse,
   requireApiActor,
@@ -19,8 +20,9 @@ export async function GET(request: Request, context: RouteContext) {
       attachmentId,
       { inlinePreview: inlineRequested },
     );
+    // 在线预览：图片之外放开 PDF 与纯文本类的内联展示（白名单见 attachment-meta）
     const inline =
-      inlineRequested && attachment.mimeType.startsWith("image/");
+      inlineRequested && isInlinePreviewableMimeType(attachment.mimeType);
 
     return new Response(buffer, {
       headers: {

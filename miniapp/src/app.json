@@ -12,6 +12,7 @@
     "pages/notification-settings/page",
     "pages/members/page",
     "pages/update-detail/page",
+    "pages/attachment-text/page",
     "pages/profile-edit/page",
     "pages/web-login/page"
   ],

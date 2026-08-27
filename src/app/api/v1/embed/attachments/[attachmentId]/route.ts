@@ -1,3 +1,4 @@
+import { isInlinePreviewableMimeType } from "@/modules/attachments/attachment-meta";
 import { readExternalAttachment } from "@/modules/integrations/external/attachment-service";
 import { requireExternalSession } from "@/modules/integrations/external/session-service";
 import { routeError } from "@/modules/projects/api-utils";
@@ -15,7 +16,8 @@ export async function GET(request: Request, context: RouteContext) {
       attachmentId,
       { inlinePreview: inlineRequested },
     );
-    const inline = inlineRequested && attachment.mimeType.startsWith("image/");
+    const inline =
+      inlineRequested && isInlinePreviewableMimeType(attachment.mimeType);
     const fileName =
       attachment.mimeType === "image/webp" &&
       !/\.webp$/i.test(attachment.originalName)
