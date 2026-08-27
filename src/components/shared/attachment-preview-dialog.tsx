@@ -130,15 +130,38 @@ function RemoteTextPreview({ url }: { url: string }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    // 只消费响应流的前 256KB 即取消，大文件预览不用等整个下载完成
     void fetch(url, { credentials: "same-origin", signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error("附件加载失败");
-        const text = await response.text();
-        setState({
-          status: "ready",
-          content: text.slice(0, TEXT_PREVIEW_MAX_BYTES),
-          truncated: text.length > TEXT_PREVIEW_MAX_BYTES,
-        });
+        if (!response.ok || !response.body) throw new Error("附件加载失败");
+        const reader = response.body.getReader();
+        const chunks: Uint8Array[] = [];
+        let received = 0;
+        let exceeded = false;
+        try {
+          while (received <= TEXT_PREVIEW_MAX_BYTES) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            chunks.push(value);
+            received += value.byteLength;
+            if (received > TEXT_PREVIEW_MAX_BYTES) {
+              exceeded = true;
+              break;
+            }
+          }
+        } finally {
+          await reader.cancel().catch(() => undefined);
+        }
+        const merged = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          merged.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        const text = new TextDecoder("utf-8").decode(
+          merged.slice(0, TEXT_PREVIEW_MAX_BYTES),
+        );
+        setState({ status: "ready", content: text, truncated: exceeded });
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;

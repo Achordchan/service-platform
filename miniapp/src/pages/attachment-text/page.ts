@@ -14,6 +14,8 @@ Page({
   attachmentId: "",
   // 上传前预览：直接传本地临时文件路径，不走附件下载
   localPath: "",
+  // 完整内容留在实例字段（不进 setData，避免超限），复制全文用它
+  fullContent: "",
 
   onLoad(query: Record<string, string | undefined>) {
     this.attachmentId = query.id ?? "";
@@ -44,6 +46,7 @@ Page({
           fail: () => reject(new Error("文件内容读取失败")),
         });
       });
+      this.fullContent = content;
       this.setData({
         loading: false,
         content: content.slice(0, MAX_DISPLAY_CHARS),
@@ -57,9 +60,10 @@ Page({
     }
   },
   onCopyAll() {
-    if (!this.data.content) return;
+    const full = this.fullContent || this.data.content;
+    if (!full) return;
     wx.setClipboardData({
-      data: this.data.content,
+      data: full,
       fail: () => wx.showToast({ title: "复制失败", icon: "none" }),
     });
   },
