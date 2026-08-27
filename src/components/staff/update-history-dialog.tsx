@@ -116,7 +116,6 @@ export function UpdateHistoryDialog({
                   key={revision.id}
                   disableGutters
                   elevation={0}
-                  defaultExpanded={revisions.length === 1}
                   sx={{
                     border: "1px solid",
                     borderColor: "divider",
