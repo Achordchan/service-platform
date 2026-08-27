@@ -8,6 +8,10 @@ import { promisify } from "node:util";
 import { env } from "@/lib/runtime-env";
 import { withSystemDb } from "@/lib/system-db";
 import {
+  publishProjectChange,
+  publishRequestChange,
+} from "@/modules/notifications/notification-service";
+import {
   isOfficePreviewMimeType,
   officePreviewExtension,
 } from "@/modules/attachments/attachment-meta";
@@ -19,6 +23,15 @@ import {
 } from "@/modules/attachments/private-storage";
 
 const execFileAsync = promisify(execFile);
+
+const systemActor = {
+  id: "system",
+  name: "系统",
+  email: "system@local",
+  platformRole: "PLATFORM_ADMIN" as const,
+  isPlatformAdmin: true,
+  isStaff: true,
+};
 
 // 单文件转换上限：超时杀进程标记 FAILED，原文件不受影响仍可下载
 const CONVERT_TIMEOUT_MS = 120_000;
@@ -42,6 +55,9 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
         mimeType: true,
         previewStatus: true,
         previewStorageKey: true,
+        customerSpaceId: true,
+        projectId: true,
+        serviceRequestId: true,
       },
     }),
   );
@@ -63,14 +79,37 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
       "pdf",
     );
     await writePrivateFile(previewStorageKey, pdfBuffer);
-    const updated = await withSystemDb((tx) =>
-      tx.attachment.updateMany({
+    const swapped = await withSystemDb(async (tx) => {
+      const updated = await tx.attachment.updateMany({
         // storageKey 守卫：源文件在转换期间被替换（理论上仅图片类会发生）则放弃写入
         where: { id: attachment.id, storageKey: attachment.storageKey },
         data: { previewStorageKey, previewStatus: "READY" },
-      }),
-    );
-    if (updated.count !== 1) {
+      });
+      if (updated.count !== 1) return false;
+      // 发实时事件让打开中的页面刷新出预览入口（复用 webp 派生管道的模式）
+      if (
+        attachment.serviceRequestId &&
+        attachment.projectId &&
+        attachment.customerSpaceId
+      ) {
+        await publishRequestChange(tx, systemActor, {
+          change: "ATTACHMENT_PREVIEW_READY",
+          customerSpaceId: attachment.customerSpaceId,
+          projectId: attachment.projectId,
+          serviceRequestId: attachment.serviceRequestId,
+          payload: { attachmentId: attachment.id },
+        });
+      } else if (attachment.projectId && attachment.customerSpaceId) {
+        await publishProjectChange(tx, systemActor, {
+          change: "ATTACHMENT_PREVIEW_READY",
+          customerSpaceId: attachment.customerSpaceId,
+          projectId: attachment.projectId,
+          payload: { attachmentId: attachment.id },
+        });
+      }
+      return true;
+    });
+    if (!swapped) {
       await removePrivateFile(previewStorageKey);
       return;
     }
@@ -148,4 +187,24 @@ async function convertOfficeToPdf(buffer: Uint8Array, mimeType: string) {
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+const PREVIEW_PENDING_STALE_MS = 15 * 60 * 1000;
+
+/**
+ * 兜底恢复：入队失败或任务库故障会让附件停留在 PENDING。
+ * 捞出超过 15 分钟仍 PENDING 的附件重新入队（FAILED 是终态不重试）。
+ */
+export function listStalePendingPreviews() {
+  return withSystemDb((tx) =>
+    tx.attachment.findMany({
+      where: {
+        previewStatus: "PENDING",
+        createdAt: { lt: new Date(Date.now() - PREVIEW_PENDING_STALE_MS) },
+      },
+      select: { id: true },
+      orderBy: { createdAt: "asc" },
+      take: 20,
+    }),
+  );
 }

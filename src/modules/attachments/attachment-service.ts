@@ -453,7 +453,8 @@ export async function uploadProjectAttachment(
 }
 
 // 预览件生成是尽力而为：入队失败只记日志，不影响上传结果
-async function queuePreviewRenderIfNeeded(
+// （长期 PENDING 由 attachment-preview-sweep 兜底重捞）
+export async function queuePreviewRenderIfNeeded(
   attachmentId: string,
   mimeType: string,
 ) {

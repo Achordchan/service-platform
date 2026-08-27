@@ -14,9 +14,11 @@ import {
 import { validateAttachmentFile } from "@/modules/attachments/attachment-validation";
 import {
   attachmentRiskText,
+  initialPreviewStatus,
   normalizeAttachmentNote,
   normalizeAttachmentTitle,
 } from "@/modules/attachments/attachment-meta";
+import { queuePreviewRenderIfNeeded } from "@/modules/attachments/attachment-service";
 import { dispatchExternalRequestActivity } from "@/modules/notifications/notification-service";
 import { scheduleAttachmentPluginJobs } from "@/modules/plugins/plugin-scheduler";
 import { DomainError } from "@/modules/projects/errors";
@@ -185,6 +187,7 @@ export async function uploadExternalAttachment(
           title,
           note,
           storageKey,
+          previewStatus: initialPreviewStatus(validated.mimeType),
           mimeType: validated.mimeType,
           size: input.buffer.byteLength,
           visibility: "CUSTOMER_VISIBLE",
@@ -290,6 +293,7 @@ export async function uploadExternalAttachment(
   if (["image/jpeg", "image/png"].includes(attachment.mimeType)) {
     await scheduleAttachmentPluginJobs(attachment.id);
   }
+  await queuePreviewRenderIfNeeded(attachment.id, attachment.mimeType);
   return attachment;
 }
 
