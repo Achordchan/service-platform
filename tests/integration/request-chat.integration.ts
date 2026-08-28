@@ -875,6 +875,41 @@ describe("请求聊天生产流程", () => {
     });
   });
 
+  it("保留期清理要真能删掉平台用户的行（RLS 会静默吞掉直接 deleteMany）", async () => {
+    const { cleanupExpiredRequestPresence } = await import(
+      "@/modules/requests/presence-sweep-service"
+    );
+    const staleId = randomUUID();
+    const freshId = randomUUID();
+    const created = await createFixtureRequest("保留期清理");
+    // 一条早已过保留期的，一条刚离线的
+    await ownerPool.query(
+      `INSERT INTO "RequestPresence" (
+         id, "serviceRequestId", "userId", "sessionId", "expiresAt", "updatedAt"
+       ) VALUES
+         ($1, $3, $4, $1, NOW() - INTERVAL '48 hours', NOW() - INTERVAL '48 hours'),
+         ($2, $3, $4, $2, NOW(), NOW())`,
+      [staleId, freshId, created.id, customer.id],
+    );
+
+    await cleanupExpiredRequestPresence();
+
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM "RequestPresence" WHERE id = ANY($1::text[])`,
+      [[staleId, freshId]],
+    );
+    const remaining = rows.rows.map((row) => row.id);
+    // 过了保留期的必须真被删掉 —— 直接 deleteMany 会被 request_presence_delete
+    // 策略（userId = app_user_id()）静默过滤成 0 行，任务白跑
+    expect(remaining).not.toContain(staleId);
+    // 刚离线的要留着，「客户设备与网络」还要靠它
+    expect(remaining).toContain(freshId);
+
+    await ownerPool.query('DELETE FROM "RequestPresence" WHERE id = ANY($1::text[])', [
+      [staleId, freshId],
+    ]);
+  });
+
   it("离开工单只标离线，不抹掉设备记录", async () => {
     const created = await createFixtureRequest("离线保留设备");
     const sessionId = randomUUID();

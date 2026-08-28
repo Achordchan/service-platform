@@ -35,15 +35,31 @@ describe("在线记录的保留期清理", () => {
     expect(external).toContain("PRESENCE_RETENTION_MS");
   });
 
-  it("有全局定时清理兜底 —— 顺带清理只覆盖当前工单，靠不住", async () => {
+  it("清理必须绕过 RLS —— 直接 deleteMany 会被静默过滤成 0 行", async () => {
     const { readFile } = await import("node:fs/promises");
     const sweep = await readFile(
       "src/modules/requests/presence-sweep-service.ts",
       "utf8",
     );
-    // 两张表都要清，否则外部联系人的 IP/UA 会永久堆着
-    expect(sweep).toContain("tx.requestPresence.deleteMany");
-    expect(sweep).toContain("tx.externalRequestPresence.deleteMany");
+    // request_presence_delete 要求 "userId" = app_user_id()，而清理跑在
+    // withSystemDb（app.user_id = 'system'）下，匹配不上。
+    // 真正「删没删掉」由 request-chat 的集成测试断言，这里只钉住不要改回直接删
+    expect(sweep).not.toContain("tx.requestPresence.deleteMany");
+    expect(sweep).toContain("app_sweep_expired_request_presence(");
+
+    const migration = await readFile(
+      "prisma/migrations/20260829100000_request_presence_sweep_fn/migration.sql",
+      "utf8",
+    );
+    expect(migration).toContain("SECURITY DEFINER");
+    // cutoff 被夹住：调用方只能清已过保留期的，传未来时间也删不掉在线记录
+    expect(migration).toContain("LEAST(");
+    expect(migration).toContain(
+      "REVOKE ALL ON FUNCTION app_sweep_expired_request_presence",
+    );
+    // 两张表都要清，否则有一半永久堆着
+    expect(migration).toContain('DELETE FROM "RequestPresence"');
+    expect(migration).toContain('DELETE FROM "ExternalRequestPresence"');
 
     const jobs = await readFile("src/lib/jobs.ts", "utf8");
     expect(jobs).toContain("REQUEST_PRESENCE_SWEEP_JOB");

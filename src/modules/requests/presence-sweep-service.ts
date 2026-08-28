@@ -19,12 +19,17 @@ export const PRESENCE_RETENTION_MS = 24 * 60 * 60 * 1000;
 export function cleanupExpiredRequestPresence() {
   const cutoff = new Date(Date.now() - PRESENCE_RETENTION_MS);
   return withSystemDb(async (tx) => {
-    const internal = await tx.requestPresence.deleteMany({
-      where: { expiresAt: { lt: cutoff } },
-    });
-    const external = await tx.externalRequestPresence.deleteMany({
-      where: { expiresAt: { lt: cutoff } },
-    });
-    return { internal: internal.count, external: external.count };
+    // 必须走 SECURITY DEFINER 函数，不能直接 deleteMany：
+    // request_presence_delete 策略要求 "userId" = app_user_id()，而这里跑在
+    // withSystemDb（app.user_id = 'system'）下，即使 is_platform_admin 为 true
+    // 也匹配不上 —— 删除会被 RLS 静默过滤成 0 行。更隐蔽的是外部联系人那张表
+    // 策略不同、反而清得掉，任务看起来「在工作」，实际平台用户的行一条没少。
+    const [row] = await tx.$queryRaw<
+      Array<{ internal_deleted: bigint; external_deleted: bigint }>
+    >`SELECT * FROM app_sweep_expired_request_presence(${cutoff})`;
+    return {
+      internal: Number(row?.internal_deleted ?? 0),
+      external: Number(row?.external_deleted ?? 0),
+    };
   });
 }
