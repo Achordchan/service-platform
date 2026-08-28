@@ -214,6 +214,18 @@ export function extractInlineImages(html: string): {
   return { html: cleaned, images };
 }
 
+/**
+ * 取出正文里的内嵌图 <img> 原样标签。
+ *
+ * 小程序的编辑器是纯文本：htmlToText 会把 <img> 一起吃掉，若照常提交重建的正文，
+ * 服务端会把「正文里消失的附件 id」判定为删除，连附件行和存储文件一起删 ——
+ * 于是从小程序改一下标题，就把 Web 上传的正文配图永久删了。保存时把这些标签
+ * 原样接回去，id 就不会从正文里消失。
+ */
+export function keepInlineImageTags(html: string): string {
+  return (html.match(/<img\b[^>]*>/gi) ?? []).join("");
+}
+
 // 通知类型 → 项目详情目标 tab（消息点击直达对应区域）
 export function notificationTargetTab(type: string): string {
   switch (type) {

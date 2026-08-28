@@ -6,7 +6,7 @@ import {
   type ProjectUpdate,
   uploadAttachment,
 } from "../../lib/api";
-import { escapeHtml, htmlToText } from "../../lib/format";
+import { escapeHtml, htmlToText, keepInlineImageTags } from "../../lib/format";
 import type { DeliveryOverride } from "../../lib/delivery";
 import { pickAttachments, type PickedFile } from "../../lib/pick-files";
 
@@ -38,6 +38,9 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /** 编辑态载入时的原始正文与其纯文本形态：用于判断正文到底改没改 */
+  loadedBody: "",
+  loadedText: "",
   onLoad(query: Record<string, string | undefined>) {
     const projectId = query.projectId ?? "";
     const updateId = query.updateId ?? "";
@@ -71,11 +74,14 @@ Page({
         this.setData({ loading: false, loadError: "动态不存在或已被删除" });
         return;
       }
+      const bodyText = htmlToText(update.body);
+      this.loadedBody = update.body;
+      this.loadedText = bodyText;
       this.setData({
         loading: false,
         title: update.title,
         // 编辑器是纯文本：HTML 正文转文本回填（会丢富格式，移动端快速编辑取舍）
-        bodyText: htmlToText(update.body),
+        bodyText,
       });
     } catch (error) {
       this.setData({
@@ -162,10 +168,20 @@ Page({
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {
+        // 正文没动就别提交 body：纯文本编辑器还原不出原来的富文本，
+        // 提交等于拿降级后的版本覆盖原文
+        const textChanged = text !== this.loadedText.trim();
+        // 真改了正文，也要把原正文里的内嵌图标签原样接回去 —— 服务端会把
+        // 正文里消失的附件 id 当成删除，连附件行和存储文件一起删掉
+        const bodyForEdit = textChanged
+          ? body + keepInlineImageTags(this.loadedBody)
+          : undefined;
         await editProjectUpdate(this.data.projectId, this.data.updateId, {
           title,
-          body,
+          ...(bodyForEdit ? { body: bodyForEdit } : {}),
         });
+        // 编辑态也要把已选附件传上去，否则提示「已更新」但文件从没上传
+        await this.uploadPendingFiles({ projectUpdateId: this.data.updateId });
         wx.showToast({ title: "已更新", icon: "success" });
       } else {
         const override = this.data.deliveryOverride;

@@ -1,4 +1,4 @@
-import { ensureLoggedIn, fetchMeCached } from "../../lib/auth";
+import { cancelPendingActivate, ensureLoggedIn, fetchMeCached } from "../../lib/auth";
 import { ensureBadgeSync } from "../../lib/badge";
 import { eventSync } from "../../lib/events";
 import { listProjects, listRequests, type ServiceRequestSummary } from "../../lib/api";
@@ -76,6 +76,8 @@ Page({
     | ((events: Array<{ type: string }>) => void)
     | null,
   sseStarted: false,
+  // 校验中挂起的 activate；onHide/onUnload 需取消
+  pendingActivate: null as (() => void) | null,
   onLoad(query: Record<string, string | undefined>) {
     this.setData({
       initializedFromProject: Boolean(query.projectId),
@@ -84,10 +86,19 @@ Page({
     this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn(() => this.activate())) return;
-    this.activate();
+    // 必须存下同一个函数引用：cancelAuthWaiter 按引用取消，每次现造匿名箭头
+    // 函数就取消不掉 —— 校验完成后会唤醒已隐藏页面的 activate，
+    // eventSync 计数只增不减，最后连登出都清不干净
+    const activate = () => void this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
+    void this.activate();
   },
   teardown() {
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
     if (!this.sseStarted) return;
     this.sseStarted = false;
     if (this.boundEventHandler) {
@@ -117,6 +128,7 @@ Page({
     }
   },
   async activate() {
+    this.pendingActivate = null;
     ensureBadgeSync();
     if (this.boundEventHandler) {
       eventSync.on(this.boundEventHandler);

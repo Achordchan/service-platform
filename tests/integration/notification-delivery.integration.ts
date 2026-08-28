@@ -611,6 +611,74 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     }
   });
 
+  it("后台把通道关掉时，预览仍要报出真实收件范围", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    // 关掉邮件规则：预览若跟着当前开关算，就会说「本场景不发邮件」，
+    // 可员工正是要在弹窗里强制打开 —— 提交后真实发送又把这些人算回来
+    await setRequestPublicMessageMailRule(false);
+    const offRule = await previewRequestDelivery(
+      admin,
+      requestId,
+      "PUBLIC_MESSAGE",
+    );
+    expect(offRule.emailUserIds).toContain(customer.id);
+
+    await setRequestPublicMessageMailRule(true);
+    const onRule = await previewRequestDelivery(
+      admin,
+      requestId,
+      "PUBLIC_MESSAGE",
+    );
+    // 通道开关不该改变预览算出的收件范围，两次必须一致
+    expect(onRule.emailUserIds.sort()).toEqual(offRule.emailUserIds.sort());
+    expect(onRule.notificationUserIds.sort()).toEqual(
+      offRule.notificationUserIds.sort(),
+    );
+  });
+
+  it("本次关掉站内通知时，实时事件不再标记为可响铃", async () => {
+    await setRequestPublicMessageMailRule(true);
+    const integrationMarker = `silent-${randomUUID()}`;
+    cleanup.eventMarkers.push(integrationMarker);
+    const delivery = await withActorDb(admin, (tx) =>
+      dispatchRequestActivity(tx, admin, {
+        eventType: "REQUEST_MESSAGE_CREATED",
+        eventPayload: {
+          requestId,
+          visibility: "CUSTOMER_VISIBLE",
+          integrationMarker,
+        },
+        notificationType: "REQUEST_MESSAGE",
+        notificationTitle: "本次不提醒",
+        notificationBody: "提示行说不发提醒，就不该还响铃",
+        includeCustomers: true,
+        relevantWorkerUserIds: [],
+        notifyProjectManagers: false,
+        notifyPlatformAdmins: false,
+        customerSpaceId,
+        projectId,
+        serviceRequestId: requestId,
+        deliveryOverride: { notification: false },
+      }),
+    );
+    cleanup.notificationIds.push(
+      ...delivery.notifications.map((notification) => notification.id),
+    );
+    expect(delivery.notifications).toEqual([]);
+
+    const event = await pool.query<{ audible: boolean | null }>(
+      `SELECT (payload->>'audible')::boolean AS audible
+         FROM "EventRecord"
+        WHERE payload->>'integrationMarker' = $1
+        LIMIT 1`,
+      [integrationMarker],
+    );
+    // 站内是载体：关掉它就不建通知，也不该让 GlobalRealtimeSound 响
+    expect(event.rows[0]?.audible).toBe(false);
+  });
+
   it("客户新建标准服务请求会为平台管理员创建并投递邮件 Outbox", async () => {
     await configureStandardMail(true, false);
     await setUserMailPreference(admin.id, true);

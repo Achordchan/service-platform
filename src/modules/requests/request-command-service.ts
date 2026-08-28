@@ -641,7 +641,12 @@ export async function changeRequestStatus(
     );
     return {
       updated,
-      externalMail: statusMail(request, targetStatus),
+      // 外部联系人的邮件不挂在 Notification 行上、由下面单独入队，
+      // 所以必须自己听一次本次覆盖 —— 否则员工关了邮件，外部联系人照收，
+      // 反馈还把它算作已发送
+      externalMail: delivery.emailChannelEnabled
+        ? statusMail(request, targetStatus)
+        : null,
       deliveryFeedback: delivery.feedback,
     };
   });
@@ -995,6 +1000,8 @@ export async function addRequestMessage(
     const externalMail =
       !isCustomer &&
       input.visibility === "CUSTOMER_VISIBLE" &&
+      // 同上：外部联系人邮件单独入队，要自己听一次本次覆盖
+      delivery.emailChannelEnabled &&
       canSendExternalContactMail(request) &&
       contact &&
       connection

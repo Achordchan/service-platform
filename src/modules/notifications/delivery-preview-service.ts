@@ -11,6 +11,16 @@ import {
   type WechatTemplateKey,
 } from "@/modules/miniapp/wechat-subscribe-message-service";
 
+/**
+ * 已知边界：预览只列平台用户。外部联系人（Sub2API 等外部门户创建的工单）的邮件
+ * 不挂在 Notification 行上、由命令层单独入队，也没有 userId，逐人排除
+ * （excludeUserIds）对他们无从谈起，因此不进这个列表。
+ *
+ * 行为上他们仍受本次覆盖的「邮件」开关约束（见 request-command-service 里
+ * emailChannelEnabled 的用法）—— 关掉邮件他们同样不会收到。缺的只是「预览里
+ * 看不到他们」这条信息，要补齐需要给预览引入非用户收件人这一类，属于后续工作。
+ */
+
 /** 收件人在邮件通道上的状态 */
 export type EmailRecipientState =
   /** 会收到 */

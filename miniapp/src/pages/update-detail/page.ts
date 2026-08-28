@@ -1,9 +1,4 @@
-import {
-  ensureLoggedIn,
-  fetchMeCached,
-  projectDeliveryCaps,
-  type MiniappMe,
-} from "../../lib/auth";
+import { cancelPendingActivate, ensureLoggedIn, fetchMeCached, projectDeliveryCaps, type MiniappMe } from "../../lib/auth";
 import { eventSync } from "../../lib/events";
 import {
   getProject,
@@ -78,14 +73,22 @@ Page({
       ) => void)
     | null,
   sseStarted: false,
+  // 校验中挂起的 activate；onHide/onUnload 需取消
+  pendingActivate: null as (() => void) | null,
   onLoad() {
     this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn(() => this.activate())) return;
-    this.activate();
+    // 必须存下同一个函数引用：cancelAuthWaiter 按引用取消，每次现造匿名箭头
+    // 函数就取消不掉 —— 校验完成后会唤醒已隐藏页面的 activate，
+    // eventSync 计数只增不减，最后连登出都清不干净
+    const activate = () => void this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
+    void this.activate();
   },
   activate() {
+    this.pendingActivate = null;
     // 别人评论/编辑这条动态时实时刷新，不必下拉
     if (this.boundEventHandler) {
       eventSync.on(this.boundEventHandler);
@@ -95,6 +98,10 @@ Page({
     void this.load();
   },
   teardown() {
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
     if (!this.sseStarted) return;
     this.sseStarted = false;
     if (this.boundEventHandler) {

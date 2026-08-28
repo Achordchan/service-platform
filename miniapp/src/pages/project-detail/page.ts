@@ -1,10 +1,4 @@
-import {
-  ensureLoggedIn,
-  fetchMeCached,
-  projectDeliveryCaps,
-  type MiniappMe,
-  type ProjectDeliveryCaps,
-} from "../../lib/auth";
+import { cancelPendingActivate, ensureLoggedIn, fetchMeCached, projectDeliveryCaps, type MiniappMe, type ProjectDeliveryCaps } from "../../lib/auth";
 import { ensureBadgeSync } from "../../lib/badge";
 import { eventSync } from "../../lib/events";
 import {
@@ -175,16 +169,24 @@ Page({
       ) => void)
     | null,
   sseStarted: false,
+  // 校验中挂起的 activate；onHide/onUnload 需取消
+  pendingActivate: null as (() => void) | null,
   onLoad(query: Record<string, string | undefined>) {
     this.setData({ projectId: query.id ?? "" });
     this.initialTab = query.tab ?? "";
     this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn(() => this.activate())) return;
+    // 必须存下同一个函数引用：cancelAuthWaiter 按引用取消，每次现造匿名箭头
+    // 函数就取消不掉 —— 校验完成后会唤醒已隐藏页面的 activate，
+    // eventSync 计数只增不减，最后连登出都清不干净
+    const activate = () => this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
     this.activate();
   },
   activate() {
+    this.pendingActivate = null;
     ensureBadgeSync();
     // 项目详情此前完全没有订阅实时事件：别人发动态/改里程碑，页面一直是旧的，
     // 只能下拉或重进才刷新。这里补上（角标已持有常驻连接，这里只是加监听）
@@ -196,6 +198,10 @@ Page({
     void this.load();
   },
   teardown() {
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
     if (!this.sseStarted) return;
     this.sseStarted = false;
     if (this.boundEventHandler) {

@@ -11,6 +11,7 @@ import { pickAttachments, type PickedFile } from "../../lib/pick-files";
 import {
   escapeHtml,
   htmlToText,
+  keepInlineImageTags,
   MILESTONE_STATUS_LABELS,
   type MilestoneStatusValue,
 } from "../../lib/format";
@@ -55,6 +56,9 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /** 编辑态载入时的原始描述与其纯文本形态：用于判断描述到底改没改 */
+  loadedDescription: "",
+  loadedDescText: "",
   onLoad(query: Record<string, string | undefined>) {
     const projectId = query.projectId ?? "";
     const milestoneId = query.milestoneId ?? "";
@@ -87,10 +91,15 @@ Page({
       const statusIndex = STATUS_OPTIONS.findIndex(
         (option) => option.value === milestone.status,
       );
+      const descText = milestone.description
+        ? htmlToText(milestone.description)
+        : "";
+      this.loadedDescription = milestone.description ?? "";
+      this.loadedDescText = descText;
       this.setData({
         loading: false,
         title: milestone.title,
-        descText: milestone.description ? htmlToText(milestone.description) : "",
+        descText,
         statusIndex: statusIndex >= 0 ? statusIndex : 0,
         startDate: milestone.startDate ? milestone.startDate.slice(0, 10) : "",
         endDate: milestone.endDate ? milestone.endDate.slice(0, 10) : "",
@@ -196,11 +205,20 @@ Page({
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {
-        await editMilestone(
-          this.data.projectId,
-          this.data.milestoneId,
-          withOverride,
-        );
+        // 与动态编辑同理：描述没动就别提交，真改了也要把原描述里的内嵌图标签
+        // 原样接回去 —— 服务端会把描述里消失的附件 id 当成删除，连文件一起删
+        const descChanged = descText !== this.loadedDescText.trim();
+        await editMilestone(this.data.projectId, this.data.milestoneId, {
+          ...withOverride,
+          ...(descChanged
+            ? {
+                description: descText
+                  ? textToHtml(descText) +
+                    keepInlineImageTags(this.loadedDescription)
+                  : keepInlineImageTags(this.loadedDescription) || null,
+              }
+            : { description: this.loadedDescription || null }),
+        });
         await this.uploadPendingFiles({ milestoneId: this.data.milestoneId });
         wx.showToast({ title: "已保存", icon: "success" });
       } else {

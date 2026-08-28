@@ -448,7 +448,12 @@ async function resolveProjectActivityPlan(
     actorId: actor.id,
     audience,
     ...input,
-    eventPayload: withAudiblePayload(input.eventPayload, rule.soundEnabled),
+    // 站内是载体：本次把它关掉（规则关的或本次覆盖关的）就不该还响铃 ——
+    // 提示行写的是「本次操作不会发出提醒」，收件人却听得见，等于说话不算数
+    eventPayload: withAudiblePayload(
+      input.eventPayload,
+      notificationEnabled && rule.soundEnabled,
+    ),
     visibility,
     emailRecipientUserIds:
       visibility === "CUSTOMER_VISIBLE" && emailEnabled
@@ -490,7 +495,25 @@ export async function dispatchProjectActivity(
   return persisted;
 }
 
-/** 发送前预览：跑一遍真正的收件人计算，但不落库、不应用本次覆盖 */
+/**
+ * 预览用的「全通道打开」覆盖。
+ *
+ * 预览不能沿用当前的通道开关：后台把站内或邮件关着时，收件人列表会被清空、
+ * emailEligible 会全为 false，弹窗于是显示「0 人」或「本场景不发送」；可员工正是
+ * 要在弹窗里把它强制打开，提交后真实发送又会把这些人算回来 —— 预览说没人收，
+ * 结果批量发出去。所以预览要算的是「本场景的收件范围」这个不随开关变的底数，
+ * 通道开关由弹窗自己按用户当前的勾选去渲染。
+ *
+ * 注意这里只放开通道开关。场景本身不支持的通道会被 sanitizeDeliveryOverride 丢掉，
+ * 可见性、项目类型等收件范围维度也不受影响 —— 那些是强制发送本就越不过的边界。
+ */
+const PREVIEW_ALL_CHANNELS_ON = {
+  notification: true,
+  email: true,
+  wechat: true,
+} as const;
+
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
 export async function previewProjectActivityRecipients(
   tx: Prisma.TransactionClient,
   actor: Actor,
@@ -498,7 +521,7 @@ export async function previewProjectActivityRecipients(
 ) {
   const { delivery, ruleKey } = await resolveProjectActivityPlan(tx, actor, {
     ...input,
-    deliveryOverride: undefined,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
   });
   return {
     ruleKey,
@@ -546,7 +569,8 @@ async function resolveProjectStaffPlan(
     actorId: actor.id,
     recipientUserId: input.recipientUserId,
     change: input.change,
-    audible: rule.soundEnabled,
+    // 同上：站内关掉就不响铃
+    audible: notificationEnabled && rule.soundEnabled,
     notificationTitle: input.notificationTitle,
     notificationBody: input.notificationBody,
     customerSpaceId: input.customerSpaceId,
@@ -600,7 +624,7 @@ export async function dispatchProjectStaffActivity(
   return persisted;
 }
 
-/** 发送前预览：跑一遍真正的收件人计算，但不落库、不应用本次覆盖 */
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
 export async function previewProjectStaffRecipients(
   tx: Prisma.TransactionClient,
   actor: Actor,
@@ -615,6 +639,7 @@ export async function previewProjectStaffRecipients(
     notificationTitle: "",
     notificationBody: "",
     ...input,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
   });
   return {
     ruleKey: "PROJECT_STAFF" as const,
@@ -645,7 +670,8 @@ export async function dispatchProjectCreatedActivity(
     eventPayload: {
       change: "PROJECT_CREATED",
       actorId: actor.id,
-      audible: rule.soundEnabled,
+      // 同上：规则关掉站内就不建通知，也不该响铃
+      audible: rule.notificationEnabled && rule.soundEnabled,
       projectId: input.projectId,
     },
     notificationType: "PROJECT_CREATED",
@@ -766,7 +792,9 @@ async function resolveRequestActivityPlan(
     relevantWorkerUserIds,
     eventPayload: withAudiblePayload(
       input.eventPayload,
-      resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
+      // 同上：本次不建通知（规则关的或本次覆盖关的）就不该还响铃
+      createNotifications &&
+        resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
     ),
     includeCustomers,
     createNotifications,
@@ -781,6 +809,14 @@ async function resolveRequestActivityPlan(
     override,
     payload,
     excludedUserIds: excluded.excludedUserIds,
+    /**
+     * 本次「邮件」这条通道到底开没开（后台规则 + 本次覆盖）。
+     * 外部联系人的邮件不挂在 Notification 行上、由命令层单独入队，必须据此判断 ——
+     * 否则员工在弹窗里关掉邮件，外部联系人照收，反馈还把它算作已发送。
+     */
+    emailChannelEnabled:
+      createNotifications &&
+      resolveDeliveryChannel(rule.emailEnabled, override?.email),
   };
 }
 
@@ -789,8 +825,15 @@ export async function dispatchRequestActivity(
   actor: Actor,
   input: RequestActivityRequest,
 ) {
-  const { planned, ruleKey, rule, override, payload, excludedUserIds } =
-    await resolveRequestActivityPlan(tx, actor, input);
+  const {
+    planned,
+    ruleKey,
+    rule,
+    override,
+    payload,
+    excludedUserIds,
+    emailChannelEnabled,
+  } = await resolveRequestActivityPlan(tx, actor, input);
   const delivery = await persistActivityDelivery(tx, planned, {
     contentRiskReviewId: input.contentRiskReviewId,
     deliveryOverride: override,
@@ -837,11 +880,12 @@ export async function dispatchRequestActivity(
     contentRiskReviewId: input.contentRiskReviewId,
   });
   delivery.feedback.dingtalkQueued = dingtalkQueued;
-  return delivery;
+  // 外部联系人邮件由命令层单独入队，把通道结论一并带出去给它判断
+  return { ...delivery, emailChannelEnabled };
 }
 
 
-/** 发送前预览：跑一遍真正的收件人计算，但不落库、不应用本次覆盖 */
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
 export async function previewRequestActivityRecipients(
   tx: Prisma.TransactionClient,
   actor: Actor,
@@ -852,7 +896,7 @@ export async function previewRequestActivityRecipients(
 ) {
   const { planned, ruleKey } = await resolveRequestActivityPlan(tx, actor, {
     ...input,
-    deliveryOverride: undefined,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
   });
   return {
     ruleKey,
