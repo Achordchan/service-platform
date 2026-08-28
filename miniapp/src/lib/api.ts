@@ -1055,6 +1055,8 @@ export type DeliveryPreviewRecipient = {
   userId: string;
   name: string;
   isCustomer: boolean;
+  /** 外部门户联系人：无站内、无微信，只有邮件 */
+  external: boolean;
   emailState: "READY" | "USER_OFF" | "NOT_TARGETED";
   wechatState: "READY" | "NO_BINDING" | "NO_QUOTA" | "UNSUPPORTED";
 };

@@ -50,6 +50,8 @@ type DeliveryPreview = {
     userId: string;
     name: string;
     isCustomer: boolean;
+    /** 外部门户联系人：无站内、无微信，只有邮件 */
+    external: boolean;
     emailState: EmailState;
     wechatState: WechatState;
   }>;
@@ -405,6 +407,13 @@ function DeliveryOverrideDialog({
                           >
                             {recipient.name}
                           </Typography>
+                          {recipient.external ? (
+                            <Chip
+                              size="small"
+                              variant="outlined"
+                              label="外部联系人 · 仅邮件"
+                            />
+                          ) : null}
                           {excluded.has(recipient.userId) || !notificationOn ? (
                             <Chip
                               size="small"

@@ -880,8 +880,8 @@ export async function dispatchRequestActivity(
     contentRiskReviewId: input.contentRiskReviewId,
   });
   delivery.feedback.dingtalkQueued = dingtalkQueued;
-  // 外部联系人邮件由命令层单独入队，把通道结论一并带出去给它判断
-  return { ...delivery, emailChannelEnabled };
+  // 外部联系人邮件由命令层单独入队，把通道结论与本次排除名单一并带出去给它判断
+  return { ...delivery, emailChannelEnabled, excludedUserIds };
 }
 
 

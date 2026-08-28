@@ -86,7 +86,9 @@
             color="{{item.muted ? '#98a2b3' : '#1677ff'}}"
           />
           <view class="dn-recipient-main">
-            <view class="dn-recipient-name">{{item.name}}</view>
+            <view class="dn-recipient-name">
+              {{item.name}}<text wx:if="{{item.external}}" class="dn-recipient-tag">外部联系人 · 仅邮件</text>
+            </view>
             <view wx:if="{{item.muted}}" class="dn-recipient-states">本次不提醒他</view>
             <view wx:else class="dn-recipient-states {{item.emailForced ? 'dn-recipient-forced' : ''}}">
               邮件：{{item.emailLabel}}<block wx:if="{{preview.rule.wechatSupported}}"> · 微信：{{item.wechatLabel}}</block>

@@ -11,16 +11,6 @@ import {
   type WechatTemplateKey,
 } from "@/modules/miniapp/wechat-subscribe-message-service";
 
-/**
- * 已知边界：预览只列平台用户。外部联系人（Sub2API 等外部门户创建的工单）的邮件
- * 不挂在 Notification 行上、由命令层单独入队，也没有 userId，逐人排除
- * （excludeUserIds）对他们无从谈起，因此不进这个列表。
- *
- * 行为上他们仍受本次覆盖的「邮件」开关约束（见 request-command-service 里
- * emailChannelEnabled 的用法）—— 关掉邮件他们同样不会收到。缺的只是「预览里
- * 看不到他们」这条信息，要补齐需要给预览引入非用户收件人这一类，属于后续工作。
- */
-
 /** 收件人在邮件通道上的状态 */
 export type EmailRecipientState =
   /** 会收到 */
@@ -41,11 +31,21 @@ export type WechatRecipientState =
   | "UNSUPPORTED";
 
 export type DeliveryPreviewRecipient = {
+  /**
+   * 平台用户是 User.id；外部联系人是 ExternalContact.id。
+   * 逐人排除（excludeUserIds）统一用这个字段，命令层据此决定外部联系人邮件发不发。
+   */
   userId: string;
   name: string;
   isCustomer: boolean;
   emailState: EmailRecipientState;
   wechatState: WechatRecipientState;
+  /**
+   * 外部门户联系人（Sub2API / 通用外部接入）。他们不是平台用户，没有站内通知，
+   * 邮件由命令层单独入队 —— 但预览必须列出来：不列的话弹窗会显示「0 人 /
+   * 本次没有需要提醒的人」，提交后却照样给客户发了信。
+   */
+  external: boolean;
 };
 
 export type DeliveryPreview = {
@@ -101,10 +101,26 @@ export async function resolveDeliveryPreview(
     notificationUserIds: string[];
     /** 其中本场景会发邮件的人（按规则算，未考虑个人偏好） */
     emailUserIds: string[];
+    /**
+     * 本场景还会发邮件给的外部门户联系人。他们没有站内通知、没有微信，
+     * 也没有个人退订偏好（不是平台用户），因此邮件恒为 READY。
+     */
+    externalEmailContacts?: Array<{ id: string; name: string }>;
   },
 ): Promise<DeliveryPreview> {
   const definition = ruleDefinition(input.ruleKey);
   const rule = await loadNotificationDeliveryRule(tx, input.ruleKey);
+  const externalRecipients: DeliveryPreviewRecipient[] = (
+    input.externalEmailContacts ?? []
+  ).map((contact) => ({
+    userId: contact.id,
+    name: contact.name,
+    isCustomer: true,
+    // 外部联系人不是平台用户，没有退订偏好可言；本场景要发就是会发
+    emailState: "READY" as const,
+    wechatState: "UNSUPPORTED" as const,
+    external: true,
+  }));
   const userIds = [...new Set(input.notificationUserIds)];
   const emailTargets = new Set(
     input.emailUserIds.filter((userId) => userIds.includes(userId)),
@@ -122,13 +138,14 @@ export async function resolveDeliveryPreview(
         wechatSupported: definition.wechatSupported,
       },
       mailLocalOutbox: await isMailLocalOutbox(tx),
-      recipients: [],
+      // 平台用户为空不代表没人收：外部联系人照样会收到邮件
+      recipients: externalRecipients,
       summary: {
-        total: 0,
-        emailReady: 0,
+        total: externalRecipients.length,
+        emailReady: externalRecipients.length,
         emailUserOff: 0,
         wechatReady: 0,
-        wechatUnavailable: 0,
+        wechatUnavailable: externalRecipients.length,
       },
     };
   }
@@ -191,8 +208,10 @@ export async function resolveDeliveryPreview(
       isCustomer: user.platformRole === "CUSTOMER",
       emailState,
       wechatState,
+      external: false,
     };
   });
+  recipients.push(...externalRecipients);
   recipients.sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 
   return {

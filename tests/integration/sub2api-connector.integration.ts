@@ -317,6 +317,48 @@ describe("Sub2API 外部联系人 RLS", () => {
       );
     }
   });
+
+  it("外部联系人要出现在发送预览里", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    // 必须列出他：不列的话弹窗会说「0 人 / 本次没有需要提醒的人」，
+    // 提交后却照样给客户发了信，员工也没机会把他排除掉
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    // 夹具建联系人时没留邮箱，补上才够得着邮件通知的条件
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+    const preview = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "PUBLIC_MESSAGE",
+    );
+    expect(
+      preview.externalEmailContacts.map((item) => item.id),
+    ).toContain(ids.contactA);
+
+    // 关掉外部邮件通知后就不该再出现
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    const quiet = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "PUBLIC_MESSAGE",
+    );
+    expect(quiet.externalEmailContacts).toEqual([]);
+  });
+
 });
 
 describe("Sub2API 外部项目空间隔离", () => {

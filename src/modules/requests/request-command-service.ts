@@ -642,11 +642,15 @@ export async function changeRequestStatus(
     return {
       updated,
       // 外部联系人的邮件不挂在 Notification 行上、由下面单独入队，
-      // 所以必须自己听一次本次覆盖 —— 否则员工关了邮件，外部联系人照收，
-      // 反馈还把它算作已发送
-      externalMail: delivery.emailChannelEnabled
-        ? statusMail(request, targetStatus)
-        : null,
+      // 所以必须自己听一次本次覆盖：通道开关 + 逐人排除（预览里他用
+      // ExternalContact.id 占一个收件人位，排除名单就按这个 id 记）
+      externalMail:
+        delivery.emailChannelEnabled &&
+        !delivery.excludedUserIds.includes(
+          request.createdByExternalContactId ?? "",
+        )
+          ? statusMail(request, targetStatus)
+          : null,
       deliveryFeedback: delivery.feedback,
     };
   });
@@ -1000,8 +1004,11 @@ export async function addRequestMessage(
     const externalMail =
       !isCustomer &&
       input.visibility === "CUSTOMER_VISIBLE" &&
-      // 同上：外部联系人邮件单独入队，要自己听一次本次覆盖
+      // 同上：外部联系人邮件单独入队，要自己听一次本次覆盖（通道 + 逐人排除）
       delivery.emailChannelEnabled &&
+      !delivery.excludedUserIds.includes(
+        request.createdByExternalContactId ?? "",
+      ) &&
       canSendExternalContactMail(request) &&
       contact &&
       connection
@@ -1225,6 +1232,14 @@ export function previewRequestDelivery(
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
     const assignedWorkers = workerIdsFromRequest(request);
+    // 外部门户联系人不是平台用户、没有站内通知，邮件由本模块单独入队。
+    // 但预览必须带上他：不带的话弹窗会说「0 人 / 本次没有需要提醒的人」，
+    // 提交后却照样给客户发了信，员工也没机会把他排除掉。
+    const contact = request.createdByExternalContact;
+    const externalEmailContacts =
+      canSendExternalContactMail(request) && contact
+        ? [{ id: contact.id, name: contact.displayName }]
+        : [];
     if (scene === "STATUS") {
       return previewRequestActivityRecipients(tx, actor, {
         eventType: "REQUEST_STATUS_CHANGED",
@@ -1245,7 +1260,7 @@ export function previewRequestDelivery(
         customerSpaceId: request.project.customerSpaceId,
         projectId: request.projectId,
         serviceRequestId: request.id,
-      });
+      }).then((result) => ({ ...result, externalEmailContacts }));
     }
     return previewRequestActivityRecipients(tx, actor, {
       eventType: "REQUEST_MESSAGE_CREATED",
@@ -1265,7 +1280,7 @@ export function previewRequestDelivery(
       customerSpaceId: request.project.customerSpaceId,
       projectId: request.projectId,
       serviceRequestId: request.id,
-    });
+    }).then((result) => ({ ...result, externalEmailContacts }));
   });
 }
 
