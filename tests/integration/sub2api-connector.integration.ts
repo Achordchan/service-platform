@@ -318,6 +318,39 @@ describe("Sub2API 外部联系人 RLS", () => {
     }
   });
 
+  it("外部联系人离开工单只标离线，不抹掉设备记录", async () => {
+    const sessionId = randomUUID();
+    const externalActor = {
+      id: ids.contactA,
+      bindingId: ids.binding,
+      externalUserId: "external-a",
+      name: "外部用户 A",
+      email: null,
+      username: null,
+      projectId: ids.project,
+      customerSpaceId: externalCustomerSpaceId,
+    };
+    await updateExternalPresence(externalActor, ids.requestA, {
+      action: "heartbeat",
+      sessionId,
+    });
+    await updateExternalPresence(externalActor, ids.requestA, {
+      action: "leave",
+      sessionId,
+    });
+
+    // 「客户设备与网络」里外部联系人那半边就是从这张表连到会话取 IP/UA 的；
+    // leave 直接删行的话，工单真正的提交者一关页面就再也查不到
+    const row = await owner.query<{ online: boolean }>(
+      `SELECT ("expiresAt" > NOW()) AS online
+         FROM "ExternalRequestPresence"
+        WHERE "serviceRequestId" = $1 AND "sessionId" = $2`,
+      [ids.requestA, sessionId],
+    );
+    expect(row.rowCount).toBe(1);
+    expect(row.rows[0]?.online).toBe(false);
+  });
+
   it("外部联系人要出现在发送预览里", async () => {
     const { previewRequestDelivery } = await import(
       "@/modules/requests/request-command-service"

@@ -8,6 +8,7 @@ import {
   publishTransientEvent,
 } from "@/modules/notifications/notification-service";
 import { badRequest, notFound } from "@/modules/requests/errors";
+import { PRESENCE_RETENTION_MS } from "@/modules/requests/presence-sweep-service";
 import {
   describeUserAgent,
   resolveIpLocation,
@@ -19,7 +20,10 @@ import {
 import type { RequestPresenceInput } from "@/modules/requests/request-schemas";
 
 const PRESENCE_TTL_MS = 3 * 60 * 1000;
-const STALE_RETENTION_MS = 24 * 60 * 60 * 1000;
+// 保留期与外部联系人那条路径共用一个常量，避免两边各写一份而漂移。
+// 真正兜底的是 request-presence-sweep 定时任务：这里顺带清理只在有人再次心跳时
+// 才跑、且只清当前工单，工单结束或没人再打开就永远清不到。
+const STALE_RETENTION_MS = PRESENCE_RETENTION_MS;
 const TYPING_TTL_MS = 12_000;
 
 export type RequestPresenceGroup = "CUSTOMER" | "STAFF";
@@ -194,7 +198,8 @@ export function updateRequestPresence(
       // 不删行，只把它标成已过期。这张表同时是「客户设备与网络」的数据来源，
       // 删掉的话客户一关页面，后台就只剩「还没有打开过这个工单」，设备、IP、
       // 最近活跃全没了 —— 而那恰恰是最需要查的时候。
-      // 下面本来就有按 STALE_RETENTION_MS 的过期清理，留痕不会无限增长。
+      // 保留期由 request-presence-sweep 定时任务兜底清理（下面那次顺带清理
+      // 只覆盖当前工单，靠不住）。
       await tx.requestPresence.updateMany({
         where: {
           serviceRequestId: request.id,

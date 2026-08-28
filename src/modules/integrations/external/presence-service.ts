@@ -9,6 +9,7 @@ import {
   publishTransientEvent,
 } from "@/modules/notifications/notification-service";
 import { DomainError } from "@/modules/projects/errors";
+import { PRESENCE_RETENTION_MS } from "@/modules/requests/presence-sweep-service";
 import type { z } from "zod";
 
 const PRESENCE_TTL_MS = 3 * 60 * 1000;
@@ -61,9 +62,13 @@ export function updateExternalPresence(
     }
     const now = new Date();
     const wasOnline = await isCustomerGroupOnline(tx, request.id, now);
-    // Drop expired presence rows opportunistically to keep the table bounded.
+    // 顺带清理过了保留期的行。不能按 expiresAt <= now 清 —— 离开时是把行标成
+    // 已过期而不是删掉（见下），立刻清就等于没保留。真正的兜底是
+    // request-presence-sweep 定时任务，这里只是顺手。
     await tx.externalRequestPresence.deleteMany({
-      where: { expiresAt: { lte: now } },
+      where: {
+        expiresAt: { lt: new Date(now.getTime() - PRESENCE_RETENTION_MS) },
+      },
     });
     if (input.action === "heartbeat" || (input.action === "typing" && input.typing)) {
       await tx.externalRequestPresence.upsert({
@@ -87,12 +92,16 @@ export function updateExternalPresence(
         data: { lastSeenAt: now },
       });
     } else if (input.action === "leave") {
-      await tx.externalRequestPresence.deleteMany({
+      // 与站内 presence 同理：不删行，只标成已过期。这张表是「客户设备与网络」
+      // 里外部联系人那半边的数据来源（SQL 函数从它连到 ExternalEmbedSession 取
+      // IP/UA），删掉的话对方一关页面，后台就再也看不到工单真正提交者的设备信息。
+      await tx.externalRequestPresence.updateMany({
         where: {
           serviceRequestId: request.id,
           externalContactId: actor.id,
           sessionId: input.sessionId,
         },
+        data: { expiresAt: now },
       });
     }
     const isOnline = await isCustomerGroupOnline(tx, request.id, now);

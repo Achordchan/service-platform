@@ -42,6 +42,7 @@ import {
   cleanupExpiredUniversalLaunchTickets,
 } from "@/modules/integrations/universal/ticket-service";
 import { cleanupExpiredMiniappIdentityData } from "@/modules/miniapp/identity-sweep-service";
+import { cleanupExpiredRequestPresence } from "@/modules/requests/presence-sweep-service";
 import {
   listDueWechatSubscribeDeliveries,
   processWechatSubscribeMessageDelivery,
@@ -81,6 +82,7 @@ export const WECHAT_SUBSCRIBE_MESSAGE_JOB = "wechat-subscribe-message";
 export const WECHAT_SUBSCRIBE_SWEEP_JOB = "wechat-subscribe-sweep";
 export const ATTACHMENT_PREVIEW_JOB = "attachment-preview-render";
 export const ATTACHMENT_PREVIEW_SWEEP_JOB = "attachment-preview-sweep";
+export const REQUEST_PRESENCE_SWEEP_JOB = "request-presence-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -150,6 +152,7 @@ async function startBoss() {
   await boss.createQueue(CONTENT_RISK_SWEEP_JOB);
   await boss.createQueue(ATTACHMENT_PREVIEW_JOB);
   await boss.createQueue(ATTACHMENT_PREVIEW_SWEEP_JOB);
+  await boss.createQueue(REQUEST_PRESENCE_SWEEP_JOB);
   return boss;
 }
 
@@ -826,6 +829,8 @@ export async function startMailWorker() {
     await boss.schedule(MINIAPP_IDENTITY_SWEEP_JOB, "23 4 * * *");
     await boss.schedule(WECHAT_SUBSCRIBE_SWEEP_JOB, "* * * * *");
     await boss.schedule(ATTACHMENT_PREVIEW_SWEEP_JOB, "*/10 * * * *");
+    // 在线记录的保留期清理：错开整点，避开其它每日任务
+    await boss.schedule(REQUEST_PRESENCE_SWEEP_JOB, "41 3 * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -935,6 +940,13 @@ export async function startMailWorker() {
       { batchSize: 1, localConcurrency: 1 },
       async () => {
         await cleanupExpiredMiniappIdentityData();
+      },
+    );
+    await boss.work(
+      REQUEST_PRESENCE_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await cleanupExpiredRequestPresence();
       },
     );
     await boss.work(WECHAT_SUBSCRIBE_SWEEP_JOB, { batchSize: 1, localConcurrency: 1 }, async () => {
