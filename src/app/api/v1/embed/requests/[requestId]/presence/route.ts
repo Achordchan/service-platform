@@ -11,7 +11,13 @@ export async function POST(request: Request, context: RouteContext) {
     const { requestId } = await context.params;
     const input = embedPresenceSchema.parse(await readJson(request));
     return Response.json({
-      data: await updateExternalPresence(session.actor, requestId, input),
+      data: await updateExternalPresence(
+        session.actor,
+        requestId,
+        input,
+        // 设备信息（IP / UA）记在这个会话上，presence 要存它才连得回去
+        session.sessionId,
+      ),
     });
   } catch (error) {
     return routeError(error);

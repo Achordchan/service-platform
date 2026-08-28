@@ -43,6 +43,12 @@ export function updateExternalPresence(
   actor: ExternalActor,
   requestId: string,
   input: PresenceInput,
+  /**
+   * 已鉴权的 ExternalEmbedSession.id。IP 与 UA 记在会话上，「客户设备与网络」
+   * 靠这一列去连；input.sessionId 是前端 crypto.randomUUID 生成的每标签页临时 id，
+   * 跟会话表没有任何关系，拿它连永远连不上。
+   */
+  embedSessionId?: string,
 ) {
   return withExternalActorDb(actor, async (tx) => {
     const request = await tx.serviceRequest.findFirst({
@@ -83,9 +89,14 @@ export function updateExternalPresence(
           serviceRequestId: request.id,
           externalContactId: actor.id,
           sessionId: input.sessionId,
+          embedSessionId,
           expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS),
         },
-        update: { expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS) },
+        update: {
+          expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS),
+          // 同一标签页换了会话（重新进入）时要跟上，否则设备信息停在旧会话
+          ...(embedSessionId ? { embedSessionId } : {}),
+        },
       });
       await tx.externalContact.update({
         where: { id: actor.id },

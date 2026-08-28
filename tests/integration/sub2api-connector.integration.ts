@@ -318,6 +318,52 @@ describe("Sub2API 外部联系人 RLS", () => {
     }
   });
 
+  it("外部联系人的设备信息要真能查出来（presence 必须关联真实会话）", async () => {
+    const { listRequestClientContexts } = await import(
+      "@/modules/requests/request-presence-service"
+    );
+    // 造一个真实的 ExternalEmbedSession：IP 与 UA 记在它身上
+    const embedSessionId = randomUUID();
+    await owner.query(
+      `INSERT INTO "ExternalEmbedSession" (
+         id, "tokenHash", "externalContactId", "bindingId", "expiresAt",
+         "ipAddress", "userAgent"
+       ) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day', $5, $6)`,
+      [
+        embedSessionId,
+        `hash-${embedSessionId}`,
+        ids.contactA,
+        ids.binding,
+        "203.0.113.7",
+        "Mozilla/5.0 (Macintosh) ExternalPortal/1.0",
+      ],
+    );
+    // presence 的 sessionId 是前端随机数，与会话 id 无关 —— 必须靠 embedSessionId 关联
+    await owner.query(
+      `INSERT INTO "ExternalRequestPresence" (
+         id, "serviceRequestId", "externalContactId", "sessionId",
+         "embedSessionId", "expiresAt", "updatedAt"
+       ) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '3 minutes', NOW())`,
+      [randomUUID(), ids.requestA, ids.contactA, randomUUID(), embedSessionId],
+    );
+
+    const rows = await listRequestClientContexts(adminActor, ids.requestA);
+    const external = rows.find((row) => row.external);
+    expect(external).toBeTruthy();
+    expect(external?.ipAddress).toBe("203.0.113.7");
+    expect(external?.userAgent).toContain("ExternalPortal/1.0");
+    // UA 解析后要能给出可读设备描述，不能只是原始串
+    expect(external?.device).toBeTruthy();
+
+    await owner.query(
+      'DELETE FROM "ExternalRequestPresence" WHERE "embedSessionId" = $1',
+      [embedSessionId],
+    );
+    await owner.query('DELETE FROM "ExternalEmbedSession" WHERE id = $1', [
+      embedSessionId,
+    ]);
+  });
+
   it("外部联系人离开工单只标离线，不抹掉设备记录", async () => {
     const sessionId = randomUUID();
     const externalActor = {
