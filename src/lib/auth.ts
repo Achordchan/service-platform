@@ -165,7 +165,8 @@ function authAuditPlugin(): BetterAuthPlugin {
             if (!userId || context.context.returned instanceof APIError) return;
             await recordAuthEvent({
               action: "USER_LOGOUT",
-              userId,
+              actorUserId: userId,
+              targetUserId: userId,
               ipAddress: hookIp(context.headers),
               userAgent: hookUserAgent(context.headers),
             });
@@ -226,9 +227,11 @@ export const auth = betterAuth({
         },
         actionUrl: url,
       });
+      // 未认证的「忘记密码」表单：任何人都能替他人邮箱触发，只记为目标账号，
+      // actor 留空——不能把重置请求归到受害者本人名下。
       await recordAuthEvent({
         action: "USER_PASSWORD_RESET_REQUESTED",
-        userId: user.id,
+        targetUserId: user.id,
         ipAddress: hookIp(request?.headers),
         userAgent: hookUserAgent(request?.headers),
       });
@@ -261,7 +264,8 @@ export const auth = betterAuth({
           // 故优先用与失败/登出一致的可信最右段助手，缺请求头时才回落 session 值。
           await recordAuthEvent({
             action: "USER_LOGIN",
-            userId: session.userId,
+            actorUserId: session.userId,
+            targetUserId: session.userId,
             ipAddress: hookIp(context?.headers) ?? session.ipAddress ?? null,
             userAgent:
               hookUserAgent(context?.headers) ?? session.userAgent ?? null,

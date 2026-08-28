@@ -211,6 +211,19 @@ const actionLabels: Record<string, string> = {
   EXTERNAL_CONTACT_STATUS_UPDATED: "更新外部联系人状态",
 };
 
+/**
+ * 未认证来源的动作：无已认证操作者（actorId 为空）。展示端据此把空 actor 归类为
+ * 「未认证访客」，而非误当作系统/自动任务。
+ */
+const UNAUTHENTICATED_ACTIONS = new Set<string>([
+  "USER_LOGIN_FAILED",
+  "USER_PASSWORD_RESET_REQUESTED",
+]);
+
+export function isUnauthenticatedAuditAction(action: string): boolean {
+  return UNAUTHENTICATED_ACTIONS.has(action);
+}
+
 /** Chinese verb for an action code, or `null` when the suffix is unknown. */
 export function auditActionVerb(action: string): string | null {
   const suffix = action.slice(action.lastIndexOf("_") + 1);

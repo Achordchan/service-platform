@@ -27,6 +27,7 @@ import { queryKeys } from "@/lib/query-keys";
 import {
   auditActionLabel,
   auditResourceLabel,
+  isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 
 type AuditLogRow = {
@@ -65,6 +66,21 @@ const emptyFilters = {
 };
 
 const noRows = gridNoRowsOverlay("没有符合条件的审计记录", <HistoryOutlinedIcon />);
+
+/** 执行人展示：优先真实操作者 / 外部联系人；未认证动作（登录失败、忘记密码）显式
+ * 标为「未认证访客」，其余空 actor 才归为系统 / 自动任务。 */
+function auditActorDisplay(row: AuditLogRow): { name: string; secondary: string } {
+  if (row.actorName) {
+    return { name: row.actorName, secondary: row.actorEmail ?? "—" };
+  }
+  if (row.externalActorName) {
+    return { name: row.externalActorName, secondary: "外部联系人" };
+  }
+  if (isUnauthenticatedAuditAction(row.action)) {
+    return { name: "未认证访客", secondary: "未登录尝试" };
+  }
+  return { name: "系统", secondary: "自动任务" };
+}
 
 export function AuditLogWorkspace() {
   const [filters, setFilters] = useState(emptyFilters);
@@ -128,10 +144,7 @@ export function AuditLogWorkspace() {
         minWidth: 180,
         flex: 1,
         renderCell: ({ row }) => {
-          const name =
-            row.actorName ?? row.externalActorName ?? "系统";
-          const secondary = row.actorEmail
-            ?? (row.externalActorName ? "外部联系人" : "自动任务");
+          const { name, secondary } = auditActorDisplay(row);
           return (
             <Stack spacing={0.25} sx={{ minWidth: 0 }}>
               <Typography variant="body2" noWrap>
@@ -330,8 +343,7 @@ export function AuditLogWorkspace() {
           ) : (
             rows.map((row) => {
               const label = auditActionLabel(row.action, row.resourceType);
-              const actorName =
-                row.actorName ?? row.externalActorName ?? "系统";
+              const actorName = auditActorDisplay(row).name;
               const time = new Date(row.createdAt).toLocaleString("zh-CN", {
                 hour12: false,
               });
@@ -464,7 +476,11 @@ function AuditDetailDialog({
                 value={
                   detail.actorName
                     ? `${detail.actorName}${detail.actorEmail ? ` (${detail.actorEmail})` : ""}`
-                    : (detail.externalActorName ?? "系统 / 自动任务")
+                    : detail.externalActorName
+                      ? detail.externalActorName
+                      : isUnauthenticatedAuditAction(detail.action)
+                        ? "未认证访客（未登录尝试）"
+                        : "系统 / 自动任务"
                 }
               />
               <DetailRow label="结果" value={detail.result} />

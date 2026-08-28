@@ -3,6 +3,7 @@ import {
   auditActionLabel,
   auditActionVerb,
   auditResourceLabel,
+  isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 
 describe("auditActionLabel", () => {
@@ -60,6 +61,21 @@ describe("auditActionVerb", () => {
     expect(auditActionVerb("PROJECT_CREATED")).toBe("创建");
     expect(auditActionVerb("REQUEST_STATUS_CHANGED")).toBe("变更");
     expect(auditActionVerb("SOMETHING_WEIRD")).toBeNull();
+  });
+});
+
+describe("isUnauthenticatedAuditAction", () => {
+  it("登录失败与忘记密码属未认证来源（展示端标为未认证访客）", () => {
+    expect(isUnauthenticatedAuditAction("USER_LOGIN_FAILED")).toBe(true);
+    expect(isUnauthenticatedAuditAction("USER_PASSWORD_RESET_REQUESTED")).toBe(
+      true,
+    );
+  });
+
+  it("已认证动作与系统动作不算未认证", () => {
+    expect(isUnauthenticatedAuditAction("USER_LOGIN")).toBe(false);
+    expect(isUnauthenticatedAuditAction("USER_LOGOUT")).toBe(false);
+    expect(isUnauthenticatedAuditAction("PROJECT_CREATED")).toBe(false);
   });
 });
 
