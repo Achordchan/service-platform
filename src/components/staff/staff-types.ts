@@ -90,6 +90,7 @@ export type ProjectMilestone = {
   endDate?: string | null;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  attachments?: RequestAttachment[];
 };
 
 export type ProjectUpdate = {
@@ -102,6 +103,7 @@ export type ProjectUpdate = {
   updatedAt: string;
   hasEditHistory: boolean;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  attachments?: RequestAttachment[];
   comments: Array<{
     id: string;
     body: string;
@@ -161,6 +163,9 @@ export type RequestAttachment = {
   visibility: ContentVisibility;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  /** 项目文件列表专用：来源与是否由「添加到项目文件」收录 */
+  source?: "PROJECT" | "REQUEST" | "UPDATE" | "MILESTONE";
+  pinned?: boolean;
 };
 
 export type RequestAssignee = {

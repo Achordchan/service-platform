@@ -1,5 +1,6 @@
 import { ensureLoggedIn, fetchMe, logout, type MiniappMe } from "../../lib/auth";
 import { ensureBadgeSync } from "../../lib/badge";
+import { PLATFORM_ROLE_LABELS } from "../../lib/format";
 
 function formatDateTime(value: string | null): string {
   if (!value) return "从未登录";
@@ -13,6 +14,7 @@ Page({
     loading: true,
     loadError: "",
     me: null as MiniappMe | null,
+    roleLabel: "",
     boundAtText: "",
     lastLoginText: "",
   },
@@ -30,6 +32,7 @@ Page({
       const me = await fetchMe();
       this.setData({
         me,
+        roleLabel: PLATFORM_ROLE_LABELS[me.platformRole] ?? me.platformRole,
         boundAtText: me.wechatBinding ? formatDateTime(me.wechatBinding.boundAt) : "",
         lastLoginText: me.wechatBinding ? formatDateTime(me.wechatBinding.lastLoginAt) : "",
         loading: false,
@@ -49,6 +52,12 @@ Page({
   },
   onOpenNotificationSettings() {
     wx.navigateTo({ url: "/pages/notification-settings/page" });
+  },
+  onOpenDashboard() {
+    wx.navigateTo({ url: "/pages/staff-dashboard/page" });
+  },
+  onOpenAuditLogs() {
+    wx.navigateTo({ url: "/pages/audit-logs/page" });
   },
   onOpenMembers() {
     const spaces = (this.data.me?.customerSpaces ?? []).filter(

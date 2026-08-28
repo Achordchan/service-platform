@@ -1,0 +1,39 @@
+<import src="/components/states.wxml" />
+
+<view class="audit-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 5}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '无法查看', desc: loadError, retry: true}}"
+  />
+
+  <template
+    wx:elif="{{rows.length === 0}}"
+    is="state-empty"
+    data="{{icon: 'file', title: '暂无审计记录', desc: '系统操作会记录在这里'}}"
+  />
+
+  <block wx:else>
+    <view class="audit-total text-secondary">共 {{total}} 条记录</view>
+    <view wx:for="{{rows}}" wx:key="id" class="audit-item">
+      <view class="audit-head">
+        <view class="audit-action {{item.failed ? 'audit-failed' : ''}}">
+          {{item.actionLabel}}
+        </view>
+        <view class="audit-time text-secondary">{{item.timeText}}</view>
+      </view>
+      <view class="audit-actor">
+        <text class="audit-actor-name">{{item.actorDisplay.name}}</text>
+        <text class="audit-actor-sec text-secondary"> · {{item.actorDisplay.secondary}}</text>
+      </view>
+      <view class="audit-meta text-secondary">
+        {{item.resourceLabel}}{{item.ipAddress ? ' · ' + item.ipAddress : ''}}{{item.failed ? ' · 失败' : ''}}
+      </view>
+    </view>
+
+    <view wx:if="{{loadingMore}}" class="audit-more">加载中…</view>
+    <view wx:elif="{{!hasMore}}" class="audit-more">没有更多了</view>
+  </block>
+</view>

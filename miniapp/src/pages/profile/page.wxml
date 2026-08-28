@@ -8,11 +8,20 @@
   <block wx:elif="{{me}}">
     <!-- 空间与身份：低调高端，加大视觉占比 -->
     <view class="identity-card">
-      <view class="identity-label">我的客户空间</view>
-      <view wx:for="{{me.customerSpaces}}" wx:key="id" class="identity-space">
-        <view class="identity-space-name">{{item.name}}</view>
-        <view class="identity-space-role">{{item.role === 'OWNER' ? '负责人' : '成员'}}</view>
-      </view>
+      <block wx:if="{{me.isStaff}}">
+        <view class="identity-label">内部工作账号</view>
+        <view class="identity-space">
+          <view class="identity-space-name">服务支持中心 · 后台</view>
+          <view class="identity-space-role identity-role-staff">{{roleLabel}}</view>
+        </view>
+      </block>
+      <block wx:else>
+        <view class="identity-label">我的客户空间</view>
+        <view wx:for="{{me.customerSpaces}}" wx:key="id" class="identity-space">
+          <view class="identity-space-name">{{item.name}}</view>
+          <view class="identity-space-role">{{item.role === 'OWNER' ? '负责人' : '成员'}}</view>
+        </view>
+      </block>
       <view class="identity-divider"></view>
       <view class="identity-user">
         <view class="identity-avatar">{{me.user.name[0]}}</view>
@@ -45,6 +54,24 @@
         <view class="row-left">
           <t-icon name="usergroup" size="38rpx" color="#1677ff" />
           <text>成员管理</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+    </view>
+
+    <!-- 后台工具（员工可见）-->
+    <view wx:if="{{me.isStaff}}" class="card link-card">
+      <view class="row" hover-class="hover-card" bindtap="onOpenDashboard">
+        <view class="row-left">
+          <t-icon name="chart" size="38rpx" color="#1677ff" />
+          <text>工作台</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+      <view wx:if="{{me.isPlatformAdmin}}" class="row" hover-class="hover-card" bindtap="onOpenAuditLogs">
+        <view class="row-left">
+          <t-icon name="file-1" size="38rpx" color="#1677ff" />
+          <text>审计日志</text>
         </view>
         <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
       </view>

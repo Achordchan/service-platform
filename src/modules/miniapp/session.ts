@@ -31,15 +31,16 @@ export async function resolveMiniappSessionFromAuthorization(
       expiresAt: true,
       revokedAt: true,
       lastSeenAt: true,
-      user: { select: { deletedAt: true, platformRole: true } },
+      user: { select: { deletedAt: true } },
     },
   });
+  // 客户与内部人员（项目经理/技术/平台管理员）均可持有小程序会话，
+  // 数据可见性与操作权限由 /api/v1 服务层按 actor（RLS + 权限函数）裁决。
   if (
     !record ||
     record.revokedAt ||
     record.expiresAt.getTime() <= Date.now() ||
-    record.user.deletedAt ||
-    record.user.platformRole !== "CUSTOMER"
+    record.user.deletedAt
   ) {
     return null;
   }

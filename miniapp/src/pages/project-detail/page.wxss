@@ -126,56 +126,6 @@
   margin-top: 6rpx;
 }
 
-.timeline {
-  padding: 8rpx 24rpx 40rpx;
-}
-
-.milestone-item {
-  display: flex;
-  gap: 20rpx;
-}
-
-.milestone-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-.milestone-dot {
-  width: 22rpx;
-  height: 22rpx;
-  border-radius: 50%;
-  margin-top: 10rpx;
-  box-shadow: 0 0 0 6rpx var(--card-bg);
-}
-
-.ms-COMPLETED { background: var(--success); }
-.ms-IN_PROGRESS { background: var(--brand); }
-.ms-NOT_STARTED { background: rgba(16, 24, 40, 0.18); }
-
-.milestone-line {
-  width: 3rpx;
-  flex: 1;
-  background: var(--divider);
-  margin: 6rpx 0;
-}
-
-.milestone-body {
-  flex: 1;
-  padding-bottom: 36rpx;
-}
-
-.milestone-title {
-  font-weight: 600;
-}
-
-.milestone-desc {
-  margin-top: 10rpx;
-  font-size: 26rpx;
-  color: var(--text-secondary);
-}
-
 .update-title {
   font-weight: 650;
   font-size: 30rpx;
@@ -274,21 +224,9 @@
   margin-top: -4rpx;
 }
 
-/* 服务请求 tab */
+/* 服务请求 tab：新建入口统一走右下角悬浮按钮，这里只留计数 */
 .request-actions {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 12rpx 28rpx;
-}
-
-.new-request-btn {
-  color: var(--brand);
-  font-size: 26rpx;
-  font-weight: 600;
-  padding: 10rpx 24rpx;
-  background: var(--brand-soft);
-  border-radius: 999rpx;
 }
 
 .req-head {
@@ -335,4 +273,159 @@
 .file-sub {
   font-size: 22rpx;
   margin-top: 4rpx;
+}
+
+/* —— 交付写操作（员工/管理员）—— */
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.section-action {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  font-size: 26rpx;
+  color: #1677ff;
+}
+
+.row-editable {
+  cursor: pointer;
+}
+
+.row-value-edit {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+/* 发布动态 / 新增里程碑 按钮 */
+/* 右下角悬浮新增：与工单列表的新建按钮同一套视觉 */
+.fab {
+  position: fixed;
+  right: 40rpx;
+  bottom: calc(60rpx + env(safe-area-inset-bottom));
+  width: 112rpx;
+  height: 112rpx;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #4096ff, var(--brand));
+  color: #ffffff;
+  font-size: 54rpx;
+  font-weight: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 12rpx 32rpx rgba(22, 119, 255, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.fab-spacer {
+  height: calc(180rpx + env(safe-area-inset-bottom));
+}
+
+.fab-hover {
+  transform: scale(0.94);
+  box-shadow: 0 6rpx 20rpx rgba(22, 119, 255, 0.3);
+}
+
+/* 当前阶段编辑面板 */
+.stage-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 60rpx;
+}
+
+.stage-panel {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--card-bg);
+  border-radius: 24rpx;
+  padding: 36rpx 32rpx 28rpx;
+}
+
+.stage-title {
+  font-size: 32rpx;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 28rpx;
+}
+
+/* 单行 input：固定高度 + 只留横向 padding + 显式同一行高（见 app.wxss 说明） */
+.stage-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0 24rpx;
+  background: var(--page-bg);
+  border-radius: 14rpx;
+  font-size: 30rpx;
+}
+
+.stage-placeholder {
+  color: var(--text-tertiary);
+  font-size: 30rpx;
+  line-height: 88rpx;
+}
+
+.stage-hint {
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+}
+
+.stage-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 32rpx;
+}
+
+.stage-btn {
+  flex: 1;
+  margin: 0;
+}
+
+/* 文件来源筛选 */
+.file-source-bar {
+  display: flex;
+  gap: 14rpx;
+  margin-bottom: 16rpx;
+}
+
+.file-source-chip {
+  padding: 8rpx 24rpx;
+  border-radius: 999rpx;
+  background: var(--page-bg);
+  color: var(--text-secondary);
+  font-size: 23rpx;
+}
+
+.file-source-chip-active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.file-source-tag {
+  margin-left: 12rpx;
+  padding: 2rpx 12rpx;
+  border-radius: 999rpx;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 20rpx;
+}
+
+
+/* 里程碑标题与状态标签同排（与动态卡片同构） */
+.update-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
 }

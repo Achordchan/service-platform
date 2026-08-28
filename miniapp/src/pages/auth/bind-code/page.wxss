@@ -12,6 +12,12 @@
   text-align: center;
 }
 
+.code-placeholder {
+  color: var(--text-tertiary);
+  font-size: 34rpx;
+  line-height: 84rpx;
+}
+
 .use-account {
   text-align: center;
   margin: 32rpx 48rpx;

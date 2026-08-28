@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import { miniappBindCodeSchema } from "@/modules/miniapp/schemas";
 import { bindTicketToCode } from "@/modules/miniapp/wechat-binding-service";
 import { readJson, routeError } from "@/modules/projects/api-utils";
@@ -8,7 +9,10 @@ export async function POST(request: Request) {
     const input = miniappBindCodeSchema.parse(
       await readJson(request, { maxBytes: 8 * 1024 }),
     );
-    const result = await bindTicketToCode(input);
+    const result = await bindTicketToCode(input, {
+      ipAddress: clientIpFromHeaders(request.headers),
+      userAgent: request.headers.get("user-agent"),
+    });
     return NextResponse.json({
       data: {
         token: result.token,

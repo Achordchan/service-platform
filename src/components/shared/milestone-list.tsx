@@ -33,6 +33,7 @@ export type MilestoneListItem = {
   endDate?: string | null;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  attachments?: Array<{ id: string }>;
 };
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -197,6 +198,11 @@ export function MilestoneList({
                       {dateRange}
                     </Typography>
                   </Box>
+                ) : null}
+                {!revoked && (milestone.attachments?.length ?? 0) > 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {milestone.attachments!.length} 个附件（已收录到项目文件）
+                  </Typography>
                 ) : null}
                 {!revoked && (milestone.description || renderActions) ? (
                   <Stack

@@ -1,0 +1,64 @@
+.audit-page {
+  padding: 24rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.audit-total {
+  font-size: 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.audit-item {
+  background: var(--card-bg, #fff);
+  border-radius: 16rpx;
+  padding: 24rpx;
+  margin-bottom: 16rpx;
+}
+
+.audit-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.audit-action {
+  font-size: 30rpx;
+  font-weight: 600;
+}
+
+.audit-failed {
+  color: #d14343;
+}
+
+.audit-time {
+  flex-shrink: 0;
+  font-size: 22rpx;
+}
+
+.audit-actor {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+}
+
+.audit-actor-name {
+  font-weight: 500;
+}
+
+.audit-actor-sec {
+  font-size: 24rpx;
+}
+
+.audit-meta {
+  margin-top: 8rpx;
+  font-size: 23rpx;
+  word-break: break-all;
+}
+
+.audit-more {
+  padding: 30rpx 0;
+  text-align: center;
+  font-size: 24rpx;
+  color: var(--text-tertiary, #98a2b3);
+}

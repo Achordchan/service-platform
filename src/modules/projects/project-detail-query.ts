@@ -126,15 +126,27 @@ export async function loadProjectDetail(
       ? await tx.attachment.findMany({
           where: {
             projectId,
-            projectUpdateId: null,
-            updateCommentId: null,
-            milestoneId: null,
-            serviceRequestId: null,
-            requestMessageId: null,
-            inline: false,
             ...(actor.isStaff
               ? {}
               : { visibility: "CUSTOMER_VISIBLE" as const }),
+            OR: [
+              // 项目级手动上传
+              {
+                projectUpdateId: null,
+                updateCommentId: null,
+                milestoneId: null,
+                serviceRequestId: null,
+                requestMessageId: null,
+                inline: false,
+              },
+              // 进度动态 / 里程碑上的文件附件：自动收录，无需手动添加
+              // （正文内嵌图不算文件，仍排除）
+              { projectUpdateId: { not: null }, inline: false },
+              { milestoneId: { not: null }, inline: false },
+              // 从工单聊天里显式「添加到项目文件」的。RLS 仍按原归属裁决，
+              // 看不到源工单的人读不到这些行，收录不放宽任何可见性。
+              { pinnedToProjectAt: { not: null } },
+            ],
           },
           select: {
             id: true,
@@ -147,10 +159,57 @@ export async function loadProjectDetail(
             visibility: true,
             uploadedById: true,
             createdAt: true,
+            pinnedToProjectAt: true,
+            serviceRequestId: true,
+            projectUpdateId: true,
+            updateCommentId: true,
+            milestoneId: true,
+            inline: true,
           },
           orderBy: { createdAt: "desc" },
         })
       : [];
+  const decorateAttachment = (attachment: (typeof attachments)[number]) => {
+    const revoked =
+      !actor.isPlatformAdmin &&
+      riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED";
+    return {
+      ...attachment,
+      originalName: revoked ? "" : attachment.originalName,
+      title: revoked ? null : attachment.title,
+      note: revoked ? null : attachment.note,
+      // 来源：让文件列表能按「项目文件 / 来自沟通」分流并标注出处
+      source: attachment.serviceRequestId
+        ? ("REQUEST" as const)
+        : attachment.projectUpdateId || attachment.updateCommentId
+          ? ("UPDATE" as const)
+          : attachment.milestoneId
+            ? ("MILESTONE" as const)
+            : ("PROJECT" as const),
+      pinned: Boolean(attachment.pinnedToProjectAt),
+      contentRiskStatus: riskStatus(
+        "ATTACHMENT",
+        attachment.id,
+        attachment.uploadedById === actor.id,
+      ),
+    };
+  };
+  // 同一批数据两用：文件 tab 用全量，动态/里程碑各自渲染自己的附件
+  const attachmentsByUpdateId = new Map<string, typeof attachments>();
+  const attachmentsByMilestoneId = new Map<string, typeof attachments>();
+  for (const attachment of attachments) {
+    if (attachment.inline) continue;
+    if (attachment.projectUpdateId) {
+      const list = attachmentsByUpdateId.get(attachment.projectUpdateId) ?? [];
+      list.push(attachment);
+      attachmentsByUpdateId.set(attachment.projectUpdateId, list);
+    }
+    if (attachment.milestoneId) {
+      const list = attachmentsByMilestoneId.get(attachment.milestoneId) ?? [];
+      list.push(attachment);
+      attachmentsByMilestoneId.set(attachment.milestoneId, list);
+    }
+  }
   const pluginBindings = await tx.projectPluginBinding.findMany({
     where: { projectId },
     select: { pluginKey: true, status: true },
@@ -246,6 +305,9 @@ export async function loadProjectDetail(
           : milestone.description
             ? sanitizeMessageHtml(milestone.description)
             : null,
+      attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
+        decorateAttachment,
+      ),
     })),
     updates: updates.map((update) => ({
       ...update,
@@ -264,6 +326,9 @@ export async function loadProjectDetail(
         riskStatus("PROJECT_UPDATE", update.id, false) === "REVOKED"
           ? ""
           : sanitizeMessageHtml(update.body),
+      attachments: (attachmentsByUpdateId.get(update.id) ?? []).map(
+        decorateAttachment,
+      ),
       author: authorById.get(update.authorId)!,
       hasEditHistory: updatesWithRevisions.has(update.id),
       comments: (commentsByUpdateId.get(update.id) ?? []).map((comment) => ({
@@ -282,22 +347,7 @@ export async function loadProjectDetail(
         hasEditHistory: commentsWithRevisions.has(comment.id),
       })),
     })),
-    attachments: attachments.map((attachment) => {
-      const revoked =
-        !actor.isPlatformAdmin &&
-        riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED";
-      return {
-        ...attachment,
-        originalName: revoked ? "" : attachment.originalName,
-        title: revoked ? null : attachment.title,
-        note: revoked ? null : attachment.note,
-        contentRiskStatus: riskStatus(
-          "ATTACHMENT",
-          attachment.id,
-          attachment.uploadedById === actor.id,
-        ),
-      };
-    }),
+    attachments: attachments.map(decorateAttachment),
     pluginBindings,
     contentRiskUiEnabled: contentRisk.enabled,
     progress: progress.percentage,

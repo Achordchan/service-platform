@@ -1,0 +1,110 @@
+<import src="/components/states.wxml" />
+
+<view class="edit-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+  <view wx:elif="{{loadError}}" class="edit-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="edit-card">
+      <view class="edit-label">项目标题</view>
+      <input
+        class="edit-input"
+        value="{{title}}"
+        maxlength="200"
+        placeholder="项目名称"
+        placeholder-class="edit-placeholder"
+        bindinput="onTitleInput"
+      />
+
+      <view class="edit-label">项目状态</view>
+      <picker
+        mode="selector"
+        range="{{statusOptions}}"
+        range-key="label"
+        value="{{statusIndex}}"
+        bindchange="onStatusChange"
+      >
+        <view class="edit-picker">
+          {{statusOptions[statusIndex].label}}
+          <t-icon name="chevron-down" size="32rpx" color="#98a2b3" />
+        </view>
+      </picker>
+
+      <view class="edit-label">开始日期</view>
+      <view class="edit-date-row">
+        <picker mode="date" value="{{startDate}}" bindchange="onStartDateChange">
+          <view class="edit-picker">{{startDate || '未设置'}}</view>
+        </picker>
+        <text wx:if="{{startDate}}" class="edit-date-clear" bindtap="onClearStart">清除</text>
+      </view>
+
+      <view class="edit-label">结束日期</view>
+      <view class="edit-date-row">
+        <picker mode="date" value="{{endDate}}" bindchange="onEndDateChange">
+          <view class="edit-picker">{{endDate || '未设置'}}</view>
+        </picker>
+        <text wx:if="{{endDate}}" class="edit-date-clear" bindtap="onClearEnd">清除</text>
+      </view>
+
+      <view class="edit-label">项目描述（可选）</view>
+      <textarea
+        class="edit-textarea"
+        value="{{descText}}"
+        maxlength="5000"
+        auto-height
+        placeholder="项目简介…"
+        placeholder-class="edit-textarea-placeholder"
+        bindinput="onDescInput"
+      ></textarea>
+    </view>
+
+    <view class="edit-card">
+      <view class="edit-section-title">对客户展示</view>
+      <view class="toggle-row">
+        <view class="toggle-main">
+          <view class="toggle-title">里程碑</view>
+          <view class="toggle-desc">客户端是否展示里程碑</view>
+        </view>
+        <switch checked="{{showMilestones}}" color="#1677ff" data-key="showMilestones" bindchange="onToggle" />
+      </view>
+      <view class="toggle-row">
+        <view class="toggle-main">
+          <view class="toggle-title">整体进度</view>
+          <view class="toggle-desc">客户端是否展示进度百分比</view>
+        </view>
+        <switch checked="{{showProgress}}" color="#1677ff" data-key="showProgress" bindchange="onToggle" />
+      </view>
+      <view class="toggle-row">
+        <view class="toggle-main">
+          <view class="toggle-title">项目动态</view>
+          <view class="toggle-desc">客户端是否可见进度动态</view>
+        </view>
+        <switch checked="{{customerUpdatesEnabled}}" color="#1677ff" data-key="customerUpdatesEnabled" bindchange="onToggle" />
+      </view>
+      <view class="toggle-row">
+        <view class="toggle-main">
+          <view class="toggle-title">服务请求</view>
+          <view class="toggle-desc">客户是否可提交与查看工单</view>
+        </view>
+        <switch checked="{{customerRequestsEnabled}}" color="#1677ff" data-key="customerRequestsEnabled" bindchange="onToggle" />
+      </view>
+      <view class="toggle-row">
+        <view class="toggle-main">
+          <view class="toggle-title">项目文件</view>
+          <view class="toggle-desc">客户端是否展示项目文件</view>
+        </view>
+        <switch checked="{{customerFilesEnabled}}" color="#1677ff" data-key="customerFilesEnabled" bindchange="onToggle" />
+      </view>
+    </view>
+
+    <button
+      class="primary-btn submit-btn"
+      hover-class="hover-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      保存设置
+    </button>
+  </block>
+</view>

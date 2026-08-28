@@ -482,6 +482,11 @@ export type ListRequestsForActorFilters = {
     | "RESOLVED"
     | "CLOSED";
   query?: string;
+  priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
+  /** 归档范围：默认 EXCLUDE（不含归档），ONLY 只看归档，ALL 全部 */
+  archived?: "EXCLUDE" | "ONLY" | "ALL";
+  /** 仅看分配给我的（员工侧筛选，客户传了也无意义） */
+  assignedToMe?: boolean;
   limit?: number;
   offset?: number;
 };
@@ -501,12 +506,15 @@ export function listRequestsForActor(
         ...(filters.projectId ? { id: filters.projectId } : {}),
         ...(actor.isStaff ? {} : { customerRequestsEnabled: { not: false } }),
       },
-      select: { id: true },
+      select: { id: true, title: true },
     });
     const projectIds = projects.map((project) => project.id);
     if (projectIds.length === 0) {
       return { requests: [], nextOffset: null, totalVisibleProjects: 0 };
     }
+    const projectTitleById = new Map(
+      projects.map((project) => [project.id, project.title]),
+    );
 
     const restrictToAssigned =
       actor.isStaff &&
@@ -518,6 +526,21 @@ export function listRequestsForActor(
       where: {
         projectId: { in: projectIds },
         ...(filters.status ? { status: filters.status } : {}),
+        ...(filters.priority ? { priority: filters.priority } : {}),
+        // 归档默认不进列表：移动端列表没有归档分区，混进来会干扰日常处理
+        ...(filters.archived === "ONLY"
+          ? { archivedAt: { not: null } }
+          : filters.archived === "ALL"
+            ? {}
+            : { archivedAt: null }),
+        ...(filters.assignedToMe
+          ? {
+              OR: [
+                { assigneeId: actor.id },
+                { assignees: { some: { userId: actor.id } } },
+              ],
+            }
+          : {}),
         ...(restrictToAssigned
           ? {
               OR: [
@@ -545,7 +568,14 @@ export function listRequestsForActor(
     const page = hasMore ? requests.slice(0, limit) : requests;
     const summaries = await hydrateRequestSummaries(tx, page);
     return {
-      requests: summaries,
+      // 跨项目列表附带项目名：员工端多项目并存时需要展示归属（客户端可忽略）
+      requests: summaries.map((summary) => ({
+        ...summary,
+        project: {
+          id: summary.projectId,
+          title: projectTitleById.get(summary.projectId) ?? "",
+        },
+      })),
       nextOffset: hasMore ? offset + limit : null,
       totalVisibleProjects: projectIds.length,
     };

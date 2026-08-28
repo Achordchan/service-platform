@@ -11,6 +11,12 @@ HOST="${HOST:-0.0.0.0}"
 worker_pid=""
 web_pid=""
 
+# 本地库走回环 + trust 认证，无需 GSSAPI。Homebrew 的 libpq 客户端
+# （pg_isready/psql，PG 16）默认先做 GSSAPI 加密协商，在部分 macOS 上会
+# 卡在阻塞的 Kerberos/名字解析里，导致就绪探测挂死（-t 超时对此无效）。
+# 显式禁用即可；应用侧用 node pg 驱动本就不走 GSS，不受影响。
+export PGGSSENCMODE="${PGGSSENCMODE:-disable}"
+
 cd "$ROOT_DIR"
 
 fail() {

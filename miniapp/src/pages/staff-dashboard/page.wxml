@@ -1,0 +1,51 @@
+<import src="/components/states.wxml" />
+
+<view class="dash-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '加载失败', desc: loadError, retry: true}}"
+  />
+
+  <block wx:else>
+    <!-- 关键数字 -->
+    <view class="dash-highlight">
+      <view class="dash-hi-item" hover-class="hover-card" bindtap="onOpenRequests">
+        <view class="dash-hi-num">{{openCount}}</view>
+        <view class="dash-hi-label">未完成工单</view>
+      </view>
+      <view class="dash-hi-divider"></view>
+      <view class="dash-hi-item">
+        <view class="dash-hi-num">{{new30d}}</view>
+        <view class="dash-hi-label">近 30 天新增</view>
+      </view>
+    </view>
+
+    <!-- 状态分布 -->
+    <view class="card">
+      <view class="dash-card-title">工单状态分布</view>
+      <view class="dash-status-grid">
+        <view wx:for="{{statusRows}}" wx:key="status" class="dash-status-cell">
+          <view class="dash-status-num tone-{{item.tone}}">{{item.count}}</view>
+          <view class="dash-status-label">{{item.label}}</view>
+        </view>
+      </view>
+    </view>
+
+    <!-- 首次响应时长 -->
+    <view wx:if="{{responseRows.length > 0}}" class="card">
+      <view class="dash-card-title">平均首次响应（近 30 天）</view>
+      <view wx:for="{{responseRows}}" wx:key="priority" class="dash-resp-row">
+        <view class="dash-resp-label">{{item.label}}</view>
+        <view class="dash-resp-val">{{item.avgText}}</view>
+        <view class="dash-resp-count text-secondary">{{item.count}} 单</view>
+      </view>
+    </view>
+
+    <view class="dash-hint text-secondary">
+      完整报表与图表请在电脑端后台查看。
+    </view>
+  </block>
+</view>

@@ -6,13 +6,46 @@ export type RequestStatusValue =
   | "RESOLVED"
   | "CLOSED";
 
-// 小程序仅面向客户：文案采用客户视角（与 Web statusLabelFor(status, "CUSTOMER") 一致）
+// 客户视角文案（与 Web statusLabelFor(status, "CUSTOMER") 一致）
 export const REQUEST_STATUS_LABELS: Record<RequestStatusValue, string> = {
   PENDING: "待处理",
   IN_PROGRESS: "处理中",
   WAITING_CUSTOMER: "等待您回复",
   RESOLVED: "已解决",
   CLOSED: "已关闭",
+};
+
+// 员工视角文案（与 Web statusLabelFor(status, "STAFF") 一致）：WAITING_CUSTOMER 表述不同
+export const REQUEST_STATUS_LABELS_STAFF: Record<RequestStatusValue, string> = {
+  ...REQUEST_STATUS_LABELS,
+  WAITING_CUSTOMER: "等待客户",
+};
+
+/** 按登录身份取工单状态文案（后台模式下「等待您回复」会误导员工） */
+export function requestStatusLabel(status: string, staffView: boolean): string {
+  const labels = staffView ? REQUEST_STATUS_LABELS_STAFF : REQUEST_STATUS_LABELS;
+  return labels[status as RequestStatusValue] ?? status;
+}
+
+export const PLATFORM_ROLE_LABELS: Record<string, string> = {
+  CUSTOMER: "客户",
+  PROJECT_MANAGER: "项目经理",
+  TECHNICIAN: "技术人员",
+  PLATFORM_ADMIN: "平台管理员",
+};
+
+export type MilestoneStatusValue = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+
+export const MILESTONE_STATUS_LABELS: Record<MilestoneStatusValue, string> = {
+  NOT_STARTED: "未开始",
+  IN_PROGRESS: "进行中",
+  COMPLETED: "已完成",
+};
+
+export const MILESTONE_STATUS_TONES: Record<MilestoneStatusValue, string> = {
+  NOT_STARTED: "neutral",
+  IN_PROGRESS: "info",
+  COMPLETED: "success",
 };
 
 export const REQUEST_STATUS_TONES: Record<RequestStatusValue, string> = {
@@ -158,22 +191,26 @@ export function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-// 项目动态正文中的内嵌图片（attachment:// 协议）在小程序 rich-text 里无法
-// 携带登录态加载；提取为独立图片列表（点击下载预览），并从 HTML 中移除 img。
+// 正文内嵌图片（attachment:// 协议）在小程序 rich-text 里无法携带登录态加载，
+// 直接渲染就是一张裂图。提取成独立图片列表（点击下载预览）并从 HTML 中移除。
+// 第二个 replace 是兜底：任何没能匹配出 id 的 <img> 也一并删掉 —— 宁可不显示，
+// 也不能把裂图留在气泡里。
 export function extractInlineImages(html: string): {
   html: string;
   images: Array<{ id: string; name: string }>;
 } {
   const images: Array<{ id: string; name: string }> = [];
   let index = 0;
-  const cleaned = html.replace(
-    /<img\b[^>]*?(?:data-attachment-id|src=["']attachment:\/\/)([a-z0-9_-]+)[^>]*>/gi,
-    (_match, id: string) => {
-      index += 1;
-      images.push({ id, name: `内嵌图片 ${index}` });
-      return "";
-    },
-  );
+  const cleaned = html
+    .replace(
+      /<img\b[^>]*?(?:data-attachment-id|src=["']attachment:\/\/)([a-z0-9_-]+)[^>]*>/gi,
+      (_match, id: string) => {
+        index += 1;
+        images.push({ id, name: `内嵌图片 ${index}` });
+        return "";
+      },
+    )
+    .replace(/<img\b[^>]*>/gi, "");
   return { html: cleaned, images };
 }
 

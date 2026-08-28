@@ -52,6 +52,9 @@ export const createRequestMessageSchema = z.object({
 
 const requestPresenceSessionSchema = z.object({
   sessionId: z.string().trim().min(8).max(120),
+  // 端标识与时区只能由客户端提供；UA 与 IP 由服务端从请求头取，不信自报
+  client: z.enum(["WEB", "MINIAPP"]).optional(),
+  timezone: z.string().trim().max(64).optional(),
 });
 
 export const requestPresenceSchema = z.discriminatedUnion("action", [

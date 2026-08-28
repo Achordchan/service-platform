@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "工单详情",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "delivery-notice": "/components/delivery-notice/index"
+  }
 }

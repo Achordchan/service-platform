@@ -40,6 +40,29 @@ export async function listNotificationDeliveryRules(actor: Actor) {
   });
 }
 
+/**
+ * 员工可读的精简版：只给「发送前提示行」用，判断本场景哪些通道当前是开的。
+ * 不含插件健康度等管理员信息，也不做 ensurePluginInstallations。
+ */
+export async function listStaffDeliveryChannels(actor: Actor) {
+  assertAllowed(actor.isStaff);
+  return withActorDb(actor, async (tx) => {
+    const stored = await tx.notificationDeliveryRule.findMany();
+    const byKey = new Map<string, NotificationDeliveryRuleState>(
+      stored.map((rule) => [rule.key, rule]),
+    );
+    return mergeDefinitions(byKey).map((rule) => ({
+      key: rule.key,
+      label: rule.label,
+      notificationEnabled: rule.notificationEnabled,
+      emailEnabled: rule.emailEnabled,
+      wechatEnabled: rule.wechatEnabled,
+      emailSupported: rule.emailSupported,
+      wechatSupported: rule.wechatSupported,
+    }));
+  });
+}
+
 export async function updateNotificationDeliveryRules(
   actor: Actor,
   raw: unknown,

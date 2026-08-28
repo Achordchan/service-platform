@@ -5,6 +5,7 @@ import {
 } from "@/modules/projects/milestone-service";
 import { createMilestoneSchema } from "@/modules/projects/schemas";
 import {
+  readDeliveryOverride,
   readJson,
   requireApiActor,
   routeError,
@@ -33,8 +34,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { projectId } = await context.params;
-    const input = createMilestoneSchema.parse(await readJson(request));
-    const milestone = await createMilestone(auth.actor, projectId, input);
+    const body = await readJson(request);
+    const input = createMilestoneSchema.parse(body);
+    const milestone = await createMilestone(
+      auth.actor,
+      projectId,
+      input,
+      readDeliveryOverride(body),
+    );
     return NextResponse.json({ data: milestone }, { status: 201 });
   } catch (error) {
     return routeError(error);

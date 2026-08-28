@@ -11,6 +11,7 @@ import {
   RequestBodyTooLargeError,
 } from "@/modules/http/bounded-request-body";
 import { DomainError } from "@/modules/projects/errors";
+import { notificationDeliveryOverrideSchema } from "@/modules/notifications/notification-delivery-override";
 
 type ActorResult =
   | { actor: Actor; response?: never }
@@ -142,4 +143,17 @@ export function routeError(error: unknown, context?: Omit<ApiErrorContext, "sour
     source: "project-api",
     ...context,
   });
+}
+
+/**
+ * 从写操作的请求体里取出本次的投递覆盖。
+ *
+ * 刻意不放进各领域的输入 schema：它不是实体字段，而是一条投递指令，
+ * 混进去会污染「至少提交一个修改字段」这类校验。
+ */
+export function readDeliveryOverride(body: unknown) {
+  if (!body || typeof body !== "object") return undefined;
+  const raw = (body as Record<string, unknown>).deliveryOverride;
+  if (raw === undefined || raw === null) return undefined;
+  return notificationDeliveryOverrideSchema.parse(raw);
 }

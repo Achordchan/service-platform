@@ -46,6 +46,10 @@ class EventSyncManager {
     wx.removeStorageSync(CURSOR_KEY);
     this.lastEventId = null;
     this.stopSse();
+    // 角标持有一份常驻租约（badge.ts），换号后若不在这里重连，连接会一直是断的
+    // ——「消息」页和工单详情的 start() 因计数已 >0 也不会再建流。
+    // 退出登录先归还租约，此时计数为 0，不会误连。
+    if (this.activePages > 0) this.startSse();
   }
 
   on(listener: EventListener) {

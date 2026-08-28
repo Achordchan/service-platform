@@ -1,0 +1,68 @@
+<import src="/components/states.wxml" />
+
+<view class="edit-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+  <view wx:elif="{{loadError}}" class="edit-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="edit-card">
+      <view class="edit-label">动态标题</view>
+      <input
+        class="edit-input"
+        value="{{title}}"
+        maxlength="200"
+        placeholder="如：本周进展 / 阶段性成果"
+        placeholder-class="edit-placeholder"
+        bindinput="onTitleInput"
+      />
+
+      <view class="edit-label">进度说明</view>
+      <textarea
+        class="edit-textarea"
+        value="{{bodyText}}"
+        maxlength="20000"
+        auto-height
+        placeholder="向客户同步的项目进展…"
+        placeholder-class="edit-textarea-placeholder"
+        bindinput="onBodyInput"
+      ></textarea>
+
+      <view wx:if="{{mode === 'create'}}" class="edit-switch-row">
+        <view class="edit-switch-main">
+          <view class="edit-switch-title">仅内部可见</view>
+          <view class="edit-switch-desc">开启后不推送给客户，仅内部同事可见</view>
+        </view>
+        <switch checked="{{internal}}" color="#1677ff" bindchange="onToggleInternal" />
+      </view>
+
+
+      <view class="edit-label">附件</view>
+      <view wx:for="{{files}}" wx:key="localPath" class="edit-file-row">
+        <t-icon name="file" size="32rpx" color="#1677ff" />
+        <text class="edit-file-name">{{item.fileName}}</text>
+        <text class="edit-file-remove" data-index="{{index}}" bindtap="onRemoveFile">移除</text>
+      </view>
+      <view class="edit-file-add" hover-class="hover-plain" bindtap="onAddFile">
+        ＋ 添加附件（最多 5 个）
+      </view>
+
+      <view wx:if="{{deliveryScene}}" class="edit-delivery">
+        <delivery-notice
+          scene="{{deliveryScene}}"
+          disabled="{{submitting}}"
+          bind:change="onDeliveryChange"
+        />
+      </view>
+    </view>
+
+    <button
+      class="primary-btn submit-btn"
+      hover-class="hover-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      {{mode === 'edit' ? '保存修改' : '发布'}}
+    </button>
+  </block>
+</view>

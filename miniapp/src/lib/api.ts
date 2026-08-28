@@ -51,6 +51,17 @@ export type ProjectSummary = {
   };
 };
 
+export type EntityAttachment = {
+  id: string;
+  originalName: string;
+  title?: string | null;
+  note?: string | null;
+  mimeType: string;
+  size: number;
+  visibility?: string;
+  createdAt: string;
+};
+
 export type Milestone = {
   id: string;
   title: string;
@@ -60,6 +71,7 @@ export type Milestone = {
   endDate: string | null;
   sortOrder: number;
   contentRiskStatus?: string;
+  attachments?: EntityAttachment[];
 };
 
 export type ProjectUpdate = {
@@ -69,6 +81,7 @@ export type ProjectUpdate = {
   createdAt: string;
   author: { id: string; name: string };
   contentRiskStatus?: string;
+  attachments?: EntityAttachment[];
   comments: Array<{
     id: string;
     body: string;
@@ -86,11 +99,27 @@ export type AttachmentMeta = {
   size: number;
   createdAt: string;
   contentRiskStatus?: string | null;
+  /** 项目文件列表专用：来源与是否被显式收录 */
+  source?: "PROJECT" | "REQUEST" | "UPDATE" | "MILESTONE";
+  pinned?: boolean;
+};
+
+/** 处理指南快照：随消息一起下发，正文只含标题+摘要，全文在这里 */
+export type SupportPlaybookSnapshot = {
+  key: string;
+  category: "REMOTE" | "DIAGNOSTIC" | "INFORMATION";
+  title: string;
+  summary: string;
+  introduction: string;
+  content?: string;
+  steps: string[];
+  safetyNotes: string[];
 };
 
 export type RequestMessage = {
   id: string;
   body: string;
+  supportPlaybook?: SupportPlaybookSnapshot | null;
   /** 服务端权威判定：正文是否为纯附件回复的生成占位（附件：<文件名列表>） */
   bodyIsAttachmentPlaceholder?: boolean;
   visibility: string;
@@ -129,7 +158,11 @@ export type ServiceRequestSummary = {
   updatedAt: string;
   category: { id: string; name: string };
   assignee: { id: string; name: string } | null;
+  /** 多人处理列表（后台指派用；跨项目列表与详情均返回） */
+  assignees?: Array<{ userId: string; user: { id: string; name: string } }>;
   createdBy: { id: string; name: string } | null;
+  /** 跨项目列表（/api/v1/requests）附带项目归属，员工端展示用 */
+  project?: { id: string; title: string };
 };
 
 export type ServiceRequestDetail = ServiceRequestSummary & {
@@ -199,10 +232,168 @@ export function listProjectRequests(
   );
 }
 
+// —— 项目交付写操作（员工/管理员）：后端按 actor 权限裁决，客户端仅按能力显示入口 ——
+
+/** 发布进度动态。body 为 HTML（服务端 sanitize）；visibility 缺省客户可见 */
+export function createProjectUpdate(
+  projectId: string,
+  input: {
+    title: string;
+    body: string;
+    visibility?: MessageVisibility;
+    deliveryOverride?: DeliveryOverride;
+  },
+): Promise<{ id: string }> {
+  return request(`/api/v1/projects/${projectId}/updates`, {
+    method: "POST",
+    data: input,
+    timeoutMs: 30000,
+  });
+}
+
+export function editProjectUpdate(
+  projectId: string,
+  updateId: string,
+  input: { title?: string; body?: string },
+): Promise<{ id: string }> {
+  return request(`/api/v1/projects/${projectId}/updates/${updateId}`, {
+    method: "PATCH",
+    data: input,
+    timeoutMs: 30000,
+  });
+}
+
+export function deleteProjectUpdate(
+  projectId: string,
+  updateId: string,
+): Promise<void> {
+  return request(`/api/v1/projects/${projectId}/updates/${updateId}`, {
+    method: "DELETE",
+  }).then(() => undefined);
+}
+
+export function createUpdateComment(
+  projectId: string,
+  updateId: string,
+  body: string,
+): Promise<{ id: string }> {
+  return request(
+    `/api/v1/projects/${projectId}/updates/${updateId}/comments`,
+    { method: "POST", data: { body }, timeoutMs: 20000 },
+  );
+}
+
+export function editUpdateComment(
+  projectId: string,
+  updateId: string,
+  commentId: string,
+  body: string,
+): Promise<{ id: string }> {
+  return request(
+    `/api/v1/projects/${projectId}/updates/${updateId}/comments/${commentId}`,
+    { method: "PATCH", data: { body }, timeoutMs: 20000 },
+  );
+}
+
+export function deleteUpdateComment(
+  projectId: string,
+  updateId: string,
+  commentId: string,
+): Promise<void> {
+  return request(
+    `/api/v1/projects/${projectId}/updates/${updateId}/comments/${commentId}`,
+    { method: "DELETE" },
+  ).then(() => undefined);
+}
+
+export type MilestoneStatus = "NOT_STARTED" | "IN_PROGRESS" | "COMPLETED";
+
+export type MilestoneInput = {
+  title: string;
+  description?: string | null;
+  status?: MilestoneStatus;
+  /** ISO datetime 或 null；页面把「YYYY-MM-DD」转成 ISO 再传 */
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+export function createMilestone(
+  projectId: string,
+  input: MilestoneInput & { deliveryOverride?: DeliveryOverride },
+): Promise<Milestone> {
+  return request(`/api/v1/projects/${projectId}/milestones`, {
+    method: "POST",
+    data: input,
+    timeoutMs: 20000,
+  });
+}
+
+export function editMilestone(
+  projectId: string,
+  milestoneId: string,
+  input: Partial<MilestoneInput> & { deliveryOverride?: DeliveryOverride },
+): Promise<Milestone> {
+  return request(`/api/v1/projects/${projectId}/milestones/${milestoneId}`, {
+    method: "PATCH",
+    data: input,
+    timeoutMs: 20000,
+  });
+}
+
+export function deleteMilestone(
+  projectId: string,
+  milestoneId: string,
+): Promise<void> {
+  return request(`/api/v1/projects/${projectId}/milestones/${milestoneId}`, {
+    method: "DELETE",
+  }).then(() => undefined);
+}
+
+/** 更新当前阶段（项目交付权限）。currentStage 传 null/空清空 */
+export function updateProjectStage(
+  projectId: string,
+  currentStage: string | null,
+): Promise<{ id: string; currentStage: string | null }> {
+  return request(`/api/v1/projects/${projectId}/stage`, {
+    method: "PATCH",
+    data: { currentStage },
+    timeoutMs: 20000,
+  });
+}
+
+export type ProjectSettingsInput = {
+  title?: string;
+  description?: string | null;
+  status?: string;
+  showMilestones?: boolean;
+  showProgress?: boolean;
+  customerUpdatesEnabled?: boolean;
+  customerRequestsEnabled?: boolean;
+  customerFilesEnabled?: boolean;
+  startDate?: string | null;
+  endDate?: string | null;
+};
+
+/** 更新项目设置（仅平台管理员，服务端 updateProject 断言 isPlatformAdmin） */
+export function updateProjectSettings(
+  projectId: string,
+  input: ProjectSettingsInput,
+): Promise<ProjectSummary> {
+  return request(`/api/v1/projects/${projectId}`, {
+    method: "PATCH",
+    data: input,
+    timeoutMs: 20000,
+  });
+}
+
 export function listRequests(filters: {
   projectId?: string;
   status?: string;
   q?: string;
+  priority?: string;
+  /** 归档范围：默认 EXCLUDE（不含归档） */
+  archived?: "EXCLUDE" | "ONLY" | "ALL";
+  assignedToMe?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<RequestListResult> {
@@ -210,6 +401,9 @@ export function listRequests(filters: {
   if (filters.projectId) params.push(`projectId=${filters.projectId}`);
   if (filters.status) params.push(`status=${filters.status}`);
   if (filters.q) params.push(`q=${encodeURIComponent(filters.q)}`);
+  if (filters.priority) params.push(`priority=${filters.priority}`);
+  if (filters.archived) params.push(`archived=${filters.archived}`);
+  if (filters.assignedToMe) params.push(`assignedToMe=true`);
   if (filters.limit !== undefined) params.push(`limit=${filters.limit}`);
   if (filters.offset !== undefined) params.push(`offset=${filters.offset}`);
   const query = params.length ? `?${params.join("&")}` : "";
@@ -238,24 +432,128 @@ export function createRequest(
   });
 }
 
+export type MessageVisibility = "CUSTOMER_VISIBLE" | "INTERNAL";
+
 export function replyRequest(
   requestId: string,
   input: {
     body: string;
     replyToMessageId?: string | null;
     clientMutationKey: string;
+    /** 员工可发内部备注（INTERNAL）；缺省为客户可见回复 */
+    visibility?: MessageVisibility;
+    deliveryOverride?: DeliveryOverride;
   },
 ): Promise<ReplyResult> {
   return request<ReplyResult>(`/api/v1/requests/${requestId}/messages`, {
     method: "POST",
     data: {
       body: input.body,
-      visibility: "CUSTOMER_VISIBLE",
+      visibility: input.visibility ?? "CUSTOMER_VISIBLE",
       replyToMessageId: input.replyToMessageId ?? null,
+      ...(input.deliveryOverride
+        ? { deliveryOverride: input.deliveryOverride }
+        : {}),
     },
     idempotencyKey: input.clientMutationKey,
     timeoutMs: 30000,
   });
+}
+
+// —— 员工操作：状态、指派、项目人员（后端按 actor 权限裁决，此处仅透传）——
+
+export function changeRequestStatus(
+  requestId: string,
+  status: string,
+  deliveryOverride?: DeliveryOverride,
+): Promise<{ status: string }> {
+  return request(`/api/v1/requests/${requestId}/status`, {
+    method: "PATCH",
+    data: deliveryOverride ? { status, deliveryOverride } : { status },
+    timeoutMs: 20000,
+  });
+}
+
+export function assignRequest(
+  requestId: string,
+  assigneeIds: string[],
+): Promise<{ assigneeId: string | null }> {
+  return request(`/api/v1/requests/${requestId}/assignee`, {
+    method: "PATCH",
+    data: { assigneeIds },
+    timeoutMs: 20000,
+  });
+}
+
+export type ProjectStaffMember = {
+  id: string;
+  role: "PROJECT_MANAGER" | "TECHNICIAN";
+  userId: string;
+  user: { id: string; name: string };
+};
+
+export function listProjectStaff(
+  projectId: string,
+): Promise<ProjectStaffMember[]> {
+  return request<ProjectStaffMember[]>(
+    `/api/v1/projects/${projectId}/staff`,
+    { timeoutMs: 20000 },
+  );
+}
+
+export type ProjectStaffRole = "PROJECT_MANAGER" | "TECHNICIAN";
+
+export type StaffCandidate = {
+  id: string;
+  name: string;
+  email: string;
+  platformRole: "PLATFORM_ADMIN" | "PROJECT_MANAGER" | "TECHNICIAN";
+};
+
+/** 可加入该项目的内部人员候选（管理员/项目经理/技术，服务端按 manage_staff 权限裁决） */
+export function listAssignableProjectStaff(
+  projectId: string,
+): Promise<StaffCandidate[]> {
+  return request<StaffCandidate[]>(
+    `/api/v1/projects/${projectId}/staff/assignable`,
+    { timeoutMs: 20000 },
+  );
+}
+
+export function addProjectStaff(
+  projectId: string,
+  input: {
+    userId: string;
+    role: ProjectStaffRole;
+    deliveryOverride?: DeliveryOverride;
+  },
+): Promise<ProjectStaffMember> {
+  return request(`/api/v1/projects/${projectId}/staff`, {
+    method: "POST",
+    data: input,
+    timeoutMs: 20000,
+  });
+}
+
+export function updateProjectStaffRole(
+  projectId: string,
+  projectStaffId: string,
+  role: ProjectStaffRole,
+): Promise<ProjectStaffMember> {
+  return request(`/api/v1/projects/${projectId}/staff/${projectStaffId}`, {
+    method: "PATCH",
+    data: { role },
+    timeoutMs: 20000,
+  });
+}
+
+export function removeProjectStaff(
+  projectId: string,
+  projectStaffId: string,
+): Promise<void> {
+  return request(`/api/v1/projects/${projectId}/staff/${projectStaffId}`, {
+    method: "DELETE",
+  }).then(() => undefined);
 }
 
 
@@ -264,10 +562,18 @@ export function replyRequest(
 export function uploadAttachment(input: {
   filePath: string;
   fileName: string;
-  serviceRequestId: string;
+  /** 工单附件（与项目文件二选一） */
+  serviceRequestId?: string;
+  /** 项目文件（与工单附件二选一） */
+  projectId?: string;
+  /** 挂到进度动态 / 里程碑上（需同时给 projectId） */
+  projectUpdateId?: string;
+  milestoneId?: string;
   requestMessageId?: string;
   title?: string;
   note?: string;
+  /** 内部备注的附件应随消息同为 INTERNAL，客户不可见 */
+  visibility?: MessageVisibility;
 }): Promise<AttachmentMeta> {
   return new Promise((resolve, reject) => {
     wx.uploadFile({
@@ -275,8 +581,15 @@ export function uploadAttachment(input: {
       filePath: input.filePath,
       name: "file",
       formData: {
-        serviceRequestId: input.serviceRequestId,
-        visibility: "CUSTOMER_VISIBLE",
+        ...(input.serviceRequestId
+          ? { serviceRequestId: input.serviceRequestId }
+          : {}),
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.projectUpdateId
+          ? { projectUpdateId: input.projectUpdateId }
+          : {}),
+        ...(input.milestoneId ? { milestoneId: input.milestoneId } : {}),
+        visibility: input.visibility ?? "CUSTOMER_VISIBLE",
         ...(input.requestMessageId
           ? { requestMessageId: input.requestMessageId }
           : {}),
@@ -659,4 +972,224 @@ export function cancelEmailChange(): Promise<void> {
   return request(`/api/v1/me/email-change`, { method: "DELETE" }).then(
     () => undefined,
   );
+}
+
+// —— 员工工作台（简版概览）——
+
+export type DashboardAnalytics = {
+  volumeTrend: Array<{ date: string; count: number }>;
+  statusDistribution: Array<{ status: string; count: number }>;
+  responseTimeByPriority: Array<{
+    priority: string;
+    avgMinutes: number;
+    count: number;
+  }>;
+};
+
+/** 员工工作台统计（后端 assertAllowed(isStaff)，员工均可） */
+export function getDashboardAnalytics(): Promise<DashboardAnalytics> {
+  return request<DashboardAnalytics>(`/api/v1/admin/dashboard/analytics`, {
+    timeoutMs: 20000,
+  });
+}
+
+// —— 简版审计日志（仅平台管理员）——
+
+export type AuditRow = {
+  id: string;
+  action: string;
+  actionLabel: string;
+  resourceType: string;
+  resourceLabel: string;
+  resourceId: string | null;
+  result: string;
+  createdAt: string;
+  ipAddress: string | null;
+  actorDisplay: { name: string; secondary: string };
+};
+
+export type AuditPage = {
+  total: number;
+  page: number;
+  pageSize: number;
+  rows: AuditRow[];
+};
+
+export function listAuditLogs(params: {
+  page?: number;
+  pageSize?: number;
+}): Promise<AuditPage> {
+  const query = new Array<string>();
+  if (params.page !== undefined) query.push(`page=${params.page}`);
+  if (params.pageSize !== undefined) query.push(`pageSize=${params.pageSize}`);
+  const suffix = query.length ? `?${query.join("&")}` : "";
+  return request<AuditPage>(`/api/v1/admin/audit-logs${suffix}`, {
+    timeoutMs: 20000,
+  });
+}
+
+// —— 发送前提醒预览与本次覆盖 ——
+
+export type DeliveryChannelRule = {
+  key: string;
+  label: string;
+  notificationEnabled: boolean;
+  emailEnabled: boolean;
+  wechatEnabled: boolean;
+  emailSupported: boolean;
+  wechatSupported: boolean;
+};
+
+export type DeliveryScene =
+  | {
+      scene: "PROJECT_UPDATE";
+      projectId: string;
+      visibility: "CUSTOMER_VISIBLE" | "INTERNAL";
+    }
+  | { scene: "PROJECT_MILESTONE"; projectId: string }
+  | { scene: "PROJECT_STAFF"; projectId: string; targetUserId: string }
+  | { scene: "REQUEST_PUBLIC_MESSAGE"; requestId: string }
+  | { scene: "REQUEST_STATUS"; requestId: string; status: string };
+
+export type DeliveryPreviewRecipient = {
+  userId: string;
+  name: string;
+  isCustomer: boolean;
+  emailState: "READY" | "USER_OFF" | "NOT_TARGETED";
+  wechatState: "READY" | "NO_BINDING" | "NO_QUOTA" | "UNSUPPORTED";
+};
+
+export type DeliveryPreview = {
+  ruleKey: string;
+  label: string;
+  rule: {
+    notificationEnabled: boolean;
+    emailEnabled: boolean;
+    wechatEnabled: boolean;
+    emailSupported: boolean;
+    wechatSupported: boolean;
+  };
+  mailLocalOutbox: boolean;
+  recipients: DeliveryPreviewRecipient[];
+  summary: {
+    total: number;
+    emailReady: number;
+    emailUserOff: number;
+    wechatReady: number;
+    wechatUnavailable: number;
+  };
+};
+
+export type DeliveryOverride = {
+  notification?: boolean;
+  email?: boolean;
+  wechat?: boolean;
+  excludeUserIds?: string[];
+};
+
+export function listDeliveryChannels(): Promise<DeliveryChannelRule[]> {
+  return request(`/api/v1/notifications/delivery-channels`);
+}
+
+export function previewDelivery(scene: DeliveryScene): Promise<DeliveryPreview> {
+  return request(`/api/v1/notifications/delivery-preview`, {
+    method: "POST",
+    data: scene,
+  });
+}
+
+// —— 员工工单处理：归档 / 撤回消息 / 处理指南 ——
+
+export function changeRequestArchive(
+  requestId: string,
+  archived: boolean,
+): Promise<{ archivedAt: string | null }> {
+  return request(`/api/v1/requests/${requestId}/archive`, {
+    method: "PATCH",
+    data: { archived },
+    timeoutMs: 20000,
+  });
+}
+
+/** 仅平台管理员：由系统撤回一条消息并留下理由 */
+export function revokeRequestMessage(
+  requestId: string,
+  messageId: string,
+  reason: string,
+): Promise<unknown> {
+  return request(`/api/v1/requests/${requestId}/messages/${messageId}/revoke`, {
+    method: "POST",
+    data: { reason },
+    timeoutMs: 20000,
+  });
+}
+
+export type SupportPlaybook = SupportPlaybookSnapshot;
+
+export function listSupportPlaybooks(): Promise<SupportPlaybook[]> {
+  return request(`/api/v1/support-playbooks`, { timeoutMs: 20000 });
+}
+
+/** 发送处理指南：正文由服务端按模板渲染，这里只提交 key */
+export function sendSupportPlaybook(
+  requestId: string,
+  playbookKey: string,
+  deliveryOverride?: DeliveryOverride,
+): Promise<ReplyResult> {
+  return request<ReplyResult>(`/api/v1/requests/${requestId}/messages`, {
+    method: "POST",
+    data: {
+      body: "",
+      visibility: "CUSTOMER_VISIBLE",
+      supportPlaybookKey: playbookKey,
+      ...(deliveryOverride ? { deliveryOverride } : {}),
+    },
+    timeoutMs: 30000,
+  });
+}
+
+/** 把工单聊天/动态里的附件收录进项目文件（或移出）。收录不改可见性。 */
+export function setAttachmentProjectPin(
+  attachmentId: string,
+  pinned: boolean,
+): Promise<{ id: string; pinned: boolean }> {
+  return request(`/api/v1/attachments/${attachmentId}/pin`, {
+    method: "POST",
+    data: { pinned },
+    timeoutMs: 20000,
+  });
+}
+
+// —— 在线状态上报（与 Web 同一个端点；client 固定为 MINIAPP）——
+
+export type PresenceResult = {
+  counterpartOnline: boolean;
+  counterpartClients: string[];
+};
+
+export function reportRequestPresence(
+  requestId: string,
+  action: "heartbeat" | "leave",
+  sessionId: string,
+): Promise<PresenceResult> {
+  return request(`/api/v1/requests/${requestId}/presence`, {
+    method: "POST",
+    data: {
+      sessionId,
+      action,
+      client: "MINIAPP",
+      // 小程序没有 Intl.DateTimeFormat 的完整实现，取系统时区兜底
+      timezone: presenceTimezone(),
+    },
+    timeoutMs: 15000,
+  });
+}
+
+function presenceTimezone(): string | undefined {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return zone || undefined;
+  } catch {
+    return undefined;
+  }
 }

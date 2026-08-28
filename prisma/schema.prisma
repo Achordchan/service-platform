@@ -96,6 +96,7 @@ enum NotificationType {
   PROJECT_UPDATE
   UPDATE_COMMENT
   PROJECT_STAGE
+  PROJECT_STAFF
   PROJECT_MILESTONE
   PROJECT_FILE
   REQUEST_CREATED
@@ -826,6 +827,11 @@ model Attachment {
   uploadedById                String?
   uploadedByExternalContactId String?
   createdAt                   DateTime          @default(now())
+  /// 显式「添加到项目文件」：非空表示已收录进项目文件列表。
+  /// 不改动 serviceRequestId 等归属字段 —— RLS 仍按原归属裁决可见性，
+  /// 看不到源工单的人即使文件被收录也读不到。
+  pinnedToProjectAt           DateTime?
+  pinnedById                  String?
 
   customerSpace             CustomerSpace?   @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
   project                   Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -843,6 +849,7 @@ model Attachment {
   @@index([milestoneId])
   @@index([supportPlaybookKey])
   @@index([inline, createdAt])
+  @@index([projectId, pinnedToProjectAt])
   @@index([uploadedByExternalContactId, createdAt])
 }
 
@@ -935,6 +942,11 @@ model UserNotificationPreference {
   @@unique([userId, ruleKey])
 }
 
+enum PresenceClient {
+  WEB
+  MINIAPP
+}
+
 model RequestPresence {
   id               String   @id @default(cuid())
   serviceRequestId String
@@ -943,6 +955,13 @@ model RequestPresence {
   expiresAt        DateTime
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
+  /// 在线来自哪个端；仅用于在线标识旁的图标区分
+  client           PresenceClient @default(WEB)
+  /// 后台人员排查用：设备、时区、来源 IP。UA 与 IP 由服务端从请求头取，
+  /// 不信客户端自报；时区只能由客户端提供（浏览器/小程序 API）。
+  userAgent        String?
+  timezone         String?
+  ipAddress        String?
 
   serviceRequest ServiceRequest @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)

@@ -26,15 +26,45 @@ async function refreshBadge() {
 }
 
 let bound = false;
+let leaseHeld = false;
 
-/** 各 Tab 页 onShow 调用；事件回调（NOTIFICATION_CREATED）自动刷新 */
+/**
+ * 各 Tab 页 onShow 调用；事件回调（NOTIFICATION_CREATED）自动刷新角标。
+ *
+ * 这里必须自己持有一份 SSE 租约：只有「消息」页和工单详情会 eventSync.start()，
+ * 停在项目/工单/我的这些 Tab 上时根本没有连接，注册的监听永远不会触发 ——
+ * 表现就是网页端发了消息，小程序停在首页一直没有红点。
+ *
+ * 租约取到就不释放（角标是全局的，不跟随页面进出），退出登录时由
+ * releaseBadgeSync 归还，避免未登录还挂着一条已鉴权的流。
+ */
 export function ensureBadgeSync() {
   void refreshBadge();
-  if (bound) return;
-  bound = true;
-  eventSync.on((events) => {
-    if (events.some((event) => event.type === "NOTIFICATION_CREATED")) {
-      void refreshBadge();
-    }
-  });
+  if (!bound) {
+    bound = true;
+    eventSync.on((events) => {
+      if (events.some((event) => event.type === "NOTIFICATION_CREATED")) {
+        void refreshBadge();
+      }
+    });
+  }
+  // 租约自愈：401 清掉 token 后这里归还，重新登录后再取回。
+  // 冷启动 onShow 可能早于登录完成，未登录时不占租约。
+  const hasToken = Boolean(getToken());
+  if (leaseHeld && !hasToken) {
+    leaseHeld = false;
+    eventSync.stop();
+  } else if (!leaseHeld && hasToken) {
+    leaseHeld = true;
+    eventSync.start();
+  }
+}
+
+/** 退出登录 / 被踢：归还租约并清掉角标 */
+export function releaseBadgeSync() {
+  if (leaseHeld) {
+    leaseHeld = false;
+    eventSync.stop();
+  }
+  void wx.removeTabBarBadge({ index: BADGE_TAB_INDEX }).catch(() => undefined);
 }

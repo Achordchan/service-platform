@@ -378,6 +378,15 @@ describe("微信小程序登录与绑定", () => {
         password: ids.ownerPassword,
       }),
     ).rejects.toMatchObject({ code: "BIND_ATTEMPTS_LOCKED" });
+
+    // 凭据验证失败会补记 USER_LOGIN_FAILED（better-auth 走内部旁路头，Web 钩子对其静默）
+    const failedAudits = await ownerPool.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM "AuditLog"
+       WHERE action = 'USER_LOGIN_FAILED' AND metadata->>'path' = 'miniapp-bind'
+         AND metadata->>'email' = $1`,
+      [ids.ownerEmail],
+    );
+    expect(Number(failedAudits.rows[0]?.count)).toBeGreaterThanOrEqual(5);
   });
 
   it("密码失败计数按邮箱维度锁定：更换微信也无法绕过", async () => {
@@ -501,6 +510,84 @@ describe("微信小程序登录与绑定", () => {
       otp: otp!,
     });
     expect(bound.user.id).toBe(ids.memberUserId);
+  });
+
+  it("内部人员（技术/管理员角色）可绑定微信并登录小程序，me 下发角色与权限", async () => {
+    const staffEmail = `wx-staff-${ids.run}@local.test`;
+    cleanupEmails.push(staffEmail);
+    const staffUserId = randomUUID();
+    await ownerPool.query(
+      `INSERT INTO "User" (id, name, email, "emailVerified", "platformRole", "createdAt", "updatedAt")
+       VALUES ($1, '绑定测试技术员', $2, true, 'TECHNICIAN', NOW(), NOW())`,
+      [staffUserId, staffEmail],
+    );
+
+    const openid = `it-openid-staff-${ids.run}`;
+    const login = await createMiniappSessionForCode(
+      { code: "any" },
+      fakeProvider(openid),
+    );
+    expect(login.status).toBe("NEED_BINDING");
+    if (login.status !== "NEED_BINDING") return;
+
+    // OTP 通道对员工账号同样可用（曾被 CUSTOMER 门槛静默拒绝）
+    await sendBindingOtp({
+      bindingTicket: login.bindingTicket,
+      email: staffEmail,
+    });
+    const mail = await ownerPool.query<{ body: string }>(
+      `SELECT body FROM "MailMessage"
+       WHERE "sourceType" = 'LOGIN_EMAIL_OTP' AND "toEmail" = $1
+       ORDER BY "createdAt" DESC LIMIT 1`,
+      [staffEmail],
+    );
+    const otp = mail.rows[0]?.body.match(/\b(\d{6})\b/)?.[1];
+    expect(otp).toBeTruthy();
+
+    const bound = await bindTicketToAccount(
+      {
+        bindingTicket: login.bindingTicket,
+        email: staffEmail,
+        otp: otp!,
+      },
+      { ipAddress: "203.0.113.9", userAgent: "it-staff-ua" },
+    );
+    expect(bound.user.id).toBe(staffUserId);
+
+    // 会话可解析为员工 Actor
+    const session = await resolveMiniappSessionFromAuthorization(
+      `Bearer ${bound.token}`,
+    );
+    expect(session?.actor.platformRole).toBe("TECHNICIAN");
+    expect(session?.actor.isStaff).toBe(true);
+
+    // me 下发角色/权限，员工不返回客户空间
+    const me = await getMiniappMe(session!.actor);
+    expect(me.platformRole).toBe("TECHNICIAN");
+    expect(me.isStaff).toBe(true);
+    expect(me.isPlatformAdmin).toBe(false);
+    expect(me.permissions).toContain("request.reply");
+    expect(me.customerSpaces).toEqual([]);
+
+    // 再次微信一键登录直接签发（不再被 BINDING_ACCOUNT_UNAVAILABLE 拒绝）
+    const second = await createMiniappSessionForCode(
+      { code: "any" },
+      fakeProvider(openid),
+      { ipAddress: "203.0.113.9", userAgent: "it-staff-ua" },
+    );
+    expect(second.status).toBe("SESSION_ISSUED");
+
+    // 小程序登录审计：绑定即登录（miniapp-bind）+ 复访登录（miniapp），带可信来源
+    const audits = await ownerPool.query<{ path: string; ip: string | null }>(
+      `SELECT metadata->>'path' AS path, "ipAddress" AS ip FROM "AuditLog"
+       WHERE action = 'USER_LOGIN' AND "actorId" = $1 ORDER BY id ASC`,
+      [staffUserId],
+    );
+    expect(audits.rows.map((row) => row.path)).toEqual([
+      "miniapp-bind",
+      "miniapp",
+    ]);
+    expect(audits.rows[0]?.ip).toBe("203.0.113.9");
   });
 
   it("小程序会话可解析为 Actor，解绑后立即失效且可重新绑定", async () => {

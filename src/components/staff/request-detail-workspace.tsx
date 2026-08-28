@@ -32,7 +32,12 @@ import type {
   ChatReeditDraft,
   ChatReplyTarget,
 } from "@/components/shared/request-chat-types";
+import { CustomerClientContextDialog } from "@/components/staff/customer-client-context-dialog";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { RequestReplyComposer } from "@/components/staff/request-reply-composer";
 import { StaffPageHeading } from "@/components/staff/staff-page-heading";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -107,6 +112,13 @@ export function RequestDetailWorkspace({
   const router = useRouter();
   const toast = useToast();
   const [submitting, setSubmitting] = useState(false);
+  const [clientContextOpen, setClientContextOpen] = useState(false);
+  // 状态变更原本是一排「点了立刻生效」的按钮，没有提交步骤挂不住发送前提示；
+  // 改成先选目标状态、看清会提醒谁，再确认。
+  const [pendingStatus, setPendingStatus] = useState<RequestStatus | null>(null);
+  const [statusOverride, setStatusOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const statusDeliveryRule = useDeliveryChannelRule("REQUEST_STATUS");
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
   const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
   const [revokeTarget, setRevokeTarget] = useState<ChatMessage | null>(null);
@@ -159,10 +171,16 @@ export function RequestDetailWorkspace({
     try {
       const result = await staffApi<{ deliveryFeedback: DeliveryFeedback }>(
         `/api/v1/requests/${request.id}/status`,
-        jsonRequest("PATCH", { status }),
+        jsonRequest("PATCH", {
+          status,
+          ...deliveryOverridePayload(statusOverride, statusDeliveryRule),
+        }),
       );
       toast.success(`服务请求状态已更新为${statusLabel(status)}`);
       toast.delivery(result.deliveryFeedback);
+      // 覆盖是一次性的，不跨下一次操作沿用
+      setPendingStatus(null);
+      setStatusOverride({});
       markRequestLocalMutation();
       router.refresh();
     } catch (updateError) {
@@ -220,6 +238,7 @@ export function RequestDetailWorkspace({
             <StaffStatus value={request.status} />
             <RequestPresenceIndicator
               online={presence.counterpartOnline}
+              clients={presence.counterpartClients}
               label="客户在线"
             />
           </>
@@ -241,6 +260,19 @@ export function RequestDetailWorkspace({
             contentRiskEnabled={request.contentRiskUiEnabled}
             canViewRevokedContent={canViewRevokedContent}
             onReply={setReplyTarget}
+            onPinAttachmentToProject={async (file) => {
+              try {
+                await staffApi(
+                  `/api/v1/attachments/${file.id}/pin`,
+                  jsonRequest("POST", { pinned: true }),
+                );
+                toast.success("已添加到项目文件");
+              } catch (pinError) {
+                toast.error(
+                  pinError instanceof Error ? pinError.message : "添加失败",
+                );
+              }
+            }}
             onReedit={
               canReply && !request.archivedAt && request.status !== "CLOSED"
                 ? (message) => {
@@ -315,19 +347,70 @@ export function RequestDetailWorkspace({
                 {availableStatuses.map((status) => (
                   <Button
                     key={status}
-                    variant={status === "RESOLVED" ? "contained" : "outlined"}
-                    onClick={() => updateStatus(status)}
+                    variant={
+                      pendingStatus === status
+                        ? "contained"
+                        : status === "RESOLVED" && !pendingStatus
+                          ? "contained"
+                          : "outlined"
+                    }
+                    onClick={() => {
+                      setPendingStatus(status);
+                      setStatusOverride({});
+                    }}
                     disabled={submitting}
                   >
                     改为{statusLabel(status)}
                   </Button>
                 ))}
               </Stack>
+              {pendingStatus ? (
+                <Stack spacing={1.5} sx={{ mt: 2 }}>
+                  <DeliveryNotice
+                    scene={{
+                      scene: "REQUEST_STATUS",
+                      requestId: request.id,
+                      status: pendingStatus,
+                    }}
+                    override={statusOverride}
+                    onOverrideChange={setStatusOverride}
+                    disabled={submitting}
+                  />
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      variant="contained"
+                      onClick={() => void updateStatus(pendingStatus)}
+                      disabled={submitting}
+                    >
+                      确认改为{statusLabel(pendingStatus)}
+                    </Button>
+                    <Button
+                      onClick={() => {
+                        setPendingStatus(null);
+                        setStatusOverride({});
+                      }}
+                      disabled={submitting}
+                    >
+                      取消
+                    </Button>
+                  </Stack>
+                </Stack>
+              ) : null}
             </Paper>
           ) : null}
 
           <Paper variant="outlined" sx={{ p: 2.5 }}>
-            <Typography variant="h3">请求信息</Typography>
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "center", justifyContent: "space-between" }}
+            >
+              <Typography variant="h3">请求信息</Typography>
+              {/* 客户的设备/时区/IP 归属地：常驻的在线标识旁不适合塞，做成入口 */}
+              <Button size="small" onClick={() => setClientContextOpen(true)}>
+                客户设备与网络
+              </Button>
+            </Stack>
             <Stack spacing={2.25} sx={{ mt: 2.5 }}>
               <DetailField label="状态" value={<StaffStatus value={request.status} />} />
               <DetailField label="优先级" value={<PriorityChip value={request.priority} />} />
@@ -475,6 +558,12 @@ export function RequestDetailWorkspace({
           </Button>
         </DialogActions>
       </Dialog>
+
+      <CustomerClientContextDialog
+        requestId={request.id}
+        open={clientContextOpen}
+        onClose={() => setClientContextOpen(false)}
+      />
     </Stack>
   );
 }

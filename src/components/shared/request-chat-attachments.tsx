@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
+import LibraryAddOutlinedIcon from "@mui/icons-material/LibraryAddOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -167,12 +168,14 @@ function MessageFile({
   resolveUrl,
   onDownload,
   onPreview,
+  onPinToProject,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
   onPreview?: (source: PreviewSource) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const colors = attachmentColors(tone);
   const displayName = attachmentDisplayName(file);
@@ -269,6 +272,20 @@ function MessageFile({
           </Typography>
         ) : null}
       </Box>
+      {onPinToProject ? (
+        <IconButton
+          onClick={(event: React.MouseEvent) => {
+            event.stopPropagation();
+            onPinToProject(file);
+          }}
+          aria-label={`把 ${displayName} 添加到项目文件`}
+          title="添加到项目文件"
+          size="small"
+          sx={{ color: colors.secondary }}
+        >
+          <LibraryAddOutlinedIcon fontSize="small" />
+        </IconButton>
+      ) : null}
       <IconButton
         {...(onDownload
           ? {
@@ -299,11 +316,13 @@ export function RequestMessageAttachments({
   tone,
   resolveUrl,
   onDownload,
+  onPinToProject,
 }: {
   files: ChatAttachment[];
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   if (files.length === 0) return null;
@@ -339,6 +358,7 @@ export function RequestMessageAttachments({
           key={file.id}
           file={file}
           tone={tone}
+          onPinToProject={onPinToProject}
           resolveUrl={resolveUrl}
           onDownload={onDownload}
           onPreview={setPreview}

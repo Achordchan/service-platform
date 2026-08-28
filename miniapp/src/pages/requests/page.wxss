@@ -24,16 +24,22 @@
 }
 
 .search-input {
+  box-sizing: border-box;
   flex: 1;
   background: var(--card-bg);
   border: var(--card-border);
   border-radius: 14rpx;
-  padding: 14rpx 20rpx;
+  /* 单行 input：固定高度 + 横向 padding，行高与 placeholder 对齐 */
+  height: 72rpx;
+  line-height: 70rpx;
+  padding: 0 20rpx;
   font-size: 26rpx;
 }
 
 .search-placeholder {
   color: var(--text-tertiary);
+  font-size: 26rpx;
+  line-height: 70rpx;
 }
 
 .status-bar {
@@ -114,4 +120,119 @@
 .fab-hover {
   transform: scale(0.94);
   box-shadow: 0 6rpx 20rpx rgba(22, 119, 255, 0.3);
+}
+
+/* 更多筛选入口与面板 */
+.filter-btn {
+  position: relative;
+  flex-shrink: 0;
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 14rpx;
+  background: var(--card-bg);
+  border: var(--card-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.filter-btn-active {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+}
+
+.filter-badge {
+  position: absolute;
+  top: -6rpx;
+  right: -6rpx;
+  min-width: 28rpx;
+  height: 28rpx;
+  padding: 0 6rpx;
+  border-radius: 999rpx;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 18rpx;
+  line-height: 28rpx;
+  text-align: center;
+}
+
+.filter-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.filter-panel {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--card-bg);
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 28rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+
+.filter-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8rpx;
+}
+
+.filter-panel-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.filter-group-label {
+  margin: 24rpx 0 12rpx;
+  font-size: 25rpx;
+  color: var(--text-secondary);
+}
+
+.filter-group-inline {
+  margin: 0;
+  font-size: 28rpx;
+  color: var(--text-primary);
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14rpx;
+}
+
+.filter-chip {
+  padding: 12rpx 28rpx;
+  border-radius: 999rpx;
+  background: var(--page-bg);
+  color: var(--text-secondary);
+  font-size: 25rpx;
+}
+
+.filter-chip-active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.filter-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 28rpx;
+  padding-top: 24rpx;
+  border-top: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.filter-panel-foot {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 32rpx;
+}
+
+.filter-foot-btn {
+  flex: 1;
+  margin: 0;
 }

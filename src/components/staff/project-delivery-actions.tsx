@@ -30,6 +30,22 @@ import { useToast } from "@/components/shared/toast-provider";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { hasMeaningfulHtml } from "@/lib/message-content";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
+import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
+import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
+import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
+import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import type {
@@ -99,6 +115,18 @@ export function ProjectDeliveryActions({
   const router = useRouter();
   const toast = useToast();
   const [dialog, setDialog] = useState<DialogName>(null);
+  // 动态/里程碑的文件附件：与工单同一套两段式 —— 先建实体再带 id 上传，
+  // 避免草稿态附件先跑进项目文件列表
+  const { policy, validateFiles } = useAttachmentPolicy();
+  const [updateFiles, setUpdateFiles] = useState<AttachmentDraft[]>([]);
+  const [milestoneFiles, setMilestoneFiles] = useState<AttachmentDraft[]>([]);
+  // 本次发布的提醒方式覆盖：动态与里程碑各自一份，关弹窗时清掉
+  const [updateOverride, setUpdateOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const [milestoneOverride, setMilestoneOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const updateDeliveryRule = useDeliveryChannelRule("PROJECT_UPDATE");
+  const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");
   const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const milestoneForm = useForm<MilestoneFormValues>({ resolver: zodResolver(milestoneFormSchema), defaultValues: { title: "", description: "", status: "NOT_STARTED", startDate: "", endDate: "" } });
@@ -138,20 +166,52 @@ export function ProjectDeliveryActions({
   });
   const deliveryActive = isProjectDeliveryActive(project.status);
 
-  async function execute<T>(
+  async function execute<T extends { id?: string }>(
     url: string,
     body: unknown,
     successMessage: string,
     deliveryFeedback?: (result: T) => DeliveryFeedback | undefined,
+    attach?: {
+      files: AttachmentDraft[];
+      field: "projectUpdateId" | "milestoneId";
+    },
   ) {
     setSubmitting(true);
     try {
       const result = await staffApi<T>(url, jsonRequest("POST", body));
+      // 实体建好后再上传附件：服务端据此绑定归属，并按实体可见性派生附件可见性
+      const failed =
+        attach && attach.files.length > 0 && result.id
+          ? await uploadFilesBestEffort(attach.files, async (draft) => {
+              const formData = new FormData();
+              formData.append("file", draft.file);
+              formData.append("projectId", project.id);
+              formData.append(attach.field, result.id!);
+              appendDraftMeta(formData, draft);
+              await staffApi("/api/v1/attachments", {
+                method: "POST",
+                body: formData,
+              });
+            })
+          : [];
       milestoneForm.reset();
       updateForm.reset();
       setInlineImageUploading(false);
       setDialog(null);
-      toast.success(successMessage);
+      setUpdateFiles([]);
+      setMilestoneFiles([]);
+      // 覆盖是一次性的，不跨下一次操作沿用
+      setUpdateOverride({});
+      setMilestoneOverride({});
+      if (failed.length > 0) {
+        toast.warning(
+          `${successMessage}，但附件上传失败：${fileNames(
+            failed.map((draft) => draft.file),
+          )}。请在文件中重新添加。`,
+        );
+      } else {
+        toast.success(successMessage);
+      }
       toast.delivery(deliveryFeedback?.(result));
       router.refresh();
     } catch (submitError) {
@@ -164,7 +224,7 @@ export function ProjectDeliveryActions({
   }
 
   const submitMilestone = milestoneForm.handleSubmit(async (values) => {
-    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+    await execute<{ id: string; deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/milestones`,
       {
         title: values.title,
@@ -179,22 +239,26 @@ export function ProjectDeliveryActions({
           ? new Date(values.endDate).toISOString()
           : null,
         sortOrder: project.milestones.length,
+        ...deliveryOverridePayload(milestoneOverride, milestoneDeliveryRule),
       },
       "里程碑已创建",
       (result) => result.deliveryFeedback,
+      { files: milestoneFiles, field: "milestoneId" },
     );
   });
 
   const submitUpdate = updateForm.handleSubmit(async (values) => {
-    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+    await execute<{ id: string; deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/updates`,
       {
         title: values.title,
         body: values.body,
         visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        ...deliveryOverridePayload(updateOverride, updateDeliveryRule),
       },
       values.internal ? "内部进度已发布" : "客户进度已发布",
       (result) => result.deliveryFeedback,
+      { files: updateFiles, field: "projectUpdateId" },
     );
   });
 
@@ -405,6 +469,61 @@ export function ProjectDeliveryActions({
                   <RichTextEditor value={field.value} onChange={field.onChange} placeholder="说明里程碑目标、交付内容或验收标准" disabled={submitting} minHeight={130} maxHeight={260} uploadImage={uploadMilestoneImage} onImageUploadingChange={setInlineImageUploading} />
                 )} />
               </Stack>
+              <Stack spacing={1}>
+                <Typography sx={{ fontWeight: 650 }}>附件</Typography>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <FilePickerButton
+                    variant="outlined"
+                    disabled={submitting}
+                    multiple
+                    accept={policy.accept}
+                    maxSize={policy.maxSizeMb * 1024 * 1024}
+                    onFiles={(next) => {
+                      const { accepted, error } = validateFiles(
+                        next,
+                        milestoneFiles.length,
+                      );
+                      if (error) toast.warning(error);
+                      if (accepted.length > 0) {
+                        setMilestoneFiles((current) => [
+                          ...current,
+                          ...createAttachmentDrafts(accepted),
+                        ]);
+                      }
+                    }}
+                    onRejected={(rejections) =>
+                      toast.warning(firstFileRejectionMessage(rejections))
+                    }
+                  >
+                    添加附件
+                  </FilePickerButton>
+                  <Typography variant="body2" color="text.secondary">
+                    单个不超过 {policy.maxSizeMb}MB
+                  </Typography>
+                </Stack>
+                <RequestAttachmentDrafts
+                  drafts={milestoneFiles}
+                  disabled={submitting}
+                  onUpdate={(index, patch) =>
+                    setMilestoneFiles((current) =>
+                      current.map((draft, i) =>
+                        i === index ? { ...draft, ...patch } : draft,
+                      ),
+                    )
+                  }
+                  onRemove={(index) =>
+                    setMilestoneFiles((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </Stack>
+              <DeliveryNotice
+                scene={{ scene: "PROJECT_MILESTONE", projectId: project.id }}
+                override={milestoneOverride}
+                onOverrideChange={setMilestoneOverride}
+                disabled={submitting}
+              />
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -483,6 +602,65 @@ export function ProjectDeliveryActions({
               <Controller name="internal" control={updateForm.control} render={({ field }) => (
                 <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="仅内部可见" />
               )} />
+              <Stack spacing={1}>
+                <Typography sx={{ fontWeight: 650 }}>附件</Typography>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <FilePickerButton
+                    variant="outlined"
+                    disabled={submitting}
+                    multiple
+                    accept={policy.accept}
+                    maxSize={policy.maxSizeMb * 1024 * 1024}
+                    onFiles={(next) => {
+                      const { accepted, error } = validateFiles(
+                        next,
+                        updateFiles.length,
+                      );
+                      if (error) toast.warning(error);
+                      if (accepted.length > 0) {
+                        setUpdateFiles((current) => [
+                          ...current,
+                          ...createAttachmentDrafts(accepted),
+                        ]);
+                      }
+                    }}
+                    onRejected={(rejections) =>
+                      toast.warning(firstFileRejectionMessage(rejections))
+                    }
+                  >
+                    添加附件
+                  </FilePickerButton>
+                  <Typography variant="body2" color="text.secondary">
+                    单个不超过 {policy.maxSizeMb}MB
+                  </Typography>
+                </Stack>
+                <RequestAttachmentDrafts
+                  drafts={updateFiles}
+                  disabled={submitting}
+                  onUpdate={(index, patch) =>
+                    setUpdateFiles((current) =>
+                      current.map((draft, i) =>
+                        i === index ? { ...draft, ...patch } : draft,
+                      ),
+                    )
+                  }
+                  onRemove={(index) =>
+                    setUpdateFiles((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </Stack>
+              <DeliveryNotice
+                scene={{
+                  scene: "PROJECT_UPDATE",
+                  projectId: project.id,
+                  visibility: updateInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+                }}
+                override={updateOverride}
+                onOverrideChange={setUpdateOverride}
+                disabled={submitting}
+              />
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>

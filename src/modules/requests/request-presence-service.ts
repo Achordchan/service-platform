@@ -9,6 +9,10 @@ import {
 } from "@/modules/notifications/notification-service";
 import { badRequest, notFound } from "@/modules/requests/errors";
 import {
+  describeUserAgent,
+  resolveIpLocation,
+} from "@/modules/http/client-context";
+import {
   canAccessCustomerRequestModule,
   findRequestContext,
 } from "@/modules/requests/request-context";
@@ -20,6 +24,11 @@ const TYPING_TTL_MS = 12_000;
 
 export type RequestPresenceGroup = "CUSTOMER" | "STAFF";
 
+export type PresenceNetwork = {
+  ipAddress?: string | null;
+  userAgent?: string | null;
+};
+
 function actorGroup(actor: Actor): RequestPresenceGroup {
   return actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF";
 }
@@ -28,6 +37,25 @@ function groupUserWhere(group: RequestPresenceGroup): Prisma.UserWhereInput {
   return group === "CUSTOMER"
     ? { platformRole: "CUSTOMER" }
     : { platformRole: { not: "CUSTOMER" } };
+}
+
+/** 该分组当前在线的端集合（用于在线标识旁的图标区分） */
+async function onlineClients(
+  tx: Prisma.TransactionClient,
+  serviceRequestId: string,
+  group: RequestPresenceGroup,
+  now: Date,
+) {
+  const rows = await tx.requestPresence.findMany({
+    where: {
+      serviceRequestId,
+      expiresAt: { gt: now },
+      user: groupUserWhere(group),
+    },
+    select: { client: true },
+    distinct: ["client"],
+  });
+  return rows.map((row) => row.client);
 }
 
 async function isGroupOnline(
@@ -114,6 +142,7 @@ export function updateRequestPresence(
   actor: Actor,
   requestId: string,
   input: RequestPresenceInput,
+  network?: PresenceNetwork,
 ) {
   return withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
@@ -148,9 +177,17 @@ export function updateRequestPresence(
           userId: actor.id,
           sessionId: input.sessionId,
           expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS),
+          client: input.client ?? "WEB",
+          timezone: input.timezone ?? null,
+          userAgent: network?.userAgent ?? null,
+          ipAddress: network?.ipAddress ?? null,
         },
         update: {
           expiresAt: new Date(now.getTime() + PRESENCE_TTL_MS),
+          client: input.client ?? "WEB",
+          ...(input.timezone ? { timezone: input.timezone } : {}),
+          ...(network?.userAgent ? { userAgent: network.userAgent } : {}),
+          ...(network?.ipAddress ? { ipAddress: network.ipAddress } : {}),
         },
       });
     } else if (input.action === "leave") {
@@ -238,6 +275,61 @@ export function updateRequestPresence(
     return {
       counterpartOnline:
         counterpartUserIds.length > 0 || externalCounterpartOnline,
+      // 对方在线来自哪些端：外部联系人走邮件门户，统一记为 WEB
+      counterpartClients: [
+        ...new Set([
+          ...(await onlineClients(tx, request.id, counterpartGroup, now)),
+          ...(externalCounterpartOnline ? (["WEB"] as const) : []),
+        ]),
+      ],
     };
+  });
+}
+
+/**
+ * 客户端上下文（设备 / 时区 / IP 归属地）—— 仅后台人员可读。
+ *
+ * 数据来自在线心跳留下的 RequestPresence 行：UA 与 IP 由服务端从请求头取，
+ * 时区由客户端提供。这些信息不放在「客户在线」标识旁（那个是常驻的），
+ * 而是作为工单详情里的一个入口按需查看。
+ */
+export function listRequestClientContexts(actor: Actor, requestId: string) {
+  return withActorDb(actor, async (tx) => {
+    if (!actor.isStaff) throw notFound();
+    const request = await findRequestContext(tx, requestId, actor.id);
+    if (!request) throw notFound();
+    if (!canAccessCustomerRequestModule(actor, request)) throw notFound();
+
+    const rows = await tx.requestPresence.findMany({
+      where: {
+        serviceRequestId: requestId,
+        user: { platformRole: "CUSTOMER" },
+      },
+      select: {
+        id: true,
+        client: true,
+        userAgent: true,
+        timezone: true,
+        ipAddress: true,
+        expiresAt: true,
+        updatedAt: true,
+        user: { select: { id: true, name: true, email: true } },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
+    const now = new Date();
+    return rows.map((row) => ({
+      id: row.id,
+      user: row.user,
+      client: row.client,
+      online: row.expiresAt.getTime() > now.getTime(),
+      lastSeenAt: row.updatedAt.toISOString(),
+      timezone: row.timezone,
+      ipAddress: row.ipAddress,
+      ipLocation: resolveIpLocation(row.ipAddress),
+      device: describeUserAgent(row.userAgent),
+      userAgent: row.userAgent,
+    }));
   });
 }

@@ -294,7 +294,15 @@
 
 .reply-placeholder {
   color: var(--text-tertiary);
+  font-size: 28rpx;
   line-height: 44rpx;
+}
+
+/* 附件标题/备注小输入框只有 24rpx，默认 placeholder 32rpx 会明显大一圈 */
+.reply-file-placeholder {
+  color: var(--text-tertiary);
+  font-size: 24rpx;
+  line-height: 52rpx;
 }
 
 .send-btn {
@@ -393,10 +401,458 @@
 }
 
 .reply-file-input {
+  box-sizing: border-box;
   margin-top: 8rpx;
-  padding: 8rpx 12rpx;
   background: var(--card-bg, #fff);
   border: 2rpx solid rgba(16, 24, 40, 0.1);
   border-radius: 8rpx;
+  /* 单行 input：固定高度 + 横向 padding，行高与 placeholder 对齐 */
+  height: 56rpx;
+  line-height: 52rpx;
+  padding: 0 12rpx;
   font-size: 24rpx;
+}
+
+/* —— 员工（后台模式）扩展 —— */
+
+/* 操作区：状态变更 / 指派 */
+.staff-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.staff-action-btn {
+  flex: 1;
+  font-size: 26rpx;
+}
+
+/* 未分配认领提示 */
+.claim-banner {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-top: 16rpx;
+  padding: 14rpx 18rpx;
+  background: #fef7e6;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  color: #b45309;
+}
+
+/* 内部备注气泡与徽标（琥珀色系，区别于客户可见消息） */
+.bubble-internal {
+  background: #fffaf0;
+  border: 2rpx dashed #f0c987;
+}
+
+.msg-internal-badge {
+  margin-left: 8rpx;
+  padding: 2rpx 10rpx;
+  background: #fdf0d5;
+  color: #b45309;
+  font-size: 20rpx;
+  border-radius: 6rpx;
+}
+
+/* 无权限只读提示 */
+.reply-bar-notice {
+  padding: 24rpx;
+}
+
+.staff-view-only {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  font-size: 25rpx;
+  color: var(--text-secondary, #667085);
+}
+
+/* 回复模式切换（回复客户 / 内部备注） */
+.reply-mode-row {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  margin-bottom: 14rpx;
+}
+
+.reply-mode-chip {
+  padding: 8rpx 22rpx;
+  border-radius: 999rpx;
+  font-size: 24rpx;
+  color: var(--text-secondary, #667085);
+  background: rgba(16, 24, 40, 0.05);
+}
+
+.reply-mode-active {
+  background: rgba(22, 119, 255, 0.12);
+  color: #1677ff;
+  font-weight: 500;
+}
+
+.reply-mode-internal-active {
+  background: #fdf0d5;
+  color: #b45309;
+  font-weight: 500;
+}
+
+.reply-mode-hint {
+  font-size: 22rpx;
+  color: #b45309;
+}
+
+.reply-input-internal {
+  background: #fffaf0;
+}
+
+/* 指派处理人面板 */
+.assign-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(16, 24, 40, 0.45);
+  z-index: 20;
+}
+
+.assign-panel {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 21;
+  background: var(--card-bg, #fff);
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 32rpx 32rpx calc(32rpx + env(safe-area-inset-bottom));
+}
+
+.assign-panel-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.assign-panel-desc {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.assign-list {
+  margin-top: 20rpx;
+  max-height: 480rpx;
+}
+
+.assign-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22rpx 8rpx;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.assign-item-name {
+  font-size: 28rpx;
+}
+
+.assign-item-role {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.assign-empty {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 25rpx;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.assign-panel-footer {
+  display: flex;
+  gap: 20rpx;
+  margin-top: 28rpx;
+}
+
+.assign-cancel-btn {
+  flex: 1;
+}
+
+.assign-confirm-btn {
+  flex: 2;
+}
+
+/* 状态变更待确认：先看清会提醒谁，再确认 */
+.status-pending {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border-radius: 14rpx;
+  background: var(--page-bg);
+}
+
+.status-pending-title {
+  font-size: 27rpx;
+  font-weight: 600;
+  margin-bottom: 12rpx;
+}
+
+.status-pending-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+
+.status-pending-btn {
+  flex: 1;
+  margin: 0;
+}
+
+.reply-delivery {
+  padding: 0 4rpx 6rpx;
+}
+
+/* 处理指南消息卡片：与普通文本气泡区分，明确「这不是全文」 */
+.playbook-card {
+  margin-top: 8rpx;
+  padding: 18rpx 20rpx;
+  border-radius: 14rpx;
+  background: rgba(22, 119, 255, 0.06);
+  border-left: 6rpx solid var(--brand);
+}
+
+.playbook-head {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.playbook-title {
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.playbook-summary {
+  margin-top: 8rpx;
+  font-size: 25rpx;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.playbook-more {
+  margin-top: 12rpx;
+  display: flex;
+  align-items: center;
+  font-size: 24rpx;
+  color: var(--brand);
+}
+
+/* 处理指南全文面板 */
+.pb-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.pb-panel {
+  box-sizing: border-box;
+  width: 100%;
+  background: var(--card-bg);
+  border-radius: 28rpx 28rpx 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.pb-panel-head {
+  box-sizing: border-box;
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 28rpx;
+}
+
+.pb-panel-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.pb-panel-body {
+  /* 与提醒方式面板同因：scroll-view 需要确定高度，且无全局 border-box 重置 */
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 240rpx;
+  max-height: 60vh;
+  padding: 0 28rpx 28rpx;
+}
+
+.pb-section-text {
+  font-size: 27rpx;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.pb-section-title {
+  margin: 28rpx 0 12rpx;
+  font-size: 27rpx;
+  font-weight: 600;
+}
+
+.pb-step {
+  display: flex;
+  gap: 14rpx;
+  padding: 10rpx 0;
+}
+
+.pb-step-index {
+  flex-shrink: 0;
+  width: 36rpx;
+  height: 36rpx;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 22rpx;
+  line-height: 36rpx;
+  text-align: center;
+}
+
+.pb-step-text {
+  flex: 1;
+  font-size: 26rpx;
+  line-height: 1.7;
+}
+
+.pb-note {
+  padding: 12rpx 18rpx;
+  margin-bottom: 10rpx;
+  border-radius: 10rpx;
+  background: rgba(247, 144, 9, 0.1);
+  color: #b54708;
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+/* 处理指南选择面板 */
+.pb-filter {
+  box-sizing: border-box;
+  width: 100%;
+  flex-shrink: 0;
+  padding: 0 28rpx 12rpx;
+}
+
+.pb-search {
+  box-sizing: border-box;
+  width: 100%;
+  height: 72rpx;
+  line-height: 70rpx;
+  padding: 0 20rpx;
+  background: var(--page-bg);
+  border-radius: 14rpx;
+  font-size: 26rpx;
+}
+
+.pb-search-placeholder {
+  color: var(--text-tertiary);
+  font-size: 26rpx;
+  line-height: 70rpx;
+}
+
+.pb-tabs {
+  white-space: nowrap;
+  margin-top: 16rpx;
+}
+
+.pb-tab {
+  display: inline-block;
+  padding: 10rpx 26rpx;
+  margin-right: 14rpx;
+  border-radius: 999rpx;
+  background: var(--page-bg);
+  color: var(--text-secondary);
+  font-size: 25rpx;
+}
+
+.pb-tab-active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 500;
+}
+
+.pb-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--text-secondary);
+}
+
+.pb-item {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 20rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.pb-item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.pb-item-title {
+  font-size: 28rpx;
+  font-weight: 600;
+}
+
+.pb-item-summary {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.pb-item-preview {
+  margin-top: 8rpx;
+  font-size: 23rpx;
+  color: var(--brand);
+}
+
+.pb-item-send {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 28rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  border-radius: 14rpx;
+  background: var(--brand);
+  color: #ffffff;
+  font-size: 26rpx;
+  font-weight: 500;
+  border: none;
+}
+
+.pb-item-send::after {
+  border: none;
+}
+
+/* 对方在线：文案不变，端用图标区分（手机=小程序，显示器=网页） */
+.presence {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  color: var(--success);
+}
+
+.presence-dot {
+  width: 12rpx;
+  height: 12rpx;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.presence-text {
+  font-size: 23rpx;
 }

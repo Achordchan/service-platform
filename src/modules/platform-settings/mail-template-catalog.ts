@@ -14,6 +14,7 @@ export const MAIL_TEMPLATE_KEYS = [
   "STANDARD_REQUEST_ASSIGNMENT",
   "STANDARD_PROJECT_CREATED",
   "STANDARD_PROJECT_CUSTOMER_UPDATE",
+  "STANDARD_PROJECT_STAFF_CHANGE",
   "EXTERNAL_REQUEST_PUBLIC_REPLY",
   "EXTERNAL_REQUEST_WAITING_CUSTOMER",
   "EXTERNAL_REQUEST_RESOLVED",
@@ -373,6 +374,33 @@ const definitions: Record<MailTemplateKey, MailTemplateDefinition> = {
       heading: "你好，{{recipientName}}",
       body: "“{{projectName}}”有新的项目交付变化：{{notificationBody}}。请进入客户中心查看完整内容。",
       actionLabel: "查看项目进展",
+    },
+  },
+  STANDARD_PROJECT_STAFF_CHANGE: {
+    key: "STANDARD_PROJECT_STAFF_CHANGE",
+    name: "项目人员变动提醒",
+    description:
+      "后台人员被加入项目、项目角色调整或被移出项目时，向当事人发送。",
+    variables: [
+      { key: "recipientName", label: "收件人姓名", sample: "张三" },
+      { key: "projectName", label: "项目名称", sample: "官网升级项目" },
+      {
+        key: "notificationTitle",
+        label: "变动标题",
+        sample: "你已加入项目：官网升级项目",
+      },
+      {
+        key: "notificationBody",
+        label: "变动说明",
+        sample: "你被添加为“官网升级项目”的项目经理。",
+      },
+    ],
+    defaults: {
+      subject: "{{notificationTitle}}",
+      previewText: "{{notificationBody}}",
+      heading: "你好，{{recipientName}}",
+      body: "{{notificationBody}}如需了解项目当前进度与待办，请进入后台查看。",
+      actionLabel: "查看项目",
     },
   },
   STANDARD_PROJECT_CREATED: {

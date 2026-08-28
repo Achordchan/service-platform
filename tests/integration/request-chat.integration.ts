@@ -692,13 +692,13 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: false });
+    ).toEqual({ counterpartOnline: false, counterpartClients: [] });
     expect(
       await updateRequestPresence(technician, created.id, {
         sessionId: staffSessionA,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
     await updateRequestPresence(technician, created.id, {
       sessionId: staffSessionB,
       action: "heartbeat",
@@ -708,7 +708,7 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
 
     const listener = new Client({
       connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -770,7 +770,7 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
     await updateRequestPresence(technician, created.id, {
       sessionId: staffSessionB,
       action: "leave",
@@ -780,11 +780,69 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: false });
+    ).toEqual({ counterpartOnline: false, counterpartClients: [] });
     await updateRequestPresence(customer, created.id, {
       sessionId: customerSession,
       action: "leave",
     });
+  });
+
+  it("在线端按来源区分，同一分组的多个端会去重合并", async () => {
+    const created = await createFixtureRequest("在线端区分");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>接手在线端区分测试</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    const miniappSession = randomUUID();
+    const webSession = randomUUID();
+    const staffSession = randomUUID();
+
+    // 客户只在小程序在线：员工侧看到的对端只有 MINIAPP
+    await updateRequestPresence(customer, created.id, {
+      sessionId: miniappSession,
+      action: "heartbeat",
+      client: "MINIAPP",
+    });
+    expect(
+      await updateRequestPresence(technician, created.id, {
+        sessionId: staffSession,
+        action: "heartbeat",
+      }),
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["MINIAPP"] });
+
+    // 同一客户再开网页：两个端都要出现，且各自只出现一次
+    await updateRequestPresence(customer, created.id, {
+      sessionId: webSession,
+      action: "heartbeat",
+    });
+    const both = await updateRequestPresence(technician, created.id, {
+      sessionId: staffSession,
+      action: "heartbeat",
+    });
+    expect(both.counterpartOnline).toBe(true);
+    expect([...both.counterpartClients].sort()).toEqual(["MINIAPP", "WEB"]);
+
+    // 小程序离线后只剩 WEB
+    await updateRequestPresence(customer, created.id, {
+      sessionId: miniappSession,
+      action: "leave",
+    });
+    expect(
+      await updateRequestPresence(technician, created.id, {
+        sessionId: staffSession,
+        action: "heartbeat",
+      }),
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
+
+    for (const [actor, sessionId] of [
+      [customer, webSession],
+      [technician, staffSession],
+    ] as const) {
+      await updateRequestPresence(actor, created.id, {
+        sessionId,
+        action: "leave",
+      });
+    }
   });
 });
 

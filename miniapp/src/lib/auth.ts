@@ -26,8 +26,19 @@ export type LoginResult =
 
 export type BindResult = { token: string; user: MiniappUser };
 
+export type PlatformRole =
+  | "CUSTOMER"
+  | "PROJECT_MANAGER"
+  | "TECHNICIAN"
+  | "PLATFORM_ADMIN";
+
 export type MiniappMe = {
   user: MiniappUser;
+  platformRole: PlatformRole;
+  isStaff: boolean;
+  isPlatformAdmin: boolean;
+  /** 角色组权限清单（管理员为空数组但视为全权限，判断请走 hasPermission） */
+  permissions: string[];
   wechatBinding: { boundAt: string; lastLoginAt: string | null } | null;
   customerSpaces: Array<{
     id: string;
@@ -35,6 +46,66 @@ export type MiniappMe = {
     role: "OWNER" | "MEMBER";
   }>;
 };
+
+/** 与服务端 hasRolePermission 同语义：管理员全权限，客户无员工权限 */
+export function hasPermission(me: MiniappMe, permission: string): boolean {
+  if (me.isPlatformAdmin) return true;
+  if (!me.isStaff) return false;
+  return me.permissions.includes(permission);
+}
+
+export type ProjectRole = "PROJECT_MANAGER" | "TECHNICIAN" | null;
+
+/** 当前用户在该项目里的角色（据 project.staff）；非成员为 null */
+export function projectRoleOf(
+  me: MiniappMe,
+  staff: Array<{ role: string; user: { id: string } }>,
+): ProjectRole {
+  const mine = staff.find((member) => member.user.id === me.user.id);
+  return (mine?.role as ProjectRole) ?? null;
+}
+
+export type ProjectDeliveryCaps = {
+  /** 里程碑增删改、阶段变更 */
+  canManageDelivery: boolean;
+  /** 发布/编辑/删除进度动态 */
+  canPublishUpdate: boolean;
+  /** 评论进度动态 */
+  canComment: boolean;
+  /** 项目设置（展示开关/状态/日期）——仅平台管理员 */
+  canEditSettings: boolean;
+  /** 项目人员增删改 */
+  canManageStaff: boolean;
+  /** 上传项目文件 */
+  canUploadFile: boolean;
+};
+
+/**
+ * 项目交付能力，与服务端 project permissions 同口径：
+ * 交付/发布需「平台管理员」或「项目内 PROJECT_MANAGER + 对应权限」；
+ * 评论需任意项目成员 + update.comment；设置仅平台管理员。
+ * 仅决定 UI 展示，服务端仍是最终裁决者。
+ */
+export function projectDeliveryCaps(
+  me: MiniappMe,
+  staff: Array<{ role: string; user: { id: string } }>,
+): ProjectDeliveryCaps {
+  const role = projectRoleOf(me, staff);
+  const isPM = role === "PROJECT_MANAGER";
+  return {
+    canManageDelivery:
+      me.isPlatformAdmin || (isPM && hasPermission(me, "project.manage_delivery")),
+    canPublishUpdate:
+      me.isPlatformAdmin || (isPM && hasPermission(me, "update.publish")),
+    canComment:
+      me.isPlatformAdmin || (role !== null && hasPermission(me, "update.comment")),
+    canEditSettings: me.isPlatformAdmin,
+    canManageStaff:
+      me.isPlatformAdmin || (isPM && hasPermission(me, "project.manage_staff")),
+    canUploadFile:
+      me.isPlatformAdmin || (isPM && hasPermission(me, "file.upload")),
+  };
+}
 
 export function getToken(): string {
   return (wx.getStorageSync(TOKEN_KEY) as string) || "";
@@ -47,6 +118,12 @@ export function getToken(): string {
 let onIdentitySwitch: (() => void) | null = null;
 export function setIdentitySwitchHandler(handler: () => void) {
   onIdentitySwitch = handler;
+}
+
+/** 退出登录时的清理（归还角标 SSE 租约等）。同样由 app.ts 接线避免循环依赖。 */
+let onSessionEnd: (() => void) | null = null;
+export function setSessionEndHandler(handler: () => void) {
+  onSessionEnd = handler;
 }
 
 export function saveToken(token: string) {
@@ -330,6 +407,10 @@ export async function logout() {
   clearToken();
   clearCachedMe();
   markUnauthenticated();
+  // 先归还角标的常驻 SSE 租约，再 reset —— 否则 reset 会拿着已清空的
+  // 登录态重连（角标租约让活跃计数一直 > 0）。
+  // 由 app.ts 接线，避免 auth ← badge 循环依赖（badge 依赖 auth.getToken）
+  onSessionEnd?.();
   // 换号场景：旧游标对新账号无意义，重置避免跳过事件
   eventSync.reset();
 }

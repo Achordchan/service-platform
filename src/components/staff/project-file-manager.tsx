@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useRouter } from "next/navigation";
 import {
+  Chip,
   Button,
   Dialog,
   DialogActions,
@@ -51,6 +52,21 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   day: "2-digit",
 });
 
+type SourceFilter = "ALL" | "PROJECT" | "PINNED";
+
+const SOURCE_FILTERS: Array<{ value: SourceFilter; label: string }> = [
+  { value: "ALL", label: "全部" },
+  { value: "PROJECT", label: "项目文件" },
+  { value: "PINNED", label: "来自沟通" },
+];
+
+const SOURCE_LABELS: Record<string, string> = {
+  PROJECT: "项目文件",
+  REQUEST: "工单沟通",
+  UPDATE: "进度动态",
+  MILESTONE: "里程碑",
+};
+
 export function ProjectFileManager({
   projectId,
   files,
@@ -72,6 +88,11 @@ export function ProjectFileManager({
   const [draft, setDraft] = useState<AttachmentDraft | null>(null);
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [uploading, setUploading] = useState(false);
+  // 来源筛选：手动上传的项目文件 vs 从工单沟通/动态里收录进来的
+  const [source, setSource] = useState<SourceFilter>("ALL");
+  const visibleFiles = files.filter((file) =>
+    source === "ALL" ? true : source === "PINNED" ? file.pinned : !file.pinned,
+  );
 
   async function upload(current: AttachmentDraft) {
     setUploading(true);
@@ -148,8 +169,20 @@ export function ProjectFileManager({
           </Stack>
         </Paper>
       ) : null}
+      <Stack direction="row" spacing={1} sx={{ mb: 1.5, flexWrap: "wrap" }}>
+        {SOURCE_FILTERS.map((item) => (
+          <Chip
+            key={item.value}
+            label={item.label}
+            size="small"
+            color={source === item.value ? "primary" : "default"}
+            variant={source === item.value ? "filled" : "outlined"}
+            onClick={() => setSource(item.value)}
+          />
+        ))}
+      </Stack>
       <Paper variant="outlined">
-        {files.map((file, index) => (
+        {visibleFiles.map((file, index) => (
           <Stack
             key={file.id}
             direction={{ xs: "column", sm: "row" }}
@@ -158,7 +191,7 @@ export function ProjectFileManager({
               px: 2.5,
               py: 2,
               borderBottom:
-                index === files.length - 1 ? 0 : "1px solid",
+                index === visibleFiles.length - 1 ? 0 : "1px solid",
               borderColor: "divider",
               alignItems: { sm: "center" },
               justifyContent: "space-between",
@@ -178,6 +211,14 @@ export function ProjectFileManager({
                 </Typography>
                 {file.visibility === "INTERNAL" ? (
                   <LockOutlinedIcon fontSize="small" color="action" />
+                ) : null}
+                {file.pinned ? (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color="primary"
+                    label={SOURCE_LABELS[file.source ?? "PROJECT"]}
+                  />
                 ) : null}
               </Stack>
               <Typography variant="body2" color="text.secondary">
@@ -238,7 +279,7 @@ export function ProjectFileManager({
             ) : null}
           </Stack>
         ))}
-        {files.length === 0 ? (
+        {visibleFiles.length === 0 ? (
           <Typography
             color="text.secondary"
             sx={{ px: 2.5, py: 5, textAlign: "center" }}

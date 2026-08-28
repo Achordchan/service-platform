@@ -1,0 +1,193 @@
+import { ensureLoggedIn } from "../../lib/auth";
+import {
+  createProjectUpdate,
+  editProjectUpdate,
+  listProjectUpdates,
+  type ProjectUpdate,
+  uploadAttachment,
+} from "../../lib/api";
+import { escapeHtml, htmlToText } from "../../lib/format";
+import type { DeliveryOverride } from "../../lib/delivery";
+import { pickAttachments, type PickedFile } from "../../lib/pick-files";
+
+/** 纯文本 → 简单 HTML：空行分段，段内换行转 <br/>（服务端仍会 sanitize） */
+function textToHtml(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map((para) => para.trim())
+    .filter(Boolean)
+    .map((para) => `<p>${escapeHtml(para).replace(/\n/g, "<br/>")}</p>`)
+    .join("");
+}
+
+Page({
+  data: {
+    projectId: "",
+    updateId: "",
+    mode: "create" as "create" | "edit",
+    title: "",
+    bodyText: "",
+    // 仅创建时可选「仅内部可见」；编辑接口虽支持改可见性，但列表不回传当前值，故编辑不改
+    internal: false,
+    submitting: false,
+    // 附件：与工单同一套两段式 —— 先建实体、再带 id 上传
+    files: [] as PickedFile[],
+    loading: false,
+    loadError: "",
+    // 本次发布的提醒方式覆盖（由 delivery-notice 组件回传）
+    deliveryOverride: {} as DeliveryOverride,
+    deliveryScene: null as unknown,
+  },
+  onLoad(query: Record<string, string | undefined>) {
+    const projectId = query.projectId ?? "";
+    const updateId = query.updateId ?? "";
+    const mode: "create" | "edit" = updateId ? "edit" : "create";
+    this.setData({
+      projectId,
+      updateId,
+      mode,
+      deliveryScene:
+        mode === "create"
+          ? { scene: "PROJECT_UPDATE", projectId, visibility: "CUSTOMER_VISIBLE" }
+          : null,
+    });
+    wx.setNavigationBarTitle({
+      title: mode === "edit" ? "编辑动态" : "发布进度动态",
+    });
+    if (mode === "edit") void this.loadExisting();
+  },
+  onShow() {
+    // 子页面兜底鉴权：token 丢失则回登录页
+    ensureLoggedIn();
+  },
+  async loadExisting() {
+    this.setData({ loading: true, loadError: "" });
+    try {
+      const updates = await listProjectUpdates(this.data.projectId);
+      const update = updates.find(
+        (item: ProjectUpdate) => item.id === this.data.updateId,
+      );
+      if (!update) {
+        this.setData({ loading: false, loadError: "动态不存在或已被删除" });
+        return;
+      }
+      this.setData({
+        loading: false,
+        title: update.title,
+        // 编辑器是纯文本：HTML 正文转文本回填（会丢富格式，移动端快速编辑取舍）
+        bodyText: htmlToText(update.body),
+      });
+    } catch (error) {
+      this.setData({
+        loading: false,
+        loadError: error instanceof Error ? error.message : "加载失败",
+      });
+    }
+  },
+  onTitleInput(event: WechatMiniprogram.Input) {
+    this.setData({ title: event.detail.value });
+  },
+  onBodyInput(event: WechatMiniprogram.TextareaInput) {
+    this.setData({ bodyText: event.detail.value });
+  },
+  onToggleInternal(event: WechatMiniprogram.SwitchChange) {
+    const internal = event.detail.value;
+    this.setData({
+      internal,
+      // 可见性变了收件人也跟着变，场景要同步刷新
+      deliveryScene: {
+        scene: "PROJECT_UPDATE",
+        projectId: this.data.projectId,
+        visibility: internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+      },
+      deliveryOverride: {},
+    });
+  },
+  onDeliveryChange(event: WechatMiniprogram.CustomEvent) {
+    this.setData({
+      deliveryOverride: (event.detail?.override ?? {}) as DeliveryOverride,
+    });
+  },
+  async onAddFile() {
+    if (this.data.files.length >= 5) {
+      wx.showToast({ title: "最多 5 个附件", icon: "none" });
+      return;
+    }
+    const chosen = await pickAttachments(5 - this.data.files.length);
+    if (chosen.length === 0) return;
+    this.setData({ files: [...this.data.files, ...chosen] });
+  },
+  onRemoveFile(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({
+      files: this.data.files.filter((_, i) => i !== index),
+    });
+  },
+  /** 实体建好后再传附件：服务端据此绑定归属并派生可见性 */
+  async uploadPendingFiles(target: { projectUpdateId?: string; milestoneId?: string }) {
+    let failed = 0;
+    for (const file of this.data.files) {
+      try {
+        await uploadAttachment({
+          filePath: file.localPath,
+          fileName: file.fileName,
+          projectId: this.data.projectId,
+          ...target,
+        });
+      } catch {
+        failed += 1;
+      }
+    }
+    if (failed > 0) {
+      wx.showToast({ title: `${failed} 个附件上传失败`, icon: "none" });
+    }
+  },
+  async onSubmit() {
+    if (this.data.submitting) return;
+    const title = this.data.title.trim();
+    const text = this.data.bodyText.trim();
+    if (!title) {
+      wx.showToast({ title: "请填写动态标题", icon: "none" });
+      return;
+    }
+    if (!text) {
+      wx.showToast({ title: "请填写进度说明", icon: "none" });
+      return;
+    }
+    const body = textToHtml(text);
+    if (!body) {
+      wx.showToast({ title: "请填写进度说明", icon: "none" });
+      return;
+    }
+    this.setData({ submitting: true });
+    try {
+      if (this.data.mode === "edit") {
+        await editProjectUpdate(this.data.projectId, this.data.updateId, {
+          title,
+          body,
+        });
+        wx.showToast({ title: "已更新", icon: "success" });
+      } else {
+        const override = this.data.deliveryOverride;
+        const created = await createProjectUpdate(this.data.projectId, {
+          title,
+          body,
+          visibility: this.data.internal ? "INTERNAL" : undefined,
+          ...(Object.keys(override).length > 0
+            ? { deliveryOverride: override }
+            : {}),
+        });
+        await this.uploadPendingFiles({ projectUpdateId: created.id });
+        wx.showToast({ title: "已发布", icon: "success" });
+      }
+      setTimeout(() => wx.navigateBack(), 600);
+    } catch (error) {
+      wx.showToast({
+        title: error instanceof Error ? error.message : "提交失败，请重试",
+        icon: "none",
+      });
+    } finally {
+      this.setData({ submitting: false });
+    }
+  },
+});

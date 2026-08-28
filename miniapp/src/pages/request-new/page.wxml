@@ -69,6 +69,7 @@
         value="{{item.title}}"
         maxlength="160"
         placeholder="展示标题（默认用文件名）"
+        placeholder-class="attach-meta-placeholder"
         data-index="{{index}}"
         bindinput="onAttachmentTitleInput"
       />
@@ -77,6 +78,7 @@
         value="{{item.note}}"
         maxlength="500"
         placeholder="备注（可选）"
+        placeholder-class="attach-meta-placeholder"
         data-index="{{index}}"
         bindinput="onAttachmentNoteInput"
       />

@@ -1,0 +1,131 @@
+.edit-page {
+  padding: 24rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.edit-load-error {
+  padding: 80rpx 0;
+  text-align: center;
+  color: var(--text-secondary, #667085);
+  font-size: 26rpx;
+}
+
+.edit-card {
+  background: var(--card-bg, #fff);
+  border-radius: 20rpx;
+  padding: 28rpx;
+}
+
+.edit-label {
+  font-size: 26rpx;
+  color: var(--text-secondary, #667085);
+  margin-bottom: 12rpx;
+}
+
+.edit-label:not(:first-child) {
+  margin-top: 28rpx;
+}
+
+.edit-input,
+.edit-picker,
+.edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 20rpx;
+  background: #f5f6f8;
+  border-radius: 12rpx;
+  font-size: 30rpx;
+}
+
+/* 单行 input：page 继承的 line-height 只作用于 placeholder 覆盖层，
+   固定高度 + 只留横向 padding + 显式同一行高，两者才对齐 */
+.edit-input {
+  height: 88rpx;
+  line-height: 88rpx;
+  padding: 0 20rpx;
+}
+
+.edit-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.edit-textarea {
+  min-height: 200rpx;
+  line-height: 1.6;
+}
+
+/* placeholder 只认 color / font-size / font-weight，且不继承输入框字号，
+   必须显式对齐；textarea 另配一份带 line-height 的，否则首行会比正文高一截 */
+.edit-placeholder {
+  color: #98a2b3;
+  font-size: 30rpx;
+  line-height: 88rpx;
+}
+
+.edit-textarea-placeholder {
+  color: #98a2b3;
+  font-size: 30rpx;
+  line-height: 1.6;
+}
+
+.edit-date-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+
+.edit-date-row .edit-picker {
+  flex: 1;
+}
+
+.edit-date-clear {
+  flex-shrink: 0;
+  font-size: 26rpx;
+  color: #1677ff;
+}
+
+.submit-btn {
+  margin-top: 40rpx;
+}
+
+.edit-delivery {
+  margin-top: 24rpx;
+  padding-top: 20rpx;
+  border-top: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.edit-file-row {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+  padding: 14rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.edit-file-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.edit-file-remove {
+  flex-shrink: 0;
+  font-size: 24rpx;
+  color: #d14343;
+}
+
+.edit-file-add {
+  margin-top: 14rpx;
+  padding: 18rpx;
+  border-radius: 12rpx;
+  background: #f5f6f8;
+  text-align: center;
+  font-size: 26rpx;
+  color: #1677ff;
+}

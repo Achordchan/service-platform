@@ -1,4 +1,7 @@
 {
   "navigationBarTitleText": "项目动态",
-  "enablePullDownRefresh": true
+  "enablePullDownRefresh": true,
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon"
+  }
 }

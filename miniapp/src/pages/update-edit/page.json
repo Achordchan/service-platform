@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "发布进度动态",
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon",
+    "delivery-notice": "/components/delivery-notice/index"
+  }
+}

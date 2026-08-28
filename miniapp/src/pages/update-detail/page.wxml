@@ -1,6 +1,6 @@
 <import src="/components/states.wxml" />
 
-<view class="page">
+<view class="page {{!loading && !loadError && canComment ? 'page-with-bar' : ''}}">
   <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
 
   <template
@@ -12,10 +12,38 @@
   <block wx:else>
     <view class="card">
       <view class="detail-title">{{title}}</view>
-      <view class="text-secondary detail-meta">{{authorName}} · {{timeText}}</view>
+      <view class="detail-head-row">
+        <view class="text-secondary detail-meta">{{authorName}} · {{timeText}}</view>
+        <view wx:if="{{canPublishUpdate}}" class="detail-actions">
+          <text class="detail-action" hover-class="hover-plain" bindtap="onEditUpdate">编辑</text>
+          <text class="detail-action detail-action-danger" hover-class="hover-plain" bindtap="onDeleteUpdate">删除</text>
+        </view>
+      </view>
       <view class="detail-body">
         <rich-text nodes="{{body}}"></rich-text>
       </view>
+      <view wx:if="{{attachments.length > 0}}" class="attach-section">
+        <view class="section-title">附件（{{attachments.length}}）</view>
+        <view
+          wx:for="{{attachments}}"
+          wx:key="id"
+          class="attach-row"
+          hover-class="hover-card"
+          data-id="{{item.id}}"
+          data-istext="{{item.isText}}"
+          data-name="{{item.name}}"
+          bindtap="onOpenAttachment"
+        >
+          <t-icon name="file" size="36rpx" color="#1677ff" />
+          <view class="attach-main">
+            <view class="attach-name">{{item.name}}</view>
+            <view wx:if="{{item.note}}" class="attach-note">{{item.note}}</view>
+            <view class="attach-size">{{item.sizeText}}</view>
+          </view>
+          <t-icon name="chevron-right" size="32rpx" color="#98a2b3" />
+        </view>
+      </view>
+
       <view wx:if="{{images.length > 0}}" class="image-section">
         <view class="section-title">图片（{{images.length}}）</view>
         <view class="image-grid">
@@ -40,15 +68,46 @@
       </view>
     </view>
 
-    <view wx:if="{{comments.length > 0}}" class="card">
+    <view class="card">
       <view class="section-title">评论（{{comments.length}}）</view>
-      <view wx:for="{{comments}}" wx:key="id" class="comment-item">
+      <view wx:if="{{comments.length === 0}}" class="comment-empty text-secondary">还没有评论</view>
+      <view
+        wx:for="{{comments}}"
+        wx:key="id"
+        class="comment-item {{item.isMine ? 'comment-mine' : ''}}"
+        data-id="{{item.id}}"
+        bindlongpress="onCommentActions"
+      >
         <view class="comment-head">
           <text class="comment-author">{{item.authorName}}</text>
           <text class="text-secondary comment-time">{{item.timeText}}</text>
         </view>
         <view class="comment-body">{{item.body}}</view>
+        <view wx:if="{{item.isMine}}" class="comment-mine-hint text-secondary">长按可编辑 / 删除</view>
       </view>
     </view>
   </block>
+</view>
+
+<!-- 评论输入栏（有评论权限时） -->
+<view wx:if="{{!loading && !loadError && canComment}}" class="comment-bar">
+  <textarea
+    class="comment-input"
+    value="{{commentText}}"
+    auto-height
+    maxlength="10000"
+    placeholder="写评论…"
+    placeholder-class="comment-placeholder"
+    bindinput="onCommentInput"
+  ></textarea>
+  <button
+    class="comment-send"
+    size="mini"
+    hover-class="hover-btn"
+    loading="{{commentSubmitting}}"
+    disabled="{{commentSubmitting}}"
+    bindtap="onSubmitComment"
+  >
+    发送
+  </button>
 </view>

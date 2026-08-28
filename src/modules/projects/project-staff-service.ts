@@ -1,11 +1,14 @@
 import "server-only";
 
 import type { Actor } from "@/lib/actor";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { withActorDb } from "@/lib/actor";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
+  dispatchProjectStaffActivity,
   publishDetachedProjectChange,
   publishProjectChange,
+  previewProjectStaffRecipients,
 } from "@/modules/notifications/notification-service";
 import {
   assertCanManageProjectStaff,
@@ -19,6 +22,11 @@ import type {
   AddProjectStaffInput,
   UpdateProjectStaffInput,
 } from "@/modules/projects/schemas";
+
+const PROJECT_ROLE_LABELS: Record<AddProjectStaffInput["role"], string> = {
+  PROJECT_MANAGER: "项目经理",
+  TECHNICIAN: "技术人员",
+};
 
 const staffUserSelect = {
   id: true,
@@ -69,12 +77,13 @@ export function addProjectStaff(
   actor: Actor,
   projectId: string,
   input: AddProjectStaffInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   return withActorDb(actor, async (tx) => {
     await assertCanManageProjectStaff(tx, actor, projectId);
     const project = await tx.project.findUnique({
       where: { id: projectId },
-      select: { id: true, customerSpaceId: true },
+      select: { id: true, customerSpaceId: true, title: true },
     });
     const user = await tx.user.findUnique({
       where: { id: input.userId },
@@ -121,7 +130,37 @@ export function addProjectStaff(
       projectId,
       payload: { projectStaffId: staff.id, userId: input.userId },
     });
+    await dispatchProjectStaffActivity(tx, actor, {
+      change: "PROJECT_STAFF_SELF_ADDED",
+      recipientUserId: input.userId,
+      notificationTitle: `你已加入项目：${project.title}`,
+      notificationBody: `你被添加为“${project.title}”的${PROJECT_ROLE_LABELS[input.role]}。`,
+      customerSpaceId: project.customerSpaceId,
+      projectId,
+      deliveryOverride,
+    });
     return staff;
+  });
+}
+
+/** 发送前预览：只提醒当事人，所以收件人恒为被操作的那一位 */
+export function previewProjectStaffDelivery(
+  actor: Actor,
+  projectId: string,
+  targetUserId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    await assertCanManageProjectStaff(tx, actor, projectId);
+    const project = await tx.project.findUnique({
+      where: { id: projectId },
+      select: { customerSpaceId: true },
+    });
+    assertFound(project, "项目不存在");
+    return previewProjectStaffRecipients(tx, actor, {
+      recipientUserId: targetUserId,
+      customerSpaceId: project.customerSpaceId,
+      projectId,
+    });
   });
 }
 
@@ -136,7 +175,7 @@ export function updateProjectStaff(
     const staff = await tx.projectStaff.findFirst({
       where: { id: projectStaffId, projectId },
       include: {
-        project: { select: { customerSpaceId: true } },
+        project: { select: { customerSpaceId: true, title: true } },
         user: { select: { platformRole: true, deletedAt: true } },
       },
     });
@@ -165,6 +204,16 @@ export function updateProjectStaff(
       projectId,
       payload: { projectStaffId: updated.id, userId: staff.userId },
     });
+    if (updated.role !== staff.role) {
+      await dispatchProjectStaffActivity(tx, actor, {
+        change: "PROJECT_STAFF_SELF_UPDATED",
+        recipientUserId: staff.userId,
+        notificationTitle: `项目角色已调整：${staff.project.title}`,
+        notificationBody: `你在“${staff.project.title}”的角色已调整为${PROJECT_ROLE_LABELS[updated.role]}。`,
+        customerSpaceId: staff.project.customerSpaceId,
+        projectId,
+      });
+    }
     return updated;
   });
 }
@@ -179,7 +228,7 @@ export function removeProjectStaff(
     const staff = await tx.projectStaff.findFirst({
       where: { id: projectStaffId, projectId },
       include: {
-        project: { select: { customerSpaceId: true } },
+        project: { select: { customerSpaceId: true, title: true } },
       },
     });
     assertFound(staff, "项目人员不存在");
@@ -212,6 +261,16 @@ export function removeProjectStaff(
         data: { assigneeId: nextAssignee?.userId ?? null },
       });
     }
+    // 必须赶在删除之前：Notification 的 RLS WITH CHECK 对非管理员要求
+    // app_user_relevant_to_project(userId, projectId)，删完就插不进去了。
+    await dispatchProjectStaffActivity(tx, actor, {
+      change: "PROJECT_STAFF_SELF_REMOVED",
+      recipientUserId: staff.userId,
+      notificationTitle: `你已被移出项目：${staff.project.title}`,
+      notificationBody: `你不再是“${staff.project.title}”的项目人员，相关工单分配已一并解除。`,
+      customerSpaceId: staff.project.customerSpaceId,
+      projectId,
+    });
     await tx.projectStaff.delete({ where: { id: projectStaffId } });
     await writeAuditLog(tx, actor, {
       action: "PROJECT_STAFF_REMOVED",

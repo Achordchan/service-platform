@@ -19,7 +19,11 @@ import {
   Typography,
 } from "@mui/material";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   ProjectStaffMember,
@@ -99,6 +103,10 @@ export function ProjectStaffManager({
     }
   }
 
+  const [staffOverride, setStaffOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const staffDeliveryRule = useDeliveryChannelRule("PROJECT_STAFF");
+
   const addStaff = form.handleSubmit(async (values) => {
     const selectedCandidate = availableCandidates.find(
       (candidate) => candidate.id === values.userId,
@@ -114,10 +122,13 @@ export function ProjectStaffManager({
               selectedCandidate.platformRole === "TECHNICIAN"
                 ? "TECHNICIAN"
                 : values.projectRole,
+            ...deliveryOverridePayload(staffOverride, staffDeliveryRule),
           }),
         );
         setOpen(false);
         form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
+        // 覆盖是一次性的，不跨下一次分配沿用
+        setStaffOverride({});
         toast.success("项目人员已分配");
         router.refresh();
       });
@@ -259,6 +270,18 @@ export function ProjectStaffManager({
               <Alert severity="info">
                 暂无可分配人员，请先到「团队」邀请成员。
               </Alert>
+            ) : null}
+            {selectedCandidate ? (
+              <DeliveryNotice
+                scene={{
+                  scene: "PROJECT_STAFF",
+                  projectId,
+                  targetUserId: selectedCandidate.id,
+                }}
+                override={staffOverride}
+                onOverrideChange={setStaffOverride}
+                disabled={submitting}
+              />
             ) : null}
           </Stack>
         </DialogContent>

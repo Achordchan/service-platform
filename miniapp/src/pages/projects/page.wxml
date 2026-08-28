@@ -64,11 +64,13 @@
           <view class="hero-stat-num">{{item._count.updates}}</view>
           <view class="hero-stat-label">项目动态</view>
         </view>
-        <view class="hero-stat-divider"></view>
-        <view class="hero-stat">
-          <view class="hero-stat-num">{{item.progressDetails.completed}}/{{item.progressDetails.total}}</view>
-          <view class="hero-stat-label">里程碑</view>
-        </view>
+        <block wx:if="{{item.showMilestoneStat}}">
+          <view class="hero-stat-divider"></view>
+          <view class="hero-stat">
+            <view class="hero-stat-num">{{item.progressDetails.completed}}/{{item.progressDetails.total}}</view>
+            <view class="hero-stat-label">里程碑</view>
+          </view>
+        </block>
       </view>
 
       <view wx:if="{{item.staff.length > 0}}" class="hero-pm">

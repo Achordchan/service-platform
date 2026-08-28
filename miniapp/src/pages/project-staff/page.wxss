@@ -1,0 +1,106 @@
+.staff-page {
+  padding: 24rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.staff-load-error {
+  padding: 80rpx 0;
+  text-align: center;
+  color: var(--text-secondary, #667085);
+  font-size: 26rpx;
+}
+
+.staff-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  margin-bottom: 24rpx;
+  padding: 20rpx;
+  background: var(--card-bg, #fff);
+  border: 2rpx dashed #1677ff;
+  border-radius: 16rpx;
+  color: #1677ff;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.staff-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+}
+
+.card {
+  background: var(--card-bg, #fff);
+  border-radius: 20rpx;
+  overflow: hidden;
+}
+
+.staff-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx 28rpx;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.staff-row:last-child {
+  border-bottom: none;
+}
+
+.staff-avatar {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: rgba(22, 119, 255, 0.12);
+  color: #1677ff;
+  font-size: 32rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.staff-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.staff-name {
+  font-size: 30rpx;
+}
+
+.staff-role {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+}
+
+.staff-hint {
+  margin-top: 24rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+
+.staff-pending {
+  margin-bottom: 20rpx;
+}
+
+.staff-pending-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  margin-bottom: 14rpx;
+}
+
+.staff-pending-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.staff-pending-btn {
+  flex: 1;
+  margin: 0;
+}

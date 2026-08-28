@@ -141,6 +141,8 @@ export function updateExternalPresence(
         },
       });
     }
+    // 刻意不返回站内 presence 那份 counterpartClients：外部门户自绘一个
+    // 简单在线点，不展示端图标；这是对外契约，不为内部 UI 需要而加字段。
     return { counterpartOnline: staffUserIds.length > 0 };
   });
 }

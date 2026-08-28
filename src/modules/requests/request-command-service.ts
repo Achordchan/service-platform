@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma, RequestStatus } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { withActorDb } from "@/lib/actor";
 import { enqueueMail } from "@/lib/jobs";
 import {
@@ -24,6 +25,7 @@ import { enqueueExternalRequestStatusMail } from "@/modules/integrations/externa
 import {
   dispatchRequestActivity,
   requestStatusLabel,
+  previewRequestActivityRecipients,
 } from "@/modules/notifications/notification-service";
 import {
   createContentRiskReview,
@@ -584,6 +586,7 @@ export async function changeRequestStatus(
   actor: Actor,
   requestId: string,
   targetStatus: RequestStatus,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   const result = await withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
@@ -634,6 +637,7 @@ export async function changeRequestStatus(
       request.status,
       targetStatus,
       true,
+      deliveryOverride,
     );
     return {
       updated,
@@ -744,6 +748,7 @@ export async function addRequestMessage(
   actor: Actor,
   requestId: string,
   input: CreateRequestMessageInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   if (input.clientMutationKey) {
     const existing = await findRequestMessageByMutationKey(
@@ -949,6 +954,7 @@ export async function addRequestMessage(
       sourceType: "REQUEST_MESSAGE",
       sourceId: message.id,
       contentRiskReviewId: contentRiskReview?.id,
+      deliveryOverride,
     });
     const nextStatus = isCustomer
       ? statusAfterCustomerReply(request.status)
@@ -1195,6 +1201,67 @@ async function writeStatusAudit(
   });
 }
 
+/**
+ * 发送前预览：这次操作会通知到谁、每人各通道什么状态。
+ *
+ * 传给 previewRequestActivityRecipients 的这组 flag 必须与下面真正发送时
+ * 一模一样，否则预览会骗人 —— 收件人规则本身在 notification-service 里只有
+ * 一份实现，这里只负责把场景参数对齐。
+ */
+export function previewRequestDelivery(
+  actor: Actor,
+  requestId: string,
+  scene: "PUBLIC_MESSAGE" | "STATUS",
+  status?: RequestStatus,
+) {
+  return withActorDb(actor, async (tx) => {
+    const request = await findRequestContext(tx, requestId, actor.id);
+    if (!request) throw notFound();
+    const assignedWorkers = workerIdsFromRequest(request);
+    if (scene === "STATUS") {
+      return previewRequestActivityRecipients(tx, actor, {
+        eventType: "REQUEST_STATUS_CHANGED",
+        eventPayload: {
+          requestId: request.id,
+          requestNumber: request.number,
+          previousStatus: request.status,
+          status: status ?? request.status,
+          actorId: actor.id,
+        },
+        notificationType: "REQUEST_STATUS",
+        notificationTitle: "",
+        notificationBody: "",
+        includeCustomers: includeCustomerMembers(request),
+        relevantWorkerUserIds: assignedWorkers,
+        notifyProjectManagers: false,
+        notifyPlatformAdmins: false,
+        customerSpaceId: request.project.customerSpaceId,
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+      });
+    }
+    return previewRequestActivityRecipients(tx, actor, {
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: {
+        requestId: request.id,
+        requestNumber: request.number,
+        actorId: actor.id,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "",
+      notificationBody: "",
+      includeCustomers: includeCustomerMembers(request),
+      relevantWorkerUserIds: assignedWorkers,
+      notifyProjectManagers: assignedWorkers.length === 0,
+      notifyPlatformAdmins: actor.platformRole === "CUSTOMER",
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.projectId,
+      serviceRequestId: request.id,
+    });
+  });
+}
+
 async function dispatchStatusActivity(
   tx: Parameters<typeof writeAuditLog>[0],
   actor: Actor,
@@ -1202,8 +1269,10 @@ async function dispatchStatusActivity(
   previousStatus: RequestStatus,
   status: RequestStatus,
   createNotifications: boolean,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   return dispatchRequestActivity(tx, actor, {
+    deliveryOverride,
     eventType: "REQUEST_STATUS_CHANGED",
     eventPayload: {
       requestId: request.id,

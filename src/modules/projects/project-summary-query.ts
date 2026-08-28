@@ -65,8 +65,13 @@ export async function hydrateProjectSummaries(
     where: { id: { in: managerRows.map((row) => row.userId) } },
     select: { id: true, name: true },
   });
+  // 里程碑数据同时供「进度条」和「里程碑计数」两处使用：只按 showProgress 取，
+  // 会让只开了里程碑模块、没开进度的项目在列表里显示 0/0。两个模块任一开启就取。
   const progressProjectIds = projects
-    .filter((project) => actor.isStaff || project.showProgress)
+    .filter(
+      (project) =>
+        actor.isStaff || project.showProgress || project.showMilestones,
+    )
     .map((project) => project.id);
   const milestones =
     progressProjectIds.length > 0

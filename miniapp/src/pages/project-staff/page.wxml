@@ -1,0 +1,62 @@
+<import src="/components/states.wxml" />
+
+<view class="staff-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+  <view wx:elif="{{loadError}}" class="staff-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="staff-add" hover-class="hover-plain" bindtap="onAddStaff">
+      <t-icon name="user-add" size="36rpx" color="#1677ff" /><text>添加项目人员</text>
+    </view>
+
+    <view wx:if="{{pendingAdd}}" class="card staff-pending">
+      <view class="staff-pending-title">
+        即将把「{{pendingAdd.name}}」加为{{pendingAdd.roleLabel}}
+      </view>
+      <delivery-notice
+        wx:if="{{deliveryScene}}"
+        scene="{{deliveryScene}}"
+        disabled="{{submitting}}"
+        bind:change="onDeliveryChange"
+      />
+      <view class="staff-pending-actions">
+        <button class="plain-btn staff-pending-btn" hover-class="hover-plain" bindtap="onCancelAdd">取消</button>
+        <button
+          class="primary-btn staff-pending-btn"
+          hover-class="hover-btn"
+          loading="{{submitting}}"
+          disabled="{{submitting}}"
+          bindtap="onConfirmAdd"
+        >
+          确认添加
+        </button>
+      </view>
+    </view>
+
+    <view wx:if="{{staff.length === 0}}" class="staff-empty text-secondary">
+      本项目暂无内部人员
+    </view>
+
+    <view wx:else class="card">
+      <view
+        wx:for="{{staff}}"
+        wx:key="id"
+        class="staff-row"
+        hover-class="hover-card"
+        data-id="{{item.id}}"
+        bindtap="onStaffActions"
+      >
+        <view class="staff-avatar">{{item.user.name[0]}}</view>
+        <view class="staff-main">
+          <view class="staff-name">{{item.user.name}}</view>
+          <view class="staff-role text-secondary">{{item.roleLabel}}</view>
+        </view>
+        <t-icon name="more" size="36rpx" color="#98a2b3" />
+      </view>
+    </view>
+
+    <view class="staff-hint text-secondary">
+      点击成员可改角色或移出项目。项目经理可管理交付，技术人员仅处理被分配的工单。
+    </view>
+  </block>
+</view>

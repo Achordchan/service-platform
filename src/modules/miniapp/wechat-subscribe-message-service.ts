@@ -125,6 +125,11 @@ export async function recordWechatSubscribeDelivery(
     userId: string;
     projectId: string | null;
     serviceRequestId: string | null;
+    /**
+     * 本次操作的显式选择，优先于后台规则。注意只能覆盖规则开关：
+     * 未绑定微信、订阅额度耗尽是硬约束，强制也送不出去。
+     */
+    wechatOverride?: boolean;
   },
 ): Promise<boolean> {
   const definition = WECHAT_SUBSCRIBE_TEMPLATES.find((template) =>
@@ -137,6 +142,7 @@ export async function recordWechatSubscribeDelivery(
     select: { wechatEnabled: true },
   });
   const wechatEnabled =
+    notification.wechatOverride ??
     rule?.wechatEnabled ??
     defaultNotificationDeliveryRuleState(definition.ruleKey).wechatEnabled;
   if (!wechatEnabled) return false;

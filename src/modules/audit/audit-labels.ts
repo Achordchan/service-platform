@@ -157,6 +157,8 @@ const actionLabels: Record<string, string> = {
 
   // 附件
   ATTACHMENT_UPLOADED: "上传附件",
+  ATTACHMENT_PINNED_TO_PROJECT: "添加到项目文件",
+  ATTACHMENT_UNPINNED_FROM_PROJECT: "移出项目文件",
   INLINE_IMAGE_UPLOADED: "上传内嵌图片",
   ATTACHMENT_DOWNLOADED: "下载附件",
   SUPPORT_PLAYBOOK_IMAGE_UPLOADED: "上传回复模板图片",
@@ -174,6 +176,7 @@ const actionLabels: Record<string, string> = {
   RESEND_DOMAIN_VERIFIED: "验证 Resend 域名",
   RESEND_WEBHOOK_REMOVE_FAILED: "移除 Resend Webhook 失败",
   NOTIFICATION_DELIVERY_RULES_UPDATED: "更新通知送达规则",
+  NOTIFICATION_DELIVERY_OVERRIDDEN: "单次覆盖通知送达",
 
   // 插件
   PLUGIN_INSTALLATION_UPDATED: "更新插件安装",

@@ -1,0 +1,280 @@
+.dn {
+  padding: 4rpx 0;
+}
+
+.dn-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8rpx;
+}
+
+.dn-text {
+  font-size: 23rpx;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.dn-badge {
+  font-size: 20rpx;
+  color: #b54708;
+  background: rgba(247, 144, 9, 0.12);
+  border-radius: 999rpx;
+  padding: 2rpx 12rpx;
+}
+
+.dn-action {
+  font-size: 23rpx;
+  color: #1677ff;
+}
+
+.dn-action-off {
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.dn-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.dn-panel {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--card-bg, #fff);
+  border-radius: 28rpx 28rpx 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.dn-panel-head {
+  box-sizing: border-box;
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 28rpx 28rpx 16rpx;
+}
+
+.dn-panel-title {
+  font-size: 32rpx;
+  font-weight: 600;
+}
+
+.dn-panel-body {
+  /* 两个坑：
+     1) 项目无全局 border-box 重置 —— content-box 下横向 padding 会把
+        scroll-view 撑到 100%+56rpx，右侧的 switch 被挤出视口；
+     2) scroll-view 必须拿到确定高度才会内部滚动，靠 flex:1 在小程序里不可靠，
+        内容一多就把面板撑高、底部按钮压到列表上面。故直接给 max-height。 */
+  box-sizing: border-box;
+  width: 100%;
+  /* min-height 是保险：万一 scroll-view 的内置高度在某些基础库上塌成 0，
+     面板也不会变成一条缝 */
+  min-height: 240rpx;
+  max-height: 52vh;
+  padding: 0 28rpx;
+}
+
+.dn-panel-desc {
+  font-size: 23rpx;
+  color: var(--text-secondary, #667085);
+  line-height: 1.6;
+  margin-bottom: 16rpx;
+}
+
+.dn-panel-empty {
+  padding: 48rpx 28rpx;
+  text-align: center;
+  font-size: 26rpx;
+  color: var(--text-secondary, #667085);
+}
+
+.dn-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+/* 左侧文案吃掉剩余宽度并允许换行，开关不参与压缩：
+   否则说明文字一变长就把 switch 顶出可视区 */
+.dn-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dn-row switch {
+  flex-shrink: 0;
+}
+
+.dn-row-sub {
+  padding-left: 28rpx;
+}
+
+.dn-row-disabled {
+  opacity: 0.45;
+}
+
+.dn-row-title {
+  font-size: 28rpx;
+}
+
+.dn-row-desc {
+  margin-top: 4rpx;
+  font-size: 21rpx;
+  color: var(--text-tertiary, #98a2b3);
+  line-height: 1.5;
+}
+
+.dn-warn {
+  margin-top: 16rpx;
+  padding: 16rpx 20rpx;
+  border-radius: 12rpx;
+  background: rgba(247, 144, 9, 0.1);
+  color: #b54708;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+
+.dn-recipients-title {
+  margin: 24rpx 0 12rpx;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+
+.dn-recipient {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  padding: 14rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.04);
+}
+
+.dn-recipient-muted .dn-recipient-name {
+  text-decoration: line-through;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.dn-recipient-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dn-recipient-name {
+  font-size: 27rpx;
+}
+
+/* 客户与内部分组标题：颜色区分，降低在长名单里点错人的概率 */
+.dn-group-title {
+  margin: 20rpx 0 6rpx;
+  font-size: 23rpx;
+  font-weight: 600;
+  padding: 6rpx 16rpx;
+  border-radius: 8rpx;
+  align-self: flex-start;
+  display: inline-block;
+}
+
+.dn-group-customer {
+  color: #1677ff;
+  background: rgba(22, 119, 255, 0.1);
+}
+
+.dn-group-staff {
+  color: #667085;
+  background: rgba(102, 112, 133, 0.12);
+}
+
+.dn-recipient-states {
+  margin-top: 4rpx;
+  font-size: 21rpx;
+  color: var(--text-tertiary, #98a2b3);
+}
+
+.dn-panel-foot {
+  box-sizing: border-box;
+  width: 100%;
+  flex-shrink: 0;
+  display: flex;
+  background: var(--card-bg, #fff);
+  gap: 16rpx;
+  padding: 20rpx 28rpx 28rpx;
+  border-top: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+/* 自定义组件默认 styleIsolation: isolated —— app.wxss 里的 .primary-btn /
+   .plain-btn 进不到组件内，按钮样式必须自带（CSS 变量是继承值，不受影响）。 */
+.dn-btn {
+  flex: 1;
+  margin: 0;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  font-weight: 600;
+  padding: 18rpx 0;
+  text-align: center;
+  border: none;
+}
+
+.dn-btn::after {
+  border: none;
+}
+
+.dn-btn-plain {
+  background: var(--brand-soft, rgba(22, 119, 255, 0.1));
+  color: var(--brand, #1677ff);
+}
+
+.dn-btn-plain-hover {
+  opacity: 0.75;
+}
+
+.dn-btn-primary {
+  background: var(--brand, #1677ff);
+  color: #ffffff;
+}
+
+.dn-btn-primary-hover {
+  background: var(--brand-pressed, #0f5fd6);
+}
+
+.dn-btn[disabled] {
+  opacity: 0.5;
+}
+
+.dn-recipients-hint {
+  margin-bottom: 12rpx;
+  font-size: 21rpx;
+  color: var(--text-tertiary, #98a2b3);
+  line-height: 1.5;
+}
+
+.dn-recipient-off {
+  flex-shrink: 0;
+  font-size: 21rpx;
+  color: var(--text-tertiary, #98a2b3);
+  background: rgba(102, 112, 133, 0.12);
+  border-radius: 999rpx;
+  padding: 4rpx 14rpx;
+}
+
+.dn-force-warn {
+  margin: 10rpx 0 0 28rpx;
+  padding: 14rpx 18rpx;
+  border-radius: 10rpx;
+  background: rgba(247, 144, 9, 0.1);
+  color: #b54708;
+  font-size: 21rpx;
+  line-height: 1.6;
+}
+
+.dn-recipient-forced {
+  color: #b54708;
+}

@@ -251,13 +251,18 @@ describe("Sub2API 外部联系人 RLS", () => {
         action: "heartbeat",
         sessionId: externalSessionId,
       }),
+      // 外部门户只回是否在线：它自绘一个简单指示点，不用端图标，
+      // 故不返回 counterpartClients（站内 presence 才有）
     ).resolves.toEqual({ counterpartOnline: false });
     await expect(
       updateRequestPresence(adminActor, ids.requestA, {
         action: "heartbeat",
         sessionId: staffSessionId,
       }),
-    ).resolves.toEqual({ counterpartOnline: true });
+    ).resolves.toEqual({
+      counterpartOnline: true,
+      counterpartClients: ["WEB"],
+    });
 
     await updateRequestPresence(adminActor, ids.requestA, {
       action: "leave",
