@@ -323,28 +323,23 @@ export function listRequestClientContexts(actor: Actor, requestId: string) {
       orderBy: { updatedAt: "desc" },
       take: 20,
     });
-    const externalRows = await tx.externalRequestPresence.findMany({
-      where: { serviceRequestId: requestId },
-      select: {
-        id: true,
-        sessionId: true,
-        expiresAt: true,
-        updatedAt: true,
-        externalContact: {
-          select: { id: true, displayName: true, email: true },
-        },
-      },
-      orderBy: { updatedAt: "desc" },
-      take: 20,
-    });
-    // sessionId 就是 ExternalEmbedSession.id：UA / IP 记在会话上
-    const sessions = externalRows.length
-      ? await tx.externalEmbedSession.findMany({
-          where: { id: { in: externalRows.map((row) => row.sessionId) } },
-          select: { id: true, ipAddress: true, userAgent: true },
-        })
-      : [];
-    const sessionById = new Map(sessions.map((item) => [item.id, item]));
+    // 外部联系人的 IP / UA 记在 ExternalEmbedSession 上，而
+    // external_embed_session_select 只放行会话本人与平台管理员 —— 普通项目经理
+    // 或技术人员直接查会被 RLS 静默过滤成零行，设备信息永远是空的。
+    // 走 SECURITY DEFINER 函数取：它自己断言「是员工 + 对本工单有访问权」
+    // （与 RLS 同一个 app_can_access_request 谓词），只暴露这一个工单的 ip/ua。
+    const externalRows = await tx.$queryRaw<
+      Array<{
+        presence_id: string;
+        contact_id: string;
+        contact_name: string;
+        contact_email: string | null;
+        expires_at: Date;
+        updated_at: Date;
+        ip_address: string | null;
+        user_agent: string | null;
+      }>
+    >`SELECT * FROM app_external_request_client_contexts(${requestId})`;
 
     const now = new Date();
     const describe = (input: {
@@ -374,26 +369,25 @@ export function listRequestClientContexts(actor: Actor, requestId: string) {
 
     return [
       ...rows.map((row) => describe({ ...row, timezone: row.timezone })),
-      ...externalRows.map((row) => {
-        const session = sessionById.get(row.sessionId);
-        return describe({
-          id: row.id,
+      ...externalRows.map((row) =>
+        describe({
+          id: row.presence_id,
           user: {
-            id: row.externalContact.id,
-            name: row.externalContact.displayName,
-            email: row.externalContact.email,
+            id: row.contact_id,
+            name: row.contact_name,
+            email: row.contact_email,
           },
           // 外部门户只有网页
           client: "WEB",
-          expiresAt: row.expiresAt,
-          updatedAt: row.updatedAt,
+          expiresAt: row.expires_at,
+          updatedAt: row.updated_at,
           // 外部门户不上报时区
           timezone: null,
-          ipAddress: session?.ipAddress ?? null,
-          userAgent: session?.userAgent ?? null,
+          ipAddress: row.ip_address,
+          userAgent: row.user_agent,
           external: true,
-        });
-      }),
+        }),
+      ),
     ]
       .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
       .slice(0, 20);

@@ -56,6 +56,15 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /**
+   * 上一次已成功保存的内容快照。
+   *
+   * 附件上传失败时页面会留下来让用户重试，但重试会连实体一起再提交一次，
+   * 而 updateMilestone 每次调用都无条件分发一条 PROJECT_MILESTONE 通知 ——
+   * 字段一个没改也照发，于是重试几次就骚扰几次。内容与上次保存一致就跳过实体
+   * 调用，只补传剩下的附件；用户若顺手改了字段，快照对不上，实体照常提交。
+   */
+  savedSnapshot: "",
   /** 编辑态载入时的原始描述与其纯文本形态：用于判断描述到底改没改 */
   loadedDescription: "",
   loadedDescText: "",
@@ -228,23 +237,30 @@ Page({
         ? { deliveryOverride: override }
         : {}),
     };
+    const snapshot = JSON.stringify(payload);
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {
-        // 与动态编辑同理：描述没动就别提交，真改了也要把原描述里的内嵌图标签
-        // 原样接回去 —— 服务端会把描述里消失的附件 id 当成删除，连文件一起删
-        const descChanged = descText !== this.loadedDescText.trim();
-        await editMilestone(this.data.projectId, this.data.milestoneId, {
-          ...withOverride,
-          ...(descChanged
-            ? {
-                description: descText
-                  ? textToHtml(descText) +
-                    keepInlineImageTags(this.loadedDescription)
-                  : keepInlineImageTags(this.loadedDescription) || null,
-              }
-            : { description: this.loadedDescription || null }),
-        });
+        // 内容与上次成功保存的一致 = 这次只是重试没传成功的附件，
+        // 不能再调一次 editMilestone（它每次都会分发一条 PROJECT_MILESTONE 通知）
+        if (snapshot !== this.savedSnapshot) {
+          // 与动态编辑同理：描述没动就别提交，真改了也要把原描述里的内嵌图标签
+          // 原样接回去 —— 服务端会把描述里消失的附件 id 当成删除，连文件一起删
+          const descChanged = descText !== this.loadedDescText.trim();
+          const description = descChanged
+            ? descText
+              ? textToHtml(descText) +
+                keepInlineImageTags(this.loadedDescription)
+              : keepInlineImageTags(this.loadedDescription) || null
+            : this.loadedDescription || null;
+          await editMilestone(this.data.projectId, this.data.milestoneId, {
+            ...withOverride,
+            description,
+          });
+          this.loadedDescription = description ?? "";
+          this.loadedDescText = descText;
+          this.savedSnapshot = snapshot;
+        }
         if (
           !this.finishUpload(
             await this.uploadPendingFiles({
@@ -263,10 +279,12 @@ Page({
             "已新增",
           )
         ) {
-          // 里程碑已建好，留在页面上只重试剩下的附件
+          // 里程碑已建好，留在页面上只重试剩下的附件。记下快照，
+          // 下次提交只补传附件、不再重复创建或更新实体
           this.setData({ mode: "edit", milestoneId: created.id });
           this.loadedDescription = descText ? textToHtml(descText) : "";
           this.loadedDescText = descText;
+          this.savedSnapshot = snapshot;
           return;
         }
       }

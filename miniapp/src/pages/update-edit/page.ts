@@ -38,6 +38,14 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /**
+   * 上一次已成功保存的内容快照。
+   *
+   * 附件上传失败时页面会留下来让用户重试，但重试会连实体一起再提交一次，
+   * 而 editProjectUpdate 每次调用都无条件分发一条 PROJECT_UPDATE 通知 ——
+   * 字段一个没改也照发。内容与上次保存一致就跳过实体调用，只补传剩下的附件。
+   */
+  savedSnapshot: "",
   /** 编辑态载入时的原始正文与其纯文本形态：用于判断正文到底改没改 */
   loadedBody: "",
   loadedText: "",
@@ -191,21 +199,31 @@ Page({
       wx.showToast({ title: "请填写进度说明", icon: "none" });
       return;
     }
+    const snapshot = JSON.stringify({ title, text });
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {
-        // 正文没动就别提交 body：纯文本编辑器还原不出原来的富文本，
-        // 提交等于拿降级后的版本覆盖原文
-        const textChanged = text !== this.loadedText.trim();
-        // 真改了正文，也要把原正文里的内嵌图标签原样接回去 —— 服务端会把
-        // 正文里消失的附件 id 当成删除，连附件行和存储文件一起删掉
-        const bodyForEdit = textChanged
-          ? body + keepInlineImageTags(this.loadedBody)
-          : undefined;
-        await editProjectUpdate(this.data.projectId, this.data.updateId, {
-          title,
-          ...(bodyForEdit ? { body: bodyForEdit } : {}),
-        });
+        // 内容与上次成功保存的一致 = 这次只是重试没传成功的附件，
+        // 不能再调一次 editProjectUpdate（它每次都会分发一条通知）
+        if (snapshot !== this.savedSnapshot) {
+          // 正文没动就别提交 body：纯文本编辑器还原不出原来的富文本，
+          // 提交等于拿降级后的版本覆盖原文
+          const textChanged = text !== this.loadedText.trim();
+          // 真改了正文，也要把原正文里的内嵌图标签原样接回去 —— 服务端会把
+          // 正文里消失的附件 id 当成删除，连附件行和存储文件一起删掉
+          const bodyForEdit = textChanged
+            ? body + keepInlineImageTags(this.loadedBody)
+            : undefined;
+          await editProjectUpdate(this.data.projectId, this.data.updateId, {
+            title,
+            ...(bodyForEdit ? { body: bodyForEdit } : {}),
+          });
+          if (bodyForEdit) {
+            this.loadedBody = bodyForEdit;
+            this.loadedText = text;
+          }
+          this.savedSnapshot = snapshot;
+        }
         // 编辑态也要把已选附件传上去，否则提示「已更新」但文件从没上传
         if (
           !this.finishUpload(
@@ -233,10 +251,12 @@ Page({
             "已发布",
           )
         ) {
-          // 实体已建好，留在页面上只重试剩下的附件（files 只剩失败的那几个）
+          // 实体已建好，留在页面上只重试剩下的附件（files 只剩失败的那几个）。
+          // 记下快照，下次提交只补传附件、不再重复创建或更新实体
           this.setData({ mode: "edit", updateId: created.id });
           this.loadedBody = body;
           this.loadedText = text;
+          this.savedSnapshot = snapshot;
           return;
         }
       }

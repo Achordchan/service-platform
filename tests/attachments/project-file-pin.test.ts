@@ -111,6 +111,48 @@ describe("文件来源筛选", () => {
   });
 });
 
+describe("外部联系人的设备信息读取", () => {
+  it("走 SECURITY DEFINER 函数，且函数自己把住员工与工单访问权两道门", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const sql = await readFile(
+      "prisma/migrations/20260828190000_external_client_context_read/migration.sql",
+      "utf8",
+    );
+    // 绕过 RLS 的函数必须自带门禁，否则等于把会话表读权开给所有人
+    expect(sql).toContain("SECURITY DEFINER");
+    expect(sql).toContain("AND app_is_staff()");
+    expect(sql).toContain("AND app_can_access_request(request_id)");
+    expect(sql).toContain(
+      "REVOKE ALL ON FUNCTION app_external_request_client_contexts(text) FROM PUBLIC",
+    );
+
+    const service = await readFile(
+      "src/modules/requests/request-presence-service.ts",
+      "utf8",
+    );
+    // 直接查会话表的话，external_embed_session_select 只放行会话本人与平台管理员，
+    // 普通项目经理/技术人员会被静默过滤成零行 —— 设备信息永远是空的
+    expect(service).not.toContain("tx.externalEmbedSession.findMany");
+    expect(service).toContain("app_external_request_client_contexts(");
+  });
+});
+
+describe("附件重试不重复发通知", () => {
+  it("内容与上次保存一致时跳过实体提交，只补传附件", async () => {
+    const { readFile } = await import("node:fs/promises");
+    for (const path of [
+      "miniapp/src/pages/update-edit/page.ts",
+      "miniapp/src/pages/milestone-edit/page.ts",
+    ]) {
+      const page = await readFile(path, "utf8");
+      // editProjectUpdate / editMilestone 每次调用都无条件分发一条通知，
+      // 附件重试若连实体一起再提交，重试几次就骚扰几次
+      expect(page).toContain("savedSnapshot");
+      expect(page).toContain("if (snapshot !== this.savedSnapshot) {");
+    }
+  });
+});
+
 describe("项目列表的里程碑计数", () => {
   it("只开里程碑模块、未开进度时也要取里程碑，否则列表显示 0/0", async () => {
     const { readFile } = await import("node:fs/promises");
