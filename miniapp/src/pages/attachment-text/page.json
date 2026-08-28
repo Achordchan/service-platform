@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "文件预览",
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon"
+  }
+}

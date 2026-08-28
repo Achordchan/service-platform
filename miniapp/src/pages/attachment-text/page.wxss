@@ -1,0 +1,60 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--card-bg, #fff);
+}
+
+.state {
+  padding: 120rpx 40rpx;
+  text-align: center;
+  color: var(--text-secondary, #667085);
+  font-size: 26rpx;
+}
+
+.state-error {
+  color: var(--error, #d14343);
+  margin-bottom: 24rpx;
+}
+
+.retry-btn {
+  display: inline-block;
+  padding: 12rpx 48rpx;
+  border: 2rpx solid rgba(16, 24, 40, 0.15);
+  border-radius: 999rpx;
+  color: var(--text-primary, #101828);
+}
+
+.truncate-hint {
+  padding: 12rpx 24rpx;
+  background: #fff7e6;
+  color: #ad6800;
+  font-size: 22rpx;
+}
+
+.content-scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 20rpx 24rpx;
+  box-sizing: border-box;
+}
+
+.content-text {
+  font-family: Menlo, Consolas, monospace;
+  font-size: 24rpx;
+  line-height: 1.7;
+  color: var(--text-primary, #101828);
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.copy-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10rpx;
+  padding: 20rpx 0 calc(20rpx + env(safe-area-inset-bottom));
+  border-top: 2rpx solid rgba(16, 24, 40, 0.06);
+  color: var(--text-secondary, #667085);
+  font-size: 24rpx;
+}

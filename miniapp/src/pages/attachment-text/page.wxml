@@ -1,0 +1,19 @@
+<view class="page">
+  <view wx:if="{{loading}}" class="state">正在加载文件内容…</view>
+
+  <view wx:elif="{{error}}" class="state">
+    <view class="state-error">{{error}}</view>
+    <view class="retry-btn" hover-class="hover-plain" bindtap="onRetry">重试</view>
+  </view>
+
+  <block wx:else>
+    <view wx:if="{{truncated}}" class="truncate-hint">文件较大，仅展示前 20 万字符</view>
+    <scroll-view class="content-scroll" scroll-y scroll-x enable-flex>
+      <text class="content-text" user-select space="nbsp" decode="{{false}}">{{content}}</text>
+    </scroll-view>
+    <view class="copy-bar" hover-class="hover-plain" bindtap="onCopyAll">
+      <t-icon name="file-copy" size="32rpx" color="#667085" />
+      <text>复制全部内容</text>
+    </view>
+  </block>
+</view>

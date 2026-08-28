@@ -19,6 +19,7 @@ import {
   PROJECT_STATUS_TONES,
   REQUEST_STATUS_LABELS,
   REQUEST_STATUS_TONES,
+  isTextAttachment,
   fileExtLabel,
   formatDateTime,
   formatFileSize,
@@ -189,6 +190,7 @@ Page({
             ...att,
             displayName: att.title || att.originalName,
             note: att.note || "",
+            isText: isTextAttachment(att.mimeType),
             ext: fileExtLabel(att.mimeType, att.originalName),
             sizeText: formatFileSize(att.size),
           })),
@@ -348,6 +350,13 @@ Page({
   },
   async onOpenFile(event: WechatMiniprogram.TouchEvent) {
     const fileId = event.currentTarget.dataset.id as string;
+    if (event.currentTarget.dataset.istext) {
+      const name = (event.currentTarget.dataset.name as string) || "";
+      wx.navigateTo({
+        url: `/pages/attachment-text/page?id=${fileId}&name=${encodeURIComponent(name)}`,
+      });
+      return;
+    }
     wx.showLoading({ title: "下载文件" });
     try {
       const localPath = await downloadAttachment(fileId);

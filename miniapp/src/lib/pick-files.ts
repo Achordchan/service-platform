@@ -76,6 +76,7 @@ export function pickAttachments(remaining: number): Promise<PickedFile[]> {
 }
 
 const IMAGE_EXT = /\.(?:jpe?g|png|gif|webp)$/i;
+const TEXT_EXT = /\.(?:txt|log|csv|json)$/i;
 type OpenableDocType =
   | "doc"
   | "docx"
@@ -93,6 +94,12 @@ const DOC_EXT = /\.(doc|docx|xls|xlsx|ppt|pptx|pdf)$/i;
 export function previewLocalFile(file: PickedFile) {
   if (IMAGE_EXT.test(file.fileName) || IMAGE_EXT.test(file.localPath)) {
     wx.previewImage({ urls: [file.localPath] });
+    return;
+  }
+  if (TEXT_EXT.test(file.fileName)) {
+    wx.navigateTo({
+      url: `/pages/attachment-text/page?path=${encodeURIComponent(file.localPath)}&name=${encodeURIComponent(file.fileName)}`,
+    });
     return;
   }
   const match = DOC_EXT.exec(file.fileName);

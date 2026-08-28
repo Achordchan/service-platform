@@ -196,3 +196,12 @@ export function notificationTargetTab(type: string): string {
 export function genMutationKey(): string {
   return `ma-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
+
+/** 文本类附件（openDocument 不支持）改走文本查看页 */
+export function isTextAttachment(mimeType: string) {
+  return (
+    mimeType === "text/plain" ||
+    mimeType === "text/csv" ||
+    mimeType === "application/json"
+  );
+}

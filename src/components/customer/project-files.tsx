@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import {
   Box,
@@ -10,9 +11,15 @@ import {
 } from "@mui/material";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
+import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import type { ProjectAttachment } from "@/components/customer/customer-types";
 import { EmptyState } from "@/components/shared/content-state";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
+import {
+  AttachmentPreviewDialog,
+  previewKindOfMimeType,
+  type PreviewSource,
+} from "@/components/shared/attachment-preview-dialog";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -33,6 +40,7 @@ export function ProjectFiles({
   files: ProjectAttachment[];
   contentRiskEnabled?: boolean;
 }) {
+  const [preview, setPreview] = useState<PreviewSource | null>(null);
   if (files.length === 0) {
     return (
       <EmptyState
@@ -101,15 +109,39 @@ export function ProjectFiles({
               </Typography>
             ) : null}
           </Box>
-          {file.contentRiskStatus !== "REVOKED" ? <IconButton
-            component={Link}
-            href={`/api/v1/attachments/${file.id}`}
-            aria-label={`下载 ${file.title?.trim() || file.originalName}`}
-          >
-            <DownloadOutlinedIcon />
-          </IconButton> : null}
+          {file.contentRiskStatus !== "REVOKED" ? (
+            <Stack direction="row" spacing={0.5}>
+              {previewKindOfMimeType(file.mimeType) !== "unsupported" ? (
+                <IconButton
+                  onClick={() =>
+                    setPreview({
+                      type: "remote",
+                      url: `/api/v1/attachments/${file.id}?disposition=inline`,
+                      downloadUrl: `/api/v1/attachments/${file.id}`,
+                      mimeType: file.mimeType,
+                      name: file.title?.trim() || file.originalName,
+                    })
+                  }
+                  aria-label={`预览 ${file.title?.trim() || file.originalName}`}
+                >
+                  <VisibilityOutlinedIcon />
+                </IconButton>
+              ) : null}
+              <IconButton
+                component={Link}
+                href={`/api/v1/attachments/${file.id}`}
+                aria-label={`下载 ${file.title?.trim() || file.originalName}`}
+              >
+                <DownloadOutlinedIcon />
+              </IconButton>
+            </Stack>
+          ) : null}
         </Stack>
       ))}
+      <AttachmentPreviewDialog
+        source={preview}
+        onClose={() => setPreview(null)}
+      />
     </Paper>
   );
 }

@@ -89,6 +89,8 @@
                 class="msg-file"
                 hover-class="hover-card"
                 data-id="{{file.id}}"
+                data-istext="{{file.isText}}"
+                data-name="{{file.name}}"
                 bindtap="onOpenFile"
               >
                 <t-icon name="file" size="40rpx" color="#1677ff" />
@@ -116,6 +118,8 @@
           class="msg-file"
           hover-class="hover-card"
           data-id="{{item.id}}"
+          data-istext="{{item.isText}}"
+          data-name="{{item.displayName}}"
           bindtap="onOpenFile"
         >
           <t-icon name="file" size="40rpx" color="#1677ff" />

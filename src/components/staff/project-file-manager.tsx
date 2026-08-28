@@ -25,6 +25,7 @@ import {
 } from "@/components/shared/file-picker";
 import {
   AttachmentPreviewDialog,
+  previewKindOfMimeType,
   type PreviewSource,
 } from "@/components/shared/attachment-preview-dialog";
 import { useToast } from "@/components/shared/toast-provider";
@@ -197,13 +198,33 @@ export function ProjectFileManager({
                 </>
               )}
             </div>
-            {file.contentRiskStatus !== "REVOKED" ? <Button
-              component="a"
-              href={`/api/v1/attachments/${file.id}`}
-              variant="outlined"
-            >
-              下载
-            </Button> : null}
+            {file.contentRiskStatus !== "REVOKED" ? (
+              <Stack direction="row" spacing={1}>
+                {previewKindOfMimeType(file.mimeType) !== "unsupported" ? (
+                  <Button
+                    variant="text"
+                    onClick={() =>
+                      setPreview({
+                        type: "remote",
+                        url: `/api/v1/attachments/${file.id}?disposition=inline`,
+                        downloadUrl: `/api/v1/attachments/${file.id}`,
+                        mimeType: file.mimeType,
+                        name: file.title?.trim() || file.originalName,
+                      })
+                    }
+                  >
+                    预览
+                  </Button>
+                ) : null}
+                <Button
+                  component="a"
+                  href={`/api/v1/attachments/${file.id}`}
+                  variant="outlined"
+                >
+                  下载
+                </Button>
+              </Stack>
+            ) : null}
           </Stack>
         ))}
         {files.length === 0 ? (
@@ -246,7 +267,11 @@ export function ProjectFileManager({
                   size="small"
                   startIcon={<VisibilityOutlinedIcon />}
                   onClick={() =>
-                    setPreview({ file: draft.file, title: draft.title })
+                    setPreview({
+                      type: "file",
+                      file: draft.file,
+                      title: draft.title,
+                    })
                   }
                 >
                   预览
