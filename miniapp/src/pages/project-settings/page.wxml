@@ -17,7 +17,12 @@
       />
 
       <view class="edit-label">项目状态</view>
+      <!-- 草稿（外部接入待激活）的状态由接入流程管理，不可手改，对齐 Web -->
+      <view wx:if="{{statusLocked}}" class="edit-picker edit-picker-locked">
+        {{statusOptions[statusIndex].label}}
+      </view>
       <picker
+        wx:else
         mode="selector"
         range="{{statusOptions}}"
         range-key="label"
@@ -29,6 +34,9 @@
           <t-icon name="chevron-down" size="32rpx" color="#98a2b3" />
         </view>
       </picker>
+      <view wx:if="{{statusLocked}}" class="edit-hint text-secondary">
+        完成外部接入并激活后，项目会自动进入进行中
+      </view>
 
       <view class="edit-label">开始日期</view>
       <view class="edit-date-row">

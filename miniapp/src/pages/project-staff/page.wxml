@@ -59,4 +59,37 @@
       点击成员可改角色或移出项目。项目经理可管理交付，技术人员仅处理被分配的工单。
     </view>
   </block>
+
+  <!-- 候选选择：可搜索、可滚动，不再受 ActionSheet 六项上限与 slice(0,10) 截断 -->
+  <view wx:if="{{pickerVisible}}" class="cand-mask" bindtap="onClosePicker" catchtouchmove="noop">
+    <view class="cand-panel" catchtap="noop">
+      <view class="cand-head">
+        <view class="cand-title">选择人员</view>
+        <view class="cand-close" hover-class="hover-plain" bindtap="onClosePicker">关闭</view>
+      </view>
+      <input
+        class="cand-search"
+        value="{{candidateKeyword}}"
+        placeholder="搜索姓名或邮箱"
+        placeholder-class="search-placeholder"
+        bindinput="onCandidateSearch"
+      />
+      <scroll-view scroll-y class="cand-list">
+        <view
+          wx:for="{{filteredCandidates}}"
+          wx:key="id"
+          class="cand-row"
+          hover-class="hover-plain"
+          data-id="{{item.id}}"
+          bindtap="onPickCandidate"
+        >
+          <view class="cand-name">{{item.name}}</view>
+          <view class="cand-email text-secondary">{{item.email}}</view>
+        </view>
+        <view wx:if="{{filteredCandidates.length === 0}}" class="cand-empty text-secondary">
+          没有匹配的人员
+        </view>
+      </scroll-view>
+    </view>
+  </view>
 </view>

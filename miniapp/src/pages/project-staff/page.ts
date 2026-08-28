@@ -33,6 +33,12 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     // 候选（尚未加入本项目的内部人员）
     candidates: [] as StaffCandidate[],
+    // 候选选择面板：原来用 wx.showActionSheet + slice(0,10)，两处都不成立 ——
+    // itemList 上限是 6，超了直接调用失败；而候选接口最多回 500 人，
+    // 排在后面的人永远选不到。改成带搜索的可滚动列表。
+    pickerVisible: false,
+    candidateKeyword: "",
+    filteredCandidates: [] as StaffCandidate[],
     submitting: false,
   },
   onLoad(query: Record<string, string | undefined>) {
@@ -83,16 +89,36 @@ Page({
       wx.showToast({ title: "没有可添加的人员", icon: "none" });
       return;
     }
-    const candidates = this.data.candidates;
-    wx.showActionSheet({
-      itemList: candidates
-        .slice(0, 10)
-        .map((candidate) => `${candidate.name}（${candidate.email}）`),
-      success: (res) => {
-        const candidate = candidates[res.tapIndex];
-        if (candidate) this.pickRoleThenAdd(candidate);
-      },
+    this.setData({
+      pickerVisible: true,
+      candidateKeyword: "",
+      filteredCandidates: this.data.candidates,
     });
+  },
+  /** 面板内不穿透到遮罩 / 不滚穿底层列表 */
+  noop() {},
+  onClosePicker() {
+    this.setData({ pickerVisible: false, candidateKeyword: "" });
+  },
+  onCandidateSearch(event: WechatMiniprogram.Input) {
+    const keyword = event.detail.value.trim().toLowerCase();
+    this.setData({
+      candidateKeyword: event.detail.value,
+      filteredCandidates: keyword
+        ? this.data.candidates.filter(
+            (candidate) =>
+              candidate.name.toLowerCase().includes(keyword) ||
+              candidate.email.toLowerCase().includes(keyword),
+          )
+        : this.data.candidates,
+    });
+  },
+  onPickCandidate(event: WechatMiniprogram.TouchEvent) {
+    const userId = event.currentTarget.dataset.id as string;
+    const candidate = this.data.candidates.find((item) => item.id === userId);
+    if (!candidate) return;
+    this.setData({ pickerVisible: false, candidateKeyword: "" });
+    this.pickRoleThenAdd(candidate);
   },
   pickRoleThenAdd(candidate: StaffCandidate) {
     wx.showActionSheet({

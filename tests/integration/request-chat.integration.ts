@@ -452,6 +452,47 @@ describe("请求聊天生产流程", () => {
     expect(audit.rows[0]?.count).toBe("0");
   });
 
+  it("「仅我处理」不会被权限范围或关键词搜索覆盖掉", async () => {
+    const { listRequestsForActor, assignRequest } = await import(
+      "@/modules/requests/request-service"
+    ).then(async (mod) => ({
+      listRequestsForActor: mod.listRequestsForActor,
+      assignRequest: (await import("@/modules/requests/request-command-service"))
+        .assignRequest,
+    }));
+    const marker = randomUUID().slice(0, 8);
+    const mine = await createFixtureRequest(`仅我处理-已分配-${marker}`);
+    const others = await createFixtureRequest(`仅我处理-未分配-${marker}`);
+    await assignRequest(admin, mine.id, { assigneeIds: [technician.id] });
+
+    // 三组条件都是 OR，同一个对象字面量里重复写会互相覆盖：
+    // 技术员不搜索时，「仅我处理」被权限范围那组覆盖 —— 未分配工单仍会冒出来
+    const technicianMine = await listRequestsForActor(technician, {
+      assignedToMe: true,
+    });
+    const technicianIds = technicianMine.requests.map((item) => item.id);
+    expect(technicianIds).toContain(mine.id);
+    expect(technicianIds).not.toContain(others.id);
+
+    // 一旦带上关键词，关键词那组又会把前两组一起覆盖掉
+    const searched = await listRequestsForActor(admin, {
+      assignedToMe: true,
+      query: marker,
+    });
+    const searchedIds = searched.requests.map((item) => item.id);
+    expect(searchedIds).not.toContain(mine.id);
+    expect(searchedIds).not.toContain(others.id);
+
+    const technicianSearched = await listRequestsForActor(technician, {
+      assignedToMe: true,
+      query: marker,
+    });
+    const technicianSearchedIds = technicianSearched.requests.map(
+      (item) => item.id,
+    );
+    expect(technicianSearchedIds).toEqual([mine.id]);
+  });
+
   it("历史遗留的无效处理人不会阻断管理员更新状态", async () => {
     const created = await createFixtureRequest("无效处理人通知过滤");
     const staleUserId = randomUUID();

@@ -31,6 +31,10 @@ Page({
     descText: "",
     statusOptions: STATUS_OPTIONS,
     statusIndex: 1,
+    // 草稿（外部接入待激活）的状态由接入流程管理，updateProject 明确拒绝提交
+    // status: "DRAFT"，回传就会让标题/日期/展示开关等任何修改一起失败。对齐 Web：
+    // 草稿态锁死状态选择器，提交时也不带 status
+    statusLocked: false,
     startDate: "",
     endDate: "",
     showMilestones: true,
@@ -62,6 +66,7 @@ Page({
         title: project.title,
         descText: project.description ? htmlToText(project.description) : "",
         statusIndex: statusIndex >= 0 ? statusIndex : 1,
+        statusLocked: project.status === "DRAFT",
         startDate: project.startDate ? project.startDate.slice(0, 10) : "",
         endDate: project.endDate ? project.endDate.slice(0, 10) : "",
         showMilestones: project.showMilestones !== false,
@@ -120,8 +125,11 @@ Page({
     }
     const payload: ProjectSettingsInput = {
       title,
+      // 草稿态不回传 status（服务端拒绝 DRAFT，带上会让整次保存失败）
+      ...(this.data.statusLocked
+        ? {}
+        : { status: STATUS_OPTIONS[this.data.statusIndex]?.value }),
       description: this.data.descText.trim() || null,
-      status: STATUS_OPTIONS[this.data.statusIndex]?.value,
       startDate: toIso(this.data.startDate),
       endDate: toIso(this.data.endDate),
       showMilestones: this.data.showMilestones,

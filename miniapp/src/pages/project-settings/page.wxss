@@ -59,6 +59,16 @@
   justify-content: space-between;
 }
 
+/* 草稿态：状态由接入流程管理，不可手改，弱化成只读文本 */
+.edit-picker-locked {
+  color: var(--text-tertiary);
+}
+
+.edit-hint {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+}
+
 .edit-textarea {
   min-height: 160rpx;
   line-height: 1.6;

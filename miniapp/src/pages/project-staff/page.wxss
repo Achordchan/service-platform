@@ -104,3 +104,92 @@
   flex: 1;
   margin: 0;
 }
+
+/* ———— 候选选择面板 ———— */
+.cand-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.cand-panel {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card-bg);
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 24rpx 24rpx calc(24rpx + env(safe-area-inset-bottom));
+}
+
+.cand-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cand-title {
+  font-size: 30rpx;
+  font-weight: 650;
+}
+
+.cand-close {
+  color: var(--brand);
+  font-size: 26rpx;
+  padding: 8rpx;
+}
+
+/* 与工单列表同一套单行 input 配方：固定高度 + 只留横向 padding + 两侧同行高，
+   否则 page 上继承的 line-height 只作用于 placeholder 覆盖层，背景文字会错位 */
+.cand-search {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 100%;
+  margin: 16rpx 0;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 14rpx;
+  height: 72rpx;
+  line-height: 70rpx;
+  padding: 0 20rpx;
+  font-size: 26rpx;
+}
+
+.search-placeholder {
+  color: var(--text-tertiary);
+  font-size: 26rpx;
+  line-height: 70rpx;
+}
+
+/* scroll-view 在小程序里拿不到 flex:1 的确定高度，必须给具体值 */
+.cand-list {
+  max-height: 52vh;
+  min-height: 200rpx;
+}
+
+.cand-row {
+  padding: 20rpx 8rpx;
+  border-bottom: 1rpx solid var(--divider);
+}
+
+.cand-name {
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.cand-email {
+  font-size: 24rpx;
+  margin-top: 4rpx;
+}
+
+.cand-empty {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+}

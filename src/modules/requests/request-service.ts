@@ -533,31 +533,42 @@ export function listRequestsForActor(
           : filters.archived === "ALL"
             ? {}
             : { archivedAt: null }),
-        ...(filters.assignedToMe
-          ? {
-              OR: [
-                { assigneeId: actor.id },
-                { assignees: { some: { userId: actor.id } } },
-              ],
-            }
-          : {}),
-        ...(restrictToAssigned
-          ? {
-              OR: [
-                { assigneeId: actor.id },
-                { assignees: { some: { userId: actor.id } } },
-                { assigneeId: null, assignees: { none: {} } },
-              ],
-            }
-          : {}),
-        ...(keyword
-          ? {
-              OR: [
-                { title: { contains: keyword, mode: "insensitive" } },
-                { number: { contains: keyword, mode: "insensitive" } },
-              ],
-            }
-          : {}),
+        // 三组条件都是 OR，必须各自装进 AND 里：同一个对象字面量里重复写 OR
+        // 后面的会覆盖前面的 —— 技术员不搜索时「仅我处理」被权限范围覆盖（仍看到
+        // 未分配工单），任何人一输关键词又把前两组一起覆盖掉（权限范围也没了）。
+        AND: [
+          ...(filters.assignedToMe
+            ? [
+                {
+                  OR: [
+                    { assigneeId: actor.id },
+                    { assignees: { some: { userId: actor.id } } },
+                  ],
+                },
+              ]
+            : []),
+          ...(restrictToAssigned
+            ? [
+                {
+                  OR: [
+                    { assigneeId: actor.id },
+                    { assignees: { some: { userId: actor.id } } },
+                    { assigneeId: null, assignees: { none: {} } },
+                  ],
+                },
+              ]
+            : []),
+          ...(keyword
+            ? [
+                {
+                  OR: [
+                    { title: { contains: keyword, mode: "insensitive" as const } },
+                    { number: { contains: keyword, mode: "insensitive" as const } },
+                  ],
+                },
+              ]
+            : []),
+        ],
       },
       select: requestBaseSelect,
       orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
