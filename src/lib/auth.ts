@@ -218,8 +218,12 @@ export const auth = betterAuth({
     session: {
       create: {
         // 会话建成即登录成功——覆盖密码与邮箱验证码两种方式；better-auth 已在
-        // session 上填好来源 IP/UA。小程序走独立会话，不触发此钩子。
+        // session 上填好来源 IP/UA。
+        // 例外：小程序绑定复用 signInEmail/signInEmailOTP 仅作凭据校验，会瞬时
+        // 建成再立即删除 Web Session（wechat-binding-service），这类调用携带进程内
+        // 旁路令牌，据此跳过，避免每次绑定误记一条 USER_LOGIN。
         after: async (session, context) => {
+          if (context && isInternalTurnstileBypass(context.headers)) return;
           await recordAuthEvent({
             action: "USER_LOGIN",
             userId: session.userId,

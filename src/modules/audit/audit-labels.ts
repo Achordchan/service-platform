@@ -36,6 +36,9 @@ const verbLabels: Record<string, string> = {
   BOUND: "绑定",
   LOGIN: "登录",
   LOGOUT: "登出",
+  PAUSE: "暂停",
+  RESUME: "恢复",
+  CANCEL: "取消",
 };
 
 const resourceLabels: Record<string, string> = {
@@ -177,6 +180,10 @@ const actionLabels: Record<string, string> = {
   PLUGIN_HEALTH_CHECKED: "检查插件健康",
   PLUGIN_HISTORY_RUN_CREATED: "创建插件运行记录",
   PLUGIN_TEST_MESSAGE_SENT: "发送插件测试消息",
+  // 动态拼装：`PLUGIN_RUN_${action.toUpperCase()}`，action ∈ pause/resume/cancel
+  PLUGIN_RUN_PAUSE: "暂停插件运行",
+  PLUGIN_RUN_RESUME: "恢复插件运行",
+  PLUGIN_RUN_CANCEL: "取消插件运行",
 
   // 回复模板
   SUPPORT_PLAYBOOK_CREATED: "创建回复模板",
@@ -189,6 +196,8 @@ const actionLabels: Record<string, string> = {
   WECHAT_BINDING_CODE_CREATED: "生成微信绑定码",
   WECHAT_BINDING_CODE_REVOKED: "撤销微信绑定码",
   WECHAT_BINDING_REMOVED: "解除微信绑定",
+  WECHAT_BOUND_VIA_CODE: "微信绑定（绑定码）",
+  WECHAT_BOUND_VIA_ACCOUNT: "微信绑定（账号验证）",
 
   // 集成 / 外部嵌入
   UNIVERSAL_CONNECTION_CHECKED: "检查通用连接器",

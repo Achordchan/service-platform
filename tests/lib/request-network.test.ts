@@ -5,9 +5,16 @@ vi.mock("server-only", () => ({}));
 const { clientIpFromHeaders } = await import("@/lib/request-network");
 
 describe("clientIpFromHeaders", () => {
-  it("取 x-forwarded-for 的第一跳并去空白", () => {
+  it("取 x-forwarded-for 的最右段（nginx 追加、不可伪造）并去空白", () => {
     const headers = new Headers({
       "x-forwarded-for": "203.0.113.7, 10.0.0.1, 172.16.0.1",
+    });
+    expect(clientIpFromHeaders(headers)).toBe("172.16.0.1");
+  });
+
+  it("忽略客户端伪造的 XFF 首段，仍取最右可信段", () => {
+    const headers = new Headers({
+      "x-forwarded-for": "1.2.3.4 (forged), 203.0.113.7",
     });
     expect(clientIpFromHeaders(headers)).toBe("203.0.113.7");
   });

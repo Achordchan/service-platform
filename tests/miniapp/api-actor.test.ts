@@ -47,7 +47,8 @@ const customerActor: Actor = {
 const webActor: Actor = { ...customerActor, id: "user-web" };
 
 // 请求边界解析出的来源信息应被附加到 actor 上（供审计兜底记录）。
-const network = { ipAddress: "203.0.113.7", userAgent: "Vitest UA" };
+// ipAddress 取 XFF 最右段（可信），故 "203.0.113.7, 10.0.0.1" → "10.0.0.1"。
+const network = { ipAddress: "10.0.0.1", userAgent: "Vitest UA" };
 
 describe("统一 API Actor 解析：Bearer 与 Cookie 优先级", () => {
   beforeEach(() => {

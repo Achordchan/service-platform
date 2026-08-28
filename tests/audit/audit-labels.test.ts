@@ -33,6 +33,26 @@ describe("auditActionLabel", () => {
     expect(auditActionLabel("ATTACHMENT_DOWNLOADED")).toBe("下载附件");
     expect(auditActionLabel("WECHAT_BINDING_REMOVED")).toBe("解除微信绑定");
   });
+
+  it("动态拼装的动作码也有中文（模板/条件生成，非字面量）", () => {
+    // PLUGIN_RUN_${action.toUpperCase()}
+    expect(auditActionLabel("PLUGIN_RUN_PAUSE")).toBe("暂停插件运行");
+    expect(auditActionLabel("PLUGIN_RUN_RESUME")).toBe("恢复插件运行");
+    expect(auditActionLabel("PLUGIN_RUN_CANCEL")).toBe("取消插件运行");
+    // WECHAT_BOUND_VIA_{CODE,ACCOUNT}
+    expect(auditActionLabel("WECHAT_BOUND_VIA_CODE")).toBe("微信绑定（绑定码）");
+    expect(auditActionLabel("WECHAT_BOUND_VIA_ACCOUNT")).toBe(
+      "微信绑定（账号验证）",
+    );
+  });
+
+  it("PAUSE/RESUME/CANCEL 已入 verbLabels，未来同族新码有动词兜底", () => {
+    expect(auditActionLabel("PLUGIN_RUN_PAUSE", "PluginRun")).toBe(
+      "暂停插件运行",
+    );
+    // 未显式映射的同族码仍能回落到「资源 · 动词」
+    expect(auditActionVerb("SOMETHING_PAUSE")).toBe("暂停");
+  });
 });
 
 describe("auditActionVerb", () => {
