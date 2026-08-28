@@ -359,6 +359,94 @@ describe("Sub2API 外部联系人 RLS", () => {
     expect(quiet.externalEmailContacts).toEqual([]);
   });
 
+  it("在预览里取消勾选外部联系人，就真的不给他发信", async () => {
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+    const mailCount = async () => {
+      const result = await owner.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM "MailMessage" WHERE "toEmail" = $1`,
+        ["external-a@example.test"],
+      );
+      return Number(result.rows[0]?.count ?? "0");
+    };
+    const before = await mailCount();
+
+    // 排除名单里带上他：外部联系人邮件不挂在 Notification 行上，
+    // 若拿「与通知行相交后的排除名单」去判，他的 id 早被丢掉，排除等于没生效
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>排除外部联系人</p>", visibility: "CUSTOMER_VISIBLE" },
+      { excludeUserIds: [ids.contactA] },
+    );
+    expect(await mailCount()).toBe(before);
+
+    // 不排除时照常发
+    await addRequestMessage(adminActor, ids.requestA, {
+      body: "<p>正常通知外部联系人</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    expect(await mailCount()).toBe(before + 1);
+
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+  });
+
+  it("状态变更的预览要跟着目标状态走：没有模板的状态不该说会发信", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+
+    // 有模板：WAITING_CUSTOMER / RESOLVED / CLOSED
+    const waiting = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "STATUS",
+      "WAITING_CUSTOMER",
+    );
+    expect(waiting.externalEmailContacts.map((item) => item.id)).toContain(
+      ids.contactA,
+    );
+
+    // 没有模板：statusMail 会返回 null，预览就不能说他会收到
+    const inProgress = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "STATUS",
+      "IN_PROGRESS",
+    );
+    expect(inProgress.externalEmailContacts).toEqual([]);
+
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+  });
+
 });
 
 describe("Sub2API 外部项目空间隔离", () => {

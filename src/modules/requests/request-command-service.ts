@@ -151,6 +151,20 @@ function externalConnection(
     : null;
 }
 
+/**
+ * 哪些目标状态才会给外部联系人发信。
+ *
+ * 预览与真正发送必须共用这一份：只按「联系人可发邮件」判定的话，
+ * 改成 IN_PROGRESS 时弹窗会说他会收到，提交后 statusMail 却返回 null 不发。
+ */
+const EXTERNAL_STATUS_MAIL_TEMPLATES: Partial<
+  Record<RequestStatus, MailTemplateKey>
+> = {
+  WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
+  RESOLVED: "EXTERNAL_REQUEST_RESOLVED",
+  CLOSED: "EXTERNAL_REQUEST_CLOSED",
+};
+
 function statusMail(
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
   status: RequestStatus,
@@ -158,12 +172,7 @@ function statusMail(
   const contact = request.createdByExternalContact;
   const connection = externalConnection(request);
   if (!canSendExternalContactMail(request) || !connection) return null;
-  const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
-    WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
-    RESOLVED: "EXTERNAL_REQUEST_RESOLVED",
-    CLOSED: "EXTERNAL_REQUEST_CLOSED",
-  };
-  const templateKey = statusTemplates[status];
+  const templateKey = EXTERNAL_STATUS_MAIL_TEMPLATES[status];
   if (!templateKey) return null;
   if (!contact?.email) return null;
   return {
@@ -646,7 +655,7 @@ export async function changeRequestStatus(
       // ExternalContact.id 占一个收件人位，排除名单就按这个 id 记）
       externalMail:
         delivery.emailChannelEnabled &&
-        !delivery.excludedUserIds.includes(
+        !delivery.requestedExcludeUserIds.includes(
           request.createdByExternalContactId ?? "",
         )
           ? statusMail(request, targetStatus)
@@ -1006,7 +1015,7 @@ export async function addRequestMessage(
       input.visibility === "CUSTOMER_VISIBLE" &&
       // 同上：外部联系人邮件单独入队，要自己听一次本次覆盖（通道 + 逐人排除）
       delivery.emailChannelEnabled &&
-      !delivery.excludedUserIds.includes(
+      !delivery.requestedExcludeUserIds.includes(
         request.createdByExternalContactId ?? "",
       ) &&
       canSendExternalContactMail(request) &&
@@ -1236,8 +1245,17 @@ export function previewRequestDelivery(
     // 但预览必须带上他：不带的话弹窗会说「0 人 / 本次没有需要提醒的人」，
     // 提交后却照样给客户发了信，员工也没机会把他排除掉。
     const contact = request.createdByExternalContact;
+    // 状态变更还要看目标状态有没有对应模板 —— 与 statusMail 同一份判定，
+    // 否则改成 IN_PROGRESS 时弹窗承诺会发信，实际却不发
+    const externalMailEligible =
+      canSendExternalContactMail(request) &&
+      Boolean(contact) &&
+      (scene !== "STATUS" ||
+        Boolean(
+          EXTERNAL_STATUS_MAIL_TEMPLATES[status ?? request.status],
+        ));
     const externalEmailContacts =
-      canSendExternalContactMail(request) && contact
+      externalMailEligible && contact
         ? [{ id: contact.id, name: contact.displayName }]
         : [];
     if (scene === "STATUS") {
