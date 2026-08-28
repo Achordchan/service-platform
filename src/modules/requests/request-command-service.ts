@@ -973,6 +973,14 @@ export async function addRequestMessage(
       sourceId: message.id,
       contentRiskReviewId: contentRiskReview?.id,
       deliveryOverride,
+      // 本次本来会给外部联系人发信时告诉分发层，好让「只排除了他」的覆盖也能记审计
+      externalMailContactId:
+        !isInternal &&
+        !isCustomer &&
+        canSendExternalContactMail(request) &&
+        externalConnection(request)
+          ? (request.createdByExternalContactId ?? undefined)
+          : undefined,
     });
     const nextStatus = isCustomer
       ? statusAfterCustomerReply(request.status)
@@ -1313,6 +1321,12 @@ async function dispatchStatusActivity(
 ) {
   return dispatchRequestActivity(tx, actor, {
     deliveryOverride,
+    // 本次本来会给外部联系人发信时告诉分发层，好让「只排除了他」的覆盖也能记审计
+    externalMailContactId:
+      canSendExternalContactMail(request) &&
+      EXTERNAL_STATUS_MAIL_TEMPLATES[status]
+        ? (request.createdByExternalContactId ?? undefined)
+        : undefined,
     eventType: "REQUEST_STATUS_CHANGED",
     eventPayload: {
       requestId: request.id,

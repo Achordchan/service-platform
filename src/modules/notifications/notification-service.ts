@@ -730,6 +730,14 @@ type RequestActivityRequest = {
   sourceId?: string;
   contentRiskReviewId?: string;
   deliveryOverride?: NotificationDeliveryOverride;
+  /**
+   * 本次本来会收到邮件的外部门户联系人（ExternalContact.id）。
+   *
+   * 他没有 Notification 行，applyDeliveryExclusions 的交集取不到他 —— 只排除他、
+   * 别的什么都没改时，审计 effect 会算成「无效覆盖」而整条不记，可邮件确实少发了。
+   * 由命令层在确认「本次本来会给他发信」后传入，仅用于把这次排除记进审计。
+   */
+  externalMailContactId?: string;
 };
 
 /**
@@ -808,7 +816,15 @@ async function resolveRequestActivityPlan(
     rule,
     override,
     payload,
-    excludedUserIds: excluded.excludedUserIds,
+    excludedUserIds: [
+      ...excluded.excludedUserIds,
+      // 外部联系人没有通知行，applyDeliveryExclusions 的交集取不到他；
+      // 本次本会给他发信却被排除掉时，这是唯一能让审计记下这件事的地方
+      ...(input.externalMailContactId &&
+      override?.excludeUserIds?.includes(input.externalMailContactId)
+        ? [input.externalMailContactId]
+        : []),
+    ],
     /**
      * 本次「邮件」这条通道到底开没开（后台规则 + 本次覆盖）。
      * 外部联系人的邮件不挂在 Notification 行上、由命令层单独入队，必须据此判断 ——

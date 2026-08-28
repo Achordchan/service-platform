@@ -389,6 +389,19 @@ describe("Sub2API 外部联系人 RLS", () => {
     );
     expect(await mailCount()).toBe(before);
 
+    // 少发了信就必须留痕：外部联系人没有通知行，若只按「与通知行相交后的名单」
+    // 判定覆盖是否生效，这条覆盖会被当成空操作而整条不记审计
+    const audit = await owner.query<{ excluded: string[] | null }>(
+      `SELECT metadata->'excludedUserIds' AS excluded
+         FROM "AuditLog"
+        WHERE action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+          AND "serviceRequestId" = $1
+        ORDER BY "createdAt" DESC
+        LIMIT 1`,
+      [ids.requestA],
+    );
+    expect(audit.rows[0]?.excluded).toContain(ids.contactA);
+
     // 不排除时照常发
     await addRequestMessage(adminActor, ids.requestA, {
       body: "<p>正常通知外部联系人</p>",
