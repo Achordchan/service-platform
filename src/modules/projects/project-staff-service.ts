@@ -156,6 +156,21 @@ export function previewProjectStaffDelivery(
       select: { customerSpaceId: true },
     });
     assertFound(project, "项目不存在");
+    // 目标必须落在「可加入本项目的内部人员」这个范围内，与 addProjectStaff 同口径。
+    // 不校验的话，任何有项目人员管理权的员工都能拿已知 userId 构造预览，
+    // 而预览会读出这个人的姓名、邮件总开关、按场景退订、微信绑定与额度 ——
+    // 等于把预览接口变成跨用户的通知偏好查询入口。
+    const target = await tx.user.findFirst({
+      where: {
+        id: targetUserId,
+        deletedAt: null,
+        platformRole: {
+          in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"],
+        },
+      },
+      select: { id: true },
+    });
+    assertFound(target, "该账号不可加入项目");
     return previewProjectStaffRecipients(tx, actor, {
       recipientUserId: targetUserId,
       customerSpaceId: project.customerSpaceId,

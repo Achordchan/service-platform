@@ -875,6 +875,46 @@ describe("请求聊天生产流程", () => {
     });
   });
 
+  it("离开工单只标离线，不抹掉设备记录", async () => {
+    const created = await createFixtureRequest("离线保留设备");
+    const sessionId = randomUUID();
+    await updateRequestPresence(customer, created.id, {
+      sessionId,
+      action: "heartbeat",
+      client: "MINIAPP",
+      timezone: "Asia/Shanghai",
+    });
+    await updateRequestPresence(customer, created.id, {
+      sessionId,
+      action: "leave",
+    });
+
+    // 「客户设备与网络」就是从这张表读的：leave 直接删行的话，客户一关页面
+    // 后台只剩「还没有打开过这个工单」—— 而那恰恰是最需要查的时候
+    const row = await ownerPool.query<{
+      client: string;
+      timezone: string | null;
+      online: boolean;
+    }>(
+      `SELECT client::text AS client, timezone, ("expiresAt" > NOW()) AS online
+         FROM "RequestPresence"
+        WHERE "serviceRequestId" = $1 AND "sessionId" = $2`,
+      [created.id, sessionId],
+    );
+    expect(row.rowCount).toBe(1);
+    expect(row.rows[0]?.client).toBe("MINIAPP");
+    expect(row.rows[0]?.timezone).toBe("Asia/Shanghai");
+    // 但必须已判定为离线，不能还算在线
+    expect(row.rows[0]?.online).toBe(false);
+
+    const after = await updateRequestPresence(technician, created.id, {
+      sessionId: randomUUID(),
+      action: "heartbeat",
+    });
+    expect(after.counterpartOnline).toBe(false);
+    expect(after.counterpartClients).toEqual([]);
+  });
+
   it("在线端按来源区分，同一分组的多个端会去重合并", async () => {
     const created = await createFixtureRequest("在线端区分");
     await addRequestMessage(technician, created.id, {

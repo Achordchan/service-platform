@@ -191,12 +191,17 @@ export function updateRequestPresence(
         },
       });
     } else if (input.action === "leave") {
-      await tx.requestPresence.deleteMany({
+      // 不删行，只把它标成已过期。这张表同时是「客户设备与网络」的数据来源，
+      // 删掉的话客户一关页面，后台就只剩「还没有打开过这个工单」，设备、IP、
+      // 最近活跃全没了 —— 而那恰恰是最需要查的时候。
+      // 下面本来就有按 STALE_RETENTION_MS 的过期清理，留痕不会无限增长。
+      await tx.requestPresence.updateMany({
         where: {
           serviceRequestId: request.id,
           userId: actor.id,
           sessionId: input.sessionId,
         },
+        data: { expiresAt: now },
       });
     }
 

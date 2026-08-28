@@ -112,3 +112,22 @@ describe("项目人员变动通知", () => {
     });
   });
 });
+
+describe("项目人员预览的目标校验", () => {
+  it("目标必须落在可加入项目的内部人员范围内，与 addProjectStaff 同口径", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/projects/project-staff-service.ts",
+      "utf8",
+    );
+    // 不校验的话，任何有项目人员管理权的员工都能拿已知 userId 构造预览，
+    // 而预览会读出对方的姓名、邮件总开关、按场景退订、微信绑定与额度
+    const preview = service.slice(
+      service.indexOf("export function previewProjectStaffDelivery"),
+      service.indexOf("export function updateProjectStaff"),
+    );
+    expect(preview).toContain("deletedAt: null");
+    expect(preview).toContain('"PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"');
+    expect(preview).toContain('assertFound(target, "该账号不可加入项目")');
+  });
+});
