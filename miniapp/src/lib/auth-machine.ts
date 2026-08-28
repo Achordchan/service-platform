@@ -14,6 +14,11 @@ export type AuthState =
 export type AuthMachineDeps = {
   clearToken: () => void;
   redirectToLogin: () => void;
+  /**
+   * 会话结束（被踢下线）时归还全局副作用，如角标持有的常驻 SSE 租约。
+   * 与 clearToken 一样受单飞锁保护：并发 401 只触发一次。
+   */
+  onSessionEnd?: () => void;
 };
 
 export class AuthMachine {
@@ -57,6 +62,7 @@ export class AuthMachine {
     this.state = "redirecting";
     this.readyWaiters.clear();
     this.deps.clearToken();
+    this.deps.onSessionEnd?.();
     this.deps.redirectToLogin();
   }
 

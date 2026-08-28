@@ -165,6 +165,9 @@ export function RequestReplyComposer({
       );
       toast.success("处理指南已发送");
       toast.delivery(result.deliveryFeedback);
+      // 覆盖是一次性的：不清掉的话，只要详情页不卸载，后续每条回复都会继续
+      // 带着上次的排除名单 / 强制邮件，用户却以为早已恢复默认
+      setDeliveryOverride({});
       onCancelReply?.();
       onSent?.();
       markRequestLocalMutation();
@@ -219,6 +222,8 @@ export function RequestReplyComposer({
         },
       );
       reset({ body: "", internal: false, files: [] });
+      // 同上：一次性覆盖必须随本次发送一起归零
+      setDeliveryOverride({});
       setEditorVersion((version) => version + 1);
       if (failedFiles.length > 0) {
         toast.warning(

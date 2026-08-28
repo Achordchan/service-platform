@@ -125,6 +125,7 @@ export function deliveryChannelSupport(definition: {
  * 应用逐人排除，返回真正被排掉的人（用于审计）。
  *
  * 只过滤通知，不过滤实时事件 —— 事件负责页面刷新，排除某人不该让他看到过期内容。
+ * 但事件会带上静音名单（见 persistActivityDelivery），被排除的人不会听到提示音。
  */
 export function applyDeliveryExclusions<T extends { userId: string }>(
   notifications: T[],

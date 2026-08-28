@@ -4,6 +4,7 @@ import {
   setSessionEndHandler,
 } from "./lib/auth";
 import { releaseBadgeSync } from "./lib/badge";
+import { setSessionEndedHandler } from "./lib/session";
 import { eventSync } from "./lib/events";
 import {
   invalidateSubscribeAuthorization,
@@ -19,6 +20,9 @@ App({
     setIdentitySwitchHandler(resetSubscribeState);
     // 退出登录归还角标的常驻 SSE 租约（同样在此接线，避免 auth ← badge 循环依赖）
     setSessionEndHandler(releaseBadgeSync);
+    // 401 被踢下线走的是另一条路（request.ts → session.handleUnauthorized），
+    // 不接这条的话租约不还，旧的已鉴权 SSE 会活到超时并在登录页空 token 重连
+    setSessionEndedHandler(releaseBadgeSync);
     // 监听注册不依赖登录态：首次登录后的新用户同样需要断网恢复补拉
     wx.onNetworkStatusChange((result) => {
       if (result.isConnected) {

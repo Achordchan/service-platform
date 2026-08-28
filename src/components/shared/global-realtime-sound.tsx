@@ -31,6 +31,9 @@ export function shouldPlayGlobalRealtimeSound(
 ) {
   if (!event.live) return false;
   if (event.payload.audible === false) return false;
+  // 发送方在「本次提醒方式」里把这个人排除了：事件照收（页面要刷新），但不响铃
+  const silenced = event.payload.silencedUserIds;
+  if (Array.isArray(silenced) && silenced.includes(currentUserId)) return false;
   if (event.payload.actorId) {
     if (event.payload.actorId === "system") return false;
     return event.payload.actorId !== currentUserId;

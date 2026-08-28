@@ -3,6 +3,7 @@ import {
   deliveryNoticeText,
   fetchDeliveryRule,
   isDeliveryOverrideActive,
+  materializeDeliveryOverride,
   type DeliveryChannelRule,
   type DeliveryOverride,
   type DeliveryScene,
@@ -269,7 +270,10 @@ Component({
       this.triggerEvent("change", { override: {} });
     },
     onApply() {
-      const override = { ...this.data.draft };
+      const preview = this.data.preview;
+      const override = preview
+        ? materializeDeliveryOverride(this.data.draft, preview.rule)
+        : { ...this.data.draft };
       this.setData({ override, panelVisible: false });
       this.refreshNotice();
       this.triggerEvent("change", { override });

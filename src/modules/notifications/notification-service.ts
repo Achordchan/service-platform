@@ -1458,8 +1458,25 @@ async function persistActivityDelivery(
   const emailPreferenceOverriddenUserIds: string[] = [];
   const emailForced = isEmailForced(options?.deliveryOverride);
 
+  // 被逐人排除的收件人仍要收到实时事件（事件负责页面刷新，不该让他看到过期内容），
+  // 但绝不能因此听到提示音 —— 弹窗上明写「本次不提醒他」。事件带上静音名单，
+  // 由 GlobalRealtimeSound 对号入座地跳过响铃。
+  const silencedUserIds = options?.deliveryOverride?.excludeUserIds ?? [];
   for (const event of delivery.events) {
-    events.push(await publishEvent(tx, event));
+    events.push(
+      await publishEvent(
+        tx,
+        silencedUserIds.length > 0
+          ? {
+              ...event,
+              payload: {
+                ...(event.payload as Prisma.InputJsonObject),
+                silencedUserIds,
+              },
+            }
+          : event,
+      ),
+    );
   }
   const requestId = delivery.notifications.find(
     (notification) => notification.serviceRequestId,

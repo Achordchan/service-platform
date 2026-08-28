@@ -27,6 +27,7 @@ import {
   deliveryNoticeChannels,
   deliveryNoticeText,
   isDeliveryOverrideActive,
+  materializeDeliveryOverride,
   type DeliveryScene,
 } from "@/lib/delivery-notice";
 import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
@@ -460,7 +461,7 @@ function DeliveryOverrideDialog({
         <Button
           variant="contained"
           disabled={!preview}
-          onClick={() => onApply(draft)}
+          onClick={() => preview && onApply(materializeDeliveryOverride(draft, preview.rule))}
         >
           应用
         </Button>

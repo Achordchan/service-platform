@@ -11,6 +11,7 @@ import {
   deliveryNoticeText,
   deliveryOverridePayload,
   isDeliveryOverrideActive,
+  materializeDeliveryOverride,
   RULE_KEY_BY_SCENE,
   type DeliveryChannelRule,
 } from "@/lib/delivery-notice";
@@ -131,12 +132,58 @@ describe("发送前提示行", () => {
     ]);
   });
 
-  it("与默认一致时不算自定义，也不往请求体里塞字段", () => {
-    expect(isDeliveryOverrideActive({ email: true }, rule)).toBe(false);
-    expect(deliveryOverridePayload({ email: true }, rule)).toEqual({});
+  it("没显式设过任何值才算「未自定义」，不往请求体里塞字段", () => {
+    expect(isDeliveryOverrideActive({}, rule)).toBe(false);
+    expect(deliveryOverridePayload({}, rule)).toEqual({});
     expect(isDeliveryOverrideActive({ email: false }, rule)).toBe(true);
     expect(deliveryOverridePayload({ email: false }, rule)).toEqual({
       deliveryOverride: { email: false },
+    });
+  });
+
+  it("显式开着的邮件即使与后台规则相同也要提交 —— 它才是强制发送的凭据", () => {
+    // rule.emailEnabled 已经是 true，收件人却自己退订了。弹窗逐人标的是「强制发送」、
+    // 警告条写的是「保持开启将强制发送」。若按「与规则相同就不算覆盖」丢掉 email:true，
+    // 后端 isEmailForced 恒为 false，实际仍会尊重退订 —— UI 承诺与真实行为对不上。
+    expect(rule.emailEnabled).toBe(true);
+    expect(isDeliveryOverrideActive({ email: true }, rule)).toBe(true);
+    expect(deliveryOverridePayload({ email: true }, rule)).toEqual({
+      deliveryOverride: { email: true },
+    });
+    expect(isEmailForced({ email: true })).toBe(true);
+  });
+
+  it("应用弹窗时把选择固化成显式值：默认没动的通道也要落成显式布尔", () => {
+    // 用户点「应用」就是显式选择：邮件停在默认的「开」上也要提交 email:true，
+    // 否则对已退订的收件人只是看起来会强制发送
+    expect(materializeDeliveryOverride({}, rule)).toEqual({
+      notification: true,
+      email: true,
+      wechat: false,
+    });
+    expect(
+      deliveryOverridePayload(materializeDeliveryOverride({}, rule), rule),
+    ).toEqual({
+      deliveryOverride: { notification: true, email: true, wechat: false },
+    });
+  });
+
+  it("固化时保留排除名单，且不写本场景不支持的通道", () => {
+    const noEmail: DeliveryChannelRule = {
+      ...rule,
+      emailSupported: false,
+      wechatSupported: false,
+    };
+    expect(
+      materializeDeliveryOverride({ excludeUserIds: ["u1"] }, noEmail),
+    ).toEqual({ notification: true, excludeUserIds: ["u1"] });
+  });
+
+  it("固化不会覆盖用户已经改过的值", () => {
+    expect(materializeDeliveryOverride({ email: false }, rule)).toEqual({
+      notification: true,
+      email: false,
+      wechat: false,
     });
   });
 

@@ -48,7 +48,8 @@ export function ensureBadgeSync() {
       }
     });
   }
-  // 租约自愈：401 清掉 token 后这里归还，重新登录后再取回。
+  // 401 被踢下线由 session 的 onSessionEnd 直接调 releaseBadgeSync 归还；
+  // 这里是兜底自愈（token 被其他路径清掉时），并负责重新登录后取回租约。
   // 冷启动 onShow 可能早于登录完成，未登录时不占租约。
   const hasToken = Boolean(getToken());
   if (leaseHeld && !hasToken) {
