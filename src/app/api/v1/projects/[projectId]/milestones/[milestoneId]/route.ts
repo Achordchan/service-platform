@@ -31,7 +31,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       projectId,
       milestoneId,
       input,
-      readDeliveryOverride(body),
+      readDeliveryOverride(auth.actor, body),
     );
     return NextResponse.json({ data: milestone });
   } catch (error) {

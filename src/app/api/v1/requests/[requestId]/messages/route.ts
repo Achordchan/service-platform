@@ -25,7 +25,7 @@ export async function POST(request: Request, context: RouteContext) {
       actor,
       requestId,
       { ...input, clientMutationKey: input.clientMutationKey ?? mutationKey },
-      readDeliveryOverride(body),
+      readDeliveryOverride(actor, body),
     );
     return Response.json({ data: result }, { status: 201 });
   } catch (error) {

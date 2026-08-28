@@ -432,6 +432,7 @@ async function resolveProjectActivityPlan(
   const ruleKey = ruleKeyForProjectNotification(input.notificationType);
   const rule = await loadNotificationDeliveryRule(tx, ruleKey);
   const override = sanitizeDeliveryOverride(
+    actor,
     input.deliveryOverride,
     ruleChannelSupport(ruleKey),
   );
@@ -533,6 +534,7 @@ async function resolveProjectStaffPlan(
 ) {
   const rule = await loadNotificationDeliveryRule(tx, "PROJECT_STAFF");
   const override = sanitizeDeliveryOverride(
+    actor,
     input.deliveryOverride,
     ruleChannelSupport("PROJECT_STAFF"),
   );
@@ -738,6 +740,7 @@ async function resolveRequestActivityPlan(
   });
   const rule = await loadNotificationDeliveryRule(tx, ruleKey);
   const override = sanitizeDeliveryOverride(
+    actor,
     input.deliveryOverride,
     ruleChannelSupport(ruleKey),
   );
@@ -1550,8 +1553,15 @@ async function persistActivityDelivery(
   let immediateMailNotificationId: string | null = null;
   let emailCount = 0;
   for (const notification of delivery.notifications) {
+    // 正在看这一页的人默认不重复打扰。但本次被显式强制发邮件的除外：邮件挂在通知
+    // 行上，这里 continue 掉等于强制发送对「恰好在线」的人静默失效 —— 而在线不是
+    // 个人偏好，不在强制发送越不过的那几条硬约束里（收件范围 / 绑定额度 / 邮件模式），
+    // UI 已经承诺会发。
+    const forcedEmailForUser =
+      emailForced && notification.emailEligible && mailModeAllowsEmail;
     if (
       !options?.contentRiskReviewId &&
+      !forcedEmailForUser &&
       activeUserIds.has(notification.userId)
     ) {
       continue;

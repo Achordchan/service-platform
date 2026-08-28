@@ -125,6 +125,13 @@ export function ProjectDeliveryActions({
     useState<NotificationDeliveryOverride>({});
   const [milestoneOverride, setMilestoneOverride] =
     useState<NotificationDeliveryOverride>({});
+  // 覆盖是一次性的：关闭对话框的所有路径（取消、点遮罩）都要归零，
+  // 否则自定义完再取消，下次打开会带着上次的强制/抑制设置提交
+  const closeDialog = () => {
+    setDialog(null);
+    setUpdateOverride({});
+    setMilestoneOverride({});
+  };
   const updateDeliveryRule = useDeliveryChannelRule("PROJECT_UPDATE");
   const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");
   const [submitting, setSubmitting] = useState(false);
@@ -408,7 +415,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "milestone"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -527,7 +534,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button
@@ -543,7 +550,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "stage"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="xs"
       >
@@ -558,7 +565,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button type="submit" variant="contained" disabled={submitting}>
@@ -570,7 +577,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "update"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -664,7 +671,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button
@@ -684,7 +691,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "project"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
       >
@@ -753,7 +760,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button type="submit" variant="contained" disabled={submitting}>

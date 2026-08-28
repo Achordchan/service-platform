@@ -20,7 +20,7 @@ export async function PATCH(request: Request, context: RouteContext) {
       actor,
       requestId,
       input.status,
-      readDeliveryOverride(body),
+      readDeliveryOverride(actor, body),
     );
     return Response.json({ data: serviceRequest });
   } catch (error) {

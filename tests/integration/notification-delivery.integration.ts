@@ -544,6 +544,73 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     expect(scheduled?.scheduled_before_six_minutes).toBe(true);
   });
 
+  it("收件人在线不该让强制发送失效", async () => {
+    await configureStandardMail(true);
+    await setRequestPublicMessageMailRule(true);
+    const sessionId = randomUUID();
+    // 客户此刻正开着这个工单页
+    await pool.query(
+      `INSERT INTO "RequestPresence" (
+         id, "serviceRequestId", "userId", "sessionId", "expiresAt", "updatedAt"
+       ) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '3 minutes', NOW())`,
+      [randomUUID(), requestId, customer.id, sessionId],
+    );
+
+    const dispatch = async (deliveryOverride?: { email: true }) => {
+      const integrationMarker = `presence-force-${randomUUID()}`;
+      cleanup.eventMarkers.push(integrationMarker);
+      const delivery = await withActorDb(admin, (tx) =>
+        dispatchRequestActivity(tx, admin, {
+          eventType: "REQUEST_MESSAGE_CREATED",
+          eventPayload: {
+            requestId,
+            visibility: "CUSTOMER_VISIBLE",
+            integrationMarker,
+          },
+          notificationType: "REQUEST_MESSAGE",
+          notificationTitle: "在线收件人强制发送测试",
+          notificationBody: "在线不是个人偏好，不该让强制发送静默失效",
+          includeCustomers: true,
+          relevantWorkerUserIds: [],
+          notifyProjectManagers: false,
+          notifyPlatformAdmins: false,
+          customerSpaceId,
+          projectId,
+          serviceRequestId: requestId,
+          ...(deliveryOverride ? { deliveryOverride } : {}),
+        }),
+      );
+      cleanup.notificationIds.push(
+        ...delivery.notifications.map((notification) => notification.id),
+      );
+      return pool.query<{ email_due_at: string | null }>(
+        `SELECT "emailDueAt"::text AS email_due_at
+           FROM "Notification"
+          WHERE id = ANY($1::text[]) AND "userId" = $2`,
+        [
+          delivery.notifications.map((notification) => notification.id),
+          customer.id,
+        ],
+      );
+    };
+
+    try {
+      // 对照：没强制时，正看着这一页的人本就不重复打扰
+      const quiet = await dispatch();
+      expect(quiet.rowCount).toBe(0);
+
+      // 强制发邮件时不能被在线状态吃掉：邮件挂在通知行上，跳过这行就等于
+      // 强制发送对「恰好在线」的人静默失效，而在线并不是个人偏好
+      const forced = await dispatch({ email: true });
+      expect(forced.rowCount).toBe(1);
+      expect(forced.rows[0]?.email_due_at).not.toBeNull();
+    } finally {
+      await pool.query('DELETE FROM "RequestPresence" WHERE "sessionId" = $1', [
+        sessionId,
+      ]);
+    }
+  });
+
   it("客户新建标准服务请求会为平台管理员创建并投递邮件 Outbox", async () => {
     await configureStandardMail(true, false);
     await setUserMailPreference(admin.id, true);

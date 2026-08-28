@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("server-only", () => ({}));
 import {
   hasDeliveryOverride,
   isDeliveryOverrideEffective,
@@ -203,25 +205,52 @@ describe("覆盖的越权防线", () => {
     const { sanitizeDeliveryOverride } = await import(
       "@/modules/notifications/notification-delivery-override"
     );
+    const staff = { isStaff: true };
     // 内部备注这类场景不支持邮件：伪造请求想强开也不行
     expect(
       sanitizeDeliveryOverride(
+        staff,
         { email: true, wechat: true },
         { emailSupported: false, wechatSupported: false },
       ),
     ).toBeUndefined();
     expect(
       sanitizeDeliveryOverride(
+        staff,
         { notification: false, email: true },
         { emailSupported: false, wechatSupported: false },
       ),
     ).toEqual({ notification: false });
     expect(
       sanitizeDeliveryOverride(
+        staff,
         { email: true },
         { emailSupported: true, wechatSupported: false },
       ),
     ).toEqual({ notification: undefined, email: true });
+  });
+
+  it("客户提交的覆盖一律丢掉 —— 这是员工写操作专用的能力", async () => {
+    const { sanitizeDeliveryOverride } = await import(
+      "@/modules/notifications/notification-delivery-override"
+    );
+    const support = { emailSupported: true, wechatSupported: true };
+    const customer = { isStaff: false };
+    // 客户也打工单回复 / 状态接口：不挡的话，能把自己的回复对员工静音……
+    expect(
+      sanitizeDeliveryOverride(customer, { notification: false }, support),
+    ).toBeUndefined();
+    // ……或强制给已退订的员工发邮件
+    expect(
+      sanitizeDeliveryOverride(customer, { email: true }, support),
+    ).toBeUndefined();
+    expect(
+      sanitizeDeliveryOverride(
+        customer,
+        { excludeUserIds: ["staff-1"] },
+        support,
+      ),
+    ).toBeUndefined();
   });
 });
 

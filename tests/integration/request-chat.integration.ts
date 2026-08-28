@@ -405,6 +405,53 @@ describe("请求聊天生产流程", () => {
     );
   });
 
+  it("客户伪造 deliveryOverride 静音不了后台通知", async () => {
+    const created = await createFixtureRequest("客户越权覆盖");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>技术员已接手处理。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    // 客户也打这个接口：不挡的话就能用 notification:false 把自己的回复对员工静音，
+    // 或用 email:true 强制给已退订的员工发邮件。覆盖是员工写操作专用的能力。
+    await addRequestMessage(
+      customer,
+      created.id,
+      {
+        body: "<p>客户想悄悄补充信息。</p>",
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      { notification: false, email: true },
+    );
+
+    const result = await ownerPool.query<{ user_id: string }>(
+      `
+        SELECT "userId" AS user_id
+        FROM "Notification"
+        WHERE "serviceRequestId" = $1
+          AND type = 'REQUEST_MESSAGE'
+          AND "readAt" IS NULL
+          AND "userId" = ANY($2::text[])
+        ORDER BY "userId"
+      `,
+      [created.id, [technician.id, admin.id]],
+    );
+    expect(result.rows.map((row) => row.user_id).sort()).toEqual(
+      [technician.id, admin.id].sort(),
+    );
+
+    // 覆盖被丢掉，就不该留下「本次覆盖送达」的审计
+    const audit = await ownerPool.query<{ count: string }>(
+      `
+        SELECT count(*)::text AS count
+        FROM "AuditLog"
+        WHERE "serviceRequestId" = $1
+          AND action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+      `,
+      [created.id],
+    );
+    expect(audit.rows[0]?.count).toBe("0");
+  });
+
   it("历史遗留的无效处理人不会阻断管理员更新状态", async () => {
     const created = await createFixtureRequest("无效处理人通知过滤");
     const staleUserId = randomUUID();

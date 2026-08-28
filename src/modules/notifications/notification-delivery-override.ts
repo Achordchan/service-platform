@@ -88,16 +88,22 @@ export function describeDeliveryChannel(
 }
 
 /**
- * 丢掉「本场景根本不支持的通道」上的覆盖。
+ * 丢掉不该生效的覆盖：非员工提交的，以及「本场景根本不支持的通道」上的。
  *
- * 后台规则那侧有 findNotificationDeliveryRuleViolation 拦着，管理员开不了不支持
- * 的通道；覆盖是另一条入口，必须自己挡一次，否则伪造请求就能给「内部备注」这类
- * 场景强开邮件。
+ * - 非员工：客户也会打工单回复 / 状态接口，若不挡，客户就能用
+ *   { notification: false } 把自己的回复对员工静音，或用 { email: true } 强制给
+ *   已退订的员工发邮件。覆盖是员工写操作专用的能力。路由层的 readDeliveryOverride
+ *   是第一道，这里是不依赖调用方是否记得挡的第二道。
+ * - 不支持的通道：后台规则那侧有 findNotificationDeliveryRuleViolation 拦着，
+ *   管理员开不了不支持的通道；覆盖是另一条入口，必须自己挡一次，否则伪造请求
+ *   就能给「内部备注」这类场景强开邮件。
  */
 export function sanitizeDeliveryOverride(
+  actor: { isStaff: boolean },
   override: NotificationDeliveryOverride | undefined,
   support: { emailSupported: boolean; wechatSupported: boolean },
 ): NotificationDeliveryOverride | undefined {
+  if (!actor.isStaff) return undefined;
   if (!override) return undefined;
   const sanitized: NotificationDeliveryOverride = {
     notification: override.notification,

@@ -151,7 +151,16 @@ export function routeError(error: unknown, context?: Omit<ApiErrorContext, "sour
  * 刻意不放进各领域的输入 schema：它不是实体字段，而是一条投递指令，
  * 混进去会污染「至少提交一个修改字段」这类校验。
  */
-export function readDeliveryOverride(body: unknown) {
+/**
+ * 读取本次操作的送达覆盖 —— 仅员工可用。
+ *
+ * 客户也会打这些接口（工单公开回复、确认关闭），若无条件解析，客户就能构造
+ * { notification: false } 把自己的回复对员工静音，或用 { email: true } 强制给
+ * 已退订的员工发邮件。覆盖是员工写操作专用的能力，非员工一律当没传。
+ * 服务层的 resolve*Plan 还会再丢一次，这里是第一道。
+ */
+export function readDeliveryOverride(actor: { isStaff: boolean }, body: unknown) {
+  if (!actor.isStaff) return undefined;
   if (!body || typeof body !== "object") return undefined;
   const raw = (body as Record<string, unknown>).deliveryOverride;
   if (raw === undefined || raw === null) return undefined;

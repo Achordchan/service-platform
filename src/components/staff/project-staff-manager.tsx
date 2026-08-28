@@ -105,6 +105,12 @@ export function ProjectStaffManager({
 
   const [staffOverride, setStaffOverride] =
     useState<NotificationDeliveryOverride>({});
+  // 覆盖是一次性的：关闭对话框的所有路径（取消、点遮罩）都要归零，
+  // 否则自定义完再取消、下次给别人分配时会带着上次的强制/抑制设置提交
+  const closeDialog = () => {
+    setOpen(false);
+    setStaffOverride({});
+  };
   const staffDeliveryRule = useDeliveryChannelRule("PROJECT_STAFF");
 
   const addStaff = form.handleSubmit(async (values) => {
@@ -170,6 +176,7 @@ export function ProjectStaffManager({
             startIcon={<PersonAddAltOutlinedIcon />}
             onClick={() => {
               form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
+              setStaffOverride({});
               setOpen(true);
             }}
           >
@@ -215,7 +222,7 @@ export function ProjectStaffManager({
 
       <Dialog
         open={open}
-        onClose={submitting ? undefined : () => setOpen(false)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
       >
@@ -286,7 +293,7 @@ export function ProjectStaffManager({
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)} disabled={submitting}>
+          <Button onClick={closeDialog} disabled={submitting}>
             取消
           </Button>
           <Button

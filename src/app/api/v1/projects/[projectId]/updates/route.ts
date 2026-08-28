@@ -43,7 +43,7 @@ export async function POST(request: Request, context: RouteContext) {
       auth.actor,
       projectId,
       input,
-      readDeliveryOverride(body),
+      readDeliveryOverride(auth.actor, body),
     );
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {

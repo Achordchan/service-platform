@@ -78,6 +78,12 @@ export function MilestoneManager({
   // 本次保存的提醒方式覆盖（编辑里程碑同样会发 PROJECT_MILESTONE 通知）
   const [editOverride, setEditOverride] =
     useState<NotificationDeliveryOverride>({});
+  // 覆盖是一次性的：取消 / 点遮罩关闭也要归零，否则换一个里程碑再打开时
+  // 会带着上次的强制或抑制设置提交
+  const closeEditor = () => {
+    setEditing(null);
+    setEditOverride({});
+  };
   const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");
   const [deleting, setDeleting] = useState<ProjectMilestone | null>(null);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
@@ -130,6 +136,7 @@ export function MilestoneManager({
       endDate: dateInput(milestone.endDate),
     });
     setInlineImageUploading(false);
+    setEditOverride({});
     setEditing(milestone);
   }
 
@@ -266,7 +273,7 @@ export function MilestoneManager({
 
       <Dialog
         open={Boolean(editing)}
-        onClose={actionId ? undefined : () => setEditing(null)}
+        onClose={actionId ? undefined : closeEditor}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -368,7 +375,7 @@ export function MilestoneManager({
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 3 }}>
               <Button
-                onClick={() => setEditing(null)}
+                onClick={closeEditor}
                 disabled={actionId === editing.id}
               >
                 取消
