@@ -598,7 +598,7 @@ export async function deleteProject(actor: Actor, projectId: string) {
     assertFound(existing, "项目不存在");
     const attachments = await tx.attachment.findMany({
       where: { projectId },
-      select: { storageKey: true },
+      select: { storageKey: true, previewStorageKey: true },
     });
 
     await writeAuditLog(tx, actor, {
@@ -630,7 +630,12 @@ export async function deleteProject(actor: Actor, projectId: string) {
         where: { id: existing.customerSpaceId },
       });
     }
-    return attachments.map((attachment) => attachment.storageKey);
+    // 派生的 PDF 预览件与源文件一起清理
+    return attachments.flatMap((attachment) =>
+      [attachment.storageKey, attachment.previewStorageKey].filter(
+        (value): value is string => Boolean(value),
+      ),
+    );
   });
 
   let failedCount = 0;

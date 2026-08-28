@@ -169,7 +169,7 @@ export async function cleanupAbandonedInlineAttachments() {
         supportPlaybookKey: null,
         createdAt: { lt: cutoff },
       },
-      select: { id: true, storageKey: true },
+      select: { id: true, storageKey: true, previewStorageKey: true },
       orderBy: { createdAt: "asc" },
       take: 200,
     }),
@@ -191,7 +191,10 @@ export async function cleanupAbandonedInlineAttachments() {
       }),
     );
     if (removed.count !== 1) continue;
-    await removePrivateFile(candidate.storageKey);
+    // 派生 PDF 预览件与源文件一起清理（inline 目前恒为图片、无预览件，防御性兜底）
+    for (const key of [candidate.storageKey, candidate.previewStorageKey]) {
+      if (key) await removePrivateFile(key);
+    }
     deleted += 1;
   }
   return deleted;

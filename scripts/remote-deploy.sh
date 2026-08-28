@@ -165,9 +165,49 @@ ensure_universal_request_body_limits() {
   echo "[deploy] Universal public request body limits verified"
 }
 
+ensure_libreoffice() {
+  # Office 附件转 PDF 预览件依赖 LibreOffice（worker 调 soffice --headless）。
+  # 幂等：逐包检查（只看 soffice 可执行文件会漏掉缺失的格式模块）；
+  # apt 失败不中断部署（预览任务会标记 FAILED，附件仍可下载）。
+  local packages=(
+    libreoffice-writer
+    libreoffice-calc
+    libreoffice-impress
+    fonts-noto-cjk
+  )
+  local need_install=0
+  local pkg
+  for pkg in "${packages[@]}"; do
+    if ! dpkg-query -W -f='${Status}' "${pkg}" 2>/dev/null | grep -q "install ok installed"; then
+      need_install=1
+      break
+    fi
+  done
+  if ! command -v soffice >/dev/null 2>&1; then
+    need_install=1
+  fi
+  if [[ "${need_install}" == "0" ]]; then
+    echo "[deploy] libreoffice (writer/calc/impress) + fonts-noto-cjk already installed"
+    return 0
+  fi
+  echo "[deploy] installing libreoffice (writer/calc/impress) + fonts-noto-cjk"
+  if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq; then
+    echo "[deploy] WARNING: apt-get update failed; attachment PDF preview may be unavailable" >&2
+    return 0
+  fi
+  if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+    libreoffice-writer libreoffice-calc libreoffice-impress fonts-noto-cjk; then
+    echo "[deploy] WARNING: libreoffice install failed; attachment PDF preview may be unavailable" >&2
+    return 0
+  fi
+  echo "[deploy] libreoffice installed: $(soffice --version 2>/dev/null | head -1 || echo unknown)"
+}
+
 # Fail closed on JWT logging before we ever take the app offline.
 ensure_sub2api_nginx_log_hardening "${RELEASE_STAGING}"
 ensure_universal_request_body_limits "${RELEASE_STAGING}"
+# Install conversion toolchain while the app is still online (no downtime impact).
+ensure_libreoffice
 
 DEPLOY_SERVICES_STOPPED=0
 restore_services_if_needed() {

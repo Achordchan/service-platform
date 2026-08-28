@@ -48,6 +48,10 @@ import {
 } from "@/modules/miniapp/wechat-subscribe-worker";
 import { cleanupAbandonedInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import {
+  listStalePendingPreviews,
+  renderAttachmentPdfPreview,
+} from "@/modules/attachments/preview-render-service";
+import {
   listDueUniversalWebhookDeliveries,
   processUniversalWebhookDelivery,
 } from "@/modules/integrations/universal/webhook-service";
@@ -75,6 +79,8 @@ export const CONTENT_RISK_SWEEP_JOB = "plugin-content-risk-sweep";
 export const MINIAPP_IDENTITY_SWEEP_JOB = "miniapp-identity-sweep";
 export const WECHAT_SUBSCRIBE_MESSAGE_JOB = "wechat-subscribe-message";
 export const WECHAT_SUBSCRIBE_SWEEP_JOB = "wechat-subscribe-sweep";
+export const ATTACHMENT_PREVIEW_JOB = "attachment-preview-render";
+export const ATTACHMENT_PREVIEW_SWEEP_JOB = "attachment-preview-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -142,6 +148,8 @@ async function startBoss() {
   await boss.createQueue(WECHAT_SUBSCRIBE_MESSAGE_JOB);
   await boss.createQueue(WECHAT_SUBSCRIBE_SWEEP_JOB);
   await boss.createQueue(CONTENT_RISK_SWEEP_JOB);
+  await boss.createQueue(ATTACHMENT_PREVIEW_JOB);
+  await boss.createQueue(ATTACHMENT_PREVIEW_SWEEP_JOB);
   return boss;
 }
 
@@ -589,6 +597,28 @@ export async function queueImageWebpMigrationRun(
   return jobId;
 }
 
+export async function queueAttachmentPreviewRender(attachmentId: string) {
+  if (isInlineMailWorkerEnabled()) {
+    await startMailWorker();
+  }
+  const boss = await getBoss();
+  const jobId = await boss.send(
+    ATTACHMENT_PREVIEW_JOB,
+    { attachmentId },
+    {
+      retryLimit: 2,
+      retryDelay: 60,
+      retryBackoff: true,
+      singletonKey: attachmentId,
+      singletonSeconds: 60,
+    },
+  );
+  if (!jobId) {
+    throw new Error("附件预览件任务未能加入队列");
+  }
+  return jobId;
+}
+
 export async function queueUniversalWebhookDelivery(
   deliveryId: string,
   startAfter?: Date,
@@ -795,6 +825,7 @@ export async function startMailWorker() {
     await boss.schedule(CONTENT_RISK_SWEEP_JOB, "* * * * *");
     await boss.schedule(MINIAPP_IDENTITY_SWEEP_JOB, "23 4 * * *");
     await boss.schedule(WECHAT_SUBSCRIBE_SWEEP_JOB, "* * * * *");
+    await boss.schedule(ATTACHMENT_PREVIEW_SWEEP_JOB, "*/10 * * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -954,6 +985,27 @@ export async function startMailWorker() {
       { batchSize: 1, localConcurrency: 1 },
       async () => {
         await queueDueContentRiskReviews();
+      },
+    );
+    // LibreOffice 转换吃内存，串行处理（VPS 单机）
+    await boss.work<{ attachmentId: string }>(
+      ATTACHMENT_PREVIEW_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async (jobs) => {
+        for (const job of jobs) {
+          await renderAttachmentPdfPreview(job.data.attachmentId);
+        }
+      },
+    );
+    // 入队失败/任务库故障的兜底：重捞长期 PENDING 的附件
+    await boss.work(
+      ATTACHMENT_PREVIEW_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        const stale = await listStalePendingPreviews();
+        for (const attachment of stale) {
+          await queueAttachmentPreviewRender(attachment.id);
+        }
       },
     );
     await queueDueUniversalWebhooks();

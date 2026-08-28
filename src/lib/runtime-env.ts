@@ -14,6 +14,8 @@ const envSchema = z.object({
   BETTER_AUTH_URL: z.url(),
   APP_URL: z.url(),
   UPLOAD_DIR: z.string().default(".data/uploads"),
+  // LibreOffice 可执行文件路径（Office 附件转 PDF 预览件）；默认 PATH 中的 soffice
+  SOFFICE_PATH: z.string().min(1).optional(),
   PLATFORM_SECRET_ENCRYPTION_KEY: z
     .string()
     .refine((value) => {
@@ -99,6 +101,7 @@ function readEnvSource() {
         "http://localhost:3000",
       APP_URL: process.env.APP_URL ?? "http://localhost:3000",
       UPLOAD_DIR: process.env.UPLOAD_DIR,
+      SOFFICE_PATH: process.env.SOFFICE_PATH,
       PLATFORM_SECRET_ENCRYPTION_KEY:
         process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
       SMTP_HOST: process.env.SMTP_HOST,
@@ -131,6 +134,7 @@ function readEnvSource() {
     BETTER_AUTH_URL: process.env.BETTER_AUTH_URL,
     APP_URL: process.env.APP_URL,
     UPLOAD_DIR: process.env.UPLOAD_DIR,
+    SOFFICE_PATH: process.env.SOFFICE_PATH,
     PLATFORM_SECRET_ENCRYPTION_KEY:
       process.env.PLATFORM_SECRET_ENCRYPTION_KEY,
     SMTP_HOST: process.env.SMTP_HOST,

@@ -35,9 +35,13 @@ const silentProjectChanges = new Set([
   "PROJECT_ACCESS_REVOKED",
   "PROJECT_UPDATE_DELETED",
   "ATTACHMENT_OPTIMIZED",
+  "ATTACHMENT_PREVIEW_READY",
 ]);
 
-const silentRequestChanges = new Set(["ATTACHMENT_OPTIMIZED"]);
+const silentRequestChanges = new Set([
+  "ATTACHMENT_OPTIMIZED",
+  "ATTACHMENT_PREVIEW_READY",
+]);
 
 export function isProjectChangeAudible(change: string) {
   return !silentProjectChanges.has(change);

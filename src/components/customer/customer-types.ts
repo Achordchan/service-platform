@@ -99,6 +99,7 @@ export type ProjectAttachment = {
   originalName: string;
   title?: string | null;
   note?: string | null;
+  previewStatus?: "PENDING" | "READY" | "FAILED" | null;
   mimeType: string;
   size: number;
   createdAt: string;
@@ -138,6 +139,7 @@ export type RequestAttachment = {
   originalName: string;
   title?: string | null;
   note?: string | null;
+  previewStatus?: "PENDING" | "READY" | "FAILED" | null;
   mimeType: string;
   size: number;
   createdAt: string;

@@ -176,23 +176,37 @@ function MessageFile({
 }) {
   const colors = attachmentColors(tone);
   const displayName = attachmentDisplayName(file);
+  const kind = previewKindOfMimeType(file.mimeType);
+  // Office 附件依赖服务端派生的 PDF 预览件（variant=preview），生成完成才可预览
+  const officePreviewReady =
+    kind === "unsupported" && file.previewStatus === "READY";
   // embed 门户（onDownload 注入）鉴权走请求头，弹层内联/文本加载不可用，保持仅下载
   const previewable =
     !onDownload &&
     Boolean(onPreview) &&
-    previewKindOfMimeType(file.mimeType) !== "unsupported";
+    (kind !== "unsupported" || officePreviewReady);
   const openPreview = () =>
-    onPreview?.({
-      type: "remote",
-      url: resolveUrl
-        ? resolveUrl(file, true)
-        : `/api/v1/attachments/${file.id}?disposition=inline`,
-      downloadUrl: resolveUrl
-        ? resolveUrl(file, false)
-        : `/api/v1/attachments/${file.id}`,
-      mimeType: file.mimeType,
-      name: displayName,
-    });
+    onPreview?.(
+      officePreviewReady
+        ? {
+            type: "remote",
+            url: `/api/v1/attachments/${file.id}?disposition=inline&variant=preview`,
+            downloadUrl: `/api/v1/attachments/${file.id}`,
+            mimeType: "application/pdf",
+            name: displayName,
+          }
+        : {
+            type: "remote",
+            url: resolveUrl
+              ? resolveUrl(file, true)
+              : `/api/v1/attachments/${file.id}?disposition=inline`,
+            downloadUrl: resolveUrl
+              ? resolveUrl(file, false)
+              : `/api/v1/attachments/${file.id}`,
+            mimeType: file.mimeType,
+            name: displayName,
+          },
+    );
   return (
     <Stack
       direction="row"

@@ -163,6 +163,7 @@ export default async function CustomerProjectPage({
       originalName: attachment.originalName,
       title: attachment.title,
       note: attachment.note,
+      previewStatus: attachment.previewStatus,
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),

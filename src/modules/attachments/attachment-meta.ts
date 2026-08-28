@@ -36,6 +36,7 @@ export function attachmentRiskText(
 // 允许浏览器内联展示（在线预览）的类型白名单。
 // 刻意排除 html/svg 等可执行内容——附件校验层本就不放行它们，这里再兜一层。
 export function isInlinePreviewableMimeType(mimeType: string) {
+  if (mimeType === "image/svg+xml") return false;
   return (
     mimeType.startsWith("image/") ||
     mimeType === "application/pdf" ||
@@ -50,4 +51,33 @@ export function isTextPreviewMimeType(mimeType: string) {
     mimeType === "text/csv" ||
     mimeType === "application/json"
   );
+}
+
+// 需要异步转 PDF 才能在线预览的 Office 类型（转换由 LibreOffice headless 完成）
+const OFFICE_PREVIEW_MIME_EXTENSIONS = new Map([
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx",
+  ],
+  [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xlsx",
+  ],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx",
+  ],
+]);
+
+export function isOfficePreviewMimeType(mimeType: string) {
+  return OFFICE_PREVIEW_MIME_EXTENSIONS.has(mimeType);
+}
+
+export function officePreviewExtension(mimeType: string) {
+  return OFFICE_PREVIEW_MIME_EXTENSIONS.get(mimeType) ?? null;
+}
+
+// 上传链路：命中转换类型时把预览初始状态标记为 PENDING（其余类型无预览件概念）
+export function initialPreviewStatus(mimeType: string) {
+  return isOfficePreviewMimeType(mimeType) ? ("PENDING" as const) : null;
 }

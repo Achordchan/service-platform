@@ -13,23 +13,31 @@ export async function GET(request: Request, context: RouteContext) {
   try {
     const actor = await requireApiActor();
     const { attachmentId } = await context.params;
-    const inlineRequested =
-      new URL(request.url).searchParams.get("disposition") === "inline";
+    const searchParams = new URL(request.url).searchParams;
+    const inlineRequested = searchParams.get("disposition") === "inline";
+    // variant=preview：Office 附件的派生 PDF 预览件
+    const previewRequested = searchParams.get("variant") === "preview";
     const { attachment, buffer } = await readAttachmentDownload(
       actor,
       attachmentId,
-      { inlinePreview: inlineRequested },
+      {
+        inlinePreview: inlineRequested,
+        variant: previewRequested ? "preview" : undefined,
+      },
     );
+    const mimeType = previewRequested ? "application/pdf" : attachment.mimeType;
     // 在线预览：图片之外放开 PDF 与纯文本类的内联展示（白名单见 attachment-meta）
-    const inline =
-      inlineRequested && isInlinePreviewableMimeType(attachment.mimeType);
+    const inline = inlineRequested && isInlinePreviewableMimeType(mimeType);
+    const fileName = previewRequested
+      ? `${(attachment.title?.trim() || attachment.originalName).replace(/\.[^.]+$/, "") || "attachment"}.pdf`
+      : downloadFileName(attachment.originalName, attachment.mimeType);
 
     return new Response(buffer, {
       headers: {
-        "Content-Type": attachment.mimeType,
+        "Content-Type": mimeType,
         "Content-Length": String(buffer.byteLength),
         "Content-Disposition": contentDisposition(
-          downloadFileName(attachment.originalName, attachment.mimeType),
+          fileName,
           inline ? "inline" : "attachment",
         ),
         "Cache-Control": "private, no-store",

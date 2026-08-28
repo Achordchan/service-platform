@@ -368,7 +368,12 @@ export async function updateProjectUpdate(
         body: true,
         visibility: true,
         attachments: {
-          select: { id: true, storageKey: true, inline: true },
+          select: {
+            id: true,
+            storageKey: true,
+            previewStorageKey: true,
+            inline: true,
+          },
         },
       },
     });
@@ -455,7 +460,11 @@ export async function updateProjectUpdate(
         where: { id: { in: removedAttachments.map((item) => item.id) } },
       });
       removedStorageKeys.push(
-        ...removedAttachments.map((attachment) => attachment.storageKey),
+        ...removedAttachments.flatMap((attachment) =>
+          [attachment.storageKey, attachment.previewStorageKey].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
       );
     }
     await writeAuditLog(tx, actor, {
@@ -498,12 +507,12 @@ export function deleteProjectUpdate(
         title: true,
         visibility: true,
         attachments: {
-          select: { storageKey: true },
+          select: { storageKey: true, previewStorageKey: true },
         },
         comments: {
           select: {
             attachments: {
-              select: { storageKey: true },
+              select: { storageKey: true, previewStorageKey: true },
             },
           },
         },
@@ -512,9 +521,17 @@ export function deleteProjectUpdate(
     assertFound(existing, "进度动态不存在");
 
     const storageKeys = [
-      ...existing.attachments.map((attachment) => attachment.storageKey),
+      ...existing.attachments.flatMap((attachment) =>
+        [attachment.storageKey, attachment.previewStorageKey].filter(
+          (value): value is string => Boolean(value),
+        ),
+      ),
       ...existing.comments.flatMap((comment) =>
-        comment.attachments.map((attachment) => attachment.storageKey),
+        comment.attachments.flatMap((attachment) =>
+          [attachment.storageKey, attachment.previewStorageKey].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
       ),
     ];
 

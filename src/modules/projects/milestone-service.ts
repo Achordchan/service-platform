@@ -307,7 +307,7 @@ export async function updateMilestone(
         endDate: true,
         attachments: {
           where: { inline: true },
-          select: { id: true, storageKey: true },
+          select: { id: true, storageKey: true, previewStorageKey: true },
         },
       },
     });
@@ -398,7 +398,11 @@ export async function updateMilestone(
           where: { id: { in: removedAttachments.map((item) => item.id) } },
         });
         removedStorageKeys.push(
-          ...removedAttachments.map((attachment) => attachment.storageKey),
+          ...removedAttachments.flatMap((attachment) =>
+            [attachment.storageKey, attachment.previewStorageKey].filter(
+              (value): value is string => Boolean(value),
+            ),
+          ),
         );
       }
     }
@@ -452,7 +456,9 @@ export function deleteMilestone(
       select: {
         id: true,
         title: true,
-        attachments: { select: { storageKey: true } },
+        attachments: {
+          select: { storageKey: true, previewStorageKey: true },
+        },
       },
     });
     assertFound(existing, "里程碑不存在");
@@ -484,7 +490,11 @@ export function deleteMilestone(
       customerSpaceId: context.customerSpaceId,
       projectId,
     });
-    return existing.attachments.map((attachment) => attachment.storageKey);
+    return existing.attachments.flatMap((attachment) =>
+      [attachment.storageKey, attachment.previewStorageKey].filter(
+        (value): value is string => Boolean(value),
+      ),
+    );
   }).then((storageKeys) => removeMilestoneFiles(milestoneId, storageKeys));
 }
 
