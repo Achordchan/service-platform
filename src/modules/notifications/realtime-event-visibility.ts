@@ -59,7 +59,8 @@ function isProjectFileModuleEvent(type: EventType, payload: Prisma.JsonValue) {
   const change = eventPayloadString(payload, "change");
   return (
     change === "PROJECT_ATTACHMENT_UPLOADED" ||
-    change === "ATTACHMENT_OPTIMIZED"
+    change === "ATTACHMENT_OPTIMIZED" ||
+    change === "ATTACHMENT_PREVIEW_READY"
   );
 }
 

@@ -55,6 +55,7 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
         mimeType: true,
         previewStatus: true,
         previewStorageKey: true,
+        visibility: true,
         customerSpaceId: true,
         projectId: true,
         serviceRequestId: true,
@@ -97,6 +98,8 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
           customerSpaceId: attachment.customerSpaceId,
           projectId: attachment.projectId,
           serviceRequestId: attachment.serviceRequestId,
+          // INTERNAL 附件的就绪事件不能漏给客户（filterVisibleEvents 依赖 payload.visibility）
+          visibility: attachment.visibility,
           payload: { attachmentId: attachment.id },
         });
       } else if (attachment.projectId && attachment.customerSpaceId) {
@@ -104,6 +107,7 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
           change: "ATTACHMENT_PREVIEW_READY",
           customerSpaceId: attachment.customerSpaceId,
           projectId: attachment.projectId,
+          visibility: attachment.visibility,
           payload: { attachmentId: attachment.id },
         });
       }
