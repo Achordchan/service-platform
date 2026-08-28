@@ -4,6 +4,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/runtime-env";
+import { recordAuthEvent } from "@/modules/audit/auth-audit";
 // 网页版扫码登录（已绑定小程序微信的用户快速登录 Web），唯一通道为小程序码：
 //   Web 登录页 → POST 创建票据 → img 加载小程序码（wxacode.getUnlimited, scene=t:<token>）
 //   微信扫一扫/长按 → 直达小程序 pages/web-login 确认页 → Bearer 身份确认（CONFIRMED + userId）
@@ -201,14 +202,29 @@ export async function confirmWebQrLogin(userId: string, qrPayload: string) {
 }
 
 /** 为已确认用户创建 better-auth 会话并返回 cookie（代签，格式与 better-auth 一致） */
-export async function issueWebQrSession(userId: string) {
+export async function issueWebQrSession(
+  userId: string,
+  network?: { ipAddress: string | null; userAgent: string | null },
+) {
   const token = randomBytes(32).toString("base64url");
   await prisma.session.create({
     data: {
       token,
       userId,
       expiresAt: new Date(Date.now() + SESSION_TTL_SECONDS * 1000),
+      ipAddress: network?.ipAddress ?? undefined,
+      userAgent: network?.userAgent ?? undefined,
     },
+  });
+  // 扫码登录直接落 Session 表、绕过 better-auth adapter，故 databaseHooks 不触发，
+  // 在此显式补 USER_LOGIN 审计（含轮询请求的可信来源 IP/UA）。
+  await recordAuthEvent({
+    action: "USER_LOGIN",
+    actorUserId: userId,
+    targetUserId: userId,
+    ipAddress: network?.ipAddress ?? null,
+    userAgent: network?.userAgent ?? null,
+    metadata: { path: "web-qr-login" },
   });
   const signature = createHmac("sha256", env.BETTER_AUTH_SECRET)
     .update(token)
