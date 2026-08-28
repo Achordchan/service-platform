@@ -1,7 +1,11 @@
 import "server-only";
 
 import { betterAuth, type BetterAuthPlugin } from "better-auth";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api";
 import {
   TURNSTILE_GUARDED_PATHS,
   isInternalTurnstileBypass,
@@ -11,9 +15,22 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { emailOTP } from "better-auth/plugins";
 import { prisma } from "@/lib/db";
 import { enqueueMail } from "@/lib/jobs";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import { env } from "@/lib/runtime-env";
+import { recordAuthEvent } from "@/modules/audit/auth-audit";
 import { assertEmailOtpLoginAvailable } from "@/modules/platform-settings/email-otp-login-service";
 import { hasActiveLoginAccount } from "@/modules/users/login-account-service";
+
+// 凭密码 / 邮箱验证码登录的端点路径；登录失败审计据此匹配。
+const SIGN_IN_PATHS = new Set(["/sign-in/email", "/sign-in/email-otp"]);
+
+function hookIp(headers: Headers | undefined): string | null {
+  return headers ? clientIpFromHeaders(headers) : null;
+}
+
+function hookUserAgent(headers: Headers | undefined): string | null {
+  return headers?.get("user-agent") ?? null;
+}
 
 // 人机验证守卫：密码/验证码登录提交前校验 Cloudflare Turnstile token
 //（客户端通过 authClient 额外字段 cfTurnstileToken 传入；secret 未配置时跳过）。
@@ -95,6 +112,65 @@ function emailOtpAccountGuard(): BetterAuthPlugin {
   };
 }
 
+// 认证审计：登出（会话删除前取用户）与登录失败（端点抛 APIError 后 after 钩子仍执行）。
+// 登录成功走顶层 databaseHooks.session.create；这里的钩子内自吞异常，绝不阻断认证。
+function authAuditPlugin(): BetterAuthPlugin {
+  return {
+    id: "auth-audit",
+    hooks: {
+      before: [
+        {
+          matcher: (context) => context.path === "/sign-out",
+          handler: createAuthMiddleware(async (context) => {
+            try {
+              const current = await getSessionFromCtx(context);
+              const userId = current?.user?.id;
+              if (userId) {
+                await recordAuthEvent({
+                  action: "USER_LOGOUT",
+                  userId,
+                  ipAddress: hookIp(context.headers),
+                  userAgent: hookUserAgent(context.headers),
+                });
+              }
+            } catch {
+              // 取会话失败绝不阻断登出
+            }
+          }),
+        },
+      ],
+      after: [
+        {
+          // context.returned 在端点抛 APIError 时即该错误（见 to-auth-endpoints）。
+          matcher: (context) =>
+            typeof context.path === "string" &&
+            SIGN_IN_PATHS.has(context.path),
+          handler: createAuthMiddleware(async (context) => {
+            const returned = context.context.returned;
+            if (!(returned instanceof APIError)) return;
+            const body = context.body as { email?: unknown } | null;
+            const email =
+              typeof body?.email === "string" ? body.email : null;
+            const code = (returned.body as { code?: unknown } | undefined)
+              ?.code;
+            await recordAuthEvent({
+              action: "USER_LOGIN_FAILED",
+              email,
+              result: "FAILURE",
+              ipAddress: hookIp(context.headers),
+              userAgent: hookUserAgent(context.headers),
+              metadata: {
+                path: context.path,
+                code: typeof code === "string" ? code : undefined,
+              },
+            });
+          }),
+        },
+      ],
+    },
+  };
+}
+
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
     provider: "postgresql",
@@ -106,7 +182,7 @@ export const auth = betterAuth({
     disableSignUp: true,
     minPasswordLength: 10,
     revokeSessionsOnPasswordReset: true,
-    sendResetPassword: async ({ user, url }) => {
+    sendResetPassword: async ({ user, url }, request) => {
       await enqueueMail({
         to: user.email,
         templateKey: "PASSWORD_RESET",
@@ -116,6 +192,12 @@ export const auth = betterAuth({
           expiresIn: "1 小时",
         },
         actionUrl: url,
+      });
+      await recordAuthEvent({
+        action: "USER_PASSWORD_RESET_REQUESTED",
+        userId: user.id,
+        ipAddress: hookIp(request?.headers),
+        userAgent: hookUserAgent(request?.headers),
       });
     },
   },
@@ -132,9 +214,27 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
   },
+  databaseHooks: {
+    session: {
+      create: {
+        // 会话建成即登录成功——覆盖密码与邮箱验证码两种方式；better-auth 已在
+        // session 上填好来源 IP/UA。小程序走独立会话，不触发此钩子。
+        after: async (session, context) => {
+          await recordAuthEvent({
+            action: "USER_LOGIN",
+            userId: session.userId,
+            ipAddress: session.ipAddress ?? null,
+            userAgent: session.userAgent ?? null,
+            metadata: context?.path ? { path: context.path } : undefined,
+          });
+        },
+      },
+    },
+  },
   plugins: [
     turnstileGuard(),
     emailOtpAccountGuard(),
+    authAuditPlugin(),
     emailOTP({
       disableSignUp: true,
       otpLength: 6,

@@ -25,7 +25,7 @@ import { staffApi } from "@/components/staff/staff-api";
 import { gridSx } from "@/lib/data-grid-styles";
 import { queryKeys } from "@/lib/query-keys";
 import {
-  auditActionVerb,
+  auditActionLabel,
   auditResourceLabel,
 } from "@/modules/audit/audit-labels";
 
@@ -106,25 +106,21 @@ export function AuditLogWorkspace() {
         headerName: "操作",
         minWidth: 240,
         flex: 1.2,
-        renderCell: ({ row }) => {
-          const verb = auditActionVerb(row.action);
-          return (
-            <Stack spacing={0.25} sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontWeight: 650 }} noWrap>
-                {auditResourceLabel(row.resourceType)}
-                {verb ? ` · ${verb}` : ""}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ fontFamily: "ui-monospace, monospace" }}
-                noWrap
-              >
-                {row.action}
-              </Typography>
-            </Stack>
-          );
-        },
+        renderCell: ({ row }) => (
+          <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 650 }} noWrap>
+              {auditActionLabel(row.action, row.resourceType)}
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontFamily: "ui-monospace, monospace" }}
+              noWrap
+            >
+              {row.action}
+            </Typography>
+          </Stack>
+        ),
       },
       {
         field: "actorName",
@@ -220,7 +216,7 @@ export function AuditLogWorkspace() {
           />
           <TextField
             select
-            label="操作码"
+            label="操作类型"
             value={filters.action}
             onChange={(event) => update("action", event.target.value)}
             size="small"
@@ -229,7 +225,7 @@ export function AuditLogWorkspace() {
             <MenuItem value="">全部</MenuItem>
             {(facets?.actions ?? []).map((action) => (
               <MenuItem key={action} value={action}>
-                {action}
+                {auditActionLabel(action)}
               </MenuItem>
             ))}
           </TextField>
@@ -333,8 +329,7 @@ export function AuditLogWorkspace() {
             </Stack>
           ) : (
             rows.map((row) => {
-              const verb = auditActionVerb(row.action);
-              const label = auditResourceLabel(row.resourceType);
+              const label = auditActionLabel(row.action, row.resourceType);
               const actorName =
                 row.actorName ?? row.externalActorName ?? "系统";
               const time = new Date(row.createdAt).toLocaleString("zh-CN", {
@@ -366,7 +361,6 @@ export function AuditLogWorkspace() {
                   >
                     <Typography sx={{ fontWeight: 650 }} noWrap>
                       {label}
-                      {verb ? ` · ${verb}` : ""}
                     </Typography>
                     <Chip
                       size="small"
@@ -454,10 +448,7 @@ function AuditDetailDialog({
       {detail ? (
         <>
           <DialogTitle>
-            {auditResourceLabel(detail.resourceType)}
-            {auditActionVerb(detail.action)
-              ? ` · ${auditActionVerb(detail.action)}`
-              : ""}
+            {auditActionLabel(detail.action, detail.resourceType)}
           </DialogTitle>
           <DialogContent dividers>
             <Stack spacing={2}>

@@ -3,6 +3,7 @@ import "server-only";
 import { headers } from "next/headers";
 import type { Actor } from "@/lib/actor";
 import { resolveActor } from "@/lib/actor";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import { getCurrentSession } from "@/lib/session";
 import { resolveMiniappSessionFromAuthorization } from "@/modules/miniapp/session";
 
@@ -21,7 +22,12 @@ export type ApiActorResult =
  * better-auth Cookie 会话。
  */
 export async function resolveApiActor(): Promise<ApiActorResult> {
-  const authorization = (await headers()).get("authorization");
+  const requestHeaders = await headers();
+  const network = {
+    ipAddress: clientIpFromHeaders(requestHeaders),
+    userAgent: requestHeaders.get("user-agent"),
+  };
+  const authorization = requestHeaders.get("authorization");
   if (authorization) {
     const resolved = await resolveMiniappSessionFromAuthorization(
       authorization,
@@ -34,7 +40,7 @@ export async function resolveApiActor(): Promise<ApiActorResult> {
         },
       };
     }
-    return { actor: resolved.actor };
+    return { actor: { ...resolved.actor, ...network } };
   }
 
   const session = await getCurrentSession();
@@ -45,5 +51,5 @@ export async function resolveApiActor(): Promise<ApiActorResult> {
   if (!actor) {
     return { failure: { code: "UNAUTHORIZED", message: "当前账号不可用" } };
   }
-  return { actor };
+  return { actor: { ...actor, ...network } };
 }

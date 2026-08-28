@@ -34,8 +34,9 @@ export function writeAuditLog(
       projectId: input.projectId,
       serviceRequestId: input.serviceRequestId,
       requestId: input.requestId,
-      ipAddress: input.ipAddress,
-      userAgent: input.userAgent,
+      // 调用点显式传入优先；否则兜底用请求边界写进 actor 的来源信息
+      ipAddress: input.ipAddress ?? actor.ipAddress ?? undefined,
+      userAgent: input.userAgent ?? actor.userAgent ?? undefined,
       actorId: actor.id === "system" ? undefined : actor.id,
     }],
   });
