@@ -379,34 +379,61 @@ describe("Sub2API 外部联系人 RLS", () => {
     };
     const before = await mailCount();
 
+    // 通道状态一律用覆盖显式指定，不依赖共享的 NotificationDeliveryRule ——
+    // 集成测试各文件并行跑，别的用例会改那张表，依赖它这里就会随机红。
+    //
     // 排除名单里带上他：外部联系人邮件不挂在 Notification 行上，
     // 若拿「与通知行相交后的排除名单」去判，他的 id 早被丢掉，排除等于没生效
     await addRequestMessage(
       adminActor,
       ids.requestA,
       { body: "<p>排除外部联系人</p>", visibility: "CUSTOMER_VISIBLE" },
-      { excludeUserIds: [ids.contactA] },
+      { email: true, excludeUserIds: [ids.contactA] },
     );
     expect(await mailCount()).toBe(before);
 
     // 少发了信就必须留痕：外部联系人没有通知行，若只按「与通知行相交后的名单」
     // 判定覆盖是否生效，这条覆盖会被当成空操作而整条不记审计
-    const audit = await owner.query<{ excluded: string[] | null }>(
-      `SELECT metadata->'excludedUserIds' AS excluded
+    const audit = await owner.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
          FROM "AuditLog"
         WHERE action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
           AND "serviceRequestId" = $1
-        ORDER BY "createdAt" DESC
-        LIMIT 1`,
-      [ids.requestA],
+          AND metadata->'excludedUserIds' @> $2::jsonb`,
+      [ids.requestA, JSON.stringify([ids.contactA])],
     );
-    expect(audit.rows[0]?.excluded).toContain(ids.contactA);
+    expect(audit.rows[0]?.count).toBe("1");
+
+    // 反过来：邮件通道本次就是关的，那封信怎样都不会发，排除他没改变任何
+    // 投递结果 —— 审计里不该出现「他因本次覆盖被排除」这条假账。
+    // 用覆盖把邮件关掉，而不是去改全局 NotificationDeliveryRule：
+    // 集成测试各文件并行跑，改共享规则会把别的用例一起带崩
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>通道已关，排除无意义</p>", visibility: "CUSTOMER_VISIBLE" },
+      { email: false, excludeUserIds: [ids.contactA] },
+    );
+    // 数「声称排除了这位联系人」的审计条数有没有增加 —— 不看最后一条：
+    // 关掉邮件后这次覆盖可能压根不算有效（与规则同值时不写审计），
+    // 那样 LIMIT 1 会捞回上一条，断言就假绿/假红
+    const fakeEntries = await owner.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM "AuditLog"
+        WHERE action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+          AND "serviceRequestId" = $1
+          AND metadata->'excludedUserIds' @> $2::jsonb`,
+      [ids.requestA, JSON.stringify([ids.contactA])],
+    );
+    expect(fakeEntries.rows[0]?.count).toBe("1");
 
     // 不排除时照常发
-    await addRequestMessage(adminActor, ids.requestA, {
-      body: "<p>正常通知外部联系人</p>",
-      visibility: "CUSTOMER_VISIBLE",
-    });
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>正常通知外部联系人</p>", visibility: "CUSTOMER_VISIBLE" },
+      { email: true },
+    );
     expect(await mailCount()).toBe(before + 1);
 
     await owner.query(

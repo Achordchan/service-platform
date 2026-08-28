@@ -810,6 +810,14 @@ async function resolveRequestActivityPlan(
   });
   const excluded = applyDeliveryExclusions(planned.notifications, override);
   planned.notifications = excluded.notifications;
+  /**
+   * 本次「邮件」这条通道到底开没开（后台规则 + 本次覆盖）。
+   * 外部联系人的邮件不挂在 Notification 行上、由命令层单独入队，必须据此判断 ——
+   * 否则员工在弹窗里关掉邮件，外部联系人照收，反馈还把它算作已发送。
+   */
+  const emailChannelEnabled =
+    createNotifications &&
+    resolveDeliveryChannel(rule.emailEnabled, override?.email);
   return {
     planned,
     ruleKey,
@@ -819,20 +827,17 @@ async function resolveRequestActivityPlan(
     excludedUserIds: [
       ...excluded.excludedUserIds,
       // 外部联系人没有通知行，applyDeliveryExclusions 的交集取不到他；
-      // 本次本会给他发信却被排除掉时，这是唯一能让审计记下这件事的地方
-      ...(input.externalMailContactId &&
+      // 本次本会给他发信却被排除掉时，这是唯一能让审计记下这件事的地方。
+      // 必须同时确认邮件通道真开着：通道本来就关的话这封信怎样都不会发，
+      // 排除他没改变任何投递结果，再记一条「因本次覆盖被排除」就是假账
+      // —— 审计只记真正改变了结果的覆盖。
+      ...(emailChannelEnabled &&
+      input.externalMailContactId &&
       override?.excludeUserIds?.includes(input.externalMailContactId)
         ? [input.externalMailContactId]
         : []),
     ],
-    /**
-     * 本次「邮件」这条通道到底开没开（后台规则 + 本次覆盖）。
-     * 外部联系人的邮件不挂在 Notification 行上、由命令层单独入队，必须据此判断 ——
-     * 否则员工在弹窗里关掉邮件，外部联系人照收，反馈还把它算作已发送。
-     */
-    emailChannelEnabled:
-      createNotifications &&
-      resolveDeliveryChannel(rule.emailEnabled, override?.email),
+    emailChannelEnabled,
   };
 }
 
