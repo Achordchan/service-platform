@@ -55,3 +55,22 @@
   margin-top: 14rpx;
   font-size: 22rpx;
 }
+
+.attach-item {
+  border: 2rpx solid rgba(16, 24, 40, 0.08);
+  border-radius: 14rpx;
+  padding: 6rpx 18rpx 14rpx;
+  margin-bottom: 14rpx;
+}
+
+.attach-preview {
+  color: var(--primary, #1677ff);
+  font-size: 24rpx;
+  margin-left: 20rpx;
+  flex-shrink: 0;
+}
+
+.attach-meta-input {
+  margin-top: 10rpx;
+  font-size: 26rpx;
+}

@@ -46,6 +46,8 @@ export default async function CustomerRequestDetailPage({
     attachments: request.attachments.map((attachment) => ({
       id: attachment.id,
       originalName: attachment.originalName,
+      title: attachment.title,
+      note: attachment.note,
       mimeType: attachment.mimeType,
       size: attachment.size,
       createdAt: attachment.createdAt.toISOString(),
@@ -54,6 +56,7 @@ export default async function CustomerRequestDetailPage({
     messages: request.messages.map((message) => ({
       id: message.id,
       body: message.body,
+      bodyIsAttachmentPlaceholder: message.bodyIsAttachmentPlaceholder,
       isSystem: message.isSystem,
       isInitial: message.isInitial,
       supportPlaybook: message.supportPlaybook,
@@ -71,6 +74,8 @@ export default async function CustomerRequestDetailPage({
         ? {
             id: message.replyTo.id,
             body: message.replyTo.body,
+            bodyIsAttachmentPlaceholder:
+              message.replyTo.bodyIsAttachmentPlaceholder,
             authorId:
               message.replyTo.authorId ??
               message.replyTo.externalAuthorId ??
@@ -90,6 +95,8 @@ export default async function CustomerRequestDetailPage({
       attachments: message.attachments.map((attachment) => ({
         id: attachment.id,
         originalName: attachment.originalName,
+        title: attachment.title,
+        note: attachment.note,
         mimeType: attachment.mimeType,
         size: attachment.size,
         createdAt: attachment.createdAt.toISOString(),

@@ -50,6 +50,11 @@ import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
 import { UnreadCountPill } from "@/components/shared/tab-badge-label";
 import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
+import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
 import { hasMeaningfulHtml } from "@/lib/message-content";
 import { createEmbedTheme } from "@/theme/theme";
 
@@ -114,6 +119,7 @@ type RequestDetailView = RequestSummary & {
     isSystem: boolean;
     isInitial: boolean;
     supportPlaybook?: import("@/lib/support-reply-playbooks").SupportReplyPlaybook | null;
+    bodyIsAttachmentPlaceholder?: boolean;
     replyToMessageId: string | null;
     createdAt: string;
     author: ApiAuthor;
@@ -125,9 +131,15 @@ type RequestDetailView = RequestSummary & {
     replyTo: null | {
       id: string;
       body: string;
+      bodyIsAttachmentPlaceholder?: boolean;
       visibility: "CUSTOMER_VISIBLE";
       author: ApiAuthor;
-      attachments: Array<{ id: string; originalName: string }>;
+      attachments: Array<{
+        id: string;
+        originalName: string;
+        title?: string | null;
+        inline?: boolean;
+      }>;
     };
   }>;
 };
@@ -143,7 +155,7 @@ const statusLabels: Record<RequestStatus, string> = {
 const embedReplySchema = z
   .object({
     body: z.string(),
-    files: z.array(z.custom<File>()),
+    files: z.array(z.custom<AttachmentDraft>()),
   })
   .refine(
     ({ body, files }) => hasMeaningfulHtml(body) || files.length > 0,
@@ -672,11 +684,13 @@ function ExternalEmbedPortal({
     isSystem: message.isSystem,
     isInitial: message.isInitial,
     supportPlaybook: message.supportPlaybook,
+    bodyIsAttachmentPlaceholder: message.bodyIsAttachmentPlaceholder,
     visibility: message.visibility,
     replyToMessageId: message.replyToMessageId,
     replyTo: message.replyTo ? {
       id: message.replyTo.id,
       body: message.replyTo.body,
+      bodyIsAttachmentPlaceholder: message.replyTo.bodyIsAttachmentPlaceholder,
       authorId: message.replyTo.author.id,
       authorName: message.replyTo.author.name,
       visibility: message.replyTo.visibility,
@@ -990,7 +1004,8 @@ function EmbedReplyComposer({
         body: JSON.stringify({
           body: hasMeaningfulHtml(values.body)
             ? values.body
-            : `附件：${values.files.map((file) => file.name).join("、")}`,
+            // 纯附件回复用文件名无关的占位哨兵「附件」（对齐 buildAttachmentOnlyMessage）
+            : "附件",
           replyToMessageId: replyTarget?.id,
         }),
       });
@@ -999,17 +1014,18 @@ function EmbedReplyComposer({
       const messageId = payload.data.message.id;
       const failedFiles = await uploadFilesBestEffort(
         values.files,
-        async (file) => {
+        async (draft) => {
         const form = new FormData();
-        form.append("file", file);
+        form.append("file", draft.file);
         form.append("serviceRequestId", requestId);
         form.append("requestMessageId", messageId);
+        appendDraftMeta(form, draft);
         const upload = await fetch("/api/v1/embed/attachments", {
           method: "POST",
           headers: { Authorization: `Embed ${token}` },
           body: form,
         });
-          if (!upload.ok) throw new Error(`${file.name} 上传失败`);
+          if (!upload.ok) throw new Error(`${draft.file.name} 上传失败`);
         },
       );
       reset({ body: "", files: [] });
@@ -1024,7 +1040,9 @@ function EmbedReplyComposer({
       if (failedFiles.length > 0 || refreshError) {
         const messages: string[] = [];
         if (failedFiles.length > 0) {
-          messages.push(`附件上传失败：${fileNames(failedFiles)}`);
+          messages.push(
+            `附件上传失败：${fileNames(failedFiles.map((draft) => draft.file))}`,
+          );
         }
         if (refreshError) {
           messages.push(
@@ -1089,10 +1107,11 @@ function EmbedReplyComposer({
             multiple
             onFiles={(selected) => {
               if (selected.length === 0) return;
-              setValue("files", [...getValues("files"), ...selected], {
-                shouldDirty: true,
-                shouldValidate: true,
-              });
+              setValue(
+                "files",
+                [...getValues("files"), ...createAttachmentDrafts(selected)],
+                { shouldDirty: true, shouldValidate: true },
+              );
             }}
             onRejected={(rejections) =>
               setError("root", {
@@ -1107,7 +1126,17 @@ function EmbedReplyComposer({
           </Button>
         </Stack>
         <RequestAttachmentDrafts
-          files={files}
+          drafts={files}
+          disabled={isSubmitting}
+          onUpdate={(index, patch) =>
+            setValue(
+              "files",
+              files.map((draft, itemIndex) =>
+                itemIndex === index ? { ...draft, ...patch } : draft,
+              ),
+              { shouldDirty: true },
+            )
+          }
           onRemove={(index) =>
             setValue(
               "files",
@@ -1139,12 +1168,11 @@ function CreateRequestDialog({
     options?: { keepOpen?: boolean },
   ) => Promise<void>;
 }) {
-  const [fileDrafts, setFileDrafts] = useState<Array<{ key: string; file: File }>>([]);
+  const [fileDrafts, setFileDrafts] = useState<AttachmentDraft[]>([]);
   const [createdRequest, setCreatedRequest] = useState<{
     id: string;
     initialMessageId: string;
   } | null>(null);
-  const draftKeyRef = useRef(0);
   const {
     control,
     handleSubmit,
@@ -1202,20 +1230,21 @@ function CreateRequestDialog({
       // re-upload successful ones. Network errors count as failed drafts, not as
       // "create failed", once the request id already exists.
       const pendingDrafts = [...fileDrafts];
-      const failedDrafts: Array<{ key: string; file: File }> = [];
+      const failedDrafts: AttachmentDraft[] = [];
       for (const draft of pendingDrafts) {
         try {
           const uploadForm = new FormData();
           uploadForm.append("file", draft.file);
           uploadForm.append("serviceRequestId", requestId);
           uploadForm.append("requestMessageId", initialMessageId);
+          appendDraftMeta(uploadForm, draft);
           const upload = await fetch("/api/v1/embed/attachments", {
             method: "POST",
             headers: { Authorization: `Embed ${token}` },
             body: uploadForm,
           });
           if (upload.ok) {
-            setFileDrafts((current) => current.filter((item) => item.key !== draft.key));
+            setFileDrafts((current) => current.filter((item) => item.id !== draft.id));
           } else {
             failedDrafts.push(draft);
           }
@@ -1356,10 +1385,7 @@ function CreateRequestDialog({
                 if (selected.length === 0) return;
                 setFileDrafts((current) => [
                   ...current,
-                  ...selected.map((file) => {
-                    draftKeyRef.current += 1;
-                    return { key: `draft-${draftKeyRef.current}`, file };
-                  }),
+                  ...createAttachmentDrafts(selected),
                 ]);
               }}
               onRejected={(rejections) =>
@@ -1371,7 +1397,15 @@ function CreateRequestDialog({
               添加附件
             </FilePickerButton>
             <RequestAttachmentDrafts
-              files={fileDrafts.map((item) => item.file)}
+              drafts={fileDrafts}
+              disabled={isSubmitting}
+              onUpdate={(index, patch) =>
+                setFileDrafts((current) =>
+                  current.map((draft, itemIndex) =>
+                    itemIndex === index ? { ...draft, ...patch } : draft,
+                  ),
+                )
+              }
               onRemove={(index) =>
                 setFileDrafts((current) => current.filter((_, itemIndex) => itemIndex !== index))
               }

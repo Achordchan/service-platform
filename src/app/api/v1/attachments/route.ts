@@ -37,6 +37,11 @@ export async function POST(request: Request) {
     const visibility = formData.get("visibility");
     const inline = formData.get("inline") === "true";
     const inlineContext = formData.get("inlineContext");
+    const title = formData.get("title");
+    const note = formData.get("note");
+    // 小程序 wx.uploadFile 的 multipart 文件名取自临时路径（tmp_xxx.ext），
+    // 允许客户端显式提交真实文件名覆盖，originalName/下载名才是用户认识的名字
+    const fileNameOverride = formData.get("fileName");
 
     if (!(file instanceof File)) {
       throw badRequest("ATTACHMENT_REQUIRED", "请选择附件");
@@ -78,9 +83,15 @@ export async function POST(request: Request) {
     }
 
     const buffer = new Uint8Array(await file.arrayBuffer());
+    const titleInput = typeof title === "string" ? title : undefined;
+    const noteInput = typeof note === "string" ? note : undefined;
+    const fileName =
+      typeof fileNameOverride === "string" && fileNameOverride.trim()
+        ? fileNameOverride.trim()
+        : file.name;
     const attachment = normalizedRequestId
       ? await uploadRequestAttachment(actor, {
-          fileName: file.name,
+          fileName,
           claimedMimeType: file.type,
           buffer,
           serviceRequestId: normalizedRequestId,
@@ -90,13 +101,17 @@ export async function POST(request: Request) {
               : undefined,
           visibility: visibility ?? undefined,
           inline,
+          title: titleInput,
+          note: noteInput,
         })
       : await uploadProjectAttachment(actor, {
-          fileName: file.name,
+          fileName,
           claimedMimeType: file.type,
           buffer,
           projectId: normalizedProjectId,
           visibility: visibility ?? undefined,
+          title: titleInput,
+          note: noteInput,
           inlineContext:
             inline && inlineContext === "REQUEST_DESCRIPTION"
               ? "REQUEST_DESCRIPTION"

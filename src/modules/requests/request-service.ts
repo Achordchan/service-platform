@@ -24,6 +24,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
+  isAttachmentOnlyBody,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -658,6 +659,8 @@ export function getRequest(actor: Actor, requestId: string) {
         id: true,
         requestMessageId: true,
         originalName: true,
+        title: true,
+        note: true,
         mimeType: true,
         size: true,
         inline: true,
@@ -734,6 +737,17 @@ export function getRequest(actor: Actor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
+    // 服务端权威判定「纯附件占位正文」：文件名无关的哨兵（见 isAttachmentOnlyBody），
+    // 前端据此下发标志决定引用预览是否从实时附件列表重建，不再依赖正文里的文件名
+    // （改名/撤回/部分上传失败都不影响判定）
+    const isAttachmentPlaceholderBody = (
+      message: (typeof messages)[number],
+    ) => {
+      const hasNonInline = (
+        attachmentsByMessageId.get(message.id) ?? []
+      ).some((attachment) => !attachment.inline);
+      return isAttachmentOnlyBody(message.body, hasNonInline);
+    };
     return {
       ...summary,
       project,
@@ -761,6 +775,7 @@ export function getRequest(actor: Actor, requestId: string) {
             !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
               ? "该内容已撤回"
               : message.body,
+          bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(message),
           contentRiskStatus,
           contentRiskReason,
           reeditBody: canReeditRevokedMessage
@@ -789,6 +804,8 @@ export function getRequest(actor: Actor, requestId: string) {
             (attachment) => ({
               id: attachment.id,
               originalName: attachment.originalName,
+              title: attachment.title,
+              note: attachment.note,
               mimeType: attachment.mimeType,
               size: attachment.size,
               inline: attachment.inline,
@@ -807,6 +824,8 @@ export function getRequest(actor: Actor, requestId: string) {
                   !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
                     ? "该内容已撤回"
                     : replyTo.body,
+                bodyIsAttachmentPlaceholder:
+                  isAttachmentPlaceholderBody(replyTo),
                 visibility: replyTo.visibility,
                 isSystem: replyTo.isSystem,
                 authorId: replyTo.authorId,
@@ -821,13 +840,18 @@ export function getRequest(actor: Actor, requestId: string) {
                 attachments:
                   !actor.isPlatformAdmin && replyToRiskStatus === "REVOKED"
                     ? []
-                    : (attachmentsByMessageId.get(replyTo.id) ?? []).map(
-                        (attachment) => ({
+                    : (attachmentsByMessageId.get(replyTo.id) ?? [])
+                        // 单个附件被风控撤回时，引用预览也不能带出其文件名/标题
+                        .filter(
+                          (attachment) =>
+                            attachmentRiskStatus(attachment) !== "REVOKED",
+                        )
+                        .map((attachment) => ({
                           id: attachment.id,
                           originalName: attachment.originalName,
+                          title: attachment.title,
                           inline: attachment.inline,
-                        }),
-                      ),
+                        })),
               }
             : null,
         };
@@ -839,6 +863,8 @@ export function getRequest(actor: Actor, requestId: string) {
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,
+          title: attachment.title,
+          note: attachment.note,
           mimeType: attachment.mimeType,
           size: attachment.size,
           visibility: attachment.visibility,

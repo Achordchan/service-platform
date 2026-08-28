@@ -93,9 +93,11 @@ vi.mock("@/components/shared/file-picker", () => ({
 }));
 
 vi.mock("@/components/shared/request-chat-attachments", () => ({
-  RequestAttachmentDrafts: ({ files }: { files: File[] }) => (
-    <div>{files.map((file) => file.name).join("、")}</div>
-  ),
+  RequestAttachmentDrafts: ({
+    drafts,
+  }: {
+    drafts: Array<{ file: File }>;
+  }) => <div>{drafts.map((draft) => draft.file.name).join("、")}</div>,
 }));
 
 vi.mock("@/components/shared/rich-text-editor", () => ({

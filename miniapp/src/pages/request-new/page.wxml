@@ -58,9 +58,28 @@
     </picker>
 
     <view class="form-label">附件（可选，最多 5 个）</view>
-    <view wx:for="{{attachments}}" wx:key="localPath" class="attach-row">
-      <view class="attach-name">{{item.fileName}}</view>
-      <view class="attach-remove" data-index="{{index}}" bindtap="onRemoveAttachment">移除</view>
+    <view wx:for="{{attachments}}" wx:key="localPath" class="attach-item">
+      <view class="attach-row">
+        <view class="attach-name" data-index="{{index}}" bindtap="onPreviewAttachment">{{item.fileName}}</view>
+        <view class="attach-preview" data-index="{{index}}" bindtap="onPreviewAttachment">预览</view>
+        <view class="attach-remove" data-index="{{index}}" bindtap="onRemoveAttachment">移除</view>
+      </view>
+      <input
+        class="input attach-meta-input"
+        value="{{item.title}}"
+        maxlength="160"
+        placeholder="展示标题（默认用文件名）"
+        data-index="{{index}}"
+        bindinput="onAttachmentTitleInput"
+      />
+      <input
+        class="input attach-meta-input"
+        value="{{item.note}}"
+        maxlength="500"
+        placeholder="备注（可选）"
+        data-index="{{index}}"
+        bindinput="onAttachmentNoteInput"
+      />
     </view>
     <view class="attach-add" hover-class="hover-plain"
       bindtap="onAddAttachment">＋ 从聊天中选择文件</view>

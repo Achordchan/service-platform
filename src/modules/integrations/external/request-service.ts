@@ -8,6 +8,7 @@ import {
   escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
+  isAttachmentOnlyBody,
 } from "@/lib/message-content";
 import {
   sanitizeMessageHtml,
@@ -484,6 +485,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         id: true,
         requestMessageId: true,
         originalName: true,
+        title: true,
+        note: true,
         mimeType: true,
         size: true,
         inline: true,
@@ -609,6 +612,15 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         ? contactById.get(message.externalAuthorId) ?? null
         : null,
     });
+    // 与客户/员工序列化一致：文件名无关的哨兵判定纯附件占位（见 isAttachmentOnlyBody）
+    const isAttachmentPlaceholderBody = (
+      message: (typeof messages)[number],
+    ) => {
+      const hasNonInline = (
+        attachmentsByMessageId.get(message.id) ?? []
+      ).some((attachment) => !attachment.inline);
+      return isAttachmentOnlyBody(message.body, hasNonInline);
+    };
     const serializedMessages = messages.map((message) => {
       const contentRiskStatus = messageRiskStatus(message);
       const contentRiskReason = contentRiskReasonFor(
@@ -625,6 +637,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         id: message.id,
         body:
           contentRiskStatus === "REVOKED" ? "该内容已撤回" : message.body,
+        bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(message),
         visibility: message.visibility,
         isSystem: message.isSystem,
         isInitial: message.isInitial,
@@ -658,6 +671,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
           (attachment) => ({
             id: attachment.id,
             originalName: attachment.originalName,
+            title: attachment.title,
+            note: attachment.note,
             mimeType: attachment.mimeType,
             size: attachment.size,
             inline: attachment.inline,
@@ -675,19 +690,25 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
                 replyToRiskStatus === "REVOKED"
                   ? "该内容已撤回"
                   : replyTo.body,
+              bodyIsAttachmentPlaceholder: isAttachmentPlaceholderBody(replyTo),
               visibility: replyTo.visibility,
               isSystem: replyTo.isSystem,
               author: serializeAuthor(authorFor(replyTo), actor),
               attachments:
                 replyToRiskStatus === "REVOKED"
                   ? []
-                  : (attachmentsByMessageId.get(replyTo.id) ?? []).map(
-                      (attachment) => ({
+                  : (attachmentsByMessageId.get(replyTo.id) ?? [])
+                      // 单个附件被风控撤回时，引用预览也不能带出其文件名/标题
+                      .filter(
+                        (attachment) =>
+                          attachmentRiskStatus(attachment) !== "REVOKED",
+                      )
+                      .map((attachment) => ({
                         id: attachment.id,
                         originalName: attachment.originalName,
+                        title: attachment.title,
                         inline: attachment.inline,
-                      }),
-                    ),
+                      })),
             }
           : null,
       };
@@ -712,6 +733,8 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         .map((attachment) => ({
           id: attachment.id,
           originalName: attachment.originalName,
+          title: attachment.title,
+          note: attachment.note,
           mimeType: attachment.mimeType,
           size: attachment.size,
           createdAt: attachment.createdAt,

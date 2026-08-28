@@ -139,6 +139,8 @@ export async function loadProjectDetail(
           select: {
             id: true,
             originalName: true,
+            title: true,
+            note: true,
             mimeType: true,
             size: true,
             visibility: true,
@@ -279,19 +281,22 @@ export async function loadProjectDetail(
         hasEditHistory: commentsWithRevisions.has(comment.id),
       })),
     })),
-    attachments: attachments.map((attachment) => ({
-      ...attachment,
-      originalName:
+    attachments: attachments.map((attachment) => {
+      const revoked =
         !actor.isPlatformAdmin &&
-        riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED"
-          ? ""
-          : attachment.originalName,
-      contentRiskStatus: riskStatus(
-        "ATTACHMENT",
-        attachment.id,
-        attachment.uploadedById === actor.id,
-      ),
-    })),
+        riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED";
+      return {
+        ...attachment,
+        originalName: revoked ? "" : attachment.originalName,
+        title: revoked ? null : attachment.title,
+        note: revoked ? null : attachment.note,
+        contentRiskStatus: riskStatus(
+          "ATTACHMENT",
+          attachment.id,
+          attachment.uploadedById === actor.id,
+        ),
+      };
+    }),
     pluginBindings,
     contentRiskUiEnabled: contentRisk.enabled,
     progress: progress.percentage,

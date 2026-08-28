@@ -71,10 +71,22 @@ export function buildMessagePreview(html: string, maxLength = 120) {
   return truncatePlainText(htmlToPlainText(html), maxLength);
 }
 
-export function buildAttachmentOnlyMessage(fileNames: string[]) {
-  const names = fileNames
-    .map((name) => name.trim())
-    .filter(Boolean)
-    .map(escapeHtmlText);
-  return `<p>附件：${names.join("、") || "文件"}</p>`;
+// 纯附件回复的占位正文：不含文件名。正文是不可变的历史记录，而附件（标题、
+// 存废）是可变的，二者一旦耦合就会在改名/撤回/部分上传失败时产生过时或泄露。
+// 展示端（replyText / 引用预览）改从实时附件列表重建，服务端据此哨兵判定占位。
+export const ATTACHMENT_ONLY_MESSAGE_SENTINEL = "附件";
+
+export function buildAttachmentOnlyMessage() {
+  return `<p>${ATTACHMENT_ONLY_MESSAGE_SENTINEL}</p>`;
+}
+
+// 服务端权威判定：正文是否为纯附件回复占位（哨兵且存在非内联附件）
+export function isAttachmentOnlyBody(
+  body: string,
+  hasNonInlineAttachment: boolean,
+) {
+  return (
+    hasNonInlineAttachment &&
+    htmlToPlainText(body).trim() === ATTACHMENT_ONLY_MESSAGE_SENTINEL
+  );
 }

@@ -799,6 +799,8 @@ model RequestMessage {
 model Attachment {
   id                          String            @id @default(cuid())
   originalName                String
+  title                       String?
+  note                        String?
   storageKey                  String            @unique
   mimeType                    String
   size                        Int

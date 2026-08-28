@@ -74,7 +74,10 @@
                 bindtap="onOpenImage"
               >
                 <t-icon name="image" size="40rpx" color="#16a466" />
-                <view class="file-name">{{image.name}}</view>
+                <view class="file-main">
+                  <view class="file-name">{{image.name}}</view>
+                  <view wx:if="{{image.note}}" class="file-note">{{image.note}}</view>
+                </view>
                 <view class="file-size">点击预览</view>
               </view>
             </view>
@@ -89,7 +92,10 @@
                 bindtap="onOpenFile"
               >
                 <t-icon name="file" size="40rpx" color="#1677ff" />
-                <view class="file-name">{{file.name}}</view>
+                <view class="file-main">
+                  <view class="file-name">{{file.name}}</view>
+                  <view wx:if="{{file.note}}" class="file-note">{{file.note}}</view>
+                </view>
                 <view class="file-size">{{file.size}}</view>
               </view>
             </view>
@@ -113,7 +119,10 @@
           bindtap="onOpenFile"
         >
           <t-icon name="file" size="40rpx" color="#1677ff" />
-            <view class="file-name">{{item.originalName}}</view>
+            <view class="file-main">
+              <view class="file-name">{{item.displayName}}</view>
+              <view wx:if="{{item.note}}" class="file-note">{{item.note}}</view>
+            </view>
             <view class="file-size">{{item.sizeText}}</view>
         </view>
       </view>
@@ -129,14 +138,33 @@
     <view wx:if="{{replyTarget}}" class="reply-target">
       <view class="reply-target-main">
         <view class="reply-target-text">回复 {{replyTarget.authorName}}</view>
-        <view class="reply-target-preview">{{replyTarget.bodyText}}</view>
+        <view class="reply-target-preview">{{replyTarget.previewText}}</view>
       </view>
       <view class="reply-target-cancel" hover-class="hover-plain" bindtap="onCancelReplyTarget">取消</view>
     </view>
     <view wx:if="{{replyFiles.length > 0}}" class="reply-files">
       <view wx:for="{{replyFiles}}" wx:key="localPath" class="reply-file">
-        <text>{{item.fileName}}</text>
-        <text class="reply-file-remove" data-index="{{index}}" bindtap="onRemoveReplyFile">移除</text>
+        <view class="reply-file-head">
+          <text class="reply-file-name" data-index="{{index}}" bindtap="onPreviewReplyFile">{{item.fileName}}</text>
+          <text class="reply-file-preview" data-index="{{index}}" bindtap="onPreviewReplyFile">预览</text>
+          <text class="reply-file-remove" data-index="{{index}}" bindtap="onRemoveReplyFile">移除</text>
+        </view>
+        <input
+          class="reply-file-input"
+          value="{{item.title}}"
+          maxlength="160"
+          placeholder="展示标题（默认用文件名）"
+          data-index="{{index}}"
+          bindinput="onReplyFileTitleInput"
+        />
+        <input
+          class="reply-file-input"
+          value="{{item.note}}"
+          maxlength="500"
+          placeholder="备注（可选）"
+          data-index="{{index}}"
+          bindinput="onReplyFileNoteInput"
+        />
       </view>
     </view>
     <view class="reply-input-row">

@@ -10,7 +10,7 @@ import {
 } from "../../lib/api";
 import { ensureBadgeSync } from "../../lib/badge";
 import { eventSync } from "../../lib/events";
-import { pickAttachments } from "../../lib/pick-files";
+import { pickAttachments, previewLocalFile } from "../../lib/pick-files";
 import {
   formatFileSize,
   REQUEST_STATUS_LABELS,
@@ -35,21 +35,50 @@ type ViewMessage = RequestMessage & {
   isMine: boolean;
   isAdmin: boolean;
   bodyText: string;
+  previewText: string;
   revoked: boolean;
   revokedText: string;
   reviewing: boolean;
   replyPreview: string;
-  images: Array<{ id: string; name: string }>;
-  files: Array<{ id: string; name: string; size: string }>;
+  images: Array<{ id: string; name: string; note: string }>;
+  files: Array<{ id: string; name: string; size: string; note: string }>;
 };
 
 type AttachmentMetaLite = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   inline?: boolean;
+  contentRiskStatus?: string | null;
 };
+
+/**
+ * 引用/回复目标的预览文本（对齐 Web replyText）：
+ * 「正文是否为纯附件占位」由服务端用过滤前的完整附件列表全等判定并下发，
+ * 前端不做启发式猜测；命中占位时用幸存附件的当前标题重建。
+ */
+function attachmentAwarePreview(
+  bodyText: string,
+  attachments: Array<{
+    originalName: string;
+    title?: string | null;
+    inline?: boolean;
+    contentRiskStatus?: string | null;
+  }>,
+  isPlaceholder: boolean | undefined,
+) {
+  if (!isPlaceholder) return bodyText;
+  const files = attachments.filter(
+    (att) => !att.inline && att.contentRiskStatus !== "REVOKED",
+  );
+  if (files.length === 0) return "原消息附件已撤回";
+  return `附件：${files
+    .map((att) => att.title || att.originalName)
+    .join("、")}`;
+}
 
 Page({
   data: {
@@ -66,7 +95,12 @@ Page({
     // 回复状态
     replyText: "",
     replyTarget: null as ViewMessage | null,
-    replyFiles: [] as Array<{ localPath: string; fileName: string }>,
+    replyFiles: [] as Array<{
+      localPath: string;
+      fileName: string;
+      title: string;
+      note: string;
+    }>,
     sending: false,
     scrollTop: 0,
   },
@@ -204,10 +238,15 @@ Page({
       );
       const decoratedRequest = {
         ...request,
-        attachments: request.attachments.map((att) => ({
-          ...att,
-          sizeText: formatFileSize(att.size),
-        })),
+        attachments: request.attachments
+          // 对齐 Web：被内容风控撤回的附件不展示（连元信息一起隐藏）
+          .filter((att) => att.contentRiskStatus !== "REVOKED")
+          .map((att) => ({
+            ...att,
+            displayName: att.title || att.originalName,
+            note: att.note || "",
+            sizeText: formatFileSize(att.size),
+          })),
       };
       this.setData({
         loading: false,
@@ -244,7 +283,11 @@ Page({
     }
   },
   decorateMessage(message: RequestMessage): ViewMessage {
-    const attachments: AttachmentMetaLite[] = message.attachments ?? [];
+    // 对齐 Web request-chat-thread：被内容风控撤回的附件（含标题/备注）不渲染
+    const attachments: AttachmentMetaLite[] = (
+      message.attachments ?? []
+    ).filter((att) => att.contentRiskStatus !== "REVOKED");
+    const bodyText = htmlToText(message.body);
     return {
       ...message,
       authorName: message.author?.name ?? "系统",
@@ -252,7 +295,13 @@ Page({
       isMine: message.authorId !== null && message.authorId === this.myUserId,
       // 对齐 Web：仅平台管理员消息加「管理员」标识
       isAdmin: message.author?.platformRole === "PLATFORM_ADMIN",
-      bodyText: htmlToText(message.body),
+      bodyText,
+      // 引用/回复目标的预览文本：纯附件占位正文优先显示附件当前标题（对齐 Web replyText）
+      previewText: attachmentAwarePreview(
+        bodyText,
+        attachments,
+        message.bodyIsAttachmentPlaceholder,
+      ),
       revoked: message.contentRiskStatus === "REVOKED",
       // 文案对齐 Web：人工撤回带决策理由，自动撤回用通用原因
       revokedText:
@@ -264,20 +313,26 @@ Page({
           : "",
       reviewing: message.contentRiskStatus === "PENDING",
       replyPreview: message.replyTo
-        ? `${message.replyTo.author?.name ?? ""}: ${htmlToText(message.replyTo.body).slice(0, 60)}`
+        ? `${message.replyTo.author?.name ?? ""}: ${attachmentAwarePreview(
+            htmlToText(message.replyTo.body),
+            message.replyTo.attachments ?? [],
+            message.replyTo.bodyIsAttachmentPlaceholder,
+          ).slice(0, 60)}`
         : "",
       images: attachments
         .filter((att) => att.mimeType.startsWith("image/"))
         .map((att) => ({
           id: att.id,
-          name: att.originalName,
+          name: att.title || att.originalName,
+          note: att.note || "",
         })),
       files: attachments
         .filter((att) => !att.mimeType.startsWith("image/"))
         .map((att) => ({
           id: att.id,
-          name: att.originalName,
+          name: att.title || att.originalName,
           size: formatFileSize(att.size),
+          note: att.note || "",
         })),
     };
   },
@@ -326,8 +381,25 @@ Page({
     const chosen = await pickAttachments(5 - this.data.replyFiles.length);
     if (chosen.length === 0) return;
     this.setData({
-      replyFiles: [...this.data.replyFiles, ...chosen],
+      replyFiles: [
+        ...this.data.replyFiles,
+        // 标题默认用文件名，用户可改；备注选填
+        ...chosen.map((file) => ({ ...file, title: file.fileName, note: "" })),
+      ],
     });
+  },
+  onPreviewReplyFile(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const file = this.data.replyFiles[index];
+    if (file) previewLocalFile(file);
+  },
+  onReplyFileTitleInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`replyFiles[${index}].title`]: event.detail.value });
+  },
+  onReplyFileNoteInput(event: WechatMiniprogram.Input) {
+    const index = Number(event.currentTarget.dataset.index);
+    this.setData({ [`replyFiles[${index}].note`]: event.detail.value });
   },
   onRemoveReplyFile(event: WechatMiniprogram.TouchEvent) {
     const index = Number(event.currentTarget.dataset.index);
@@ -347,11 +419,11 @@ Page({
     this.setData({ sending: true });
     const mutationKey = this.replyMutationKey;
     // 对齐 Web 端：纯附件回复的正文写「附件：文件名列表」，否则服务端 EMPTY_MESSAGE 拒绝
+    // 纯附件回复用文件名无关的占位哨兵「附件」（对齐 Web ATTACHMENT_ONLY_MESSAGE_SENTINEL）：
+    // 不把可变文件名写进不可变正文，引用预览改从实时附件列表重建
     const bodyHtml = text
       ? `<p>${escapeHtml(text).replace(/\n/g, "<br/>")}</p>`
-      : `<p>附件：${this.data.replyFiles
-          .map((file) => escapeHtml(file.fileName))
-          .join("、") || "文件"}</p>`;
+      : `<p>附件</p>`;
     try {
       const result = await replyRequest(this.data.requestId, {
         body: bodyHtml,
@@ -368,6 +440,8 @@ Page({
             fileName: file.fileName,
             serviceRequestId: this.data.requestId,
             requestMessageId: result.message.id,
+            title: file.title.trim(),
+            note: file.note.trim(),
           });
         } catch {
           attachFailed += 1;

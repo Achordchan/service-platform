@@ -80,14 +80,19 @@ export type ProjectUpdate = {
 export type AttachmentMeta = {
   id: string;
   originalName: string;
+  title?: string | null;
+  note?: string | null;
   mimeType: string;
   size: number;
   createdAt: string;
+  contentRiskStatus?: string | null;
 };
 
 export type RequestMessage = {
   id: string;
   body: string;
+  /** 服务端权威判定：正文是否为纯附件回复的生成占位（附件：<文件名列表>） */
+  bodyIsAttachmentPlaceholder?: boolean;
   visibility: string;
   isSystem: boolean;
   isInitial: boolean;
@@ -102,7 +107,14 @@ export type RequestMessage = {
   replyTo: {
     id: string;
     body: string;
+    bodyIsAttachmentPlaceholder?: boolean;
     author: { id: string; name: string } | null;
+    attachments?: Array<{
+      id: string;
+      originalName: string;
+      title?: string | null;
+      inline?: boolean;
+    }>;
   } | null;
 };
 
@@ -254,6 +266,8 @@ export function uploadAttachment(input: {
   fileName: string;
   serviceRequestId: string;
   requestMessageId?: string;
+  title?: string;
+  note?: string;
 }): Promise<AttachmentMeta> {
   return new Promise((resolve, reject) => {
     wx.uploadFile({
@@ -266,6 +280,14 @@ export function uploadAttachment(input: {
         ...(input.requestMessageId
           ? { requestMessageId: input.requestMessageId }
           : {}),
+        // wx.uploadFile 的 multipart 文件名取自临时路径（tmp_xxx.ext），
+        // 显式提交真实文件名供服务端覆盖 originalName/下载名
+        fileName: input.fileName,
+        // 标题与文件名一致（未修改默认值）时不提交，展示端兜底 originalName
+        ...(input.title && input.title !== input.fileName
+          ? { title: input.title }
+          : {}),
+        ...(input.note ? { note: input.note } : {}),
       },
       header: { Authorization: `Bearer ${getToken()}` },
       success: (res) => {

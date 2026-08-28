@@ -347,3 +347,56 @@
   color: var(--text-tertiary);
   line-height: 1.6;
 }
+
+/* 附件标题 + 备注（消息内文件卡片） */
+.file-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.file-main .file-name {
+  flex: none;
+  display: block;
+}
+
+.file-note {
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+  margin-top: 4rpx;
+  word-break: break-all;
+}
+
+/* 待发送附件：可预览、可改标题/加备注 */
+.reply-file {
+  display: block;
+  width: 100%;
+}
+
+.reply-file-head {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+}
+
+.reply-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 24rpx;
+}
+
+.reply-file-preview {
+  color: var(--brand, #1677ff);
+  flex-shrink: 0;
+}
+
+.reply-file-input {
+  margin-top: 8rpx;
+  padding: 8rpx 12rpx;
+  background: var(--card-bg, #fff);
+  border: 2rpx solid rgba(16, 24, 40, 0.1);
+  border-radius: 8rpx;
+  font-size: 24rpx;
+}

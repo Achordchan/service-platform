@@ -190,7 +190,8 @@
           >
             <view class="file-ext">{{item.ext}}</view>
             <view class="file-main">
-              <view class="file-name">{{item.originalName}}</view>
+              <view class="file-name">{{item.displayName}}</view>
+              <view wx:if="{{item.note}}" class="text-secondary file-sub file-note">{{item.note}}</view>
               <view class="text-secondary file-sub">{{item.sizeText}} · {{item.createdAt}}</view>
             </view>
             <t-icon name="chevron-right" size="34rpx" color="#98a2b3" />

@@ -19,15 +19,36 @@ import type {
 import { htmlToPlainText, truncatePlainText } from "@/lib/message-content";
 
 function replyText(
-  message: Pick<ChatReplyReference, "body" | "attachments">,
+  message: Pick<
+    ChatReplyReference,
+    "body" | "attachments" | "bodyIsAttachmentPlaceholder"
+  >,
 ) {
+  // 只过滤内联与被撤回项：replyTo.attachments 服务端已过滤撤回，
+  // 实时选择回复目标时传入的消息对象带 contentRiskStatus，在此兜底
+  const files = message.attachments.filter(
+    (attachment: {
+      inline?: boolean;
+      contentRiskStatus?: "PENDING" | "REVOKED" | null;
+    }) => !attachment.inline && attachment.contentRiskStatus !== "REVOKED",
+  );
+  // 「正文是否为纯附件占位」由服务端用过滤前的完整附件列表全等判定并下发，
+  // 前端不再对正文做启发式猜测（混合正文、部分失败、撤回缩水都不会误判）
+  if (message.bodyIsAttachmentPlaceholder) {
+    if (files.length === 0) return "原消息附件已撤回";
+    return truncatePlainText(
+      `附件：${files
+        .map((file) => file.title?.trim() || file.originalName)
+        .join("、")}`,
+      120,
+    );
+  }
   const plainText = htmlToPlainText(message.body);
   if (plainText && plainText !== "（附件）") {
     return truncatePlainText(plainText, 120);
   }
-  const fileName = message.attachments.find(
-    (attachment) => !attachment.inline,
-  )?.originalName;
+  const first = files[0];
+  const fileName = first ? first.title?.trim() || first.originalName : "";
   return fileName ? `附件：${fileName}` : "原消息无文字内容";
 }
 

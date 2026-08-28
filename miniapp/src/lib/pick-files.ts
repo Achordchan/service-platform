@@ -1,10 +1,18 @@
 export type PickedFile = { localPath: string; fileName: string };
 
-// chooseMedia 的临时路径通常形如 .../xxxx.jpg，尽量取原文件名，取不到再兜底带扩展名
-function deriveImageName(path: string, index: number): string {
+// chooseMedia 的临时路径通常形如 .../xxxx.jpg，尽量取原文件名；无扩展名时
+// 用 getImageInfo 探测真实图片类型再命名（该名字会作为 originalName 持久化）
+async function deriveImageName(path: string, index: number): Promise<string> {
   const base = path.split("/").pop() ?? "";
   if (base.includes(".")) return base;
-  const ext = base.split(".").pop() || "jpg";
+  const type = await new Promise<string>((resolve) => {
+    wx.getImageInfo({
+      src: path,
+      success: (res) => resolve(res.type || "jpg"),
+      fail: () => resolve("jpg"),
+    });
+  });
+  const ext = type === "jpeg" ? "jpg" : type;
   return `图片_${Date.now()}_${index}.${ext}`;
 }
 
@@ -17,13 +25,14 @@ function chooseLocalImage(count: number): Promise<PickedFile[]> {
       mediaType: ["image"],
       sourceType: ["album", "camera"],
       sizeType: ["original", "compressed"],
-      success: (res) =>
-        resolve(
-          res.tempFiles.map((file, index) => ({
+      success: (res) => {
+        void Promise.all(
+          res.tempFiles.map(async (file, index) => ({
             localPath: file.tempFilePath,
-            fileName: deriveImageName(file.tempFilePath, index),
+            fileName: await deriveImageName(file.tempFilePath, index),
           })),
-        ),
+        ).then(resolve);
+      },
       fail: () => resolve([]),
     });
   });
@@ -63,5 +72,39 @@ export function pickAttachments(remaining: number): Promise<PickedFile[]> {
       },
       fail: () => resolve([]),
     });
+  });
+}
+
+const IMAGE_EXT = /\.(?:jpe?g|png|gif|webp)$/i;
+type OpenableDocType =
+  | "doc"
+  | "docx"
+  | "xls"
+  | "xlsx"
+  | "ppt"
+  | "pptx"
+  | "pdf";
+const DOC_EXT = /\.(doc|docx|xls|xlsx|ppt|pptx|pdf)$/i;
+
+/**
+ * 上传前本地预览：图片走 previewImage，Office/PDF 走 openDocument（显式给
+ * fileType，chooseMessageFile 的临时路径可能不带规范扩展名），其余格式提示不支持。
+ */
+export function previewLocalFile(file: PickedFile) {
+  if (IMAGE_EXT.test(file.fileName) || IMAGE_EXT.test(file.localPath)) {
+    wx.previewImage({ urls: [file.localPath] });
+    return;
+  }
+  const match = DOC_EXT.exec(file.fileName);
+  if (!match) {
+    wx.showToast({ title: "该格式暂不支持预览，可直接上传", icon: "none" });
+    return;
+  }
+  wx.openDocument({
+    filePath: file.localPath,
+    fileType: match[1].toLowerCase() as OpenableDocType,
+    showMenu: true,
+    fail: () =>
+      wx.showToast({ title: "该格式暂不支持预览，可直接上传", icon: "none" }),
   });
 }
