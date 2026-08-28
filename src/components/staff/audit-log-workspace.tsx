@@ -25,8 +25,9 @@ import { staffApi } from "@/components/staff/staff-api";
 import { gridSx } from "@/lib/data-grid-styles";
 import { queryKeys } from "@/lib/query-keys";
 import {
-  auditActionVerb,
+  auditActionLabel,
   auditResourceLabel,
+  isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 
 type AuditLogRow = {
@@ -65,6 +66,21 @@ const emptyFilters = {
 };
 
 const noRows = gridNoRowsOverlay("没有符合条件的审计记录", <HistoryOutlinedIcon />);
+
+/** 执行人展示：优先真实操作者 / 外部联系人；未认证动作（登录失败、忘记密码）显式
+ * 标为「未认证访客」，其余空 actor 才归为系统 / 自动任务。 */
+function auditActorDisplay(row: AuditLogRow): { name: string; secondary: string } {
+  if (row.actorName) {
+    return { name: row.actorName, secondary: row.actorEmail ?? "—" };
+  }
+  if (row.externalActorName) {
+    return { name: row.externalActorName, secondary: "外部联系人" };
+  }
+  if (isUnauthenticatedAuditAction(row.action)) {
+    return { name: "未认证访客", secondary: "未登录尝试" };
+  }
+  return { name: "系统", secondary: "自动任务" };
+}
 
 export function AuditLogWorkspace() {
   const [filters, setFilters] = useState(emptyFilters);
@@ -106,25 +122,21 @@ export function AuditLogWorkspace() {
         headerName: "操作",
         minWidth: 240,
         flex: 1.2,
-        renderCell: ({ row }) => {
-          const verb = auditActionVerb(row.action);
-          return (
-            <Stack spacing={0.25} sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontWeight: 650 }} noWrap>
-                {auditResourceLabel(row.resourceType)}
-                {verb ? ` · ${verb}` : ""}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="text.secondary"
-                sx={{ fontFamily: "ui-monospace, monospace" }}
-                noWrap
-              >
-                {row.action}
-              </Typography>
-            </Stack>
-          );
-        },
+        renderCell: ({ row }) => (
+          <Stack spacing={0.25} sx={{ minWidth: 0 }}>
+            <Typography sx={{ fontWeight: 650 }} noWrap>
+              {auditActionLabel(row.action, row.resourceType)}
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontFamily: "ui-monospace, monospace" }}
+              noWrap
+            >
+              {row.action}
+            </Typography>
+          </Stack>
+        ),
       },
       {
         field: "actorName",
@@ -132,10 +144,7 @@ export function AuditLogWorkspace() {
         minWidth: 180,
         flex: 1,
         renderCell: ({ row }) => {
-          const name =
-            row.actorName ?? row.externalActorName ?? "系统";
-          const secondary = row.actorEmail
-            ?? (row.externalActorName ? "外部联系人" : "自动任务");
+          const { name, secondary } = auditActorDisplay(row);
           return (
             <Stack spacing={0.25} sx={{ minWidth: 0 }}>
               <Typography variant="body2" noWrap>
@@ -220,7 +229,7 @@ export function AuditLogWorkspace() {
           />
           <TextField
             select
-            label="操作码"
+            label="操作类型"
             value={filters.action}
             onChange={(event) => update("action", event.target.value)}
             size="small"
@@ -229,7 +238,7 @@ export function AuditLogWorkspace() {
             <MenuItem value="">全部</MenuItem>
             {(facets?.actions ?? []).map((action) => (
               <MenuItem key={action} value={action}>
-                {action}
+                {auditActionLabel(action)}
               </MenuItem>
             ))}
           </TextField>
@@ -333,10 +342,8 @@ export function AuditLogWorkspace() {
             </Stack>
           ) : (
             rows.map((row) => {
-              const verb = auditActionVerb(row.action);
-              const label = auditResourceLabel(row.resourceType);
-              const actorName =
-                row.actorName ?? row.externalActorName ?? "系统";
+              const label = auditActionLabel(row.action, row.resourceType);
+              const actorName = auditActorDisplay(row).name;
               const time = new Date(row.createdAt).toLocaleString("zh-CN", {
                 hour12: false,
               });
@@ -366,7 +373,6 @@ export function AuditLogWorkspace() {
                   >
                     <Typography sx={{ fontWeight: 650 }} noWrap>
                       {label}
-                      {verb ? ` · ${verb}` : ""}
                     </Typography>
                     <Chip
                       size="small"
@@ -454,10 +460,7 @@ function AuditDetailDialog({
       {detail ? (
         <>
           <DialogTitle>
-            {auditResourceLabel(detail.resourceType)}
-            {auditActionVerb(detail.action)
-              ? ` · ${auditActionVerb(detail.action)}`
-              : ""}
+            {auditActionLabel(detail.action, detail.resourceType)}
           </DialogTitle>
           <DialogContent dividers>
             <Stack spacing={2}>
@@ -473,7 +476,11 @@ function AuditDetailDialog({
                 value={
                   detail.actorName
                     ? `${detail.actorName}${detail.actorEmail ? ` (${detail.actorEmail})` : ""}`
-                    : (detail.externalActorName ?? "系统 / 自动任务")
+                    : detail.externalActorName
+                      ? detail.externalActorName
+                      : isUnauthenticatedAuditAction(detail.action)
+                        ? "未认证访客（未登录尝试）"
+                        : "系统 / 自动任务"
                 }
               />
               <DetailRow label="结果" value={detail.result} />

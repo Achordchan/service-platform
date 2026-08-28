@@ -3,6 +3,8 @@ import type { Actor } from "@/lib/actor";
 
 const mocks = vi.hoisted(() => ({
   authorizationHeader: null as string | null,
+  forwardedFor: "203.0.113.7, 10.0.0.1" as string | null,
+  userAgent: "Vitest UA" as string | null,
   resolveActor: vi.fn(),
   getCurrentSession: vi.fn(),
   resolveMiniappSession: vi.fn(),
@@ -11,8 +13,18 @@ const mocks = vi.hoisted(() => ({
 vi.mock("server-only", () => ({}));
 vi.mock("next/headers", () => ({
   headers: async () => ({
-    get: (name: string) =>
-      name.toLowerCase() === "authorization" ? mocks.authorizationHeader : null,
+    get: (name: string) => {
+      switch (name.toLowerCase()) {
+        case "authorization":
+          return mocks.authorizationHeader;
+        case "x-forwarded-for":
+          return mocks.forwardedFor;
+        case "user-agent":
+          return mocks.userAgent;
+        default:
+          return null;
+      }
+    },
   }),
 }));
 vi.mock("@/lib/actor", () => ({ resolveActor: mocks.resolveActor }));
@@ -34,10 +46,16 @@ const customerActor: Actor = {
 
 const webActor: Actor = { ...customerActor, id: "user-web" };
 
+// 请求边界解析出的来源信息应被附加到 actor 上（供审计兜底记录）。
+// ipAddress 取 XFF 最右段（可信），故 "203.0.113.7, 10.0.0.1" → "10.0.0.1"。
+const network = { ipAddress: "10.0.0.1", userAgent: "Vitest UA" };
+
 describe("统一 API Actor 解析：Bearer 与 Cookie 优先级", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.authorizationHeader = null;
+    mocks.forwardedFor = "203.0.113.7, 10.0.0.1";
+    mocks.userAgent = "Vitest UA";
   });
 
   it("携带 Authorization 且 Bearer 有效时使用小程序会话 Actor", async () => {
@@ -51,7 +69,7 @@ describe("统一 API Actor 解析：Bearer 与 Cookie 优先级", () => {
 
     const result = await resolveApiActor();
 
-    expect(result).toEqual({ actor: customerActor });
+    expect(result).toEqual({ actor: { ...customerActor, ...network } });
     expect(mocks.resolveMiniappSession).toHaveBeenCalledExactlyOnceWith(
       "Bearer ma_valid_token",
     );
@@ -97,7 +115,7 @@ describe("统一 API Actor 解析：Bearer 与 Cookie 优先级", () => {
 
     const result = await resolveApiActor();
 
-    expect(result).toEqual({ actor: webActor });
+    expect(result).toEqual({ actor: { ...webActor, ...network } });
     expect(mocks.resolveMiniappSession).not.toHaveBeenCalled();
   });
 

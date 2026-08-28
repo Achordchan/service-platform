@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit } from "@/lib/rate-limit";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import {
   claimSingleReissue,
   consumeConfirmedTicket,
@@ -28,9 +29,14 @@ export async function GET(
   }
   const token = new URL(request.url).searchParams.get("token") ?? "";
   const bindSecret = readQrBindCookie(request.headers.get("cookie"));
+  // 轮询请求即真正登录的浏览器：取其可信来源写入 USER_LOGIN 审计。
+  const network = {
+    ipAddress: clientIpFromHeaders(request.headers),
+    userAgent: request.headers.get("user-agent"),
+  };
   const result = await consumeConfirmedTicket(ticketId, token, bindSecret);
   if (result.outcome === "ready") {
-    const { cookie } = await issueWebQrSession(result.userId);
+    const { cookie } = await issueWebQrSession(result.userId, network);
     return NextResponse.json(
       { data: { status: "LOGGED_IN" } },
       { headers: { "set-cookie": cookie } },
@@ -41,7 +47,7 @@ export async function GET(
     if (!claim) {
       return NextResponse.json({ data: { status: "EXPIRED" } });
     }
-    const { cookie } = await issueWebQrSession(claim.userId);
+    const { cookie } = await issueWebQrSession(claim.userId, network);
     return NextResponse.json(
       { data: { status: "LOGGED_IN" } },
       { headers: { "set-cookie": cookie } },

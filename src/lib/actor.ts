@@ -15,6 +15,10 @@ export type Actor = {
   isPlatformAdmin: boolean;
   isStaff: boolean;
   permissions?: RolePermissionKey[];
+  // 请求边界（resolveApiActor / requireUserWithAccess）填充，供 writeAuditLog
+  // 在调用点未显式传 ipAddress/userAgent 时兜底记录来源，非请求上下文为 undefined。
+  ipAddress?: string | null;
+  userAgent?: string | null;
 };
 
 export async function resolveActor(userId: string): Promise<Actor | null> {

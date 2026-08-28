@@ -3,6 +3,7 @@ import "server-only";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { resolveActor } from "@/lib/actor";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import { auth } from "@/lib/auth";
 
 export async function getCurrentSession() {
@@ -25,7 +26,15 @@ export async function requireUserWithAccess() {
   if (!actor) {
     redirect("/login");
   }
-  return { session, actor };
+  const requestHeaders = await headers();
+  return {
+    session,
+    actor: {
+      ...actor,
+      ipAddress: clientIpFromHeaders(requestHeaders),
+      userAgent: requestHeaders.get("user-agent"),
+    },
+  };
 }
 
 export async function requirePlatformAdmin() {
