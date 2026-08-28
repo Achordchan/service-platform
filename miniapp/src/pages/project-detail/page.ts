@@ -60,6 +60,9 @@ type ViewFile = AttachmentMeta & {
   note: string;
   isText: boolean;
   sourceLabel: string;
+  /** 非手动上传（工单/动态/里程碑收录来的），决定来源标签与筛选归类 */
+  collected: boolean;
+  /** 手动「添加到项目文件」的，只有它支持「移出」 */
   pinned: boolean;
 };
 
@@ -112,11 +115,11 @@ Page({
     stageDraft: "",
     stageSaving: false,
     // 文件来源筛选：项目文件（手动上传）/ 来自沟通（工单聊天、动态里收录进来的）
-    fileSource: "ALL" as "ALL" | "PROJECT" | "PINNED",
+    fileSource: "ALL" as "ALL" | "PROJECT" | "COLLECTED",
     fileSourceOptions: [
       { value: "ALL", label: "全部" },
       { value: "PROJECT", label: "项目文件" },
-      { value: "PINNED", label: "来自沟通" },
+      { value: "COLLECTED", label: "来自沟通" },
     ],
     allFiles: [] as ViewFile[],
     // 员工交付能力（客户恒为全 false）；据此渲染写操作入口
@@ -407,6 +410,9 @@ Page({
             ext: fileExtLabel(att.mimeType, att.originalName),
             sizeText: formatFileSize(att.size),
             sourceLabel: SOURCE_LABELS[att.source ?? "PROJECT"] ?? "项目文件",
+            // collected：不是手动上传的项目文件（用于来源标签与筛选）
+            // pinned：手动「添加到项目文件」的，只有它能「移出」
+            collected: (att.source ?? "PROJECT") !== "PROJECT",
             pinned: Boolean(att.pinned),
           })),
       });
@@ -651,9 +657,14 @@ Page({
   applyFileSource() {
     const source = this.data.fileSource;
     this.setData({
-      files: this.data.allFiles.filter((file) =>
-        source === "ALL" ? true : source === "PINNED" ? file.pinned : !file.pinned,
-      ),
+      // 按 source 分类，不能按 pinned：动态/里程碑上的附件是服务端自动收录的，
+      // source 是 UPDATE/MILESTONE 但 pinnedToProjectAt 为空，用 pinned 判会把
+      // 它们错归成「项目文件」。pinned 只决定能不能「移出项目文件」。
+      files: this.data.allFiles.filter((file) => {
+        if (source === "ALL") return true;
+        const collected = (file.source ?? "PROJECT") !== "PROJECT";
+        return source === "COLLECTED" ? collected : !collected;
+      }),
     });
   },
   onFileSource(event: WechatMiniprogram.TouchEvent) {
@@ -662,7 +673,7 @@ Page({
         fileSource: event.currentTarget.dataset.value as
           | "ALL"
           | "PROJECT"
-          | "PINNED",
+          | "COLLECTED",
       },
       () => this.applyFileSource(),
     );

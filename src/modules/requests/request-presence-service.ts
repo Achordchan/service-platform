@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@/generated/prisma/client";
+import type { PresenceClient, Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import {
@@ -292,6 +292,11 @@ export function updateRequestPresence(
  * 数据来自在线心跳留下的 RequestPresence 行：UA 与 IP 由服务端从请求头取，
  * 时区由客户端提供。这些信息不放在「客户在线」标识旁（那个是常驻的），
  * 而是作为工单详情里的一个入口按需查看。
+ *
+ * 外部门户（Sub2API / 通用外部接入）的联系人不是平台用户，心跳写在
+ * ExternalRequestPresence，UA 与 IP 记在它对应的 ExternalEmbedSession 上。
+ * 只查 RequestPresence 的话，工单的真正提交者会整个缺席 —— 明明有人正在看，
+ * 却显示「还没有打开过这个工单」。两边合并后按最近活跃排序。
  */
 export function listRequestClientContexts(actor: Actor, requestId: string) {
   return withActorDb(actor, async (tx) => {
@@ -318,18 +323,79 @@ export function listRequestClientContexts(actor: Actor, requestId: string) {
       orderBy: { updatedAt: "desc" },
       take: 20,
     });
+    const externalRows = await tx.externalRequestPresence.findMany({
+      where: { serviceRequestId: requestId },
+      select: {
+        id: true,
+        sessionId: true,
+        expiresAt: true,
+        updatedAt: true,
+        externalContact: {
+          select: { id: true, displayName: true, email: true },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 20,
+    });
+    // sessionId 就是 ExternalEmbedSession.id：UA / IP 记在会话上
+    const sessions = externalRows.length
+      ? await tx.externalEmbedSession.findMany({
+          where: { id: { in: externalRows.map((row) => row.sessionId) } },
+          select: { id: true, ipAddress: true, userAgent: true },
+        })
+      : [];
+    const sessionById = new Map(sessions.map((item) => [item.id, item]));
+
     const now = new Date();
-    return rows.map((row) => ({
-      id: row.id,
-      user: row.user,
-      client: row.client,
-      online: row.expiresAt.getTime() > now.getTime(),
-      lastSeenAt: row.updatedAt.toISOString(),
-      timezone: row.timezone,
-      ipAddress: row.ipAddress,
-      ipLocation: resolveIpLocation(row.ipAddress),
-      device: describeUserAgent(row.userAgent),
-      userAgent: row.userAgent,
-    }));
+    const describe = (input: {
+      id: string;
+      user: { id: string; name: string; email: string | null };
+      client: PresenceClient;
+      expiresAt: Date;
+      updatedAt: Date;
+      timezone: string | null;
+      ipAddress: string | null;
+      userAgent: string | null;
+      external?: boolean;
+    }) => ({
+      id: input.id,
+      user: input.user,
+      client: input.client,
+      online: input.expiresAt.getTime() > now.getTime(),
+      lastSeenAt: input.updatedAt.toISOString(),
+      timezone: input.timezone,
+      ipAddress: input.ipAddress,
+      ipLocation: resolveIpLocation(input.ipAddress),
+      device: describeUserAgent(input.userAgent),
+      userAgent: input.userAgent,
+      /** 外部门户联系人（非平台用户），UI 需要区分标注 */
+      external: input.external ?? false,
+    });
+
+    return [
+      ...rows.map((row) => describe({ ...row, timezone: row.timezone })),
+      ...externalRows.map((row) => {
+        const session = sessionById.get(row.sessionId);
+        return describe({
+          id: row.id,
+          user: {
+            id: row.externalContact.id,
+            name: row.externalContact.displayName,
+            email: row.externalContact.email,
+          },
+          // 外部门户只有网页
+          client: "WEB",
+          expiresAt: row.expiresAt,
+          updatedAt: row.updatedAt,
+          // 外部门户不上报时区
+          timezone: null,
+          ipAddress: session?.ipAddress ?? null,
+          userAgent: session?.userAgent ?? null,
+          external: true,
+        });
+      }),
+    ]
+      .sort((a, b) => b.lastSeenAt.localeCompare(a.lastSeenAt))
+      .slice(0, 20);
   });
 }

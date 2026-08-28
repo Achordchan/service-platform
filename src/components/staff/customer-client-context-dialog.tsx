@@ -28,6 +28,8 @@ type ClientContext = {
   ipAddress: string | null;
   ipLocation: string | null;
   device: string | null;
+  /** 外部门户联系人（非平台用户）：工单的真正提交者常常是这一类 */
+  external: boolean;
 };
 
 /**
@@ -101,6 +103,9 @@ export function CustomerClientContextDialog({
                   label={row.client === "MINIAPP" ? "小程序" : "网页端"}
                   variant="outlined"
                 />
+                {row.external ? (
+                  <Chip size="small" label="外部联系人" variant="outlined" />
+                ) : null}
                 {row.online ? (
                   <Chip size="small" color="success" label="在线" />
                 ) : null}

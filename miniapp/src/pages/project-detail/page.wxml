@@ -235,7 +235,7 @@
               <view wx:if="{{item.note}}" class="text-secondary file-sub file-note">{{item.note}}</view>
               <view class="text-secondary file-sub">
                 {{item.sizeText}} · {{item.createdAt}}
-                <text wx:if="{{item.pinned}}" class="file-source-tag">{{item.sourceLabel}}</text>
+                <text wx:if="{{item.collected}}" class="file-source-tag">{{item.sourceLabel}}</text>
               </view>
             </view>
             <t-icon name="chevron-right" size="34rpx" color="#98a2b3" />

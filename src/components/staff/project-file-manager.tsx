@@ -52,12 +52,12 @@ const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   day: "2-digit",
 });
 
-type SourceFilter = "ALL" | "PROJECT" | "PINNED";
+type SourceFilter = "ALL" | "PROJECT" | "COLLECTED";
 
 const SOURCE_FILTERS: Array<{ value: SourceFilter; label: string }> = [
   { value: "ALL", label: "全部" },
   { value: "PROJECT", label: "项目文件" },
-  { value: "PINNED", label: "来自沟通" },
+  { value: "COLLECTED", label: "来自沟通" },
 ];
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -90,9 +90,15 @@ export function ProjectFileManager({
   const [uploading, setUploading] = useState(false);
   // 来源筛选：手动上传的项目文件 vs 从工单沟通/动态里收录进来的
   const [source, setSource] = useState<SourceFilter>("ALL");
-  const visibleFiles = files.filter((file) =>
-    source === "ALL" ? true : source === "PINNED" ? file.pinned : !file.pinned,
-  );
+  // 按 source 分类，不能按 pinned：动态/里程碑上的附件是服务端自动收录的，
+  // source 是 UPDATE/MILESTONE 但 pinnedToProjectAt 为空，用 pinned 判会把它们
+  // 错归成「项目文件」，「来自沟通」则只剩手动收录的工单附件。
+  // pinned 只用来决定能不能「移出项目文件」（自动收录的没有这个动作）。
+  const visibleFiles = files.filter((file) => {
+    if (source === "ALL") return true;
+    const collected = (file.source ?? "PROJECT") !== "PROJECT";
+    return source === "COLLECTED" ? collected : !collected;
+  });
 
   async function upload(current: AttachmentDraft) {
     setUploading(true);
@@ -212,7 +218,7 @@ export function ProjectFileManager({
                 {file.visibility === "INTERNAL" ? (
                   <LockOutlinedIcon fontSize="small" color="action" />
                 ) : null}
-                {file.pinned ? (
+                {(file.source ?? "PROJECT") !== "PROJECT" ? (
                   <Chip
                     size="small"
                     variant="outlined"

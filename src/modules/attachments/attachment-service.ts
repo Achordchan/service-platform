@@ -434,7 +434,12 @@ export async function uploadProjectAttachment(
         },
       });
       let deliveryFeedback = null;
-      if (!input.inlineContext) {
+      // 挂在动态 / 里程碑上的附件不再单独发「项目新增文件」通知：那条实体自己的
+      // 活动才是本次提醒，它已经按本次覆盖发过了。这里再发一次不但重复打扰
+      // （一条带三个附件的动态会多出三条通知），还会绕开覆盖 ——
+      // 附件上传是另一个请求，不带 deliveryOverride，于是按默认规则通知，
+      // 明确被「本次不提醒」排除掉的人照样收到站内/邮件/微信。
+      if (!input.inlineContext && !input.attachTo) {
         const delivery = await dispatchProjectActivity(tx, actor, {
           eventType: "PROJECT_UPDATED",
           eventPayload: {

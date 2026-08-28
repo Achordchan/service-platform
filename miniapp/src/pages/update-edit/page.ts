@@ -130,8 +130,17 @@ Page({
     });
   },
   /** 实体建好后再传附件：服务端据此绑定归属并派生可见性 */
-  async uploadPendingFiles(target: { projectUpdateId?: string; milestoneId?: string }) {
-    let failed = 0;
+  /**
+   * 返回上传失败的文件，由调用方决定提示与是否离页。
+   *
+   * 不能在这里吞掉失败：紧接着的「已发布/已保存」成功提示会盖掉失败提示，
+   * 页面又自动返回，已选的本地文件随页面销毁，用户既不知道传丢了也没法重试。
+   */
+  async uploadPendingFiles(target: {
+    projectUpdateId?: string;
+    milestoneId?: string;
+  }): Promise<PickedFile[]> {
+    const failed: PickedFile[] = [];
     for (const file of this.data.files) {
       try {
         await uploadAttachment({
@@ -141,12 +150,29 @@ Page({
           ...target,
         });
       } catch {
-        failed += 1;
+        failed.push(file);
       }
     }
-    if (failed > 0) {
-      wx.showToast({ title: `${failed} 个附件上传失败`, icon: "none" });
+    return failed;
+  },
+  /**
+   * 上传收尾：全成功才提示成功并允许离页；有失败就留在页面、只保留失败的文件，
+   * 用户可以直接重试，不至于「看到成功提示、页面返回、文件其实没传上去」。
+   * 返回 true 表示可以离页。
+   */
+  finishUpload(failed: PickedFile[], successTitle: string): boolean {
+    if (failed.length === 0) {
+      this.setData({ files: [] });
+      wx.showToast({ title: successTitle, icon: "success" });
+      return true;
     }
+    this.setData({ files: failed });
+    wx.showModal({
+      title: "部分附件未上传",
+      content: `内容已保存，但 ${failed.length} 个附件上传失败，已保留在下方，可重新提交。`,
+      showCancel: false,
+    });
+    return false;
   },
   async onSubmit() {
     if (this.data.submitting) return;
@@ -181,8 +207,16 @@ Page({
           ...(bodyForEdit ? { body: bodyForEdit } : {}),
         });
         // 编辑态也要把已选附件传上去，否则提示「已更新」但文件从没上传
-        await this.uploadPendingFiles({ projectUpdateId: this.data.updateId });
-        wx.showToast({ title: "已更新", icon: "success" });
+        if (
+          !this.finishUpload(
+            await this.uploadPendingFiles({
+              projectUpdateId: this.data.updateId,
+            }),
+            "已更新",
+          )
+        ) {
+          return;
+        }
       } else {
         const override = this.data.deliveryOverride;
         const created = await createProjectUpdate(this.data.projectId, {
@@ -193,8 +227,18 @@ Page({
             ? { deliveryOverride: override }
             : {}),
         });
-        await this.uploadPendingFiles({ projectUpdateId: created.id });
-        wx.showToast({ title: "已发布", icon: "success" });
+        if (
+          !this.finishUpload(
+            await this.uploadPendingFiles({ projectUpdateId: created.id }),
+            "已发布",
+          )
+        ) {
+          // 实体已建好，留在页面上只重试剩下的附件（files 只剩失败的那几个）
+          this.setData({ mode: "edit", updateId: created.id });
+          this.loadedBody = body;
+          this.loadedText = text;
+          return;
+        }
       }
       setTimeout(() => wx.navigateBack(), 600);
     } catch (error) {

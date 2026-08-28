@@ -83,6 +83,34 @@ describe("动态 / 里程碑附件", () => {
   });
 });
 
+describe("实体附件不重复发通知", () => {
+  it("挂在动态/里程碑上的附件不再单独分发 PROJECT_FILE 活动", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/attachments/attachment-service.ts",
+      "utf8",
+    );
+    // 附件上传是独立请求、不带 deliveryOverride：再发一次不但重复打扰
+    // （一条带三个附件的动态多出三条通知），还会绕开本次「不提醒 / 排除某人」
+    expect(service).toContain("if (!input.inlineContext && !input.attachTo) {");
+  });
+});
+
+describe("文件来源筛选", () => {
+  it("按 source 分类而非 pinned —— 自动收录的附件没有 pinnedToProjectAt", async () => {
+    const { readFile } = await import("node:fs/promises");
+    for (const path of [
+      "src/components/staff/project-file-manager.tsx",
+      "miniapp/src/pages/project-detail/page.ts",
+    ]) {
+      const source = await readFile(path, "utf8");
+      expect(source).toContain('(file.source ?? "PROJECT") !== "PROJECT"');
+      // 旧写法会把动态/里程碑附件错归成「项目文件」
+      expect(source).not.toContain('source === "PINNED" ? file.pinned');
+    }
+  });
+});
+
 describe("项目列表的里程碑计数", () => {
   it("只开里程碑模块、未开进度时也要取里程碑，否则列表显示 0/0", async () => {
     const { readFile } = await import("node:fs/promises");
