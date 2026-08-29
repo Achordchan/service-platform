@@ -1250,14 +1250,18 @@ export function previewRequestDelivery(
     if (!request) throw notFound();
     // 预览要按「这次写操作本人做不做得了」把门：响应会披露收件人的邮件退订状态、
     // 微信绑定与额度。只有查看权限的角色若能拿到，等于把预览变成偏好查询入口，
-    // 而他真去回复 / 改状态是会被拒的。与真实写操作用同一个谓词。
-    if (
+    // 而他真去回复 / 改状态是会被拒的。
+    //
+    // 必须与真实写路径逐条对齐，不能只取其中一半：公开回复那条在 addRequestMessage
+    // 里是 canReplyToRequest || canClaimUnassignedRequest（未分配工单首次公开回复
+    // 会自动认领），只认前者的话，本来能开单回复的员工点开「本次提醒方式」就吃 403。
+    const previewContext = accessContext(request);
+    const allowed =
       scene === "STATUS"
-        ? !canChangeRequestStatus(actor, accessContext(request))
-        : !canReplyToRequest(actor, accessContext(request))
-    ) {
-      throw forbidden();
-    }
+        ? canChangeRequestStatus(actor, previewContext)
+        : canReplyToRequest(actor, previewContext) ||
+          canClaimUnassignedRequest(actor, previewContext);
+    if (!allowed) throw forbidden();
     const assignedWorkers = workerIdsFromRequest(request);
     // 外部门户联系人不是平台用户、没有站内通知，邮件由本模块单独入队。
     // 但预览必须带上他：不带的话弹窗会说「0 人 / 本次没有需要提醒的人」，

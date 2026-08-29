@@ -209,8 +209,12 @@ describe("工单送达预览的权限", () => {
     const preview = service.slice(
       service.indexOf("export function previewRequestDelivery"),
     );
-    expect(preview).toContain("canChangeRequestStatus(actor, accessContext(request))");
-    expect(preview).toContain("canReplyToRequest(actor, accessContext(request))");
+    expect(preview).toContain("canChangeRequestStatus(actor, previewContext)");
+    // 公开回复必须与真实写路径逐条对齐：addRequestMessage 是
+    // canReplyToRequest || canClaimUnassignedRequest（未分配工单首次回复自动认领），
+    // 只认前者的话，本来能开单回复的员工点开「本次提醒方式」会吃 403
+    expect(preview).toContain("canReplyToRequest(actor, previewContext) ||");
+    expect(preview).toContain("canClaimUnassignedRequest(actor, previewContext)");
     expect(preview).toContain("throw forbidden()");
   });
 });
