@@ -148,7 +148,12 @@ Component({
         excludedCount: preview.recipients.filter((recipient) =>
           excluded.has(recipient.userId),
         ).length,
-        notifyCount: active.length,
+        // 「本次提醒 N 人」不能只看排除名单：站内关掉时邮件与微信一并失效，
+        // 每行都写着「本次全部不提醒」，头部却还报 N 人；只关邮件时，
+        // 只有邮件这一条路的外部联系人也不该再计入
+        notifyCount: !notification
+          ? 0
+          : active.filter((recipient) => !recipient.external || emailOn).length,
         emailHint: !preview.rule.emailSupported
           ? "本场景不支持邮件提醒"
           : !notification

@@ -120,27 +120,49 @@ Page({
     this.setData({ pickerVisible: false, candidateKeyword: "" });
     this.pickRoleThenAdd(candidate);
   },
+  /**
+   * 可选的项目角色由候选人的平台角色决定，与服务端 assertRoleMatches 同口径：
+   * 平台管理员两种都行，其余人只能选与自身平台角色一致的那种。
+   * 全都列出来的话，不匹配的组合提交必然吃 PROJECT_STAFF_ROLE_MISMATCH ——
+   * 等于把注定失败的操作摆在常用入口上（Web 端本就按平台角色限制了）。
+   */
+  allowedProjectRoles(platformRole: string): ProjectStaffRole[] {
+    if (platformRole === "PLATFORM_ADMIN") {
+      return ["PROJECT_MANAGER", "TECHNICIAN"];
+    }
+    return platformRole === "PROJECT_MANAGER"
+      ? ["PROJECT_MANAGER"]
+      : ["TECHNICIAN"];
+  },
   pickRoleThenAdd(candidate: StaffCandidate) {
+    const roles = this.allowedProjectRoles(candidate.platformRole);
+    if (roles.length === 1) {
+      // 只有一种合法角色，不必再弹一层选择
+      this.stageAdd(candidate, roles[0]!);
+      return;
+    }
     wx.showActionSheet({
-      itemList: ["加为项目经理", "加为技术人员"],
+      itemList: roles.map((role) => `加为${ROLE_LABELS[role]}`),
       success: (res) => {
-        const role: ProjectStaffRole =
-          res.tapIndex === 0 ? "PROJECT_MANAGER" : "TECHNICIAN";
-        this.setData({
-          pendingAdd: {
-            userId: candidate.id,
-            name: candidate.name,
-            role,
-            roleLabel: ROLE_LABELS[role],
-          },
-          deliveryScene: {
-            scene: "PROJECT_STAFF",
-            projectId: this.data.projectId,
-            targetUserId: candidate.id,
-          },
-          deliveryOverride: {},
-        });
+        const role = roles[res.tapIndex];
+        if (role) this.stageAdd(candidate, role);
       },
+    });
+  },
+  stageAdd(candidate: StaffCandidate, role: ProjectStaffRole) {
+    this.setData({
+      pendingAdd: {
+        userId: candidate.id,
+        name: candidate.name,
+        role,
+        roleLabel: ROLE_LABELS[role],
+      },
+      deliveryScene: {
+        scene: "PROJECT_STAFF",
+        projectId: this.data.projectId,
+        targetUserId: candidate.id,
+      },
+      deliveryOverride: {},
     });
   },
   onDeliveryChange(event: WechatMiniprogram.CustomEvent) {
@@ -195,12 +217,23 @@ Page({
     if (!member) return;
     const otherRole: ProjectStaffRole =
       member.role === "PROJECT_MANAGER" ? "TECHNICIAN" : "PROJECT_MANAGER";
+    // 切到另一个项目角色未必合法：服务端 assertRoleMatches 要求与平台角色一致
+    // （平台管理员除外）。不判的话这个选项对多数成员点了必然报错。
+    const canSwitch = this.allowedProjectRoles(
+      member.user.platformRole ?? "",
+    ).includes(otherRole);
+    const items = canSwitch
+      ? [`改为${ROLE_LABELS[otherRole]}`, "移出项目"]
+      : ["移出项目"];
     wx.showActionSheet({
-      itemList: [`改为${ROLE_LABELS[otherRole]}`, "移出项目"],
+      itemList: items,
       success: (res) => {
-        if (res.tapIndex === 0) this.changeRole(member.id, otherRole);
-        else if (res.tapIndex === 1)
+        const action = items[res.tapIndex];
+        if (action === "移出项目") {
           this.confirmRemove(member.id, member.user.name);
+        } else if (action) {
+          this.changeRole(member.id, otherRole);
+        }
       },
     });
   },

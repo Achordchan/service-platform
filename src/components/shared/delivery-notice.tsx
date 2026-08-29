@@ -347,7 +347,14 @@ function DeliveryOverrideDialog({
             <Box>
               <Typography variant="subtitle2">
                 收件人 {preview.recipients.length} 人 · 本次提醒{" "}
-                {activeRecipients(preview, excluded).length} 人
+                {
+                  activeRecipients(preview, excluded, {
+                    notification: notificationOn,
+                    email: resolved("email"),
+                    wechat: resolved("wechat"),
+                  }).length
+                }{" "}
+                人
               </Typography>
               <Typography
                 variant="caption"
@@ -506,8 +513,31 @@ function recipientGroups(preview: DeliveryPreview) {
 }
 
 // 统计只算「本次真的会提醒」的人：排除掉的不能再计进各通道人数
-function activeRecipients(preview: DeliveryPreview, excluded: Set<string>) {
+/** 只去掉逐人排除的底数：各通道提示自行处理「通道关掉」的情况 */
+function keptRecipients(preview: DeliveryPreview, excluded: Set<string>) {
   return preview.recipients.filter((item) => !excluded.has(item.userId));
+}
+
+/**
+ * 本次真正会被提醒到的人。
+ *
+ * 不能只看排除名单：站内关掉时邮件与微信一并失效，每行都写着「本次全部不提醒」，
+ * 头部却还报着 N 人；只关邮件时，没有站内通知能力的外部联系人也不该再计入。
+ * 逐人判「他至少还有一条通道真的开着」。
+ */
+function activeRecipients(
+  preview: DeliveryPreview,
+  excluded: Set<string>,
+  channels: { notification: boolean; email: boolean; wechat: boolean },
+) {
+  if (!channels.notification) return [];
+  return preview.recipients.filter((item) => {
+    if (excluded.has(item.userId)) return false;
+    // 外部联系人只有邮件这一条路
+    if (item.external) return channels.email;
+    // 平台用户有站内（此处必开），邮件与微信只是加成
+    return true;
+  });
 }
 
 function emailHint(
@@ -518,7 +548,7 @@ function emailHint(
 ) {
   if (!notificationOn) return "站内通知已关闭，本次不发邮件";
   if (!on) return "已关闭：本次不发邮件";
-  const active = activeRecipients(preview, excluded);
+  const active = keptRecipients(preview, excluded);
   const emailReady = active.filter((item) => item.emailState === "READY").length;
   const emailUserOff = active.filter(
     (item) => item.emailState === "USER_OFF",
@@ -539,7 +569,7 @@ function emailForceWarning(
   notificationOn: boolean,
 ) {
   if (!on || !notificationOn) return null;
-  const count = activeRecipients(preview, excluded).filter(
+  const count = keptRecipients(preview, excluded).filter(
     (item) => item.emailState === "USER_OFF",
   ).length;
   if (count === 0) return null;
@@ -554,7 +584,7 @@ function wechatHint(
 ) {
   if (!notificationOn) return "站内通知已关闭，本次不发微信";
   if (!on) return "已关闭：本次不发微信订阅";
-  const active = activeRecipients(preview, excluded);
+  const active = keptRecipients(preview, excluded);
   const wechatReady = active.filter(
     (item) => item.wechatState === "READY",
   ).length;

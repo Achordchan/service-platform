@@ -489,7 +489,8 @@ export type ProjectStaffMember = {
   id: string;
   role: "PROJECT_MANAGER" | "TECHNICIAN";
   userId: string;
-  user: { id: string; name: string };
+  /** 员工视角服务端会带 platformRole（客户视角不带）：项目角色能不能切要看它 */
+  user: { id: string; name: string; platformRole?: string };
 };
 
 export function listProjectStaff(

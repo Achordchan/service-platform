@@ -321,3 +321,41 @@ describe("强制发送的边界：只盖个人偏好，不改收件人范围", (
     expect(byUser.get("admin-1")?.emailEligible).toBe(true);
   });
 });
+
+describe("弹窗的人数统计与逐行文案要一致", () => {
+  it("关掉站内时不能还报「本次提醒 N 人」", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const web = await readFile(
+      "src/components/shared/delivery-notice.tsx",
+      "utf8",
+    );
+    // 站内是载体：关掉它每行都写「本次全部不提醒」，头部数字必须跟着归零
+    expect(web).toContain("if (!channels.notification) return [];");
+    // 外部联系人只有邮件这一条路，关掉邮件就不该再计入
+    expect(web).toContain("if (item.external) return channels.email;");
+
+    const miniapp = await readFile(
+      "miniapp/src/components/delivery-notice/index.ts",
+      "utf8",
+    );
+    expect(miniapp).toContain("notifyCount: !notification");
+    expect(miniapp).toContain("!recipient.external || emailOn");
+  });
+});
+
+describe("项目角色选择要与服务端约束一致", () => {
+  it("按平台角色限制可选项目角色，别把注定失败的组合摆出来", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const page = await readFile(
+      "miniapp/src/pages/project-staff/page.ts",
+      "utf8",
+    );
+    // 服务端 assertRoleMatches 要求项目角色与平台角色一致（平台管理员除外）
+    expect(page).toContain("allowedProjectRoles(");
+    // 新增与切换两个入口都要用它
+    expect(page).toContain("const roles = this.allowedProjectRoles(");
+    expect(page).toContain("const canSwitch = this.allowedProjectRoles(");
+    // 不能再无条件列出两种角色
+    expect(page).not.toContain('itemList: ["加为项目经理", "加为技术人员"]');
+  });
+});
