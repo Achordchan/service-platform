@@ -10,8 +10,20 @@ import {
   type DeliveryScene,
 } from "../../lib/delivery";
 import { previewDelivery, type DeliveryPreview } from "../../lib/api";
+import { createLatestRequest, type LatestRequest } from "../../lib/latest-request";
 
+// Component 的实例类型不含自定义字段，每实例的状态挂在这里
 const channelUnsubscribers = new WeakMap<object, () => void>();
+const previewRequests = new WeakMap<object, LatestRequest>();
+
+function latestPreviewOf(instance: object): LatestRequest {
+  let latest = previewRequests.get(instance);
+  if (!latest) {
+    latest = createLatestRequest();
+    previewRequests.set(instance, latest);
+  }
+  return latest;
+}
 
 type RecipientRow = DeliveryPreview["recipients"][number] & {
   emailLabel: string;
@@ -70,13 +82,26 @@ Component({
         this,
         subscribeDeliveryChannels(() => {
           const scene = this.data.scene as DeliveryScene | null;
-          if (scene) void this.loadRule(scene);
+          if (!scene) return;
+          void this.loadRule(scene);
+          if (this.data.panelVisible) {
+            // 面板里的通道与收件人状态同样过期了。继续用旧 preview.rule 物化，
+            // onApply 会把保存前的通道选择显式提交回去 —— 等于替用户强制
+            // 打开管理员刚关掉的通道。
+            this.loadPreview(scene);
+          } else {
+            // 面板没开：作废可能还在路上的旧预览，并丢掉旧快照
+            latestPreviewOf(this).cancel();
+            this.setData({ preview: null });
+          }
         }),
       );
     },
     detached() {
       channelUnsubscribers.get(this)?.();
       channelUnsubscribers.delete(this);
+      // 卸载后不再 setData：作废掉可能还在路上的预览
+      latestPreviewOf(this).cancel();
     },
   },
   methods: {
@@ -109,18 +134,28 @@ Component({
       if (!scene) return;
       this.setData({
         panelVisible: true,
+        draft: { ...this.data.override },
+      });
+      this.loadPreview(scene);
+    },
+    loadPreview(scene: DeliveryScene) {
+      const isCurrent = latestPreviewOf(this).begin();
+      this.setData({
         loadingPreview: true,
         previewError: "",
         preview: null,
         rows: [],
-        draft: { ...this.data.override },
+        groups: [],
       });
       previewDelivery(scene)
         .then((preview) => {
+          // 期间规则被作废过：这份预览已经是旧的，丢掉，由新一次重拉写回
+          if (!isCurrent()) return;
           this.setData({ preview, loadingPreview: false });
           this.syncDraftFromPreview();
         })
         .catch((error: unknown) => {
+          if (!isCurrent()) return;
           this.setData({
             loadingPreview: false,
             previewError:

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFile } from "node:fs/promises";
 import { createChannelCache } from "../../miniapp/src/lib/delivery-channel-cache";
+import { createLatestRequest } from "../../miniapp/src/lib/latest-request";
 
 type Rule = { key: string; emailEnabled: boolean };
 
@@ -91,7 +92,29 @@ describe("送达通道缓存", () => {
   });
 });
 
-// 下面两条只能做源码级断言：miniapp 的 delivery.ts / 组件会一路 import 到
+describe("后发起的那次说了算", () => {
+  it("只有最后一次开始的请求判定为有效", () => {
+    const latest = createLatestRequest();
+    const first = latest.begin();
+    expect(first()).toBe(true);
+
+    const second = latest.begin();
+    // 先发的那次结果回来时已经过期：写回去会覆盖后发的那次
+    expect(first()).toBe(false);
+    expect(second()).toBe(true);
+  });
+
+  it("作废后连当前这次也判为过期", () => {
+    const latest = createLatestRequest();
+    const current = latest.begin();
+    expect(current()).toBe(true);
+
+    latest.cancel();
+    expect(current()).toBe(false);
+  });
+});
+
+// 下面三条只能做源码级断言：miniapp 的 delivery.ts / 组件会一路 import 到
 // 依赖 wx 全局的 api.ts，而根 tsconfig 排除了 miniapp，直接 import 会让
 // typecheck 红。状态机本身已由上面的黑盒用例覆盖，这里只钉接线点。
 describe("小程序侧的接线", () => {
@@ -115,5 +138,22 @@ describe("小程序侧的接线", () => {
       "this.loadRule(scene)",
     );
     expect(component).toContain("channelUnsubscribers.get(this)?.()");
+  });
+
+  it("面板开着时连预览一起重拉，且预览请求走后发者优先", async () => {
+    const component = await readFile(
+      "miniapp/src/components/delivery-notice/index.ts",
+      "utf8",
+    );
+    const attached = component.slice(component.indexOf("attached()"));
+    const callback = attached.slice(0, attached.indexOf("detached()"));
+    // 只重拉 rule 不重拉 preview 的话，面板里仍是旧通道与旧收件人，
+    // 而 onApply 会拿旧 preview.rule 物化覆盖 —— 等于替用户把管理员
+    // 刚关掉的通道显式打开
+    expect(callback).toContain("this.loadPreview(scene)");
+    // 唯一的预览入口都要过代次判定，绕开它就等于没修
+    expect(component).toContain("latestPreviewOf(this).begin()");
+    expect(component).toContain("if (!isCurrent()) return;");
+    expect(component).not.toMatch(/onOpenPanel\(\)[\s\S]{0,400}previewDelivery\(/);
   });
 });
