@@ -38,6 +38,10 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /** 载入与提交必须用同一个算法算快照，否则「一字未改」判不出来，等于没初始化 */
+  contentSnapshot(title: string, text: string) {
+    return JSON.stringify({ title: title.trim(), text: text.trim() });
+  },
   /**
    * 上一次已成功保存的内容快照。
    *
@@ -85,6 +89,9 @@ Page({
       const bodyText = htmlToText(update.body);
       this.loadedBody = update.body;
       this.loadedText = bodyText;
+      // 快照必须按载入值初始化：留空的话首次提交必然与它不同，
+      // 于是一字未改（或只补传附件）也会调 editProjectUpdate 发一条更新通知
+      this.savedSnapshot = this.contentSnapshot(update.title, bodyText);
       this.setData({
         loading: false,
         title: update.title,
@@ -199,7 +206,7 @@ Page({
       wx.showToast({ title: "请填写进度说明", icon: "none" });
       return;
     }
-    const snapshot = JSON.stringify({ title, text });
+    const snapshot = this.contentSnapshot(title, text);
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {

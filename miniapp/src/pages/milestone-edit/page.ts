@@ -56,6 +56,17 @@ Page({
     deliveryOverride: {} as DeliveryOverride,
     deliveryScene: null as unknown,
   },
+  /** 载入与提交必须用同一个算法算快照，否则「一字未改」判不出来，等于没初始化 */
+  contentSnapshot() {
+    const descText = this.data.descText.trim();
+    return JSON.stringify({
+      title: this.data.title.trim(),
+      description: descText ? textToHtml(descText) : null,
+      status: STATUS_OPTIONS[this.data.statusIndex]?.value ?? "NOT_STARTED",
+      startDate: toIso(this.data.startDate),
+      endDate: toIso(this.data.endDate),
+    });
+  },
   /**
    * 上一次已成功保存的内容快照。
    *
@@ -105,6 +116,7 @@ Page({
         : "";
       this.loadedDescription = milestone.description ?? "";
       this.loadedDescText = descText;
+
       this.setData({
         loading: false,
         title: milestone.title,
@@ -113,6 +125,10 @@ Page({
         startDate: milestone.startDate ? milestone.startDate.slice(0, 10) : "",
         endDate: milestone.endDate ? milestone.endDate.slice(0, 10) : "",
       });
+      // 必须按载入值初始化快照，且要用与提交同一个算法 ——
+      // 留空的话首次提交必然与它不同，一字未改（或只补传附件）也会调
+      // editMilestone 发一条里程碑更新通知
+      this.savedSnapshot = this.contentSnapshot();
     } catch (error) {
       this.setData({
         loading: false,
@@ -237,7 +253,7 @@ Page({
         ? { deliveryOverride: override }
         : {}),
     };
-    const snapshot = JSON.stringify(payload);
+    const snapshot = this.contentSnapshot();
     this.setData({ submitting: true });
     try {
       if (this.data.mode === "edit") {

@@ -13,6 +13,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchProjectActivity,
   dispatchRequestActivity,
+  publishEvent,
 } from "@/modules/notifications/notification-service";
 import {
   createStorageKey,
@@ -434,6 +435,27 @@ export async function uploadProjectAttachment(
         },
       });
       let deliveryFeedback = null;
+      if (input.attachTo && !input.inlineContext) {
+        // 实体附件不发通知（理由见下），但必须补一个静默刷新事件：
+        // 实体是先建好再逐个传附件的，别人页面收到实体事件时刷出来的是「没有附件」
+        // 的版本，附件传完若不再发事件，就要一直等到手动重载或下一次项目事件。
+        // audible: false + 不建通知行 —— 只刷新，不打扰。
+        await publishEvent(tx, {
+          type: "PROJECT_UPDATED",
+          payload: {
+            change: "PROJECT_ATTACHMENT_UPLOADED",
+            actorId: actor.id,
+            audible: false,
+            projectId: project.projectId,
+            attachmentId: attachment.id,
+            ...(input.attachTo.kind === "PROJECT_UPDATE"
+              ? { projectUpdateId: input.attachTo.id }
+              : { milestoneId: input.attachTo.id }),
+          },
+          customerSpaceId: project.customerSpaceId,
+          projectId: project.projectId,
+        });
+      }
       // 挂在动态 / 里程碑上的附件不再单独发「项目新增文件」通知：那条实体自己的
       // 活动才是本次提醒，它已经按本次覆盖发过了。这里再发一次不但重复打扰
       // （一条带三个附件的动态会多出三条通知），还会绕开覆盖 ——

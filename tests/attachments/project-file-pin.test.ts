@@ -149,7 +149,30 @@ describe("附件重试不重复发通知", () => {
       // 附件重试若连实体一起再提交，重试几次就骚扰几次
       expect(page).toContain("savedSnapshot");
       expect(page).toContain("if (snapshot !== this.savedSnapshot) {");
+      // 载入时必须初始化快照：留空的话首次提交必然与它不同，一字未改也会发通知
+      expect(page).toContain("this.savedSnapshot = this.contentSnapshot(");
+      // 且载入与提交要用同一个算法，否则「一字未改」判不出来，等于没初始化
+      expect(page).toContain("const snapshot = this.contentSnapshot(");
     }
+  });
+});
+
+describe("实体附件仍要发静默刷新事件", () => {
+  it("不发通知，但要让停在项目详情页的人刷出附件", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/attachments/attachment-service.ts",
+      "utf8",
+    );
+    // 实体先建好、附件随后逐个上传：不补事件的话，别人页面停在「没有附件」
+    // 的版本，要等手动重载或下一次项目事件才刷得出来
+    const block = service.slice(
+      service.indexOf("if (input.attachTo && !input.inlineContext) {"),
+      service.indexOf("if (!input.inlineContext && !input.attachTo) {"),
+    );
+    expect(block).toContain("publishEvent(");
+    // 只刷新、不打扰：不建通知行，也不响铃
+    expect(block).toContain("audible: false");
   });
 });
 

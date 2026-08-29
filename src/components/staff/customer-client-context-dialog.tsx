@@ -47,29 +47,47 @@ export function CustomerClientContextDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>客户设备与网络</DialogTitle>
+      {/*
+        内容体只在打开时挂载，并按 requestId 挂 key：关闭即卸载、重开或换工单即
+        全新挂载，天然不会残留上一次的报错或上一位客户的设备与 IP。
+        比在 effect 里手动清空更可靠（也不触发 set-state-in-effect）。
+      */}
+      {open ? (
+        <ClientContextBody key={requestId} requestId={requestId} />
+      ) : null}
+      <DialogActions>
+        <Button onClick={onClose}>关闭</Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+function ClientContextBody({ requestId }: { requestId: string }) {
   const [rows, setRows] = useState<ClientContext[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!open) return;
     let active = true;
     staffApi<ClientContext[]>(`/api/v1/requests/${requestId}/client-context`)
       .then((data) => {
-        if (active) setRows(data);
+        if (!active) return;
+        setRows(data);
+        setError(null);
       })
       .catch((cause: unknown) => {
-        if (active) {
-          setError(cause instanceof Error ? cause.message : "读取失败");
-        }
+        if (!active) return;
+        setRows(null);
+        setError(cause instanceof Error ? cause.message : "读取失败");
       });
     return () => {
       active = false;
     };
-  }, [open, requestId]);
+  }, [requestId]);
 
   return (
-    <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-      <DialogTitle>客户设备与网络</DialogTitle>
       <DialogContent dividers>
         {error ? <Alert severity="error">{error}</Alert> : null}
         {!rows && !error ? (
@@ -130,10 +148,6 @@ export function CustomerClientContextDialog({
           ))}
         </Stack>
       </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose}>关闭</Button>
-      </DialogActions>
-    </Dialog>
   );
 }
 
