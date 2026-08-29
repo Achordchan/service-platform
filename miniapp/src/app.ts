@@ -10,6 +10,7 @@ import {
   invalidateSubscribeAuthorization,
   resetSubscribeState,
 } from "./lib/subscribe";
+import { clearDeliveryChannelsCache } from "./lib/delivery";
 
 let leftForeground = false;
 
@@ -44,5 +45,8 @@ App({
     // 用户可能刚在微信「设置-订阅消息」里关掉了某项，缓存里的 persistent
     // 已不可信；作废后由下次手势 hydrate（Codex P2）
     invalidateSubscribeAuthorization();
+    // 通道开关只能在 Web 后台改：小程序进程活着的这段时间里改动传不进来，
+    // 提示行就会照着旧通道说话。回前台作废，下次要用时重拉一次。
+    clearDeliveryChannelsCache();
   },
 });
