@@ -160,17 +160,25 @@ export function previewProjectStaffDelivery(
     // 不校验的话，任何有项目人员管理权的员工都能拿已知 userId 构造预览，
     // 而预览会读出这个人的姓名、邮件总开关、按场景退订、微信绑定与额度 ——
     // 等于把预览接口变成跨用户的通知偏好查询入口。
-    const target = await tx.user.findFirst({
-      where: {
-        id: targetUserId,
-        deletedAt: null,
-        platformRole: {
-          in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"],
+    const [candidate, member] = await Promise.all([
+      tx.user.findFirst({
+        where: {
+          id: targetUserId,
+          deletedAt: null,
+          platformRole: {
+            in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"],
+          },
         },
-      },
-      select: { id: true },
-    });
-    assertFound(target, "该账号不可加入项目");
+        select: { id: true },
+      }),
+      // 角色调整 / 移出预览的对象是已在本项目里的人。只按候选口径判的话，
+      // 平台角色事后变过的老成员会被挡在预览外，而移出本身照样能做。
+      tx.projectStaff.findUnique({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        select: { id: true },
+      }),
+    ]);
+    assertFound(candidate ?? member, "该账号不可加入项目");
     return previewProjectStaffRecipients(tx, actor, {
       recipientUserId: targetUserId,
       customerSpaceId: project.customerSpaceId,
@@ -184,6 +192,7 @@ export function updateProjectStaff(
   projectId: string,
   projectStaffId: string,
   input: UpdateProjectStaffInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   return withActorDb(actor, async (tx) => {
     await assertCanManageProjectStaff(tx, actor, projectId);
@@ -227,6 +236,7 @@ export function updateProjectStaff(
         notificationBody: `你在“${staff.project.title}”的角色已调整为${PROJECT_ROLE_LABELS[updated.role]}。`,
         customerSpaceId: staff.project.customerSpaceId,
         projectId,
+        deliveryOverride,
       });
     }
     return updated;
@@ -237,6 +247,7 @@ export function removeProjectStaff(
   actor: Actor,
   projectId: string,
   projectStaffId: string,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   return withActorDb(actor, async (tx) => {
     await assertCanManageProjectStaff(tx, actor, projectId);
@@ -285,6 +296,7 @@ export function removeProjectStaff(
       notificationBody: `你不再是“${staff.project.title}”的项目人员，相关工单分配已一并解除。`,
       customerSpaceId: staff.project.customerSpaceId,
       projectId,
+      deliveryOverride,
     });
     await tx.projectStaff.delete({ where: { id: projectStaffId } });
     await writeAuditLog(tx, actor, {

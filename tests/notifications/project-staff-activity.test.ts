@@ -114,7 +114,7 @@ describe("项目人员变动通知", () => {
 });
 
 describe("项目人员预览的目标校验", () => {
-  it("目标必须落在可加入项目的内部人员范围内，与 addProjectStaff 同口径", async () => {
+  it("目标只能是可加入项目的内部人员或已在本项目里的成员", async () => {
     const { readFile } = await import("node:fs/promises");
     const service = await readFile(
       "src/modules/projects/project-staff-service.ts",
@@ -128,6 +128,12 @@ describe("项目人员预览的目标校验", () => {
     );
     expect(preview).toContain("deletedAt: null");
     expect(preview).toContain('"PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"');
-    expect(preview).toContain('assertFound(target, "该账号不可加入项目")');
+    // 角色调整 / 移出的对象是已在本项目里的人，所以范围放宽到本项目成员 ——
+    // 但仍然是两个受限来源之一，不能退回成「有 userId 就给看」。
+    // 拒绝行为本身另有黑盒断言：tests/projects/project-staff-delivery-override.test.ts
+    expect(preview).toContain("projectId_userId");
+    expect(preview).toMatch(
+      /assertFound\(\s*candidate \?\? member,\s*"该账号不可加入项目"\s*\)/,
+    );
   });
 });

@@ -135,4 +135,40 @@ describe("客户成员和项目人员表单", () => {
     });
     expect(routerRefreshMock).toHaveBeenCalledOnce();
   });
+
+  it("移出项目人员先确认并带上本次提醒方式再提交", async () => {
+    staffApiMock.mockResolvedValue({});
+    renderWithQueryClient(
+      <ProjectStaffManager
+        projectId="project-1"
+        staff={[
+          {
+            id: "staff-1",
+            userId: "user-tech",
+            name: "技术人员",
+            email: "tech@example.test",
+            role: "TECHNICIAN",
+          },
+        ]}
+        candidates={[]}
+        canEdit
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "移除" }));
+    // 移出同样会给当事人发通知：点完不能直接发出去，得先看清会怎么提醒
+    await screen.findByText("移出项目人员");
+    expect(staffApiMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认移出" }));
+
+    await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
+    expect(staffApiMock.mock.calls[0]?.[0]).toBe(
+      "/api/v1/projects/project-1/staff/staff-1",
+    );
+    // 必须是带 body 的 DELETE：回到无 body 的 { method: "DELETE" } 就没地方挂覆盖了
+    expect(jsonRequestMock).toHaveBeenCalledWith("DELETE", expect.any(Object));
+    expect(staffApiMock.mock.calls[0]?.[1]).not.toEqual({ method: "DELETE" });
+    expect(routerRefreshMock).toHaveBeenCalledOnce();
+  });
 });

@@ -145,13 +145,28 @@ export function ProjectStaffManager({
     }
   });
 
-  async function removeStaff(projectStaffId: string) {
+  // 移出同样会给当事人发通知，所以和「分配人员」一样先看清会怎么提醒再确认
+  const [pendingRemove, setPendingRemove] = useState<ProjectStaffMember | null>(
+    null,
+  );
+  const [removeOverride, setRemoveOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const closeRemoveDialog = () => {
+    setPendingRemove(null);
+    setRemoveOverride({});
+  };
+
+  async function removeStaff(member: ProjectStaffMember) {
     try {
       await staffMutation.mutateAsync(async () => {
         await staffApi(
-          `/api/v1/projects/${projectId}/staff/${projectStaffId}`,
-          { method: "DELETE" },
+          `/api/v1/projects/${projectId}/staff/${member.id}`,
+          jsonRequest(
+            "DELETE",
+            deliveryOverridePayload(removeOverride, staffDeliveryRule),
+          ),
         );
+        closeRemoveDialog();
         toast.success("项目人员已移除，相关服务请求分配已同步清理");
         router.refresh();
       });
@@ -207,7 +222,10 @@ export function ProjectStaffManager({
                   size="small"
                   color="inherit"
                   disabled={submitting}
-                  onClick={() => removeStaff(member.id)}
+                  onClick={() => {
+                    setPendingRemove(member);
+                    setRemoveOverride({});
+                  }}
                 >
                   移除
                 </Button>
@@ -302,6 +320,49 @@ export function ProjectStaffManager({
             disabled={!selectedCandidate || submitting || !form.formState.isValid}
           >
             确认分配
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingRemove)}
+        onClose={submitting ? undefined : closeRemoveDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>移出项目人员</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography>
+              确定将「{pendingRemove?.name}」移出本项目吗？该成员在本项目下的服务请求分配会一并解除。
+            </Typography>
+            {pendingRemove ? (
+              <DeliveryNotice
+                scene={{
+                  scene: "PROJECT_STAFF",
+                  projectId,
+                  targetUserId: pendingRemove.userId,
+                }}
+                override={removeOverride}
+                onOverrideChange={setRemoveOverride}
+                disabled={submitting}
+              />
+            ) : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRemoveDialog} disabled={submitting}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={submitting}
+            onClick={() => {
+              if (pendingRemove) void removeStaff(pendingRemove);
+            }}
+          >
+            确认移出
           </Button>
         </DialogActions>
       </Dialog>

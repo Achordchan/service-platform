@@ -72,11 +72,13 @@ function MessageImage({
   tone,
   resolveUrl,
   onPreview,
+  onPinToProject,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onPreview: (source: PreviewSource) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const inlineUrl = resolveUrl
     ? resolveUrl(file, true)
@@ -88,7 +90,7 @@ function MessageImage({
       ? file.title.trim()
       : "";
   return (
-    <Box sx={{ minWidth: 0 }}>
+    <Box sx={{ minWidth: 0, position: "relative" }}>
       {/* 原生 button 保证键盘可达（Tab + Enter/Space 打开灯箱） */}
       <Box
         component="button"
@@ -128,6 +130,28 @@ function MessageImage({
           }}
         />
       </Box>
+      {/* 与灯箱按钮同级而非嵌套：button 里不能再放 button */}
+      {onPinToProject ? (
+        <IconButton
+          onClick={(event: React.MouseEvent) => {
+            event.stopPropagation();
+            onPinToProject(file);
+          }}
+          aria-label={`把 ${displayName} 添加到项目文件`}
+          title="添加到项目文件"
+          size="small"
+          sx={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            color: "common.white",
+            bgcolor: "rgba(15,23,42,0.55)",
+            "&:hover": { bgcolor: "rgba(15,23,42,0.72)" },
+          }}
+        >
+          <LibraryAddOutlinedIcon fontSize="small" />
+        </IconButton>
+      ) : null}
       {customTitle || file.note?.trim() ? (
         <Box sx={{ px: 0.5, pt: 0.5, textAlign: "left" }}>
           {customTitle ? (
@@ -349,6 +373,7 @@ export function RequestMessageAttachments({
               tone={tone}
               resolveUrl={resolveUrl}
               onPreview={setPreview}
+              onPinToProject={onPinToProject}
             />
           ))}
         </Box>

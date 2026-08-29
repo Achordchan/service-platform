@@ -540,10 +540,11 @@ export function updateProjectStaffRole(
   projectId: string,
   projectStaffId: string,
   role: ProjectStaffRole,
+  deliveryOverride?: DeliveryOverride,
 ): Promise<ProjectStaffMember> {
   return request(`/api/v1/projects/${projectId}/staff/${projectStaffId}`, {
     method: "PATCH",
-    data: { role },
+    data: { role, ...(deliveryOverride ? { deliveryOverride } : {}) },
     timeoutMs: 20000,
   });
 }
@@ -551,9 +552,12 @@ export function updateProjectStaffRole(
 export function removeProjectStaff(
   projectId: string,
   projectStaffId: string,
+  deliveryOverride?: DeliveryOverride,
 ): Promise<void> {
   return request(`/api/v1/projects/${projectId}/staff/${projectStaffId}`, {
     method: "DELETE",
+    // 移出也会给当事人发通知，同样带上本次操作的提醒方式覆盖
+    data: deliveryOverride ? { deliveryOverride } : undefined,
   }).then(() => undefined);
 }
 

@@ -5,7 +5,9 @@ import {
 } from "@/modules/projects/project-staff-service";
 import { updateProjectStaffSchema } from "@/modules/projects/schemas";
 import {
+  readDeliveryOverride,
   readJson,
+  readOptionalJson,
   requireApiActor,
   routeError,
 } from "@/modules/projects/api-utils";
@@ -23,12 +25,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const { projectId, projectStaffId } = await context.params;
-    const input = updateProjectStaffSchema.parse(await readJson(request));
+    const body = await readJson(request);
+    const input = updateProjectStaffSchema.parse(body);
     const staff = await updateProjectStaff(
       auth.actor,
       projectId,
       projectStaffId,
       input,
+      readDeliveryOverride(auth.actor, body),
     );
     return NextResponse.json({ data: staff });
   } catch (error) {
@@ -36,13 +40,21 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export async function DELETE(request: Request, context: RouteContext) {
   const auth = await requireApiActor();
   if (auth.response) return auth.response;
 
   try {
     const { projectId, projectStaffId } = await context.params;
-    await removeProjectStaff(auth.actor, projectId, projectStaffId);
+    // 移出也会给当事人发通知，所以同样接收本次操作的提醒方式覆盖；
+    // DELETE 不强制带 body，空体按「不覆盖」处理。
+    const body = await readOptionalJson(request);
+    await removeProjectStaff(
+      auth.actor,
+      projectId,
+      projectStaffId,
+      readDeliveryOverride(auth.actor, body),
+    );
     return new NextResponse(null, { status: 204 });
   } catch (error) {
     return routeError(error);

@@ -18,17 +18,27 @@ const ROLE_LABELS: Record<ProjectStaffRole, string> = {
 
 type StaffRow = ProjectStaffMember & { roleLabel: string };
 
+/** 待确认的人员变更：三种都会给当事人发 PROJECT_STAFF 通知，共用同一张确认卡片 */
+type PendingStaffAction = {
+  kind: "add" | "role" | "remove";
+  userId: string;
+  name: string;
+  summary: string;
+  confirmText: string;
+  role?: ProjectStaffRole;
+  projectStaffId?: string;
+};
+
 Page({
   data: {
     projectId: "",
     loading: true,
     loadError: "",
     staff: [] as StaffRow[],
-    // 加人原本是两级 ActionSheet 点完直接生效，挂不住发送前提示；
-    // 选完人和角色先落到待确认卡片，看清会提醒谁再确认。
-    pendingAdd: null as
-      | { userId: string; name: string; role: ProjectStaffRole; roleLabel: string }
-      | null,
+    // 加人 / 改角色 / 移出原本都是 ActionSheet 点完直接生效，挂不住发送前提示；
+    // 三者都会给当事人发 PROJECT_STAFF 通知，所以统一先落到待确认卡片，
+    // 看清会怎么提醒（并可关通道 / 本次不提醒）再确认。
+    pendingAction: null as PendingStaffAction | null,
     deliveryScene: null as unknown,
     deliveryOverride: {} as DeliveryOverride,
     // 候选（尚未加入本项目的内部人员）
@@ -150,66 +160,88 @@ Page({
     });
   },
   stageAdd(candidate: StaffCandidate, role: ProjectStaffRole) {
+    this.stage({
+      kind: "add",
+      userId: candidate.id,
+      name: candidate.name,
+      summary: `即将把「${candidate.name}」加为${ROLE_LABELS[role]}`,
+      confirmText: "确认添加",
+      role,
+    });
+  },
+  stage(pendingAction: PendingStaffAction) {
     this.setData({
-      pendingAdd: {
-        userId: candidate.id,
-        name: candidate.name,
-        role,
-        roleLabel: ROLE_LABELS[role],
-      },
+      pendingAction,
       deliveryScene: {
         scene: "PROJECT_STAFF",
         projectId: this.data.projectId,
-        targetUserId: candidate.id,
+        targetUserId: pendingAction.userId,
       },
       deliveryOverride: {},
     });
+    // 确认卡片在列表上方：从下面的成员行触发时不滚上去就看不见
+    wx.pageScrollTo({ scrollTop: 0, duration: 200 });
   },
   onDeliveryChange(event: WechatMiniprogram.CustomEvent) {
     this.setData({
       deliveryOverride: (event.detail?.override ?? {}) as DeliveryOverride,
     });
   },
-  onCancelAdd() {
+  onCancelPending() {
+    this.clearPending();
+  },
+  clearPending() {
     this.setData({
-      pendingAdd: null,
+      pendingAction: null,
       deliveryScene: null,
       deliveryOverride: {},
     });
   },
-  onConfirmAdd() {
-    const pending = this.data.pendingAdd;
-    if (!pending) return;
-    this.submitAdd(pending.userId, pending.role);
-  },
-  submitAdd(userId: string, role: ProjectStaffRole) {
-    if (this.data.submitting) return;
-    this.setData({ submitting: true });
+  onConfirmPending() {
+    const pending = this.data.pendingAction;
+    if (!pending || this.data.submitting) return;
     const override = this.data.deliveryOverride;
-    addProjectStaff(this.data.projectId, {
-      userId,
-      role,
-      ...(Object.keys(override).length > 0
-        ? { deliveryOverride: override }
-        : {}),
-    })
-      .then(() => {
-        wx.showToast({ title: "已添加", icon: "success" });
-        // 覆盖是一次性的，不跨下一次添加沿用
-        this.setData({
-          pendingAdd: null,
-          deliveryScene: null,
-          deliveryOverride: {},
-        });
-        void this.load();
-      })
-      .catch((error: unknown) => {
-        wx.showToast({
-          title: error instanceof Error ? error.message : "添加失败",
-          icon: "none",
-        });
-      })
-      .then(() => this.setData({ submitting: false }));
+    // 覆盖是一次性的：只有真被改过才带上，空对象照旧走后台规则
+    const withOverride =
+      Object.keys(override).length > 0 ? override : undefined;
+    this.setData({ submitting: true });
+    const done = (title: string) => {
+      wx.showToast({ title, icon: "success" });
+      this.clearPending();
+      void this.load();
+    };
+    const fail = (fallback: string) => (error: unknown) => {
+      wx.showToast({
+        title: error instanceof Error ? error.message : fallback,
+        icon: "none",
+      });
+    };
+    const task =
+      pending.kind === "add"
+        ? addProjectStaff(this.data.projectId, {
+            userId: pending.userId,
+            role: pending.role!,
+            ...(withOverride ? { deliveryOverride: withOverride } : {}),
+          })
+            .then(() => done("已添加"))
+            .catch(fail("添加失败"))
+        : pending.kind === "role"
+          ? updateProjectStaffRole(
+              this.data.projectId,
+              pending.projectStaffId!,
+              pending.role!,
+              withOverride,
+            )
+              .then(() => done("已更新"))
+              .catch(fail("更新失败"))
+          : removeProjectStaff(
+              this.data.projectId,
+              pending.projectStaffId!,
+              withOverride,
+            )
+              .then(() => done("已移出"))
+              .catch(fail("移出失败"));
+    void task.then(() => this.setData({ submitting: false }));
   },
   onStaffActions(event: WechatMiniprogram.TouchEvent) {
     const id = event.currentTarget.dataset.id as string;
@@ -230,45 +262,25 @@ Page({
       success: (res) => {
         const action = items[res.tapIndex];
         if (action === "移出项目") {
-          this.confirmRemove(member.id, member.user.name);
-        } else if (action) {
-          this.changeRole(member.id, otherRole);
-        }
-      },
-    });
-  },
-  changeRole(projectStaffId: string, role: ProjectStaffRole) {
-    updateProjectStaffRole(this.data.projectId, projectStaffId, role)
-      .then(() => {
-        wx.showToast({ title: "已更新", icon: "success" });
-        void this.load();
-      })
-      .catch((error: unknown) => {
-        wx.showToast({
-          title: error instanceof Error ? error.message : "更新失败",
-          icon: "none",
-        });
-      });
-  },
-  confirmRemove(projectStaffId: string, name: string) {
-    wx.showModal({
-      title: "移出项目",
-      content: `确定将「${name}」移出本项目吗？`,
-      confirmText: "移出",
-      confirmColor: "#d14343",
-      success: (res) => {
-        if (!res.confirm) return;
-        void removeProjectStaff(this.data.projectId, projectStaffId)
-          .then(() => {
-            wx.showToast({ title: "已移出", icon: "success" });
-            void this.load();
-          })
-          .catch((error: unknown) => {
-            wx.showToast({
-              title: error instanceof Error ? error.message : "移出失败",
-              icon: "none",
-            });
+          this.stage({
+            kind: "remove",
+            userId: member.userId,
+            name: member.user.name,
+            summary: `即将把「${member.user.name}」移出本项目，其在本项目下的工单分配会一并解除`,
+            confirmText: "确认移出",
+            projectStaffId: member.id,
           });
+        } else if (action) {
+          this.stage({
+            kind: "role",
+            userId: member.userId,
+            name: member.user.name,
+            summary: `即将把「${member.user.name}」改为${ROLE_LABELS[otherRole]}`,
+            confirmText: "确认调整",
+            role: otherRole,
+            projectStaffId: member.id,
+          });
+        }
       },
     });
   },

@@ -61,6 +61,39 @@ export async function readJson(
   }
 }
 
+/**
+ * 没有必填载荷的方法（DELETE 等）读可选 JSON：空体按 {} 处理，
+ * 有内容仍按 JSON 严格解析 —— 别把语法错误的请求体当成「没传」静默放过。
+ */
+export async function readOptionalJson(
+  request: Request,
+  options: { maxBytes?: number } = {},
+) {
+  let text: string;
+  try {
+    const body = await readBoundedRequestBody(
+      request,
+      options.maxBytes ?? 16 * 1024,
+    );
+    text = new TextDecoder().decode(body);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      throw new DomainError(
+        "REQUEST_BODY_TOO_LARGE",
+        "请求体超过允许的大小",
+        413,
+      );
+    }
+    throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
+  }
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
+  }
+}
+
 export function routeError(error: unknown, context?: Omit<ApiErrorContext, "source">) {
   if (error instanceof ZodError) {
     return NextResponse.json(
