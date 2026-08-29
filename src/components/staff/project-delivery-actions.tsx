@@ -139,12 +139,12 @@ export function ProjectDeliveryActions({
     setDialog(null);
     setUpdateOverride({});
     setMilestoneOverride({});
-    if (retryAttach) {
-      // 放弃补传：这些草稿只对那个已建好的实体有意义，留着会挂到下一次操作上
-      setRetryAttach(null);
-      setUpdateFiles([]);
-      setMilestoneFiles([]);
-    }
+    // 附件草稿和覆盖一样是一次性的：取消就该丢掉。
+    // 只在放弃补传时清的话，普通取消挑好的附件会静静留到下一次弹窗，
+    // 跟着下一条动态/里程碑一起传上去 —— 用户并没有再选过它们。
+    setRetryAttach(null);
+    setUpdateFiles([]);
+    setMilestoneFiles([]);
   };
   const updateDeliveryRule = useDeliveryChannelRule("PROJECT_UPDATE");
   const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");

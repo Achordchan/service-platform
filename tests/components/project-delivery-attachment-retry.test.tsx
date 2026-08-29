@@ -158,6 +158,50 @@ function updateCreateCalls() {
   );
 }
 
+describe("动态附件草稿的生命周期", () => {
+  it("直接取消会丢掉挑好的附件，不会跟着下一条动态传上去", async () => {
+    staffApiMock.mockImplementation(async (url: string) => {
+      if (url === "/api/v1/projects/project-1/updates") return { id: "update-1" };
+      return {};
+    });
+
+    render(
+      <ProjectDeliveryActions
+        project={project}
+        canManageDelivery
+        canPublishUpdate
+        canEditProject
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "发布进度" }));
+    fireEvent.click(screen.getByRole("button", { name: "添加附件" }));
+    expect(screen.getByTestId("drafts").textContent).toBe("failed.txt");
+
+    fireEvent.click(screen.getByRole("button", { name: "取消" }));
+    fireEvent.click(await screen.findByRole("button", { name: "发布进度" }));
+    await screen.findByText("发布项目进度");
+
+    // 用户取消后并没有再选过这些文件，不该在下一次弹窗里替他做主
+    expect(screen.getByTestId("drafts").textContent).toBe("");
+
+    fireEvent.change(screen.getByRole("textbox", { name: "动态标题" }), {
+      target: { value: "本周进展" },
+    });
+    fireEvent.change(screen.getByLabelText("富文本内容"), {
+      target: { value: "<p>已完成联调</p>" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "发布" }));
+
+    await waitFor(() =>
+      expect(toastSuccessMock).toHaveBeenCalledWith("客户进度已发布"),
+    );
+    expect(
+      staffApiMock.mock.calls.filter(([url]) => url === "/api/v1/attachments"),
+    ).toHaveLength(0);
+  });
+});
+
 describe("动态附件上传失败后的原位补传", () => {
   it("实体已建好时保留失败附件并留在弹窗里补传，不重复发布", async () => {
     staffApiMock.mockImplementation(async (url: string) => {
