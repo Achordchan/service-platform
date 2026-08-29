@@ -190,7 +190,28 @@ describe("附件派生事件要带上归属实体", () => {
       expect(source).toContain("attachmentEventPayload(attachment)");
       // 不能再退回只带 attachmentId 的写法
       expect(source).not.toContain("payload: { attachmentId: attachment.id }");
+      // payload 带上归属 id 后更要带 visibility：filterVisibleEvents 只认它挡客户，
+      // 漏了就把内部附件的实体 id 一起漏出去
+      expect(source).toContain("visibility: attachment.visibility");
     }
+  });
+});
+
+describe("工单送达预览的权限", () => {
+  it("按 scene 用与真实写操作同一个谓词把门", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/requests/request-command-service.ts",
+      "utf8",
+    );
+    // 预览会披露收件人的邮件退订状态、微信绑定与额度：
+    // 只有查看权限的角色若能拿到，等于把它变成偏好查询入口
+    const preview = service.slice(
+      service.indexOf("export function previewRequestDelivery"),
+    );
+    expect(preview).toContain("canChangeRequestStatus(actor, accessContext(request))");
+    expect(preview).toContain("canReplyToRequest(actor, accessContext(request))");
+    expect(preview).toContain("throw forbidden()");
   });
 });
 

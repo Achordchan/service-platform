@@ -1248,6 +1248,16 @@ export function previewRequestDelivery(
   return withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
     if (!request) throw notFound();
+    // 预览要按「这次写操作本人做不做得了」把门：响应会披露收件人的邮件退订状态、
+    // 微信绑定与额度。只有查看权限的角色若能拿到，等于把预览变成偏好查询入口，
+    // 而他真去回复 / 改状态是会被拒的。与真实写操作用同一个谓词。
+    if (
+      scene === "STATUS"
+        ? !canChangeRequestStatus(actor, accessContext(request))
+        : !canReplyToRequest(actor, accessContext(request))
+    ) {
+      throw forbidden();
+    }
     const assignedWorkers = workerIdsFromRequest(request);
     // 外部门户联系人不是平台用户、没有站内通知，邮件由本模块单独入队。
     // 但预览必须带上他：不带的话弹窗会说「0 人 / 本次没有需要提醒的人」，

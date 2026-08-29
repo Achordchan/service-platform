@@ -64,6 +64,10 @@ export async function optimizeAttachmentWithWebp(
         customerSpaceId: true,
         projectId: true,
         serviceRequestId: true,
+        // filterVisibleEvents 只认 payload.visibility === "INTERNAL" 来挡客户。
+        // 不带的话，内部附件的优化事件（现在还带着归属实体 id）会漏给客户 ——
+        // 预览就绪那条路径一直带着，这里之前漏了
+        visibility: true,
         // 事件按附件挂在谁身上归模块（与 RLS 同口径）：不带这几个 id 的话，
         // 动态/里程碑上的附件会被当成项目级文件，「开着动态、关着文件」的客户
         // 就收不到这条刷新
@@ -238,6 +242,7 @@ export async function optimizeAttachmentWithWebp(
             customerSpaceId: attachment.customerSpaceId,
             projectId: attachment.projectId,
             serviceRequestId: attachment.serviceRequestId,
+            visibility: attachment.visibility,
             payload: attachmentEventPayload(attachment),
           });
         } else if (attachment.projectId && attachment.customerSpaceId) {
@@ -245,6 +250,7 @@ export async function optimizeAttachmentWithWebp(
             change: "ATTACHMENT_OPTIMIZED",
             customerSpaceId: attachment.customerSpaceId,
             projectId: attachment.projectId,
+            visibility: attachment.visibility,
             payload: attachmentEventPayload(attachment),
           });
         }
