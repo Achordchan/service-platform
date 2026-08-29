@@ -250,7 +250,30 @@ export async function uploadRequestAttachment(
         },
       });
       let deliveryFeedback = null;
-      if (!input.inline) {
+      if (!input.inline && input.requestMessageId) {
+        // 绑在某条回复上的附件属于那次回复的一部分：回复自己那条活动才是本次提醒，
+        // 它已经按本次覆盖发过了。这里再按 REQUEST_ATTACHMENT 默认规则发一次，
+        // 既重复打扰（一条带三个附件的回复多出三条），又绕开覆盖 ——
+        // 附件上传是另一个请求、不带 deliveryOverride，被「本次不提醒」排除掉的人
+        // 照样每个附件收一条。与项目动态/里程碑附件同一处理。
+        // 但仍要发静默刷新事件：回复先落库、附件随后逐个传，别人页面收到回复事件时
+        // 刷出来的是「没有附件」的版本。
+        await publishEvent(tx, {
+          type: "REQUEST_UPDATED",
+          payload: {
+            change: "REQUEST_ATTACHMENT_UPLOADED",
+            actorId: actor.id,
+            audible: false,
+            requestId: request.id,
+            attachmentId: attachment.id,
+            requestMessageId: input.requestMessageId,
+            visibility: attachment.visibility,
+          },
+          customerSpaceId: request.project.customerSpaceId,
+          projectId: request.projectId,
+          serviceRequestId: request.id,
+        });
+      } else if (!input.inline) {
         const workerIds = Array.from(
           new Set(
             [

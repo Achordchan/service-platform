@@ -1,3 +1,4 @@
+import { attachmentEventPayload } from "@/modules/attachments/attachment-event-payload";
 import "server-only";
 
 import { execFile } from "node:child_process";
@@ -59,6 +60,11 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
         customerSpaceId: true,
         projectId: true,
         serviceRequestId: true,
+        // 归属实体决定这条事件归哪个模块（见 attachmentEventPayload）
+        projectUpdateId: true,
+        updateCommentId: true,
+        milestoneId: true,
+        requestMessageId: true,
       },
     }),
   );
@@ -100,7 +106,7 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
           serviceRequestId: attachment.serviceRequestId,
           // INTERNAL 附件的就绪事件不能漏给客户（filterVisibleEvents 依赖 payload.visibility）
           visibility: attachment.visibility,
-          payload: { attachmentId: attachment.id },
+          payload: attachmentEventPayload(attachment),
         });
       } else if (attachment.projectId && attachment.customerSpaceId) {
         await publishProjectChange(tx, systemActor, {
@@ -108,7 +114,7 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
           customerSpaceId: attachment.customerSpaceId,
           projectId: attachment.projectId,
           visibility: attachment.visibility,
-          payload: { attachmentId: attachment.id },
+          payload: attachmentEventPayload(attachment),
         });
       }
       return true;

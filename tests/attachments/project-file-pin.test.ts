@@ -157,6 +157,43 @@ describe("附件重试不重复发通知", () => {
   });
 });
 
+describe("工单回复的附件不重复发通知", () => {
+  it("绑在回复上的附件只发静默刷新事件，不再按 REQUEST_ATTACHMENT 默认规则通知", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/attachments/attachment-service.ts",
+      "utf8",
+    );
+    // 附件上传是另一个请求、不带 deliveryOverride：再发一次通知的话，
+    // 被「本次不提醒」排除掉的人会为每个附件各收一条
+    expect(service).toContain("if (!input.inline && input.requestMessageId) {");
+    const block = service.slice(
+      service.indexOf("if (!input.inline && input.requestMessageId) {"),
+      service.indexOf("} else if (!input.inline) {"),
+    );
+    expect(block).toContain("publishEvent(");
+    expect(block).toContain("audible: false");
+  });
+});
+
+describe("附件派生事件要带上归属实体", () => {
+  it("优化完成 / 预览就绪都要带 id，否则会被当成项目级文件过滤掉", async () => {
+    const { readFile } = await import("node:fs/promises");
+    for (const path of [
+      "src/modules/plugins/image-webp-runtime-service.ts",
+      "src/modules/attachments/preview-render-service.ts",
+    ]) {
+      const source = await readFile(path, "utf8");
+      // 查询要取到归属 id，payload 才带得出去
+      expect(source).toContain("projectUpdateId: true");
+      expect(source).toContain("milestoneId: true");
+      expect(source).toContain("attachmentEventPayload(attachment)");
+      // 不能再退回只带 attachmentId 的写法
+      expect(source).not.toContain("payload: { attachmentId: attachment.id }");
+    }
+  });
+});
+
 describe("实体附件仍要发静默刷新事件", () => {
   it("不发通知，但要让停在项目详情页的人刷出附件", async () => {
     const { readFile } = await import("node:fs/promises");
