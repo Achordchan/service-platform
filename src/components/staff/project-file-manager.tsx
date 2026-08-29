@@ -44,7 +44,7 @@ import {
   createAttachmentDrafts,
   type AttachmentDraft,
 } from "@/lib/attachment-drafts";
-import { apiRequest } from "@/lib/api-client";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -90,6 +90,7 @@ export function ProjectFileManager({
   const [uploading, setUploading] = useState(false);
   // 来源筛选：手动上传的项目文件 vs 从工单沟通/动态里收录进来的
   const [source, setSource] = useState<SourceFilter>("ALL");
+  const [unpinning, setUnpinning] = useState<string | null>(null);
   // 按 source 分类，不能按 pinned：动态/里程碑上的附件是服务端自动收录的，
   // source 是 UPDATE/MILESTONE 但 pinnedToProjectAt 为空，用 pinned 判会把它们
   // 错归成「项目文件」，「来自沟通」则只剩手动收录的工单附件。
@@ -99,6 +100,23 @@ export function ProjectFileManager({
     const collected = (file.source ?? "PROJECT") !== "PROJECT";
     return source === "COLLECTED" ? collected : !collected;
   });
+
+  async function unpinFile(attachmentId: string) {
+    setUnpinning(attachmentId);
+    try {
+      await apiRequest(
+        `/api/v1/attachments/${attachmentId}/pin`,
+        jsonRequest("POST", { pinned: false }),
+        "移出失败",
+      );
+      toast.success("已移出项目文件");
+      router.refresh();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "移出失败");
+    } finally {
+      setUnpinning(null);
+    }
+  }
 
   async function upload(current: AttachmentDraft) {
     setUploading(true);
@@ -281,6 +299,18 @@ export function ProjectFileManager({
                 >
                   下载
                 </Button>
+                {/* 手动收录进来的才有「移出」；自动收录的（动态/里程碑附件）
+                    跟着实体走，移不了，所以只认 pinned 而不是 source */}
+                {file.pinned ? (
+                  <Button
+                    variant="text"
+                    color="inherit"
+                    disabled={unpinning === file.id}
+                    onClick={() => void unpinFile(file.id)}
+                  >
+                    移出项目文件
+                  </Button>
+                ) : null}
               </Stack>
             ) : null}
           </Stack>

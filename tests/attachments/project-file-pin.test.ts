@@ -250,3 +250,30 @@ describe("项目列表的里程碑计数", () => {
     );
   });
 });
+
+describe("收录状态变更要能被别人看到、也要能撤销", () => {
+  it("翻收录标记后发静默刷新事件，否则别人停在旧列表", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const service = await readFile(
+      "src/modules/attachments/attachment-service.ts",
+      "utf8",
+    );
+    const fn = service.slice(
+      service.indexOf("export async function setAttachmentProjectPin"),
+    );
+    expect(fn).toContain("publishEvent(");
+    expect(fn).toContain("audible: false");
+  });
+
+  it("Web 端要有「移出项目文件」入口，不能只在小程序有", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const web = await readFile(
+      "src/components/staff/project-file-manager.tsx",
+      "utf8",
+    );
+    // 只有手动收录的（pinned）才可移出；自动收录的跟着实体走
+    expect(web).toContain("file.pinned ?");
+    expect(web).toContain("移出项目文件");
+    expect(web).toContain('jsonRequest("POST", { pinned: false })');
+  });
+});

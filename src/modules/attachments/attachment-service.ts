@@ -890,6 +890,8 @@ export async function setAttachmentProjectPin(
       select: {
         id: true,
         projectId: true,
+        customerSpaceId: true,
+        visibility: true,
         pinnedToProjectAt: true,
         serviceRequestId: true,
         requestMessageId: true,
@@ -929,6 +931,25 @@ export async function setAttachmentProjectPin(
       projectId: attachment.projectId,
       serviceRequestId: attachment.serviceRequestId ?? undefined,
     });
+    // 收录状态变了，项目文件聚合列表就跟着变：不发事件的话，别人开着的
+    // 项目详情页会一直停在旧列表，直到手动刷新或碰巧收到别的项目事件。
+    // 与附件上传那条一样：audible: false，只刷新、不打扰。
+    if (attachment.customerSpaceId) {
+      await publishEvent(tx, {
+        type: "PROJECT_UPDATED",
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          actorId: actor.id,
+          audible: false,
+          projectId: attachment.projectId,
+          attachmentId: attachment.id,
+          // 收录/移出改的是项目文件聚合列表，归项目文件模块
+          visibility: attachment.visibility,
+        },
+        customerSpaceId: attachment.customerSpaceId,
+        projectId: attachment.projectId,
+      });
+    }
     return { id: attachment.id, pinned };
   });
 }
