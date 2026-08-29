@@ -5,6 +5,7 @@ import {
 } from "@/modules/projects/project-staff-service";
 import { addProjectStaffSchema } from "@/modules/projects/schemas";
 import {
+  readDeliveryOverride,
   readJson,
   requireApiActor,
   routeError,
@@ -33,8 +34,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { projectId } = await context.params;
-    const input = addProjectStaffSchema.parse(await readJson(request));
-    const staff = await addProjectStaff(auth.actor, projectId, input);
+    const body = await readJson(request);
+    const input = addProjectStaffSchema.parse(body);
+    const staff = await addProjectStaff(
+      auth.actor,
+      projectId,
+      input,
+      readDeliveryOverride(auth.actor, body),
+    );
     return NextResponse.json({ data: staff }, { status: 201 });
   } catch (error) {
     return routeError(error);

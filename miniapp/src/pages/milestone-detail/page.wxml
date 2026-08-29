@@ -1,0 +1,62 @@
+<import src="/components/states.wxml" />
+
+<view class="ms-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+  <view wx:elif="{{loadError}}" class="ms-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="card">
+      <view class="ms-head">
+        <view class="ms-title">{{title}}</view>
+        <view class="tag tag-{{statusTone}}">{{statusLabel}}</view>
+      </view>
+      <view class="text-secondary ms-date">{{dateText}}</view>
+
+      <rich-text wx:if="{{hasBody}}" class="ms-body" nodes="{{body}}"></rich-text>
+      <view wx:else class="text-secondary ms-empty">未填写说明</view>
+
+      <view wx:if="{{images.length > 0}}" class="ms-section">
+        <view class="section-title">图片（{{images.length}}）</view>
+        <view
+          wx:for="{{images}}"
+          wx:key="id"
+          class="ms-row"
+          hover-class="hover-card"
+          data-id="{{item.id}}"
+          bindtap="onOpenImage"
+        >
+          <t-icon name="image" size="36rpx" color="#16a466" />
+          <view class="ms-row-main"><view class="ms-row-name">{{item.name}}</view></view>
+          <text class="ms-row-hint">点击预览</text>
+        </view>
+      </view>
+
+      <view wx:if="{{attachments.length > 0}}" class="ms-section">
+        <view class="section-title">附件（{{attachments.length}}）</view>
+        <view
+          wx:for="{{attachments}}"
+          wx:key="id"
+          class="ms-row"
+          hover-class="hover-card"
+          data-id="{{item.id}}"
+          data-istext="{{item.isText}}"
+          data-name="{{item.name}}"
+          bindtap="onOpenAttachment"
+        >
+          <t-icon name="file" size="36rpx" color="#1677ff" />
+          <view class="ms-row-main">
+            <view class="ms-row-name">{{item.name}}</view>
+            <view wx:if="{{item.note}}" class="ms-row-sub">{{item.note}}</view>
+            <view class="ms-row-sub">{{item.sizeText}}</view>
+          </view>
+          <t-icon name="chevron-right" size="32rpx" color="#98a2b3" />
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{canManage}}" class="ms-actions">
+      <button class="plain-btn ms-action-btn" hover-class="hover-plain" bindtap="onEdit">编辑</button>
+      <button class="plain-btn ms-action-btn ms-action-danger" hover-class="hover-plain" bindtap="onDelete">删除</button>
+    </view>
+  </block>
+</view>

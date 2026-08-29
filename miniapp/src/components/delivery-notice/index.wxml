@@ -1,0 +1,114 @@
+<view wx:if="{{rule}}" class="dn">
+  <view class="dn-line">
+    <t-icon name="notification" size="28rpx" color="#98a2b3" />
+    <text class="dn-text">{{noticeText}}</text>
+    <text wx:if="{{customized}}" class="dn-badge">已自定义</text>
+    <text class="dn-action {{disabled ? 'dn-action-off' : ''}}" bindtap="onOpenPanel">{{customized ? '编辑' : '自定义'}}</text>
+  </view>
+</view>
+
+<view wx:if="{{panelVisible}}" class="dn-mask" bindtap="onClosePanel" catchtouchmove="noop">
+  <view class="dn-panel" catchtap="noop">
+    <view class="dn-panel-head">
+      <text class="dn-panel-title">本次提醒方式</text>
+      <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onClosePanel" />
+    </view>
+
+    <view wx:if="{{loadingPreview}}" class="dn-panel-empty">读取提醒范围…</view>
+    <view wx:elif="{{previewError}}" class="dn-panel-empty">{{previewError}}</view>
+
+    <scroll-view wx:else scroll-y class="dn-panel-body">
+      <view class="dn-panel-desc">
+        场景「{{preview.label}}」。开关优先于后台规则与个人设置，强制发送将记入审计。
+      </view>
+
+      <view class="dn-row">
+        <view class="dn-row-main">
+          <view class="dn-row-title">站内通知</view>
+          <view class="dn-row-desc">通知的载体，关掉后邮件与微信订阅一并失效</view>
+        </view>
+        <switch checked="{{draftNotification}}" color="#1677ff" bindchange="onToggleNotification" />
+      </view>
+
+      <view class="dn-row dn-row-sub {{draftNotification ? '' : 'dn-row-disabled'}}">
+        <view class="dn-row-main">
+          <view class="dn-row-title">邮件</view>
+          <view class="dn-row-desc">{{emailHint}}</view>
+        </view>
+        <switch
+          wx:if="{{preview.rule.emailSupported}}"
+          checked="{{draftEmail}}"
+          disabled="{{!draftNotification}}"
+          color="#1677ff"
+          bindchange="onToggleEmail"
+        />
+      </view>
+
+      <view class="dn-row dn-row-sub {{draftNotification ? '' : 'dn-row-disabled'}}">
+        <view class="dn-row-main">
+          <view class="dn-row-title">微信订阅</view>
+          <view class="dn-row-desc">{{wechatHint}}</view>
+        </view>
+        <switch
+          wx:if="{{preview.rule.wechatSupported}}"
+          checked="{{draftWechat}}"
+          disabled="{{!draftNotification}}"
+          color="#1677ff"
+          bindchange="onToggleWechat"
+        />
+      </view>
+
+      <view wx:if="{{forceWarn}}" class="dn-force-warn">{{forceWarn}}</view>
+
+      <view wx:if="{{preview.mailLocalOutbox && draftEmail}}" class="dn-warn">
+        邮件当前是本地收件箱模式，开启后只会写入本地发件箱，不会真正外发。
+      </view>
+
+      <view class="dn-recipients-title">
+        收件人 {{rows.length}} 人 · 本次提醒 {{notifyCount}} 人
+      </view>
+      <view class="dn-recipients-hint">
+        点选可将某人移出本次提醒，仅影响本次，不改动对方的通知设置。
+      </view>
+      <view wx:if="{{rows.length === 0}}" class="dn-panel-empty">本次没有需要提醒的人。</view>
+      <block wx:for="{{groups}}" wx:for-item="group" wx:key="key">
+        <view class="dn-group-title dn-group-{{group.key}}">{{group.title}}</view>
+        <view
+          wx:for="{{group.rows}}"
+          wx:key="userId"
+          class="dn-recipient {{item.muted ? 'dn-recipient-muted' : ''}}"
+          data-user-id="{{item.userId}}"
+          bindtap="onToggleRecipient"
+        >
+          <t-icon
+            name="{{item.muted ? 'close-circle' : 'check-circle'}}"
+            size="36rpx"
+            color="{{item.muted ? '#98a2b3' : '#1677ff'}}"
+          />
+          <view class="dn-recipient-main">
+            <view class="dn-recipient-name">
+              {{item.name}}<text wx:if="{{item.external}}" class="dn-recipient-tag">外部联系人 · 仅邮件</text>
+            </view>
+            <view wx:if="{{item.muted}}" class="dn-recipient-states">本次不提醒他</view>
+            <view wx:else class="dn-recipient-states {{item.emailForced ? 'dn-recipient-forced' : ''}}">
+              邮件：{{item.emailLabel}}<block wx:if="{{preview.rule.wechatSupported}}"> · 微信：{{item.wechatLabel}}</block>
+            </view>
+          </view>
+          <text wx:if="{{item.muted}}" class="dn-recipient-off">已取消</text>
+        </view>
+      </block>
+    </scroll-view>
+
+    <view class="dn-panel-foot">
+      <button class="dn-btn dn-btn-plain" hover-class="dn-btn-plain-hover" bindtap="onRestoreDefault">恢复默认</button>
+      <button
+        class="dn-btn dn-btn-primary"
+        hover-class="dn-btn-primary-hover"
+        disabled="{{loadingPreview || previewError}}"
+        bindtap="onApply"
+      >
+        应用
+      </button>
+    </view>
+  </view>
+</view>

@@ -15,6 +15,7 @@ import { withActorDb } from "@/lib/actor";
 import { withSystemDb } from "@/lib/system-db";
 import {
   planProjectActivity,
+  planProjectStaffActivity,
   planRequestActivity,
   type ActivityAudience,
   type ActivityDelivery,
@@ -35,12 +36,24 @@ import {
   canReceiveProjectRealtimeEvent,
   canReceiveRequestRealtimeEvent,
 } from "@/modules/notifications/realtime-event-visibility";
+import { writeAuditLog } from "@/modules/audit/audit-service";
 import { loadNotificationDeliveryRule } from "@/modules/notifications/notification-delivery-rule-service";
 import {
+  applyDeliveryExclusions,
+  isDeliveryOverrideEffective,
+  isEmailForced,
+  resolveDeliveryChannel,
+  sanitizeDeliveryOverride,
+  type DeliveryOverrideEffect,
+  type NotificationDeliveryOverride,
+} from "@/modules/notifications/notification-delivery-override";
+import {
+  NOTIFICATION_DELIVERY_RULES,
   resolveNotificationSoundEnabled,
   ruleKeyForNotificationEmail,
   ruleKeyForProjectNotification,
   ruleKeyForRequestActivity,
+  type NotificationDeliveryRuleKey,
 } from "@/modules/notifications/notification-delivery-rules";
 import { recordUniversalRequestWebhook } from "@/modules/integrations/universal/webhook-service";
 import { recordDingTalkRobotDelivery } from "@/modules/plugins/dingtalk-robot-service";
@@ -216,6 +229,7 @@ export async function publishProjectDeleted(
 export async function createNotification(
   tx: Prisma.TransactionClient,
   input: NotificationPersistenceInput,
+  options?: { wechatOverride?: boolean },
 ) {
   const notificationId = randomUUID();
   let notification: {
@@ -289,6 +303,7 @@ export async function createNotification(
   });
   // 微信订阅消息（提醒渠道）：入队失败不影响通知本身
   await recordWechatSubscribeDelivery(tx, {
+    wechatOverride: options?.wechatOverride,
     id: notification.id,
     occurrenceCount: notification.occurrenceCount,
     type: input.type,
@@ -301,30 +316,96 @@ export async function createNotification(
   return { ...input, ...notification };
 }
 
-export async function dispatchProjectActivity(
+/**
+ * 只有真正改变了投递结果才落审计：点开自定义但什么都没改 → 不记。
+ * 「谁的邮件退订被无视」是这条审计最关键的信息，必须逐人记下来。
+ */
+async function recordDeliveryOverrideAudit(
   tx: Prisma.TransactionClient,
   actor: Actor,
   input: {
-    eventType: Extract<
-      EventType,
-      "PROJECT_UPDATED" | "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
-    >;
-    eventPayload: Prisma.InputJsonValue;
-    notificationType: Extract<
-      NotificationType,
-      | "PROJECT_UPDATE"
-      | "UPDATE_COMMENT"
-      | "PROJECT_STAGE"
-      | "PROJECT_MILESTONE"
-      | "PROJECT_FILE"
-    >;
-    notificationTitle: string;
-    notificationBody: string;
-    visibility: ContentVisibility;
-    customerSpaceId: string;
-    projectId: string;
-    contentRiskReviewId?: string;
+    override?: NotificationDeliveryOverride;
+    ruleKey: string;
+    rule: {
+      notificationEnabled: boolean;
+      emailEnabled: boolean;
+      wechatEnabled: boolean;
+    };
+    emailPreferenceOverriddenUserIds: string[];
+    excludedUserIds: string[];
+    customerSpaceId?: string;
+    projectId?: string;
+    serviceRequestId?: string;
   },
+) {
+  const override = input.override;
+  const forcedChannels: DeliveryOverrideEffect["forcedChannels"] = [];
+  const suppressedChannels: DeliveryOverrideEffect["suppressedChannels"] = [];
+  const channels = [
+    ["notification", override?.notification, input.rule.notificationEnabled],
+    ["email", override?.email, input.rule.emailEnabled],
+    ["wechat", override?.wechat, input.rule.wechatEnabled],
+  ] as const;
+  for (const [channel, chosen, ruleEnabled] of channels) {
+    if (chosen === undefined || chosen === ruleEnabled) continue;
+    if (chosen) forcedChannels.push(channel);
+    else suppressedChannels.push(channel);
+  }
+  const effect: DeliveryOverrideEffect = {
+    forcedChannels,
+    suppressedChannels,
+    emailPreferenceOverriddenUserIds: input.emailPreferenceOverriddenUserIds,
+    excludedUserIds: input.excludedUserIds,
+  };
+  if (!isDeliveryOverrideEffective(effect)) return;
+  await writeAuditLog(tx, actor, {
+    action: "NOTIFICATION_DELIVERY_OVERRIDDEN",
+    resourceType: "NotificationDeliveryRule",
+    resourceId: input.ruleKey,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    serviceRequestId: input.serviceRequestId,
+    metadata: {
+      ruleKey: input.ruleKey,
+      forcedChannels: effect.forcedChannels,
+      suppressedChannels: effect.suppressedChannels,
+      emailPreferenceOverriddenUserIds: effect.emailPreferenceOverriddenUserIds,
+      excludedUserIds: effect.excludedUserIds,
+    },
+  });
+}
+
+type ProjectActivityRequest = {
+  eventType: Extract<
+    EventType,
+    "PROJECT_UPDATED" | "PROJECT_UPDATE_CREATED" | "UPDATE_COMMENT_CREATED"
+  >;
+  eventPayload: Prisma.InputJsonValue;
+  notificationType: Extract<
+    NotificationType,
+    | "PROJECT_UPDATE"
+    | "UPDATE_COMMENT"
+    | "PROJECT_STAGE"
+    | "PROJECT_MILESTONE"
+    | "PROJECT_FILE"
+  >;
+  notificationTitle: string;
+  notificationBody: string;
+  visibility: ContentVisibility;
+  customerSpaceId: string;
+  projectId: string;
+  contentRiskReviewId?: string;
+  deliveryOverride?: NotificationDeliveryOverride;
+};
+
+/**
+ * 算出这次项目活动的收件人与各通道开关。真正发送与「发送前预览」共用这里，
+ * 避免收件人规则出现两份实现而漂移；预览只是把 deliveryOverride 留空来跑。
+ */
+async function resolveProjectActivityPlan(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: ProjectActivityRequest,
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
   const project = await tx.project.findUniqueOrThrow({
@@ -345,29 +426,228 @@ export async function dispatchProjectActivity(
           ? project.showProgress
           : project.customerUpdatesEnabled;
   const visibility =
-    input.visibility === "CUSTOMER_VISIBLE" &&
-    !customerFeatureEnabled
+    input.visibility === "CUSTOMER_VISIBLE" && !customerFeatureEnabled
       ? "INTERNAL"
       : input.visibility;
-  const rule = await loadNotificationDeliveryRule(
-    tx,
-    ruleKeyForProjectNotification(input.notificationType),
+  const ruleKey = ruleKeyForProjectNotification(input.notificationType);
+  const rule = await loadNotificationDeliveryRule(tx, ruleKey);
+  const override = sanitizeDeliveryOverride(
+    actor,
+    input.deliveryOverride,
+    ruleChannelSupport(ruleKey),
   );
+  const notificationEnabled = resolveDeliveryChannel(
+    rule.notificationEnabled,
+    override?.notification,
+  );
+  // 站内是载体：关掉它，邮件与微信一并失效
+  const emailEnabled =
+    notificationEnabled &&
+    resolveDeliveryChannel(rule.emailEnabled, override?.email);
   const delivery = planProjectActivity({
     actorId: actor.id,
     audience,
     ...input,
-    eventPayload: withAudiblePayload(input.eventPayload, rule.soundEnabled),
+    // 站内是载体：本次把它关掉（规则关的或本次覆盖关的）就不该还响铃 ——
+    // 提示行写的是「本次操作不会发出提醒」，收件人却听得见，等于说话不算数
+    eventPayload: withAudiblePayload(
+      input.eventPayload,
+      notificationEnabled && rule.soundEnabled,
+    ),
     visibility,
     emailRecipientUserIds:
-      visibility === "CUSTOMER_VISIBLE" && rule.emailEnabled
+      visibility === "CUSTOMER_VISIBLE" && emailEnabled
         ? audience.customerUserIds
         : [],
   });
-  if (!rule.notificationEnabled) delivery.notifications = [];
-  return persistActivityDelivery(tx, delivery, {
+  if (!notificationEnabled) delivery.notifications = [];
+  const excluded = applyDeliveryExclusions(delivery.notifications, override);
+  delivery.notifications = excluded.notifications;
+  return {
+    delivery,
+    ruleKey,
+    rule,
+    override,
+    excludedUserIds: excluded.excludedUserIds,
+  };
+}
+
+export async function dispatchProjectActivity(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: ProjectActivityRequest,
+) {
+  const { delivery, ruleKey, rule, override, excludedUserIds } =
+    await resolveProjectActivityPlan(tx, actor, input);
+  const persisted = await persistActivityDelivery(tx, delivery, {
     contentRiskReviewId: input.contentRiskReviewId,
+    deliveryOverride: override,
   });
+  await recordDeliveryOverrideAudit(tx, actor, {
+    override,
+    ruleKey,
+    rule,
+    emailPreferenceOverriddenUserIds: persisted.emailPreferenceOverriddenUserIds,
+    excludedUserIds,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+  });
+  return persisted;
+}
+
+/**
+ * 预览用的「全通道打开」覆盖。
+ *
+ * 预览不能沿用当前的通道开关：后台把站内或邮件关着时，收件人列表会被清空、
+ * emailEligible 会全为 false，弹窗于是显示「0 人」或「本场景不发送」；可员工正是
+ * 要在弹窗里把它强制打开，提交后真实发送又会把这些人算回来 —— 预览说没人收，
+ * 结果批量发出去。所以预览要算的是「本场景的收件范围」这个不随开关变的底数，
+ * 通道开关由弹窗自己按用户当前的勾选去渲染。
+ *
+ * 注意这里只放开通道开关。场景本身不支持的通道会被 sanitizeDeliveryOverride 丢掉，
+ * 可见性、项目类型等收件范围维度也不受影响 —— 那些是强制发送本就越不过的边界。
+ */
+const PREVIEW_ALL_CHANNELS_ON = {
+  notification: true,
+  email: true,
+  wechat: true,
+} as const;
+
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
+export async function previewProjectActivityRecipients(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: Omit<ProjectActivityRequest, "deliveryOverride" | "contentRiskReviewId">,
+) {
+  const { delivery, ruleKey } = await resolveProjectActivityPlan(tx, actor, {
+    ...input,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
+  });
+  return {
+    ruleKey,
+    notificationUserIds: delivery.notifications.map((item) => item.userId),
+    emailUserIds: delivery.notifications
+      .filter((item) => item.emailEligible)
+      .map((item) => item.userId),
+  };
+}
+
+/**
+ * 项目人员变动（加入 / 角色调整 / 移出）只提醒当事人本人。
+ *
+ * 注意调用时机：移出项目必须在删除 ProjectStaff 行之前调用。Notification 的
+ * RLS WITH CHECK 对非管理员要求 app_user_relevant_to_project(userId, projectId)，
+ * 人一旦被删就不再「相关」，插入会被拒。
+ */
+async function resolveProjectStaffPlan(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    change:
+      | "PROJECT_STAFF_SELF_ADDED"
+      | "PROJECT_STAFF_SELF_UPDATED"
+      | "PROJECT_STAFF_SELF_REMOVED";
+    recipientUserId: string;
+    notificationTitle: string;
+    notificationBody: string;
+    customerSpaceId: string;
+    projectId: string;
+    deliveryOverride?: NotificationDeliveryOverride;
+  },
+) {
+  const rule = await loadNotificationDeliveryRule(tx, "PROJECT_STAFF");
+  const override = sanitizeDeliveryOverride(
+    actor,
+    input.deliveryOverride,
+    ruleChannelSupport("PROJECT_STAFF"),
+  );
+  const notificationEnabled = resolveDeliveryChannel(
+    rule.notificationEnabled,
+    override?.notification,
+  );
+  const delivery = planProjectStaffActivity({
+    actorId: actor.id,
+    recipientUserId: input.recipientUserId,
+    change: input.change,
+    // 同上：站内关掉就不响铃
+    audible: notificationEnabled && rule.soundEnabled,
+    notificationTitle: input.notificationTitle,
+    notificationBody: input.notificationBody,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    // 站内是载体：关掉它，邮件与微信一并失效
+    emailEligible:
+      notificationEnabled &&
+      resolveDeliveryChannel(rule.emailEnabled, override?.email),
+    notificationEnabled,
+  });
+  const excluded = applyDeliveryExclusions(delivery.notifications, override);
+  delivery.notifications = excluded.notifications;
+  return {
+    delivery,
+    rule,
+    override,
+    excludedUserIds: excluded.excludedUserIds,
+  };
+}
+
+export async function dispatchProjectStaffActivity(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    change:
+      | "PROJECT_STAFF_SELF_ADDED"
+      | "PROJECT_STAFF_SELF_UPDATED"
+      | "PROJECT_STAFF_SELF_REMOVED";
+    recipientUserId: string;
+    notificationTitle: string;
+    notificationBody: string;
+    customerSpaceId: string;
+    projectId: string;
+    deliveryOverride?: NotificationDeliveryOverride;
+  },
+) {
+  const { delivery, rule, override, excludedUserIds } =
+    await resolveProjectStaffPlan(tx, actor, input);
+  const persisted = await persistActivityDelivery(tx, delivery, {
+    deliveryOverride: override,
+  });
+  await recordDeliveryOverrideAudit(tx, actor, {
+    override,
+    ruleKey: "PROJECT_STAFF",
+    rule,
+    emailPreferenceOverriddenUserIds: persisted.emailPreferenceOverriddenUserIds,
+    excludedUserIds,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+  });
+  return persisted;
+}
+
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
+export async function previewProjectStaffRecipients(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: {
+    recipientUserId: string;
+    customerSpaceId: string;
+    projectId: string;
+  },
+) {
+  const { delivery } = await resolveProjectStaffPlan(tx, actor, {
+    change: "PROJECT_STAFF_SELF_ADDED",
+    notificationTitle: "",
+    notificationBody: "",
+    ...input,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
+  });
+  return {
+    ruleKey: "PROJECT_STAFF" as const,
+    notificationUserIds: delivery.notifications.map((item) => item.userId),
+    emailUserIds: delivery.notifications
+      .filter((item) => item.emailEligible)
+      .map((item) => item.userId),
+  };
 }
 
 export async function dispatchProjectCreatedActivity(
@@ -390,7 +670,8 @@ export async function dispatchProjectCreatedActivity(
     eventPayload: {
       change: "PROJECT_CREATED",
       actorId: actor.id,
-      audible: rule.soundEnabled,
+      // 同上：规则关掉站内就不建通知，也不该响铃
+      audible: rule.notificationEnabled && rule.soundEnabled,
       projectId: input.projectId,
     },
     notificationType: "PROJECT_CREATED",
@@ -411,47 +692,62 @@ export async function dispatchProjectCreatedActivity(
   return persistActivityDelivery(tx, delivery);
 }
 
-export async function dispatchRequestActivity(
+type RequestActivityRequest = {
+  eventType: Extract<
+    EventType,
+    | "REQUEST_CREATED"
+    | "REQUEST_ASSIGNED"
+    | "REQUEST_MESSAGE_CREATED"
+    | "REQUEST_STATUS_CHANGED"
+    | "REQUEST_UPDATED"
+  >;
+  eventPayload: Prisma.InputJsonValue;
+  notificationType: Extract<
+    NotificationType,
+    | "REQUEST_CREATED"
+    | "REQUEST_ASSIGNED"
+    | "REQUEST_CLAIMED"
+    | "REQUEST_MESSAGE"
+    | "REQUEST_STATUS"
+    | "REQUEST_ATTACHMENT"
+    | "REQUEST_ARCHIVE"
+  >;
+  notificationTitle: string;
+  notificationBody: string;
+  includeCustomers: boolean;
+  relevantWorkerUserIds?: Array<string | null | undefined>;
+  emailWorkerUserIds?: Array<string | null | undefined>;
+  notifyProjectManagers: boolean;
+  notifyPlatformAdmins: boolean;
+  createNotifications?: boolean;
+  audible?: boolean;
+  eventAudience?: "DEFAULT" | "NOTIFICATION_RECIPIENTS";
+  includeExternalContact?: boolean;
+  customerSpaceId: string;
+  projectId: string;
+  serviceRequestId: string;
+  sourceType?: string;
+  sourceId?: string;
+  contentRiskReviewId?: string;
+  deliveryOverride?: NotificationDeliveryOverride;
+  /**
+   * 本次本来会收到邮件的外部门户联系人（ExternalContact.id）。
+   *
+   * 他没有 Notification 行，applyDeliveryExclusions 的交集取不到他 —— 只排除他、
+   * 别的什么都没改时，审计 effect 会算成「无效覆盖」而整条不记，可邮件确实少发了。
+   * 由命令层在确认「本次本来会给他发信」后传入，仅用于把这次排除记进审计。
+   */
+  externalMailContactId?: string;
+};
+
+/**
+ * 算出这次服务请求活动的收件人与各通道开关。真正发送与「发送前预览」共用这里，
+ * 避免收件人规则出现两份实现而漂移；预览只是把 deliveryOverride 留空来跑。
+ */
+async function resolveRequestActivityPlan(
   tx: Prisma.TransactionClient,
   actor: Actor,
-  input: {
-    eventType: Extract<
-      EventType,
-      | "REQUEST_CREATED"
-      | "REQUEST_ASSIGNED"
-      | "REQUEST_MESSAGE_CREATED"
-      | "REQUEST_STATUS_CHANGED"
-      | "REQUEST_UPDATED"
-    >;
-    eventPayload: Prisma.InputJsonValue;
-    notificationType: Extract<
-      NotificationType,
-      | "REQUEST_CREATED"
-      | "REQUEST_ASSIGNED"
-      | "REQUEST_CLAIMED"
-      | "REQUEST_MESSAGE"
-      | "REQUEST_STATUS"
-      | "REQUEST_ATTACHMENT"
-      | "REQUEST_ARCHIVE"
-    >;
-    notificationTitle: string;
-    notificationBody: string;
-    includeCustomers: boolean;
-    relevantWorkerUserIds?: Array<string | null | undefined>;
-    emailWorkerUserIds?: Array<string | null | undefined>;
-    notifyProjectManagers: boolean;
-    notifyPlatformAdmins: boolean;
-    createNotifications?: boolean;
-    audible?: boolean;
-    eventAudience?: "DEFAULT" | "NOTIFICATION_RECIPIENTS";
-    includeExternalContact?: boolean;
-    customerSpaceId: string;
-    projectId: string;
-    serviceRequestId: string;
-    sourceType?: string;
-    sourceId?: string;
-    contentRiskReviewId?: string;
-  },
+  input: RequestActivityRequest,
 ) {
   const audience = await loadProjectAudience(tx, input.projectId);
   const project = await tx.project.findUniqueOrThrow({
@@ -471,46 +767,108 @@ export async function dispatchRequestActivity(
     input.emailWorkerUserIds ?? [],
   ).filter((userId) => validWorkerUserIds.has(userId));
   const payload = jsonObject(input.eventPayload);
-  const rule = await loadNotificationDeliveryRule(
-    tx,
-    ruleKeyForRequestActivity({
-      notificationType: input.notificationType,
-      visibility:
-        typeof payload.visibility === "string" ? payload.visibility : undefined,
-    }),
+  const ruleKey = ruleKeyForRequestActivity({
+    notificationType: input.notificationType,
+    visibility:
+      typeof payload.visibility === "string" ? payload.visibility : undefined,
+  });
+  const rule = await loadNotificationDeliveryRule(tx, ruleKey);
+  const override = sanitizeDeliveryOverride(
+    actor,
+    input.deliveryOverride,
+    ruleChannelSupport(ruleKey),
   );
   const createNotifications =
-    input.createNotifications !== false && rule.notificationEnabled;
+    input.createNotifications !== false &&
+    resolveDeliveryChannel(rule.notificationEnabled, override?.notification);
+  // 站内是载体：关掉它，邮件与微信一并失效
   const emailRecipientUserIds =
-    project.kind === "STANDARD" && createNotifications && rule.emailEnabled
+    project.kind === "STANDARD" &&
+    createNotifications &&
+    resolveDeliveryChannel(rule.emailEnabled, override?.email)
       ? standardRequestEmailRecipients(
           actor,
-          {
-            ...input,
-            relevantWorkerUserIds,
-            emailWorkerUserIds,
-          },
+          { ...input, relevantWorkerUserIds, emailWorkerUserIds },
           audience,
           includeCustomers,
         )
       : [];
-  const delivery = await persistActivityDelivery(
-    tx,
-    planRequestActivity({
-      actorId: actor.id,
-      audience,
-      ...input,
-      relevantWorkerUserIds,
-      eventPayload: withAudiblePayload(
-        input.eventPayload,
+  const planned = planRequestActivity({
+    actorId: actor.id,
+    audience,
+    ...input,
+    relevantWorkerUserIds,
+    eventPayload: withAudiblePayload(
+      input.eventPayload,
+      // 同上：本次不建通知（规则关的或本次覆盖关的）就不该还响铃
+      createNotifications &&
         resolveNotificationSoundEnabled(rule.soundEnabled, input.audible),
-      ),
-      includeCustomers,
-      createNotifications,
-      emailRecipientUserIds,
-    }),
-    { contentRiskReviewId: input.contentRiskReviewId },
-  );
+    ),
+    includeCustomers,
+    createNotifications,
+    emailRecipientUserIds,
+  });
+  const excluded = applyDeliveryExclusions(planned.notifications, override);
+  planned.notifications = excluded.notifications;
+  /**
+   * 本次「邮件」这条通道到底开没开（后台规则 + 本次覆盖）。
+   * 外部联系人的邮件不挂在 Notification 行上、由命令层单独入队，必须据此判断 ——
+   * 否则员工在弹窗里关掉邮件，外部联系人照收，反馈还把它算作已发送。
+   */
+  const emailChannelEnabled =
+    createNotifications &&
+    resolveDeliveryChannel(rule.emailEnabled, override?.email);
+  return {
+    planned,
+    ruleKey,
+    rule,
+    override,
+    payload,
+    excludedUserIds: [
+      ...excluded.excludedUserIds,
+      // 外部联系人没有通知行，applyDeliveryExclusions 的交集取不到他；
+      // 本次本会给他发信却被排除掉时，这是唯一能让审计记下这件事的地方。
+      // 必须同时确认邮件通道真开着：通道本来就关的话这封信怎样都不会发，
+      // 排除他没改变任何投递结果，再记一条「因本次覆盖被排除」就是假账
+      // —— 审计只记真正改变了结果的覆盖。
+      ...(emailChannelEnabled &&
+      input.externalMailContactId &&
+      override?.excludeUserIds?.includes(input.externalMailContactId)
+        ? [input.externalMailContactId]
+        : []),
+    ],
+    emailChannelEnabled,
+  };
+}
+
+export async function dispatchRequestActivity(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: RequestActivityRequest,
+) {
+  const {
+    planned,
+    ruleKey,
+    rule,
+    override,
+    payload,
+    excludedUserIds,
+    emailChannelEnabled,
+  } = await resolveRequestActivityPlan(tx, actor, input);
+  const delivery = await persistActivityDelivery(tx, planned, {
+    contentRiskReviewId: input.contentRiskReviewId,
+    deliveryOverride: override,
+  });
+  await recordDeliveryOverrideAudit(tx, actor, {
+    override,
+    ruleKey,
+    rule,
+    emailPreferenceOverriddenUserIds: delivery.emailPreferenceOverriddenUserIds,
+    excludedUserIds,
+    customerSpaceId: input.customerSpaceId,
+    projectId: input.projectId,
+    serviceRequestId: input.serviceRequestId,
+  });
   if (input.includeExternalContact) {
     // Embed-only copy: explicitly marked so main-app SSE can ignore it without
     // dropping legitimate userId=null request events.
@@ -543,7 +901,39 @@ export async function dispatchRequestActivity(
     contentRiskReviewId: input.contentRiskReviewId,
   });
   delivery.feedback.dingtalkQueued = dingtalkQueued;
-  return delivery;
+  // 外部联系人邮件由命令层单独入队，把判断所需的两样带出去。
+  // requestedExcludeUserIds 是「清洗后原始的排除名单」，不能用 excludedUserIds ——
+  // 后者只保留与真实通知行相交的部分，而外部联系人根本没有 Notification 行，
+  // 它的 id 到不了命令层，排除就恒等于没生效。
+  return {
+    ...delivery,
+    emailChannelEnabled,
+    excludedUserIds,
+    requestedExcludeUserIds: override?.excludeUserIds ?? [],
+  };
+}
+
+
+/** 发送前预览：跑一遍真正的收件人计算，但不落库；通道一律按打开算（见上） */
+export async function previewRequestActivityRecipients(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  input: Omit<
+    RequestActivityRequest,
+    "deliveryOverride" | "contentRiskReviewId"
+  >,
+) {
+  const { planned, ruleKey } = await resolveRequestActivityPlan(tx, actor, {
+    ...input,
+    deliveryOverride: { ...PREVIEW_ALL_CHANNELS_ON },
+  });
+  return {
+    ruleKey,
+    notificationUserIds: planned.notifications.map((item) => item.userId),
+    emailUserIds: planned.notifications
+      .filter((item) => item.emailEligible)
+      .map((item) => item.userId),
+  };
 }
 
 export async function dispatchExternalRequestActivity(
@@ -1121,16 +1511,48 @@ async function loadProjectAudience(
   };
 }
 
+function ruleChannelSupport(ruleKey: NotificationDeliveryRuleKey) {
+  const definition = NOTIFICATION_DELIVERY_RULES.find(
+    (item) => item.key === ruleKey,
+  );
+  return {
+    emailSupported: definition?.emailSupported ?? false,
+    wechatSupported: definition?.wechatSupported ?? false,
+  };
+}
+
 async function persistActivityDelivery(
   tx: Prisma.TransactionClient,
   delivery: ActivityDelivery,
-  options?: { contentRiskReviewId?: string },
+  options?: {
+    contentRiskReviewId?: string;
+    deliveryOverride?: NotificationDeliveryOverride;
+  },
 ) {
   const events = [];
   const notifications = [];
+  const emailPreferenceOverriddenUserIds: string[] = [];
+  const emailForced = isEmailForced(options?.deliveryOverride);
 
+  // 被逐人排除的收件人仍要收到实时事件（事件负责页面刷新，不该让他看到过期内容），
+  // 但绝不能因此听到提示音 —— 弹窗上明写「本次不提醒他」。事件带上静音名单，
+  // 由 GlobalRealtimeSound 对号入座地跳过响铃。
+  const silencedUserIds = options?.deliveryOverride?.excludeUserIds ?? [];
   for (const event of delivery.events) {
-    events.push(await publishEvent(tx, event));
+    events.push(
+      await publishEvent(
+        tx,
+        silencedUserIds.length > 0
+          ? {
+              ...event,
+              payload: {
+                ...(event.payload as Prisma.InputJsonObject),
+                silencedUserIds,
+              },
+            }
+          : event,
+      ),
+    );
   }
   const requestId = delivery.notifications.find(
     (notification) => notification.serviceRequestId,
@@ -1161,6 +1583,9 @@ async function persistActivityDelivery(
   const emailEnabledUserIds = new Set<string>();
   let perTypeDisabled = new Set<string>();
   let delayEmailUntilUnread = false;
+  // 邮件模式是基础设施开关，不是收件人偏好：本地收件箱模式下即使本次强制勾了
+  // 邮件也不该入队，否则 deliveryFeedback 会报「已进入发送队列」骗人
+  let mailModeAllowsEmail = false;
   if (emailCandidateUserIds.length > 0) {
     const [settings] = await tx.$queryRaw<
       Array<{
@@ -1188,6 +1613,7 @@ async function persistActivityDelivery(
       optouts.map((p) => `${p.user_id}:${p.rule_key}`),
     );
     if (settings && settings.mail_mode !== "LOCAL_OUTBOX") {
+      mailModeAllowsEmail = true;
       delayEmailUntilUnread = settings?.delay_enabled ?? false;
       for (const user of users) {
         if (user.requestEmailNotificationsEnabled) {
@@ -1200,8 +1626,15 @@ async function persistActivityDelivery(
   let immediateMailNotificationId: string | null = null;
   let emailCount = 0;
   for (const notification of delivery.notifications) {
+    // 正在看这一页的人默认不重复打扰。但本次被显式强制发邮件的除外：邮件挂在通知
+    // 行上，这里 continue 掉等于强制发送对「恰好在线」的人静默失效 —— 而在线不是
+    // 个人偏好，不在强制发送越不过的那几条硬约束里（收件范围 / 绑定额度 / 邮件模式），
+    // UI 已经承诺会发。
+    const forcedEmailForUser =
+      emailForced && notification.emailEligible && mailModeAllowsEmail;
     if (
       !options?.contentRiskReviewId &&
+      !forcedEmailForUser &&
       activeUserIds.has(notification.userId)
     ) {
       continue;
@@ -1210,10 +1643,18 @@ async function persistActivityDelivery(
     const perTypeOptedOut =
       ruleKey != null &&
       perTypeDisabled.has(`${notification.userId}:${ruleKey}`);
+    // 本次操作显式勾了邮件 → 无视收件人的全局开关与按场景退订。
+    // 这是整条链上唯一凌驾于个人偏好之上的地方，被无视的人要记进审计。
+    const preferenceAllowsEmail =
+      emailEnabledUserIds.has(notification.userId) && !perTypeOptedOut;
     const emailDueAtForUser =
-      emailEnabledUserIds.has(notification.userId) && !perTypeOptedOut
+      mailModeAllowsEmail &&
+      (preferenceAllowsEmail || (emailForced && notification.emailEligible))
         ? emailDueAt
         : undefined;
+    if (emailDueAtForUser && !preferenceAllowsEmail) {
+      emailPreferenceOverriddenUserIds.push(notification.userId);
+    }
     const persistenceInput = toNotificationPersistenceInput(
       notification,
       options?.contentRiskReviewId ? undefined : emailDueAtForUser,
@@ -1223,6 +1664,7 @@ async function persistActivityDelivery(
       options?.contentRiskReviewId
         ? { ...persistenceInput, aggregationKey: undefined }
         : persistenceInput,
+      { wechatOverride: options?.deliveryOverride?.wechat },
     );
     if (options?.contentRiskReviewId) {
       const [held] = await tx.$queryRaw<Array<{ held: boolean }>>`
@@ -1265,7 +1707,12 @@ async function persistActivityDelivery(
     dingtalkQueued: false,
   };
 
-  return { events, notifications, feedback };
+  return {
+    events,
+    notifications,
+    feedback,
+    emailPreferenceOverriddenUserIds,
+  };
 }
 
 function hasInternalVisibility(payload: Prisma.JsonValue) {

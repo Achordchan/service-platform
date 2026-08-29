@@ -58,22 +58,40 @@
     <!-- 概览 -->
     <block wx:if="{{activeTab === 'overview'}}">
       <view class="card">
-        <view class="section-title">项目信息</view>
-        <view class="row"><text class="row-label">当前阶段</text><text>{{project.currentStage || '—'}}</text></view>
+        <view class="section-head">
+          <view class="section-title">项目信息</view>
+          <view wx:if="{{caps.canEditSettings}}" class="section-action" hover-class="hover-plain" bindtap="onOpenSettings">
+            <t-icon name="setting-1" size="30rpx" color="#1677ff" /><text>设置</text>
+          </view>
+        </view>
+        <view class="row {{caps.canManageDelivery ? 'row-editable' : ''}}" bindtap="onEditStage">
+          <text class="row-label">当前阶段</text>
+          <view class="row-value-edit">
+            <text>{{project.currentStage || '—'}}</text>
+            <t-icon wx:if="{{caps.canManageDelivery}}" name="edit-1" size="28rpx" color="#98a2b3" />
+          </view>
+        </view>
         <view class="row"><text class="row-label">服务周期</text><text>{{project.startDate || '—'}} 至 {{project.endDate || '—'}}</text></view>
         <view class="row"><text class="row-label">项目状态</text><text>{{statusLabel}}</text></view>
+        <view wx:if="{{caps.canManageStaff}}" class="row row-editable" bindtap="onOpenStaff">
+          <text class="row-label">项目人员</text>
+          <view class="row-value-edit">
+            <text>{{project.staff.length}} 人</text>
+            <t-icon name="chevron-right" size="30rpx" color="#98a2b3" />
+          </view>
+        </view>
       </view>
       <view class="card stat-card">
-        <view class="stat-item">
+        <view wx:if="{{showRequestStat}}" class="stat-item">
           <view class="stat-num">{{requestCount}}</view>
           <view class="stat-label">服务请求</view>
         </view>
-        <view class="stat-item">
+        <view wx:if="{{showUpdateStat}}" class="stat-item">
           <view class="stat-num">{{project.updates.length}}</view>
           <view class="stat-label">项目动态</view>
         </view>
-        <view class="stat-item">
-          <view class="stat-num">{{milestones.length > 0 ? milestones.length : project.milestones.length}}</view>
+        <view wx:if="{{showMilestoneStat}}" class="stat-item">
+          <view class="stat-num">{{project.milestones.length}}</view>
           <view class="stat-label">里程碑</view>
         </view>
       </view>
@@ -86,26 +104,37 @@
     <!-- 里程碑：骨架先行 -->
     <block wx:if="{{activeTab === 'milestones'}}">
       <template wx:if="{{milestonesLoading}}" is="skeleton-list" data="{{count: 3}}" />
-      <template
-        wx:elif="{{milestones.length === 0}}"
-        is="state-empty"
-        data="{{icon: 'flag', title: '暂无里程碑', desc: '里程碑设置后会展示项目阶段'}}"
-      />
-      <view wx:else class="timeline">
-        <view wx:for="{{milestones}}" wx:key="id" class="milestone-item">
-          <view class="milestone-rail">
-            <view class="milestone-dot ms-{{item.status}}"></view>
-            <view wx:if="{{index < milestones.length - 1}}" class="milestone-line"></view>
-          </view>
-          <view class="milestone-body">
-            <view class="milestone-title">{{item.title}}</view>
-            <view class="text-secondary">{{item.startDateText}} ~ {{item.endDateText}}</view>
-            <view wx:if="{{item.description}}" class="milestone-desc">
-              <rich-text nodes="{{item.description}}"></rich-text>
+      <block wx:else>
+        <template
+          wx:if="{{milestones.length === 0}}"
+          is="state-empty"
+          data="{{icon: 'flag', title: '暂无里程碑', desc: '里程碑设置后会展示项目阶段'}}"
+        />
+        <block wx:else>
+          <view
+            wx:for="{{milestones}}"
+            wx:key="id"
+            class="card card-press"
+            hover-class="hover-card"
+            hover-stay-time="80"
+            data-index="{{index}}"
+            bindtap="onOpenMilestone"
+          >
+            <view class="update-head">
+              <view class="update-title">{{item.title}}</view>
+              <view class="tag tag-{{item.statusTone}}">{{item.statusLabel}}</view>
             </view>
+            <view class="text-secondary update-meta">{{item.startDateText}} ~ {{item.endDateText}}</view>
+            <view wx:if="{{item.descriptionText}}" class="update-preview">{{item.descriptionText}}</view>
+            <view wx:else class="update-preview text-secondary">未填写说明</view>
+            <view class="update-badges" wx:if="{{item.imageCount > 0 || item.attachmentCount > 0}}">
+              <view wx:if="{{item.imageCount > 0}}" class="update-badge">{{item.imageCount}} 张图片</view>
+              <view wx:if="{{item.attachmentCount > 0}}" class="update-badge">{{item.attachmentCount}} 个附件</view>
+            </view>
+            <view class="update-enter">查看全文<t-icon name="chevron-right" size="28rpx" color="#1677ff" /></view>
           </view>
-        </view>
-      </view>
+        </block>
+      </block>
     </block>
 
     <!-- 项目动态：骨架先行 + 摘要卡片（全文进详情页） -->
@@ -142,7 +171,6 @@
     <block wx:if="{{activeTab === 'requests'}}">
       <view class="request-actions">
         <view class="request-count text-secondary">共 {{requestCount}} 个服务请求</view>
-        <view class="new-request-btn" hover-class="hover-plain" bindtap="onNewRequest">+ 新建服务请求</view>
       </view>
       <template wx:if="{{requestsLoading}}" is="skeleton-list" data="{{count: 3}}" />
       <template
@@ -180,6 +208,15 @@
       <block wx:else>
         <view class="card">
           <view class="section-title">项目文件（{{files.length}}）</view>
+          <view class="file-source-bar">
+            <view
+              wx:for="{{fileSourceOptions}}"
+              wx:key="value"
+              class="file-source-chip {{fileSource === item.value ? 'file-source-chip-active' : ''}}"
+              data-value="{{item.value}}"
+              bindtap="onFileSource"
+            >{{item.label}}</view>
+          </view>
           <view
             wx:for="{{files}}"
             wx:key="id"
@@ -188,18 +225,60 @@
             data-id="{{item.id}}"
             data-istext="{{item.isText}}"
             data-name="{{item.displayName}}"
+            data-pinned="{{item.pinned}}"
             bindtap="onOpenFile"
+            bindlongpress="onLongPressProjectFile"
           >
             <view class="file-ext">{{item.ext}}</view>
             <view class="file-main">
               <view class="file-name">{{item.displayName}}</view>
               <view wx:if="{{item.note}}" class="text-secondary file-sub file-note">{{item.note}}</view>
-              <view class="text-secondary file-sub">{{item.sizeText}} · {{item.createdAt}}</view>
+              <view class="text-secondary file-sub">
+                {{item.sizeText}} · {{item.createdAt}}
+                <text wx:if="{{item.collected}}" class="file-source-tag">{{item.sourceLabel}}</text>
+              </view>
             </view>
             <t-icon name="chevron-right" size="34rpx" color="#98a2b3" />
           </view>
         </view>
       </block>
     </block>
+
+    <!-- 悬浮按钮会盖住列表末尾，留出等高的落地空间 -->
+    <view wx:if="{{fabAction}}" class="fab-spacer"></view>
   </block>
+
+  <!-- 当前阶段编辑 -->
+  <view wx:if="{{stageVisible}}" class="stage-mask" bindtap="onCloseStage" catchtouchmove="noop">
+    <view class="stage-panel" catchtap="noop">
+      <view class="stage-title">当前阶段</view>
+      <input
+        class="stage-input"
+        value="{{stageDraft}}"
+        maxlength="60"
+        placeholder="如：需求评审"
+        placeholder-class="stage-placeholder"
+        bindinput="onStageInput"
+      />
+      <view class="stage-hint">留空表示不展示阶段</view>
+      <view class="stage-actions">
+        <button class="plain-btn stage-btn" hover-class="hover-plain" bindtap="onCloseStage">取消</button>
+        <button
+          class="primary-btn stage-btn"
+          hover-class="hover-btn"
+          loading="{{stageSaving}}"
+          disabled="{{stageSaving}}"
+          bindtap="onSaveStage"
+        >保存</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 右下角悬浮新增：动作跟随当前 tab（与工单列表的新建按钮同一套视觉） -->
+  <view
+    wx:if="{{fabAction}}"
+    class="fab"
+    hover-class="fab-hover"
+    bindtap="onFabTap"
+  >＋</view>
 </view>

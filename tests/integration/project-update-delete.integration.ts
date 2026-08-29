@@ -161,6 +161,96 @@ afterAll(async () => {
   await ownerPool.end();
 });
 
+describe("动态附件的可见性只看动态模块开关", () => {
+  it("关掉「项目文件」模块，客户仍能看到动态自己的附件，只是文件列表为空", async () => {
+    const { withActorDb } = await import("@/lib/actor");
+    const { loadProjectDetail } = await import(
+      "@/modules/projects/project-detail-query"
+    );
+    const fileAttachmentId = randomUUID();
+    const fileStorageKey = `projects/update-file-${randomUUID()}.txt`;
+    await writePrivateFile(
+      fileStorageKey,
+      new TextEncoder().encode("update file attachment"),
+    );
+    // 挂在动态上的「文件」附件（非内嵌图），以及一个项目级文件用作对照
+    const projectFileId = randomUUID();
+    const projectFileKey = `projects/plain-file-${randomUUID()}.txt`;
+    await writePrivateFile(
+      projectFileKey,
+      new TextEncoder().encode("plain project file"),
+    );
+    try {
+      await ownerPool.query(
+        `INSERT INTO "Attachment" (
+           id, "originalName", "storageKey", "mimeType", size, inline,
+           "customerSpaceId", "projectId", "projectUpdateId", "uploadedById"
+         ) VALUES ($1, 'update-file.txt', $2, 'text/plain', 22, false, $3, $4, $5, $6)`,
+        [
+          fileAttachmentId,
+          fileStorageKey,
+          fixture.spaceId,
+          fixture.projectId,
+          fixture.updateId,
+          admin.id,
+        ],
+      );
+      await ownerPool.query(
+        `INSERT INTO "Attachment" (
+           id, "originalName", "storageKey", "mimeType", size, inline,
+           "customerSpaceId", "projectId", "uploadedById"
+         ) VALUES ($1, 'plain.txt', $2, 'text/plain', 18, false, $3, $4, $5)`,
+        [
+          projectFileId,
+          projectFileKey,
+          fixture.spaceId,
+          fixture.projectId,
+          admin.id,
+        ],
+      );
+      // 开着动态、关掉文件：RLS 的 app_project_attachment_feature_enabled 会
+      // 按附件挂在谁身上分别裁决，动态附件看的是 customerUpdatesEnabled
+      await ownerPool.query(
+        `UPDATE "Project"
+         SET "customerUpdatesEnabled" = true, "customerFilesEnabled" = false
+         WHERE id = $1`,
+        [fixture.projectId],
+      );
+
+      const detail = await withActorDb(customer, (tx) =>
+        loadProjectDetail(tx, customer, fixture.projectId),
+      );
+      const update = detail?.updates.find(
+        (item) => item.id === fixture.updateId,
+      );
+      // 客户看得到动态正文，就该看得到它自己的附件
+      expect(update?.attachments.map((item) => item.id)).toEqual([
+        fileAttachmentId,
+      ]);
+      // 但「项目文件」聚合列表受 customerFilesEnabled 限制，整体为空
+      expect(detail?.attachments).toEqual([]);
+
+      // 打开文件模块后，项目级文件才出现在列表里
+      await ownerPool.query(
+        `UPDATE "Project" SET "customerFilesEnabled" = true WHERE id = $1`,
+        [fixture.projectId],
+      );
+      const opened = await withActorDb(customer, (tx) =>
+        loadProjectDetail(tx, customer, fixture.projectId),
+      );
+      expect(opened?.attachments.map((item) => item.id).sort()).toEqual(
+        [fileAttachmentId, projectFileId].sort(),
+      );
+    } finally {
+      await ownerPool.query('DELETE FROM "Attachment" WHERE id = ANY($1::text[])', [
+        [fileAttachmentId, projectFileId],
+      ]);
+      await removePrivateFile(fileStorageKey);
+      await removePrivateFile(projectFileKey);
+    }
+  });
+});
+
 describe("删除项目进度", () => {
   it("拒绝客户删除进度", async () => {
     await expect(

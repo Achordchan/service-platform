@@ -84,3 +84,111 @@
   font-size: 26rpx;
   line-height: 1.7;
 }
+
+/* —— 动态操作 + 评论（员工）—— */
+.detail-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.detail-actions {
+  display: flex;
+  gap: 24rpx;
+  flex-shrink: 0;
+}
+
+.detail-action {
+  font-size: 26rpx;
+  color: #1677ff;
+}
+
+.detail-action-danger {
+  color: #d14343;
+}
+
+.comment-empty {
+  padding: 24rpx 0;
+  font-size: 26rpx;
+}
+
+.comment-mine-hint {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+}
+
+.page-with-bar {
+  padding-bottom: 180rpx;
+}
+
+.comment-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 16rpx;
+  padding: 16rpx 24rpx calc(16rpx + env(safe-area-inset-bottom));
+  background: var(--card-bg, #fff);
+  border-top: 2rpx solid rgba(16, 24, 40, 0.08);
+}
+
+.comment-input {
+  flex: 1;
+  min-height: 64rpx;
+  max-height: 240rpx;
+  padding: 16rpx 20rpx;
+  background: #f5f6f8;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+.comment-placeholder {
+  color: #98a2b3;
+  font-size: 28rpx;
+  line-height: 1.5;
+}
+
+.comment-send {
+  flex-shrink: 0;
+  margin: 0;
+  background: #1677ff;
+  color: #fff;
+  font-size: 26rpx;
+  border-radius: 16rpx;
+}
+
+/* 动态自带的文件附件（正文内嵌图另在 image-section 展示） */
+.attach-section {
+  margin-top: 24rpx;
+}
+
+.attach-row {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  padding: 18rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.attach-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.attach-name {
+  font-size: 27rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attach-note,
+.attach-size {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary, #98a2b3);
+}

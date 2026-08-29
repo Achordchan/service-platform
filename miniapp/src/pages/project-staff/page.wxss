@@ -1,0 +1,195 @@
+.staff-page {
+  padding: 24rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.staff-load-error {
+  padding: 80rpx 0;
+  text-align: center;
+  color: var(--text-secondary, #667085);
+  font-size: 26rpx;
+}
+
+.staff-add {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8rpx;
+  margin-bottom: 24rpx;
+  padding: 20rpx;
+  background: var(--card-bg, #fff);
+  border: 2rpx dashed #1677ff;
+  border-radius: 16rpx;
+  color: #1677ff;
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.staff-empty {
+  padding: 60rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+}
+
+.card {
+  background: var(--card-bg, #fff);
+  border-radius: 20rpx;
+  overflow: hidden;
+}
+
+.staff-row {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+  padding: 24rpx 28rpx;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.staff-row:last-child {
+  border-bottom: none;
+}
+
+.staff-avatar {
+  width: 72rpx;
+  height: 72rpx;
+  border-radius: 50%;
+  background: rgba(22, 119, 255, 0.12);
+  color: #1677ff;
+  font-size: 32rpx;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.staff-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.staff-name {
+  font-size: 30rpx;
+}
+
+.staff-role {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+}
+
+.staff-hint {
+  margin-top: 24rpx;
+  font-size: 22rpx;
+  line-height: 1.6;
+}
+
+.staff-pending {
+  margin-bottom: 20rpx;
+}
+
+.staff-pending-title {
+  font-size: 28rpx;
+  font-weight: 600;
+  margin-bottom: 14rpx;
+}
+
+.staff-pending-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 20rpx;
+}
+
+.staff-pending-btn {
+  flex: 1;
+  margin: 0;
+}
+
+/* ———— 候选选择面板 ———— */
+.cand-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.cand-panel {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 74vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--card-bg);
+  border-radius: 24rpx 24rpx 0 0;
+  padding: 24rpx 24rpx calc(24rpx + env(safe-area-inset-bottom));
+}
+
+.cand-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cand-title {
+  font-size: 30rpx;
+  font-weight: 650;
+}
+
+.cand-close {
+  color: var(--brand);
+  font-size: 26rpx;
+  padding: 8rpx;
+}
+
+/* 与工单列表同一套单行 input 配方：固定高度 + 只留横向 padding + 两侧同行高，
+   否则 page 上继承的 line-height 只作用于 placeholder 覆盖层，背景文字会错位 */
+.cand-search {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 100%;
+  margin: 16rpx 0;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 14rpx;
+  height: 72rpx;
+  line-height: 70rpx;
+  padding: 0 20rpx;
+  font-size: 26rpx;
+}
+
+.search-placeholder {
+  color: var(--text-tertiary);
+  font-size: 26rpx;
+  line-height: 70rpx;
+}
+
+/* scroll-view 在小程序里拿不到 flex:1 的确定高度，必须给具体值 */
+.cand-list {
+  max-height: 52vh;
+  min-height: 200rpx;
+}
+
+.cand-row {
+  padding: 20rpx 8rpx;
+  border-bottom: 1rpx solid var(--divider);
+}
+
+.cand-name {
+  font-size: 28rpx;
+  font-weight: 500;
+}
+
+.cand-email {
+  font-size: 24rpx;
+  margin-top: 4rpx;
+}
+
+.cand-empty {
+  padding: 40rpx 0;
+  text-align: center;
+  font-size: 26rpx;
+}

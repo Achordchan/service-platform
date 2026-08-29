@@ -11,6 +11,12 @@ const listRequestsQuerySchema = z.object({
     .enum(["PENDING", "IN_PROGRESS", "WAITING_CUSTOMER", "RESOLVED", "CLOSED"])
     .optional(),
   q: z.string().trim().max(120).optional(),
+  priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).optional(),
+  archived: z.enum(["EXCLUDE", "ONLY", "ALL"]).optional(),
+  assignedToMe: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
   offset: z.coerce.number().int().min(0).optional(),
 });
@@ -23,6 +29,9 @@ export async function GET(request: Request) {
       projectId: url.searchParams.get("projectId") ?? undefined,
       status: url.searchParams.get("status") ?? undefined,
       q: url.searchParams.get("q") ?? undefined,
+      priority: url.searchParams.get("priority") ?? undefined,
+      archived: url.searchParams.get("archived") ?? undefined,
+      assignedToMe: url.searchParams.get("assignedToMe") ?? undefined,
       limit: url.searchParams.get("limit") ?? undefined,
       offset: url.searchParams.get("offset") ?? undefined,
     });

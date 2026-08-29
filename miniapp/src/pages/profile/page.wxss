@@ -131,3 +131,9 @@
   color: var(--error);
   background: var(--error-soft);
 }
+
+/* 员工角色徽标：与客户空间角色同位置，蓝色系区分内部身份 */
+.identity-role-staff {
+  background: rgba(22, 119, 255, 0.1);
+  color: #1677ff;
+}

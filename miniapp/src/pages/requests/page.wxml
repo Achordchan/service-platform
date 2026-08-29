@@ -23,6 +23,10 @@
       bindinput="onKeywordInput"
       bindconfirm="onSearchConfirm"
     />
+    <view class="filter-btn {{filterCount > 0 ? 'filter-btn-active' : ''}}" hover-class="hover-plain" bindtap="onOpenFilters">
+      <t-icon name="filter" size="34rpx" color="{{filterCount > 0 ? '#1677ff' : '#667085'}}" />
+      <text wx:if="{{filterCount > 0}}" class="filter-badge">{{filterCount}}</text>
+    </view>
   </view>
 
   <scroll-view scroll-x class="status-bar" enhanced show-scrollbar="{{false}}">
@@ -48,7 +52,7 @@
   <template
     wx:elif="{{rows.length === 0}}"
     is="state-empty"
-    data="{{icon: 'form', title: '暂无工单', desc: '点击右下角 + 提交服务请求'}}"
+    data="{{icon: 'form', title: '暂无工单', desc: isStaff ? '当前筛选下没有工单' : '点击右下角 + 提交服务请求'}}"
   />
 
   <block wx:else>
@@ -67,7 +71,7 @@
       </view>
       <view class="request-title">{{item.title}}</view>
       <view class="request-meta text-secondary">
-        {{item.category.name}} · {{item.assignee ? '负责人 ' + item.assignee.name : '待指派'}}
+        {{isStaff && item.projectTitle ? item.projectTitle + ' · ' : ''}}{{item.category.name}} · {{item.assignee ? '负责人 ' + item.assignee.name : '待指派'}}
       </view>
       <view class="request-meta text-secondary">更新于 {{item.updatedText}}</view>
     </view>
@@ -75,5 +79,47 @@
     <view wx:elif="{{!hasMore}}" class="load-more">没有更多了</view>
   </block>
 
-  <view class="fab" hover-class="fab-hover" bindtap="onNewRequest">＋</view>
+  <view wx:if="{{!isStaff}}" class="fab" hover-class="fab-hover" bindtap="onNewRequest">＋</view>
+
+  <!-- 更多筛选：优先级 / 归档范围 / 仅我处理 -->
+  <view wx:if="{{filterVisible}}" class="filter-mask" bindtap="onCloseFilters" catchtouchmove="noop">
+    <view class="filter-panel" catchtap="noop">
+      <view class="filter-panel-head">
+        <text class="filter-panel-title">更多筛选</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onCloseFilters" />
+      </view>
+
+      <view class="filter-group-label">优先级</view>
+      <view class="filter-chips">
+        <view
+          wx:for="{{priorityOptions}}"
+          wx:key="value"
+          class="filter-chip {{draftPriority === item.value ? 'filter-chip-active' : ''}}"
+          data-value="{{item.value}}"
+          bindtap="onDraftPriority"
+        >{{item.label}}</view>
+      </view>
+
+      <view class="filter-group-label">归档</view>
+      <view class="filter-chips">
+        <view
+          wx:for="{{archivedOptions}}"
+          wx:key="value"
+          class="filter-chip {{draftArchived === item.value ? 'filter-chip-active' : ''}}"
+          data-value="{{item.value}}"
+          bindtap="onDraftArchived"
+        >{{item.label}}</view>
+      </view>
+
+      <view wx:if="{{isStaff}}" class="filter-switch-row">
+        <view class="filter-group-label filter-group-inline">仅看分配给我的</view>
+        <switch checked="{{draftAssignedToMe}}" color="#1677ff" bindchange="onDraftAssigned" />
+      </view>
+
+      <view class="filter-panel-foot">
+        <button class="plain-btn filter-foot-btn" hover-class="hover-plain" bindtap="onResetFilters">重置</button>
+        <button class="primary-btn filter-foot-btn" hover-class="hover-btn" bindtap="onApplyFilters">应用</button>
+      </view>
+    </view>
+  </view>
 </view>

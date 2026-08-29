@@ -1,0 +1,90 @@
+<import src="/components/states.wxml" />
+
+<view class="edit-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 2}}" />
+  <view wx:elif="{{loadError}}" class="edit-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="edit-card">
+      <view class="edit-label">里程碑标题</view>
+      <input
+        class="edit-input"
+        value="{{title}}"
+        maxlength="200"
+        placeholder="如：需求确认 / 一期上线"
+        placeholder-class="edit-placeholder"
+        bindinput="onTitleInput"
+      />
+
+      <view class="edit-label">状态</view>
+      <picker
+        mode="selector"
+        range="{{statusOptions}}"
+        range-key="label"
+        value="{{statusIndex}}"
+        bindchange="onStatusChange"
+      >
+        <view class="edit-picker">
+          {{statusOptions[statusIndex].label}}
+          <t-icon name="chevron-down" size="32rpx" color="#98a2b3" />
+        </view>
+      </picker>
+
+      <view class="edit-label">开始日期</view>
+      <view class="edit-date-row">
+        <picker mode="date" value="{{startDate}}" bindchange="onStartDateChange">
+          <view class="edit-picker">{{startDate || '未设置'}}</view>
+        </picker>
+        <text wx:if="{{startDate}}" class="edit-date-clear" bindtap="onClearStart">清除</text>
+      </view>
+
+      <view class="edit-label">结束日期</view>
+      <view class="edit-date-row">
+        <picker mode="date" value="{{endDate}}" bindchange="onEndDateChange">
+          <view class="edit-picker">{{endDate || '未设置'}}</view>
+        </picker>
+        <text wx:if="{{endDate}}" class="edit-date-clear" bindtap="onClearEnd">清除</text>
+      </view>
+
+      <view class="edit-label">说明（可选）</view>
+      <textarea
+        class="edit-textarea"
+        value="{{descText}}"
+        maxlength="20000"
+        auto-height
+        placeholder="里程碑的交付内容或说明…"
+        placeholder-class="edit-textarea-placeholder"
+        bindinput="onDescInput"
+      ></textarea>
+
+
+      <view class="edit-label">附件</view>
+      <view wx:for="{{files}}" wx:key="localPath" class="edit-file-row">
+        <t-icon name="file" size="32rpx" color="#1677ff" />
+        <text class="edit-file-name">{{item.fileName}}</text>
+        <text class="edit-file-remove" data-index="{{index}}" bindtap="onRemoveFile">移除</text>
+      </view>
+      <view class="edit-file-add" hover-class="hover-plain" bindtap="onAddFile">
+        ＋ 添加附件（最多 5 个）
+      </view>
+
+      <view wx:if="{{deliveryScene}}" class="edit-delivery">
+        <delivery-notice
+          scene="{{deliveryScene}}"
+          disabled="{{submitting}}"
+          bind:change="onDeliveryChange"
+        />
+      </view>
+    </view>
+
+    <button
+      class="primary-btn submit-btn"
+      hover-class="hover-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      {{mode === 'edit' ? '保存修改' : '新增里程碑'}}
+    </button>
+  </block>
+</view>

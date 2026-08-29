@@ -3,6 +3,8 @@ name: Pull request checks
 on:
   pull_request:
     branches: [main]
+    # ready_for_review：草稿转正式时补跑 E2E（见下方 e2e 的 if 条件）
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:
 
 permissions:
@@ -88,8 +90,19 @@ jobs:
           NODE_OPTIONS: --trace-deprecation
         run: pnpm test:integration
 
+  # E2E 是最贵的两个 job（各自 next build + Playwright，超时上限 30/35 分钟），
+  # 而 Quality + Build + Integration 已经能挡住绝大多数问题。评审迭代阶段每推一次
+  # 都全跑纯属浪费，所以只在这两种时机跑：
+  #   1. 草稿 PR 转为「可评审」（ready_for_review）
+  #   2. PR 上打了 run-e2e 标签（打标签会触发 labeled 事件，立即开跑）
+  # ⚠️ 合并前务必确认 E2E 跑过最新一次提交 —— 合入 main 即部署生产。
+  # 迭代中途想跑：加/重打 run-e2e 标签，或用 workflow_dispatch 手动触发。
   e2e-main:
     name: E2E main flow
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action == 'ready_for_review' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 35
     services:
@@ -124,8 +137,13 @@ jobs:
       - name: Main flow end-to-end tests
         run: pnpm exec playwright test e2e/main-flow.spec.ts
 
+  # 触发条件与 E2E main flow 一致，理由见上
   e2e-embeds:
     name: E2E embeds and isolation
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action == 'ready_for_review' ||
+      contains(github.event.pull_request.labels.*.name, 'run-e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:

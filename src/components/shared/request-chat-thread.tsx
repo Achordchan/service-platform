@@ -154,6 +154,7 @@ export function RequestChatThread({
   onReedit,
   counterpartTypingLabel,
   attachmentUrl,
+  onPinAttachmentToProject,
   onAttachmentDownload,
   locale = "zh-CN",
   contentRiskEnabled = false,
@@ -167,6 +168,8 @@ export function RequestChatThread({
   onReedit?: (message: ChatMessage) => void;
   counterpartTypingLabel?: string | null;
   attachmentUrl?: (file: ChatAttachment, inline: boolean) => string;
+  /** 「添加到项目文件」；未传则不渲染该入口（如 embed 门户） */
+  onPinAttachmentToProject?: (file: ChatAttachment) => void;
   onAttachmentDownload?: (file: ChatAttachment) => void;
   locale?: string;
   contentRiskEnabled?: boolean;
@@ -721,6 +724,7 @@ export function RequestChatThread({
                           tone={tone}
                           resolveUrl={attachmentUrl}
                           onDownload={onAttachmentDownload}
+                          onPinToProject={onPinAttachmentToProject}
                         />
                         {isRevoked ? (
                           <Stack

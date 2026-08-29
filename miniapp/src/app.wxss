@@ -134,11 +134,18 @@ page {
 }
 
 /* ———— 表单 ———— */
+/* 单行 input：page 上继承的 line-height: 1.6 只作用于 placeholder 覆盖层，
+   输入值本身按 normal 排版 —— 两者行盒不同，背景文字就比光标低一截。
+   固定高度 + 只留横向 padding + 两侧显式同一行高，强制用同一个行盒。
+   多行 textarea 不适用（见各页 .textarea / .edit-textarea 的覆写）。 */
 .input {
+  box-sizing: border-box;
   background: var(--page-bg);
   border: 2rpx solid transparent;
   border-radius: 16rpx;
-  padding: 20rpx 24rpx;
+  height: 88rpx;
+  line-height: 84rpx;
+  padding: 0 24rpx;
   font-size: 28rpx;
   margin-bottom: 20rpx;
   transition: border-color 0.15s ease, background 0.15s ease;
@@ -147,6 +154,25 @@ page {
 .input-focus {
   border-color: var(--brand);
   background: var(--card-bg);
+}
+
+/* 原生 input/textarea 的 placeholder 不跟随输入框自身的 font-size：微信只认
+   placeholder-class / placeholder-style 里的 color、font-size、font-weight，
+   不写就固定按默认 16px（≈32rpx）渲染，比正文大一圈、基线也对不齐。
+   这两个是 input / textarea 的默认 placeholder 类名，给没有单独指定
+   placeholder-class 的输入框兜底成 .input 的字号；字号不同的输入框
+   （搜索框、附件小输入框、验证码框等）各自在页面里覆写。 */
+.input-placeholder {
+  font-size: 28rpx;
+  line-height: 84rpx;
+  color: var(--text-tertiary);
+}
+
+.textarea-placeholder {
+  font-size: 28rpx;
+  /* textarea 的值确实按继承的 1.6 排版，placeholder 跟上即可 */
+  line-height: 1.6;
+  color: var(--text-tertiary);
 }
 
 .form-label {

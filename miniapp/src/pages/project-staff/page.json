@@ -1,0 +1,7 @@
+{
+  "navigationBarTitleText": "项目人员",
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon",
+    "delivery-notice": "/components/delivery-notice/index"
+  }
+}

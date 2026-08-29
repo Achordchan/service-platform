@@ -121,36 +121,98 @@ export async function loadProjectDetail(
     },
     select: { id: true, name: true },
   });
-  const attachments =
-    actor.isStaff || project.customerFilesEnabled
-      ? await tx.attachment.findMany({
-          where: {
-            projectId,
-            projectUpdateId: null,
-            updateCommentId: null,
-            milestoneId: null,
-            serviceRequestId: null,
-            requestMessageId: null,
-            inline: false,
-            ...(actor.isStaff
-              ? {}
-              : { visibility: "CUSTOMER_VISIBLE" as const }),
-          },
-          select: {
-            id: true,
-            originalName: true,
-            title: true,
-            note: true,
-            previewStatus: true,
-            mimeType: true,
-            size: true,
-            visibility: true,
-            uploadedById: true,
-            createdAt: true,
-          },
-          orderBy: { createdAt: "desc" },
-        })
-      : [];
+  // 不在这里按 customerFilesEnabled 一刀切：RLS 的
+  // app_project_attachment_feature_enabled 已经按附件挂在谁身上分别裁决 ——
+  // 动态/评论看 customerUpdatesEnabled、里程碑看 showMilestones、
+  // 项目级文件才看 customerFilesEnabled。外层再加一道粗门控的话，
+  // 「开着动态、关着文件」的项目里客户能看到动态正文却看不到它的附件。
+  // 受 customerFilesEnabled 限制的只是文件 tab 那个聚合列表（见返回值）。
+  const attachments = await tx.attachment.findMany({
+    where: {
+      projectId,
+      ...(actor.isStaff
+        ? {}
+        : { visibility: "CUSTOMER_VISIBLE" as const }),
+      OR: [
+        // 项目级手动上传
+        {
+          projectUpdateId: null,
+          updateCommentId: null,
+          milestoneId: null,
+          serviceRequestId: null,
+          requestMessageId: null,
+          inline: false,
+        },
+        // 进度动态 / 里程碑上的文件附件：自动收录，无需手动添加
+        // （正文内嵌图不算文件，仍排除）
+        { projectUpdateId: { not: null }, inline: false },
+        { milestoneId: { not: null }, inline: false },
+        // 从工单聊天里显式「添加到项目文件」的。RLS 仍按原归属裁决，
+        // 看不到源工单的人读不到这些行，收录不放宽任何可见性。
+        { pinnedToProjectAt: { not: null } },
+      ],
+    },
+    select: {
+      id: true,
+      originalName: true,
+      title: true,
+      note: true,
+      previewStatus: true,
+      mimeType: true,
+      size: true,
+      visibility: true,
+      uploadedById: true,
+      createdAt: true,
+      pinnedToProjectAt: true,
+      serviceRequestId: true,
+      projectUpdateId: true,
+      updateCommentId: true,
+      milestoneId: true,
+      inline: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+  const decorateAttachment = (attachment: (typeof attachments)[number]) => {
+    const revoked =
+      !actor.isPlatformAdmin &&
+      riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED";
+    return {
+      ...attachment,
+      originalName: revoked ? "" : attachment.originalName,
+      title: revoked ? null : attachment.title,
+      note: revoked ? null : attachment.note,
+      // 来源：让文件列表能按「项目文件 / 来自沟通」分流并标注出处
+      source: attachment.serviceRequestId
+        ? ("REQUEST" as const)
+        : attachment.projectUpdateId || attachment.updateCommentId
+          ? ("UPDATE" as const)
+          : attachment.milestoneId
+            ? ("MILESTONE" as const)
+            : ("PROJECT" as const),
+      pinned: Boolean(attachment.pinnedToProjectAt),
+      contentRiskStatus: riskStatus(
+        "ATTACHMENT",
+        attachment.id,
+        attachment.uploadedById === actor.id,
+      ),
+    };
+  };
+  // 同一批数据两用：文件 tab 用全量，动态/里程碑各自渲染自己的附件
+  const attachmentsByUpdateId = new Map<string, typeof attachments>();
+  const attachmentsByMilestoneId = new Map<string, typeof attachments>();
+  for (const attachment of attachments) {
+    if (attachment.inline) continue;
+    if (attachment.projectUpdateId) {
+      const list = attachmentsByUpdateId.get(attachment.projectUpdateId) ?? [];
+      list.push(attachment);
+      attachmentsByUpdateId.set(attachment.projectUpdateId, list);
+    }
+    if (attachment.milestoneId) {
+      const list = attachmentsByMilestoneId.get(attachment.milestoneId) ?? [];
+      list.push(attachment);
+      attachmentsByMilestoneId.set(attachment.milestoneId, list);
+    }
+  }
   const pluginBindings = await tx.projectPluginBinding.findMany({
     where: { projectId },
     select: { pluginKey: true, status: true },
@@ -246,6 +308,9 @@ export async function loadProjectDetail(
           : milestone.description
             ? sanitizeMessageHtml(milestone.description)
             : null,
+      attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
+        decorateAttachment,
+      ),
     })),
     updates: updates.map((update) => ({
       ...update,
@@ -264,6 +329,9 @@ export async function loadProjectDetail(
         riskStatus("PROJECT_UPDATE", update.id, false) === "REVOKED"
           ? ""
           : sanitizeMessageHtml(update.body),
+      attachments: (attachmentsByUpdateId.get(update.id) ?? []).map(
+        decorateAttachment,
+      ),
       author: authorById.get(update.authorId)!,
       hasEditHistory: updatesWithRevisions.has(update.id),
       comments: (commentsByUpdateId.get(update.id) ?? []).map((comment) => ({
@@ -282,22 +350,12 @@ export async function loadProjectDetail(
         hasEditHistory: commentsWithRevisions.has(comment.id),
       })),
     })),
-    attachments: attachments.map((attachment) => {
-      const revoked =
-        !actor.isPlatformAdmin &&
-        riskStatus("ATTACHMENT", attachment.id, false) === "REVOKED";
-      return {
-        ...attachment,
-        originalName: revoked ? "" : attachment.originalName,
-        title: revoked ? null : attachment.title,
-        note: revoked ? null : attachment.note,
-        contentRiskStatus: riskStatus(
-          "ATTACHMENT",
-          attachment.id,
-          attachment.uploadedById === actor.id,
-        ),
-      };
-    }),
+    // 文件 tab 的聚合列表才受「项目文件」模块开关限制；动态/里程碑自己的附件
+    // 走上面的 attachmentsByUpdateId / attachmentsByMilestoneId，不受它影响
+    attachments:
+      actor.isStaff || project.customerFilesEnabled
+        ? attachments.map(decorateAttachment)
+        : [],
     pluginBindings,
     contentRiskUiEnabled: contentRisk.enabled,
     progress: progress.percentage,

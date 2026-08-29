@@ -251,13 +251,18 @@ describe("Sub2API 外部联系人 RLS", () => {
         action: "heartbeat",
         sessionId: externalSessionId,
       }),
+      // 外部门户只回是否在线：它自绘一个简单指示点，不用端图标，
+      // 故不返回 counterpartClients（站内 presence 才有）
     ).resolves.toEqual({ counterpartOnline: false });
     await expect(
       updateRequestPresence(adminActor, ids.requestA, {
         action: "heartbeat",
         sessionId: staffSessionId,
       }),
-    ).resolves.toEqual({ counterpartOnline: true });
+    ).resolves.toEqual({
+      counterpartOnline: true,
+      counterpartClients: ["WEB"],
+    });
 
     await updateRequestPresence(adminActor, ids.requestA, {
       action: "leave",
@@ -312,6 +317,255 @@ describe("Sub2API 外部联系人 RLS", () => {
       );
     }
   });
+
+  it("外部联系人的设备信息要真能查出来（presence 必须关联真实会话）", async () => {
+    const { listRequestClientContexts } = await import(
+      "@/modules/requests/request-presence-service"
+    );
+    // 造一个真实的 ExternalEmbedSession：IP 与 UA 记在它身上
+    const embedSessionId = randomUUID();
+    await owner.query(
+      `INSERT INTO "ExternalEmbedSession" (
+         id, "tokenHash", "externalContactId", "bindingId", "expiresAt",
+         "ipAddress", "userAgent"
+       ) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '1 day', $5, $6)`,
+      [
+        embedSessionId,
+        `hash-${embedSessionId}`,
+        ids.contactA,
+        ids.binding,
+        "203.0.113.7",
+        "Mozilla/5.0 (Macintosh) ExternalPortal/1.0",
+      ],
+    );
+    // presence 的 sessionId 是前端随机数，与会话 id 无关 —— 必须靠 embedSessionId 关联
+    await owner.query(
+      `INSERT INTO "ExternalRequestPresence" (
+         id, "serviceRequestId", "externalContactId", "sessionId",
+         "embedSessionId", "expiresAt", "updatedAt"
+       ) VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '3 minutes', NOW())`,
+      [randomUUID(), ids.requestA, ids.contactA, randomUUID(), embedSessionId],
+    );
+
+    const rows = await listRequestClientContexts(adminActor, ids.requestA);
+    const external = rows.find((row) => row.external);
+    expect(external).toBeTruthy();
+    expect(external?.ipAddress).toBe("203.0.113.7");
+    expect(external?.userAgent).toContain("ExternalPortal/1.0");
+    // UA 解析后要能给出可读设备描述，不能只是原始串
+    expect(external?.device).toBeTruthy();
+
+    await owner.query(
+      'DELETE FROM "ExternalRequestPresence" WHERE "embedSessionId" = $1',
+      [embedSessionId],
+    );
+    await owner.query('DELETE FROM "ExternalEmbedSession" WHERE id = $1', [
+      embedSessionId,
+    ]);
+  });
+
+  it("外部联系人离开工单只标离线，不抹掉设备记录", async () => {
+    const sessionId = randomUUID();
+    const externalActor = {
+      id: ids.contactA,
+      bindingId: ids.binding,
+      externalUserId: "external-a",
+      name: "外部用户 A",
+      email: null,
+      username: null,
+      projectId: ids.project,
+      customerSpaceId: externalCustomerSpaceId,
+    };
+    await updateExternalPresence(externalActor, ids.requestA, {
+      action: "heartbeat",
+      sessionId,
+    });
+    await updateExternalPresence(externalActor, ids.requestA, {
+      action: "leave",
+      sessionId,
+    });
+
+    // 「客户设备与网络」里外部联系人那半边就是从这张表连到会话取 IP/UA 的；
+    // leave 直接删行的话，工单真正的提交者一关页面就再也查不到
+    const row = await owner.query<{ online: boolean }>(
+      `SELECT ("expiresAt" > NOW()) AS online
+         FROM "ExternalRequestPresence"
+        WHERE "serviceRequestId" = $1 AND "sessionId" = $2`,
+      [ids.requestA, sessionId],
+    );
+    expect(row.rowCount).toBe(1);
+    expect(row.rows[0]?.online).toBe(false);
+  });
+
+  it("外部联系人要出现在发送预览里", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    // 必须列出他：不列的话弹窗会说「0 人 / 本次没有需要提醒的人」，
+    // 提交后却照样给客户发了信，员工也没机会把他排除掉
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    // 夹具建联系人时没留邮箱，补上才够得着邮件通知的条件
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+    const preview = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "PUBLIC_MESSAGE",
+    );
+    expect(
+      preview.externalEmailContacts.map((item) => item.id),
+    ).toContain(ids.contactA);
+
+    // 关掉外部邮件通知后就不该再出现
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    const quiet = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "PUBLIC_MESSAGE",
+    );
+    expect(quiet.externalEmailContacts).toEqual([]);
+  });
+
+  it("在预览里取消勾选外部联系人，就真的不给他发信", async () => {
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+    const mailCount = async () => {
+      const result = await owner.query<{ count: string }>(
+        `SELECT COUNT(*)::text AS count FROM "MailMessage" WHERE "toEmail" = $1`,
+        ["external-a@example.test"],
+      );
+      return Number(result.rows[0]?.count ?? "0");
+    };
+    const before = await mailCount();
+
+    // 通道状态一律用覆盖显式指定，不依赖共享的 NotificationDeliveryRule ——
+    // 集成测试各文件并行跑，别的用例会改那张表，依赖它这里就会随机红。
+    //
+    // 排除名单里带上他：外部联系人邮件不挂在 Notification 行上，
+    // 若拿「与通知行相交后的排除名单」去判，他的 id 早被丢掉，排除等于没生效
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>排除外部联系人</p>", visibility: "CUSTOMER_VISIBLE" },
+      { email: true, excludeUserIds: [ids.contactA] },
+    );
+    expect(await mailCount()).toBe(before);
+
+    // 少发了信就必须留痕：外部联系人没有通知行，若只按「与通知行相交后的名单」
+    // 判定覆盖是否生效，这条覆盖会被当成空操作而整条不记审计
+    const audit = await owner.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM "AuditLog"
+        WHERE action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+          AND "serviceRequestId" = $1
+          AND metadata->'excludedUserIds' @> $2::jsonb`,
+      [ids.requestA, JSON.stringify([ids.contactA])],
+    );
+    expect(audit.rows[0]?.count).toBe("1");
+
+    // 反过来：邮件通道本次就是关的，那封信怎样都不会发，排除他没改变任何
+    // 投递结果 —— 审计里不该出现「他因本次覆盖被排除」这条假账。
+    // 用覆盖把邮件关掉，而不是去改全局 NotificationDeliveryRule：
+    // 集成测试各文件并行跑，改共享规则会把别的用例一起带崩
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>通道已关，排除无意义</p>", visibility: "CUSTOMER_VISIBLE" },
+      { email: false, excludeUserIds: [ids.contactA] },
+    );
+    // 数「声称排除了这位联系人」的审计条数有没有增加 —— 不看最后一条：
+    // 关掉邮件后这次覆盖可能压根不算有效（与规则同值时不写审计），
+    // 那样 LIMIT 1 会捞回上一条，断言就假绿/假红
+    const fakeEntries = await owner.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count
+         FROM "AuditLog"
+        WHERE action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+          AND "serviceRequestId" = $1
+          AND metadata->'excludedUserIds' @> $2::jsonb`,
+      [ids.requestA, JSON.stringify([ids.contactA])],
+    );
+    expect(fakeEntries.rows[0]?.count).toBe("1");
+
+    // 不排除时照常发
+    await addRequestMessage(
+      adminActor,
+      ids.requestA,
+      { body: "<p>正常通知外部联系人</p>", visibility: "CUSTOMER_VISIBLE" },
+      { email: true },
+    );
+    expect(await mailCount()).toBe(before + 1);
+
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+  });
+
+  it("状态变更的预览要跟着目标状态走：没有模板的状态不该说会发信", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = true, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+    await owner.query(
+      `UPDATE "ExternalContact" SET email = $2, "updatedAt" = NOW() WHERE id = $1`,
+      [ids.contactA, "external-a@example.test"],
+    );
+
+    // 有模板：WAITING_CUSTOMER / RESOLVED / CLOSED
+    const waiting = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "STATUS",
+      "WAITING_CUSTOMER",
+    );
+    expect(waiting.externalEmailContacts.map((item) => item.id)).toContain(
+      ids.contactA,
+    );
+
+    // 没有模板：statusMail 会返回 null，预览就不能说他会收到
+    const inProgress = await previewRequestDelivery(
+      adminActor,
+      ids.requestA,
+      "STATUS",
+      "IN_PROGRESS",
+    );
+    expect(inProgress.externalEmailContacts).toEqual([]);
+
+    await owner.query(
+      `UPDATE "Sub2ApiConnection"
+       SET "emailNotificationsEnabled" = false, "updatedAt" = NOW()
+       WHERE "bindingId" = $1`,
+      [ids.binding],
+    );
+  });
+
 });
 
 describe("Sub2API 外部项目空间隔离", () => {

@@ -158,6 +158,59 @@ export function planProjectActivity(
   };
 }
 
+type ProjectStaffActivityInput = {
+  actorId: string;
+  recipientUserId: string;
+  change: string;
+  audible: boolean;
+  notificationTitle: string;
+  notificationBody: string;
+  customerSpaceId: string;
+  projectId: string;
+  emailEligible: boolean;
+  notificationEnabled: boolean;
+};
+
+/**
+ * 项目人员变动只提醒当事人，不广播给项目其他人（项目列表刷新由调用方原有的
+ * publishProjectChange 负责，那条是静音的）。这里额外发一条按 userId 定向的
+ * 事件，好让当事人这一侧按「声音」开关决定是否响铃。
+ */
+export function planProjectStaffActivity(
+  input: ProjectStaffActivityInput,
+): ActivityDelivery {
+  if (input.recipientUserId === input.actorId) {
+    return { events: [], notifications: [] };
+  }
+  return {
+    events: [
+      {
+        type: "PROJECT_UPDATED",
+        payload: {
+          change: input.change,
+          actorId: input.actorId,
+          audible: input.audible,
+          projectId: input.projectId,
+        },
+        userId: input.recipientUserId,
+      },
+    ],
+    notifications: input.notificationEnabled
+      ? [
+          {
+            type: "PROJECT_STAFF",
+            title: input.notificationTitle,
+            body: input.notificationBody,
+            userId: input.recipientUserId,
+            customerSpaceId: input.customerSpaceId,
+            projectId: input.projectId,
+            emailEligible: input.emailEligible,
+          },
+        ]
+      : [],
+  };
+}
+
 export function planRequestActivity(
   input: RequestActivityInput,
 ): ActivityDelivery {

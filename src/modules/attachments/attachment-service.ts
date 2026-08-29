@@ -13,6 +13,7 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchProjectActivity,
   dispatchRequestActivity,
+  publishEvent,
 } from "@/modules/notifications/notification-service";
 import {
   createStorageKey,
@@ -249,7 +250,30 @@ export async function uploadRequestAttachment(
         },
       });
       let deliveryFeedback = null;
-      if (!input.inline) {
+      if (!input.inline && input.requestMessageId) {
+        // 绑在某条回复上的附件属于那次回复的一部分：回复自己那条活动才是本次提醒，
+        // 它已经按本次覆盖发过了。这里再按 REQUEST_ATTACHMENT 默认规则发一次，
+        // 既重复打扰（一条带三个附件的回复多出三条），又绕开覆盖 ——
+        // 附件上传是另一个请求、不带 deliveryOverride，被「本次不提醒」排除掉的人
+        // 照样每个附件收一条。与项目动态/里程碑附件同一处理。
+        // 但仍要发静默刷新事件：回复先落库、附件随后逐个传，别人页面收到回复事件时
+        // 刷出来的是「没有附件」的版本。
+        await publishEvent(tx, {
+          type: "REQUEST_UPDATED",
+          payload: {
+            change: "REQUEST_ATTACHMENT_UPLOADED",
+            actorId: actor.id,
+            audible: false,
+            requestId: request.id,
+            attachmentId: attachment.id,
+            requestMessageId: input.requestMessageId,
+            visibility: attachment.visibility,
+          },
+          customerSpaceId: request.project.customerSpaceId,
+          projectId: request.projectId,
+          serviceRequestId: request.id,
+        });
+      } else if (!input.inline) {
         const workerIds = Array.from(
           new Set(
             [
@@ -307,6 +331,12 @@ export type UploadProjectAttachmentInput = {
   projectId: string;
   visibility?: ContentVisibility;
   inlineContext?: "REQUEST_DESCRIPTION" | "PROJECT_UPDATE" | "MILESTONE";
+  /**
+   * 直接挂到进度动态 / 里程碑上的文件附件（非正文内嵌图）。
+   * 与工单附件同一套两段式：先建实体、再带着实体 id 上传，
+   * 避免草稿态附件先跑进项目文件列表。
+   */
+  attachTo?: { kind: "PROJECT_UPDATE" | "MILESTONE"; id: string };
   title?: string;
   note?: string;
 };
@@ -315,7 +345,7 @@ export async function uploadProjectAttachment(
   actor: Actor,
   input: UploadProjectAttachmentInput,
 ) {
-  await withActorDb(actor, (tx) =>
+  const context = await withActorDb(actor, (tx) =>
     authorizeProjectAttachmentUpload(tx, actor, input),
   );
   const validated = await validateAttachmentFile(
@@ -328,7 +358,9 @@ export async function uploadProjectAttachment(
   }
   const title = normalizeAttachmentTitle(input.title);
   const note = normalizeAttachmentNote(input.note);
-  const visibility = input.visibility ?? "CUSTOMER_VISIBLE";
+  // 挂到动态上的附件跟随动态的可见性（内部动态的附件客户不可见），
+  // 由服务端派生而不是信客户端；里程碑没有可见性维度，恒为客户可见。
+  const visibility = context.attachVisibility ?? input.visibility ?? "CUSTOMER_VISIBLE";
   if (visibility === "CUSTOMER_VISIBLE") {
     await enforceActorPublicContentRules(actor, {
       targetType: "ATTACHMENT",
@@ -368,6 +400,12 @@ export async function uploadProjectAttachment(
           inline: Boolean(input.inlineContext),
           customerSpaceId: project.customerSpaceId,
           projectId: project.projectId,
+          ...(input.attachTo?.kind === "PROJECT_UPDATE"
+            ? { projectUpdateId: input.attachTo.id }
+            : {}),
+          ...(input.attachTo?.kind === "MILESTONE"
+            ? { milestoneId: input.attachTo.id }
+            : {}),
           uploadedById: actor.id,
         },
         select: {
@@ -420,7 +458,33 @@ export async function uploadProjectAttachment(
         },
       });
       let deliveryFeedback = null;
-      if (!input.inlineContext) {
+      if (input.attachTo && !input.inlineContext) {
+        // 实体附件不发通知（理由见下），但必须补一个静默刷新事件：
+        // 实体是先建好再逐个传附件的，别人页面收到实体事件时刷出来的是「没有附件」
+        // 的版本，附件传完若不再发事件，就要一直等到手动重载或下一次项目事件。
+        // audible: false + 不建通知行 —— 只刷新，不打扰。
+        await publishEvent(tx, {
+          type: "PROJECT_UPDATED",
+          payload: {
+            change: "PROJECT_ATTACHMENT_UPLOADED",
+            actorId: actor.id,
+            audible: false,
+            projectId: project.projectId,
+            attachmentId: attachment.id,
+            ...(input.attachTo.kind === "PROJECT_UPDATE"
+              ? { projectUpdateId: input.attachTo.id }
+              : { milestoneId: input.attachTo.id }),
+          },
+          customerSpaceId: project.customerSpaceId,
+          projectId: project.projectId,
+        });
+      }
+      // 挂在动态 / 里程碑上的附件不再单独发「项目新增文件」通知：那条实体自己的
+      // 活动才是本次提醒，它已经按本次覆盖发过了。这里再发一次不但重复打扰
+      // （一条带三个附件的动态会多出三条通知），还会绕开覆盖 ——
+      // 附件上传是另一个请求，不带 deliveryOverride，于是按默认规则通知，
+      // 明确被「本次不提醒」排除掉的人照样收到站内/邮件/微信。
+      if (!input.inlineContext && !input.attachTo) {
         const delivery = await dispatchProjectActivity(tx, actor, {
           eventType: "PROJECT_UPDATED",
           eventPayload: {
@@ -637,7 +701,42 @@ async function authorizeProjectAttachmentUpload(
     return {
       projectId: context.projectId,
       customerSpaceId: context.customerSpaceId,
+      attachVisibility: undefined as ContentVisibility | undefined,
     };
+  }
+  // 直接挂到动态/里程碑上的文件附件：权限与发布该实体一致，
+  // 并且必须确认目标实体真的属于这个项目（否则可跨项目挂载）
+  if (input.attachTo) {
+    if (input.attachTo.kind === "PROJECT_UPDATE") {
+      const context = await assertCanPublishActiveProjectUpdate(
+        tx,
+        actor,
+        input.projectId,
+      );
+      if (!hasRolePermission(actor, "file.upload")) {
+        throw forbidden("当前角色无权上传文件");
+      }
+      const update = await tx.projectUpdate.findFirst({
+        where: { id: input.attachTo.id, projectId: input.projectId },
+        select: { visibility: true },
+      });
+      if (!update) throw notFound("进度动态不存在");
+      return { ...context, attachVisibility: update.visibility };
+    }
+    const context = await assertCanManageActiveProjectDelivery(
+      tx,
+      actor,
+      input.projectId,
+    );
+    if (!hasRolePermission(actor, "file.upload")) {
+      throw forbidden("当前角色无权上传文件");
+    }
+    const milestone = await tx.milestone.findFirst({
+      where: { id: input.attachTo.id, projectId: input.projectId },
+      select: { id: true },
+    });
+    if (!milestone) throw notFound("里程碑不存在");
+    return { ...context, attachVisibility: undefined };
   }
   const context = input.inlineContext
     ? input.inlineContext === "PROJECT_UPDATE"
@@ -647,7 +746,7 @@ async function authorizeProjectAttachmentUpload(
   if (!hasRolePermission(actor, "file.upload")) {
     throw forbidden("当前角色无权上传文件");
   }
-  return context;
+  return { ...context, attachVisibility: undefined };
 }
 
 function includeCustomerMembersForRequest(
@@ -771,3 +870,86 @@ function normalizeFileName(fileName: string) {
   return normalized.slice(0, 255) || "attachment";
 }
 
+
+/**
+ * 「添加到项目文件」/「移出项目文件」。
+ *
+ * 只翻 pinnedToProjectAt 这一个标记，**不动 serviceRequestId / projectUpdateId
+ * 等归属字段** —— attachment_access 策略仍按原归属裁决可见性：看不到源工单的
+ * 人即使文件被收录也读不到。因此这个动作不会放宽任何可见性，客户与后台人员
+ * 都可以对自己看得见的文件使用。
+ */
+export async function setAttachmentProjectPin(
+  actor: Actor,
+  attachmentId: string,
+  pinned: boolean,
+) {
+  return withActorDb(actor, async (tx) => {
+    const attachment = await tx.attachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true,
+        projectId: true,
+        customerSpaceId: true,
+        visibility: true,
+        pinnedToProjectAt: true,
+        serviceRequestId: true,
+        requestMessageId: true,
+        projectUpdateId: true,
+        updateCommentId: true,
+        milestoneId: true,
+      },
+    });
+    if (!attachment) throw notFound("附件不存在");
+    if (!attachment.projectId) {
+      throw badRequest("ATTACHMENT_NOT_IN_PROJECT", "该附件不属于任何项目");
+    }
+    // 项目级手动上传的文件本来就在列表里，收录/移出都没有意义
+    const alreadyProjectFile =
+      !attachment.serviceRequestId &&
+      !attachment.requestMessageId &&
+      !attachment.projectUpdateId &&
+      !attachment.updateCommentId &&
+      !attachment.milestoneId;
+    if (alreadyProjectFile) {
+      throw badRequest("ATTACHMENT_ALREADY_PROJECT_FILE", "该文件本就在项目文件中");
+    }
+    if (Boolean(attachment.pinnedToProjectAt) === pinned) {
+      return { id: attachment.id, pinned };
+    }
+    await tx.attachment.update({
+      where: { id: attachmentId },
+      data: {
+        pinnedToProjectAt: pinned ? new Date() : null,
+        pinnedById: pinned ? actor.id : null,
+      },
+    });
+    await writeAuditLog(tx, actor, {
+      action: pinned ? "ATTACHMENT_PINNED_TO_PROJECT" : "ATTACHMENT_UNPINNED_FROM_PROJECT",
+      resourceType: "Attachment",
+      resourceId: attachmentId,
+      projectId: attachment.projectId,
+      serviceRequestId: attachment.serviceRequestId ?? undefined,
+    });
+    // 收录状态变了，项目文件聚合列表就跟着变：不发事件的话，别人开着的
+    // 项目详情页会一直停在旧列表，直到手动刷新或碰巧收到别的项目事件。
+    // 与附件上传那条一样：audible: false，只刷新、不打扰。
+    if (attachment.customerSpaceId) {
+      await publishEvent(tx, {
+        type: "PROJECT_UPDATED",
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          actorId: actor.id,
+          audible: false,
+          projectId: attachment.projectId,
+          attachmentId: attachment.id,
+          // 收录/移出改的是项目文件聚合列表，归项目文件模块
+          visibility: attachment.visibility,
+        },
+        customerSpaceId: attachment.customerSpaceId,
+        projectId: attachment.projectId,
+      });
+    }
+    return { id: attachment.id, pinned };
+  });
+}

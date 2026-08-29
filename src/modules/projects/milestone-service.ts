@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { withActorDb } from "@/lib/actor";
 import {
   extractInlineAttachmentIds,
@@ -11,7 +12,10 @@ import { sanitizeMessageHtml } from "@/lib/sanitize-html";
 import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { dispatchProjectActivity } from "@/modules/notifications/notification-service";
+import {
+  dispatchProjectActivity,
+  previewProjectActivityRecipients,
+} from "@/modules/notifications/notification-service";
 import {
   createContentRiskReview,
   enforceActorPublicContentRules,
@@ -23,6 +27,7 @@ import {
 } from "@/modules/plugins/content-risk-view-service";
 import {
   assertCanManageActiveProjectDelivery,
+  assertCanManageProjectDelivery,
   assertCanViewCustomerProjectFeature,
 } from "@/modules/projects/project-access";
 import { assertFound, DomainError } from "@/modules/projects/errors";
@@ -52,6 +57,28 @@ export function listMilestones(actor: Actor, projectId: string) {
     );
     const milestones = await tx.milestone.findMany({
       where: { projectId },
+      include: {
+        attachments: {
+          where: {
+            inline: false,
+            ...(actor.isStaff
+              ? {}
+              : { visibility: "CUSTOMER_VISIBLE" as const }),
+          },
+          select: {
+            id: true,
+            originalName: true,
+            title: true,
+            note: true,
+            mimeType: true,
+            size: true,
+            previewStatus: true,
+            visibility: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" },
+        },
+      },
       orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
     });
     const contentRisk = await loadContentRiskPageState(
@@ -166,6 +193,7 @@ export async function createMilestone(
   actor: Actor,
   projectId: string,
   input: CreateMilestoneInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   const preflightContext = await withActorDb(actor, (tx) =>
     assertCanManageActiveProjectDelivery(tx, actor, projectId),
@@ -256,8 +284,29 @@ export async function createMilestone(
       customerSpaceId: context.customerSpaceId,
       projectId,
       contentRiskReviewId: contentRiskReview?.id,
+      deliveryOverride,
     });
     return { ...milestone, deliveryFeedback: delivery.feedback };
+  });
+}
+
+/** 发送前预览：与 createMilestone / updateMilestone 的 dispatch 参数保持一致 */
+export function previewMilestoneDelivery(actor: Actor, projectId: string) {
+  return withActorDb(actor, async (tx) => {
+    const context = await assertCanManageProjectDelivery(tx, actor, projectId);
+    return previewProjectActivityRecipients(tx, actor, {
+      eventType: "PROJECT_UPDATED",
+      eventPayload: { change: "MILESTONE_CREATED", actorId: actor.id, projectId },
+      notificationType: "PROJECT_MILESTONE",
+      notificationTitle: "",
+      notificationBody: "",
+      visibility:
+        context.customerFeatures.milestones || context.customerFeatures.progress
+          ? "CUSTOMER_VISIBLE"
+          : "INTERNAL",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+    });
   });
 }
 
@@ -266,6 +315,7 @@ export async function updateMilestone(
   projectId: string,
   milestoneId: string,
   input: UpdateMilestoneInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   const preflight = await withActorDb(actor, async (tx) => ({
     context: await assertCanManageActiveProjectDelivery(tx, actor, projectId),
@@ -425,6 +475,7 @@ export async function updateMilestone(
       notificationType: "PROJECT_MILESTONE",
       notificationTitle: "项目里程碑已更新",
       notificationBody: milestone.title,
+      deliveryOverride,
       visibility:
         context.customerFeatures.milestones || context.customerFeatures.progress
           ? "CUSTOMER_VISIBLE"

@@ -12,6 +12,13 @@
     "pages/notification-settings/page",
     "pages/members/page",
     "pages/update-detail/page",
+    "pages/update-edit/page",
+    "pages/milestone-detail/page",
+    "pages/milestone-edit/page",
+    "pages/project-settings/page",
+    "pages/project-staff/page",
+    "pages/staff-dashboard/page",
+    "pages/audit-logs/page",
     "pages/attachment-text/page",
     "pages/profile-edit/page",
     "pages/web-login/page"

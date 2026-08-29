@@ -405,6 +405,94 @@ describe("请求聊天生产流程", () => {
     );
   });
 
+  it("客户伪造 deliveryOverride 静音不了后台通知", async () => {
+    const created = await createFixtureRequest("客户越权覆盖");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>技术员已接手处理。</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    // 客户也打这个接口：不挡的话就能用 notification:false 把自己的回复对员工静音，
+    // 或用 email:true 强制给已退订的员工发邮件。覆盖是员工写操作专用的能力。
+    await addRequestMessage(
+      customer,
+      created.id,
+      {
+        body: "<p>客户想悄悄补充信息。</p>",
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      { notification: false, email: true },
+    );
+
+    const result = await ownerPool.query<{ user_id: string }>(
+      `
+        SELECT "userId" AS user_id
+        FROM "Notification"
+        WHERE "serviceRequestId" = $1
+          AND type = 'REQUEST_MESSAGE'
+          AND "readAt" IS NULL
+          AND "userId" = ANY($2::text[])
+        ORDER BY "userId"
+      `,
+      [created.id, [technician.id, admin.id]],
+    );
+    expect(result.rows.map((row) => row.user_id).sort()).toEqual(
+      [technician.id, admin.id].sort(),
+    );
+
+    // 覆盖被丢掉，就不该留下「本次覆盖送达」的审计
+    const audit = await ownerPool.query<{ count: string }>(
+      `
+        SELECT count(*)::text AS count
+        FROM "AuditLog"
+        WHERE "serviceRequestId" = $1
+          AND action = 'NOTIFICATION_DELIVERY_OVERRIDDEN'
+      `,
+      [created.id],
+    );
+    expect(audit.rows[0]?.count).toBe("0");
+  });
+
+  it("「仅我处理」不会被权限范围或关键词搜索覆盖掉", async () => {
+    const { listRequestsForActor, assignRequest } = await import(
+      "@/modules/requests/request-service"
+    ).then(async (mod) => ({
+      listRequestsForActor: mod.listRequestsForActor,
+      assignRequest: (await import("@/modules/requests/request-command-service"))
+        .assignRequest,
+    }));
+    const marker = randomUUID().slice(0, 8);
+    const mine = await createFixtureRequest(`仅我处理-已分配-${marker}`);
+    const others = await createFixtureRequest(`仅我处理-未分配-${marker}`);
+    await assignRequest(admin, mine.id, { assigneeIds: [technician.id] });
+
+    // 三组条件都是 OR，同一个对象字面量里重复写会互相覆盖：
+    // 技术员不搜索时，「仅我处理」被权限范围那组覆盖 —— 未分配工单仍会冒出来
+    const technicianMine = await listRequestsForActor(technician, {
+      assignedToMe: true,
+    });
+    const technicianIds = technicianMine.requests.map((item) => item.id);
+    expect(technicianIds).toContain(mine.id);
+    expect(technicianIds).not.toContain(others.id);
+
+    // 一旦带上关键词，关键词那组又会把前两组一起覆盖掉
+    const searched = await listRequestsForActor(admin, {
+      assignedToMe: true,
+      query: marker,
+    });
+    const searchedIds = searched.requests.map((item) => item.id);
+    expect(searchedIds).not.toContain(mine.id);
+    expect(searchedIds).not.toContain(others.id);
+
+    const technicianSearched = await listRequestsForActor(technician, {
+      assignedToMe: true,
+      query: marker,
+    });
+    const technicianSearchedIds = technicianSearched.requests.map(
+      (item) => item.id,
+    );
+    expect(technicianSearchedIds).toEqual([mine.id]);
+  });
+
   it("历史遗留的无效处理人不会阻断管理员更新状态", async () => {
     const created = await createFixtureRequest("无效处理人通知过滤");
     const staleUserId = randomUUID();
@@ -692,13 +780,13 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: false });
+    ).toEqual({ counterpartOnline: false, counterpartClients: [] });
     expect(
       await updateRequestPresence(technician, created.id, {
         sessionId: staffSessionA,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
     await updateRequestPresence(technician, created.id, {
       sessionId: staffSessionB,
       action: "heartbeat",
@@ -708,7 +796,7 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
 
     const listener = new Client({
       connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -770,7 +858,7 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: true });
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
     await updateRequestPresence(technician, created.id, {
       sessionId: staffSessionB,
       action: "leave",
@@ -780,11 +868,144 @@ describe("请求聊天生产流程", () => {
         sessionId: customerSession,
         action: "heartbeat",
       }),
-    ).toEqual({ counterpartOnline: false });
+    ).toEqual({ counterpartOnline: false, counterpartClients: [] });
     await updateRequestPresence(customer, created.id, {
       sessionId: customerSession,
       action: "leave",
     });
+  });
+
+  it("保留期清理要真能删掉平台用户的行（RLS 会静默吞掉直接 deleteMany）", async () => {
+    const { cleanupExpiredRequestPresence } = await import(
+      "@/modules/requests/presence-sweep-service"
+    );
+    const staleId = randomUUID();
+    const freshId = randomUUID();
+    const created = await createFixtureRequest("保留期清理");
+    // 一条早已过保留期的，一条刚离线的
+    await ownerPool.query(
+      `INSERT INTO "RequestPresence" (
+         id, "serviceRequestId", "userId", "sessionId", "expiresAt", "updatedAt"
+       ) VALUES
+         ($1, $3, $4, $1, NOW() - INTERVAL '48 hours', NOW() - INTERVAL '48 hours'),
+         ($2, $3, $4, $2, NOW(), NOW())`,
+      [staleId, freshId, created.id, customer.id],
+    );
+
+    await cleanupExpiredRequestPresence();
+
+    const rows = await ownerPool.query<{ id: string }>(
+      `SELECT id FROM "RequestPresence" WHERE id = ANY($1::text[])`,
+      [[staleId, freshId]],
+    );
+    const remaining = rows.rows.map((row) => row.id);
+    // 过了保留期的必须真被删掉 —— 直接 deleteMany 会被 request_presence_delete
+    // 策略（userId = app_user_id()）静默过滤成 0 行，任务白跑
+    expect(remaining).not.toContain(staleId);
+    // 刚离线的要留着，「客户设备与网络」还要靠它
+    expect(remaining).toContain(freshId);
+
+    await ownerPool.query('DELETE FROM "RequestPresence" WHERE id = ANY($1::text[])', [
+      [staleId, freshId],
+    ]);
+  });
+
+  it("离开工单只标离线，不抹掉设备记录", async () => {
+    const created = await createFixtureRequest("离线保留设备");
+    const sessionId = randomUUID();
+    await updateRequestPresence(customer, created.id, {
+      sessionId,
+      action: "heartbeat",
+      client: "MINIAPP",
+      timezone: "Asia/Shanghai",
+    });
+    await updateRequestPresence(customer, created.id, {
+      sessionId,
+      action: "leave",
+    });
+
+    // 「客户设备与网络」就是从这张表读的：leave 直接删行的话，客户一关页面
+    // 后台只剩「还没有打开过这个工单」—— 而那恰恰是最需要查的时候
+    const row = await ownerPool.query<{
+      client: string;
+      timezone: string | null;
+      online: boolean;
+    }>(
+      `SELECT client::text AS client, timezone, ("expiresAt" > NOW()) AS online
+         FROM "RequestPresence"
+        WHERE "serviceRequestId" = $1 AND "sessionId" = $2`,
+      [created.id, sessionId],
+    );
+    expect(row.rowCount).toBe(1);
+    expect(row.rows[0]?.client).toBe("MINIAPP");
+    expect(row.rows[0]?.timezone).toBe("Asia/Shanghai");
+    // 但必须已判定为离线，不能还算在线
+    expect(row.rows[0]?.online).toBe(false);
+
+    const after = await updateRequestPresence(technician, created.id, {
+      sessionId: randomUUID(),
+      action: "heartbeat",
+    });
+    expect(after.counterpartOnline).toBe(false);
+    expect(after.counterpartClients).toEqual([]);
+  });
+
+  it("在线端按来源区分，同一分组的多个端会去重合并", async () => {
+    const created = await createFixtureRequest("在线端区分");
+    await addRequestMessage(technician, created.id, {
+      body: "<p>接手在线端区分测试</p>",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    const miniappSession = randomUUID();
+    const webSession = randomUUID();
+    const staffSession = randomUUID();
+
+    // 客户只在小程序在线：员工侧看到的对端只有 MINIAPP
+    await updateRequestPresence(customer, created.id, {
+      sessionId: miniappSession,
+      action: "heartbeat",
+      client: "MINIAPP",
+    });
+    expect(
+      await updateRequestPresence(technician, created.id, {
+        sessionId: staffSession,
+        action: "heartbeat",
+      }),
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["MINIAPP"] });
+
+    // 同一客户再开网页：两个端都要出现，且各自只出现一次
+    await updateRequestPresence(customer, created.id, {
+      sessionId: webSession,
+      action: "heartbeat",
+    });
+    const both = await updateRequestPresence(technician, created.id, {
+      sessionId: staffSession,
+      action: "heartbeat",
+    });
+    expect(both.counterpartOnline).toBe(true);
+    expect([...both.counterpartClients].sort()).toEqual(["MINIAPP", "WEB"]);
+
+    // 小程序离线后只剩 WEB
+    await updateRequestPresence(customer, created.id, {
+      sessionId: miniappSession,
+      action: "leave",
+    });
+    expect(
+      await updateRequestPresence(technician, created.id, {
+        sessionId: staffSession,
+        action: "heartbeat",
+      }),
+    ).toEqual({ counterpartOnline: true, counterpartClients: ["WEB"] });
+
+    for (const [actor, sessionId] of [
+      [customer, webSession],
+      [technician, staffSession],
+    ] as const) {
+      await updateRequestPresence(actor, created.id, {
+        sessionId,
+        action: "leave",
+      });
+    }
   });
 });
 

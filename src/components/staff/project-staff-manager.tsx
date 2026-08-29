@@ -19,7 +19,11 @@ import {
   Typography,
 } from "@mui/material";
 import PersonAddAltOutlinedIcon from "@mui/icons-material/PersonAddAltOutlined";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   ProjectStaffMember,
@@ -99,6 +103,16 @@ export function ProjectStaffManager({
     }
   }
 
+  const [staffOverride, setStaffOverride] =
+    useState<NotificationDeliveryOverride>({});
+  // 覆盖是一次性的：关闭对话框的所有路径（取消、点遮罩）都要归零，
+  // 否则自定义完再取消、下次给别人分配时会带着上次的强制/抑制设置提交
+  const closeDialog = () => {
+    setOpen(false);
+    setStaffOverride({});
+  };
+  const staffDeliveryRule = useDeliveryChannelRule("PROJECT_STAFF");
+
   const addStaff = form.handleSubmit(async (values) => {
     const selectedCandidate = availableCandidates.find(
       (candidate) => candidate.id === values.userId,
@@ -114,10 +128,13 @@ export function ProjectStaffManager({
               selectedCandidate.platformRole === "TECHNICIAN"
                 ? "TECHNICIAN"
                 : values.projectRole,
+            ...deliveryOverridePayload(staffOverride, staffDeliveryRule),
           }),
         );
         setOpen(false);
         form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
+        // 覆盖是一次性的，不跨下一次分配沿用
+        setStaffOverride({});
         toast.success("项目人员已分配");
         router.refresh();
       });
@@ -128,13 +145,28 @@ export function ProjectStaffManager({
     }
   });
 
-  async function removeStaff(projectStaffId: string) {
+  // 移出同样会给当事人发通知，所以和「分配人员」一样先看清会怎么提醒再确认
+  const [pendingRemove, setPendingRemove] = useState<ProjectStaffMember | null>(
+    null,
+  );
+  const [removeOverride, setRemoveOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const closeRemoveDialog = () => {
+    setPendingRemove(null);
+    setRemoveOverride({});
+  };
+
+  async function removeStaff(member: ProjectStaffMember) {
     try {
       await staffMutation.mutateAsync(async () => {
         await staffApi(
-          `/api/v1/projects/${projectId}/staff/${projectStaffId}`,
-          { method: "DELETE" },
+          `/api/v1/projects/${projectId}/staff/${member.id}`,
+          jsonRequest(
+            "DELETE",
+            deliveryOverridePayload(removeOverride, staffDeliveryRule),
+          ),
         );
+        closeRemoveDialog();
         toast.success("项目人员已移除，相关服务请求分配已同步清理");
         router.refresh();
       });
@@ -159,6 +191,7 @@ export function ProjectStaffManager({
             startIcon={<PersonAddAltOutlinedIcon />}
             onClick={() => {
               form.reset({ userId: "", projectRole: "PROJECT_MANAGER" });
+              setStaffOverride({});
               setOpen(true);
             }}
           >
@@ -189,7 +222,10 @@ export function ProjectStaffManager({
                   size="small"
                   color="inherit"
                   disabled={submitting}
-                  onClick={() => removeStaff(member.id)}
+                  onClick={() => {
+                    setPendingRemove(member);
+                    setRemoveOverride({});
+                  }}
                 >
                   移除
                 </Button>
@@ -204,7 +240,7 @@ export function ProjectStaffManager({
 
       <Dialog
         open={open}
-        onClose={submitting ? undefined : () => setOpen(false)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
       >
@@ -260,10 +296,22 @@ export function ProjectStaffManager({
                 暂无可分配人员，请先到「团队」邀请成员。
               </Alert>
             ) : null}
+            {selectedCandidate ? (
+              <DeliveryNotice
+                scene={{
+                  scene: "PROJECT_STAFF",
+                  projectId,
+                  targetUserId: selectedCandidate.id,
+                }}
+                override={staffOverride}
+                onOverrideChange={setStaffOverride}
+                disabled={submitting}
+              />
+            ) : null}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpen(false)} disabled={submitting}>
+          <Button onClick={closeDialog} disabled={submitting}>
             取消
           </Button>
           <Button
@@ -272,6 +320,49 @@ export function ProjectStaffManager({
             disabled={!selectedCandidate || submitting || !form.formState.isValid}
           >
             确认分配
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingRemove)}
+        onClose={submitting ? undefined : closeRemoveDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>移出项目人员</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography>
+              确定将「{pendingRemove?.name}」移出本项目吗？该成员在本项目下的服务请求分配会一并解除。
+            </Typography>
+            {pendingRemove ? (
+              <DeliveryNotice
+                scene={{
+                  scene: "PROJECT_STAFF",
+                  projectId,
+                  targetUserId: pendingRemove.userId,
+                }}
+                override={removeOverride}
+                onOverrideChange={setRemoveOverride}
+                disabled={submitting}
+              />
+            ) : null}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRemoveDialog} disabled={submitting}>
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={submitting}
+            onClick={() => {
+              if (pendingRemove) void removeStaff(pendingRemove);
+            }}
+          >
+            确认移出
           </Button>
         </DialogActions>
       </Dialog>

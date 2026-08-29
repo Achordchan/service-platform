@@ -544,6 +544,141 @@ describe("通知、延迟邮件与 Outbox 集成", () => {
     expect(scheduled?.scheduled_before_six_minutes).toBe(true);
   });
 
+  it("收件人在线不该让强制发送失效", async () => {
+    await configureStandardMail(true);
+    await setRequestPublicMessageMailRule(true);
+    const sessionId = randomUUID();
+    // 客户此刻正开着这个工单页
+    await pool.query(
+      `INSERT INTO "RequestPresence" (
+         id, "serviceRequestId", "userId", "sessionId", "expiresAt", "updatedAt"
+       ) VALUES ($1, $2, $3, $4, NOW() + INTERVAL '3 minutes', NOW())`,
+      [randomUUID(), requestId, customer.id, sessionId],
+    );
+
+    const dispatch = async (deliveryOverride?: { email: true }) => {
+      const integrationMarker = `presence-force-${randomUUID()}`;
+      cleanup.eventMarkers.push(integrationMarker);
+      const delivery = await withActorDb(admin, (tx) =>
+        dispatchRequestActivity(tx, admin, {
+          eventType: "REQUEST_MESSAGE_CREATED",
+          eventPayload: {
+            requestId,
+            visibility: "CUSTOMER_VISIBLE",
+            integrationMarker,
+          },
+          notificationType: "REQUEST_MESSAGE",
+          notificationTitle: "在线收件人强制发送测试",
+          notificationBody: "在线不是个人偏好，不该让强制发送静默失效",
+          includeCustomers: true,
+          relevantWorkerUserIds: [],
+          notifyProjectManagers: false,
+          notifyPlatformAdmins: false,
+          customerSpaceId,
+          projectId,
+          serviceRequestId: requestId,
+          ...(deliveryOverride ? { deliveryOverride } : {}),
+        }),
+      );
+      cleanup.notificationIds.push(
+        ...delivery.notifications.map((notification) => notification.id),
+      );
+      return pool.query<{ email_due_at: string | null }>(
+        `SELECT "emailDueAt"::text AS email_due_at
+           FROM "Notification"
+          WHERE id = ANY($1::text[]) AND "userId" = $2`,
+        [
+          delivery.notifications.map((notification) => notification.id),
+          customer.id,
+        ],
+      );
+    };
+
+    try {
+      // 对照：没强制时，正看着这一页的人本就不重复打扰
+      const quiet = await dispatch();
+      expect(quiet.rowCount).toBe(0);
+
+      // 强制发邮件时不能被在线状态吃掉：邮件挂在通知行上，跳过这行就等于
+      // 强制发送对「恰好在线」的人静默失效，而在线并不是个人偏好
+      const forced = await dispatch({ email: true });
+      expect(forced.rowCount).toBe(1);
+      expect(forced.rows[0]?.email_due_at).not.toBeNull();
+    } finally {
+      await pool.query('DELETE FROM "RequestPresence" WHERE "sessionId" = $1', [
+        sessionId,
+      ]);
+    }
+  });
+
+  it("后台把通道关掉时，预览仍要报出真实收件范围", async () => {
+    const { previewRequestDelivery } = await import(
+      "@/modules/requests/request-command-service"
+    );
+    // 关掉邮件规则：预览若跟着当前开关算，就会说「本场景不发邮件」，
+    // 可员工正是要在弹窗里强制打开 —— 提交后真实发送又把这些人算回来
+    await setRequestPublicMessageMailRule(false);
+    const offRule = await previewRequestDelivery(
+      admin,
+      requestId,
+      "PUBLIC_MESSAGE",
+    );
+    expect(offRule.emailUserIds).toContain(customer.id);
+
+    await setRequestPublicMessageMailRule(true);
+    const onRule = await previewRequestDelivery(
+      admin,
+      requestId,
+      "PUBLIC_MESSAGE",
+    );
+    // 通道开关不该改变预览算出的收件范围，两次必须一致
+    expect(onRule.emailUserIds.sort()).toEqual(offRule.emailUserIds.sort());
+    expect(onRule.notificationUserIds.sort()).toEqual(
+      offRule.notificationUserIds.sort(),
+    );
+  });
+
+  it("本次关掉站内通知时，实时事件不再标记为可响铃", async () => {
+    await setRequestPublicMessageMailRule(true);
+    const integrationMarker = `silent-${randomUUID()}`;
+    cleanup.eventMarkers.push(integrationMarker);
+    const delivery = await withActorDb(admin, (tx) =>
+      dispatchRequestActivity(tx, admin, {
+        eventType: "REQUEST_MESSAGE_CREATED",
+        eventPayload: {
+          requestId,
+          visibility: "CUSTOMER_VISIBLE",
+          integrationMarker,
+        },
+        notificationType: "REQUEST_MESSAGE",
+        notificationTitle: "本次不提醒",
+        notificationBody: "提示行说不发提醒，就不该还响铃",
+        includeCustomers: true,
+        relevantWorkerUserIds: [],
+        notifyProjectManagers: false,
+        notifyPlatformAdmins: false,
+        customerSpaceId,
+        projectId,
+        serviceRequestId: requestId,
+        deliveryOverride: { notification: false },
+      }),
+    );
+    cleanup.notificationIds.push(
+      ...delivery.notifications.map((notification) => notification.id),
+    );
+    expect(delivery.notifications).toEqual([]);
+
+    const event = await pool.query<{ audible: boolean | null }>(
+      `SELECT (payload->>'audible')::boolean AS audible
+         FROM "EventRecord"
+        WHERE payload->>'integrationMarker' = $1
+        LIMIT 1`,
+      [integrationMarker],
+    );
+    // 站内是载体：关掉它就不建通知，也不该让 GlobalRealtimeSound 响
+    expect(event.rows[0]?.audible).toBe(false);
+  });
+
   it("客户新建标准服务请求会为平台管理员创建并投递邮件 Outbox", async () => {
     await configureStandardMail(true, false);
     await setUserMailPreference(admin.id, true);

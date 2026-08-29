@@ -1,0 +1,93 @@
+<import src="/components/states.wxml" />
+
+<view class="staff-page">
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 3}}" />
+  <view wx:elif="{{loadError}}" class="staff-load-error">{{loadError}}</view>
+
+  <block wx:else>
+    <view class="staff-add" hover-class="hover-plain" bindtap="onAddStaff">
+      <t-icon name="user-add" size="36rpx" color="#1677ff" /><text>添加项目人员</text>
+    </view>
+
+    <view wx:if="{{pendingAction}}" class="card staff-pending">
+      <view class="staff-pending-title">{{pendingAction.summary}}</view>
+      <delivery-notice
+        wx:if="{{deliveryScene}}"
+        scene="{{deliveryScene}}"
+        disabled="{{submitting}}"
+        bind:change="onDeliveryChange"
+      />
+      <view class="staff-pending-actions">
+        <button class="plain-btn staff-pending-btn" hover-class="hover-plain" bindtap="onCancelPending">取消</button>
+        <button
+          class="primary-btn staff-pending-btn"
+          hover-class="hover-btn"
+          loading="{{submitting}}"
+          disabled="{{submitting}}"
+          bindtap="onConfirmPending"
+        >
+          {{pendingAction.confirmText}}
+        </button>
+      </view>
+    </view>
+
+    <view wx:if="{{staff.length === 0}}" class="staff-empty text-secondary">
+      本项目暂无内部人员
+    </view>
+
+    <view wx:else class="card">
+      <view
+        wx:for="{{staff}}"
+        wx:key="id"
+        class="staff-row"
+        hover-class="hover-card"
+        data-id="{{item.id}}"
+        bindtap="onStaffActions"
+      >
+        <view class="staff-avatar">{{item.user.name[0]}}</view>
+        <view class="staff-main">
+          <view class="staff-name">{{item.user.name}}</view>
+          <view class="staff-role text-secondary">{{item.roleLabel}}</view>
+        </view>
+        <t-icon name="more" size="36rpx" color="#98a2b3" />
+      </view>
+    </view>
+
+    <view class="staff-hint text-secondary">
+      点击成员可改角色或移出项目。项目经理可管理交付，技术人员仅处理被分配的工单。
+    </view>
+  </block>
+
+  <!-- 候选选择：可搜索、可滚动，不再受 ActionSheet 六项上限与 slice(0,10) 截断 -->
+  <view wx:if="{{pickerVisible}}" class="cand-mask" bindtap="onClosePicker" catchtouchmove="noop">
+    <view class="cand-panel" catchtap="noop">
+      <view class="cand-head">
+        <view class="cand-title">选择人员</view>
+        <view class="cand-close" hover-class="hover-plain" bindtap="onClosePicker">关闭</view>
+      </view>
+      <input
+        class="cand-search"
+        value="{{candidateKeyword}}"
+        placeholder="搜索姓名或邮箱"
+        placeholder-class="search-placeholder"
+        bindinput="onCandidateSearch"
+      />
+      <scroll-view scroll-y class="cand-list">
+        <view
+          wx:for="{{filteredCandidates}}"
+          wx:key="id"
+          class="cand-row"
+          hover-class="hover-plain"
+          data-id="{{item.id}}"
+          bindtap="onPickCandidate"
+        >
+          <view class="cand-name">{{item.name}}</view>
+          <view class="cand-email text-secondary">{{item.email}}</view>
+        </view>
+        <view wx:if="{{filteredCandidates.length === 0}}" class="cand-empty text-secondary">
+          没有匹配的人员
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

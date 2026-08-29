@@ -59,4 +59,72 @@ describe("实时事件模块可见性", () => {
       canReceiveProjectRealtimeEvent({ ...disabled, isStaff: true }),
     ).toBe(true);
   });
+
+  it("附件事件按归属实体归模块，不是一律算文件模块", () => {
+    const base = {
+      isStaff: false,
+      type: "PROJECT_UPDATED" as const,
+      customerUpdatesEnabled: true,
+      customerFilesEnabled: false,
+      showMilestones: true,
+      showProgress: false,
+    };
+    // 「开着动态、关着文件」的客户看得到动态自己的附件（附件查询放行了），
+    // 那这条刷新事件就不能被文件模块开关过滤掉
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          projectUpdateId: "update-1",
+        },
+      }),
+    ).toBe(true);
+    // 里程碑同理
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          milestoneId: "milestone-1",
+        },
+      }),
+    ).toBe(true);
+    // 项目级文件（没有归属实体）才受 customerFilesEnabled 限制
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: { change: "PROJECT_ATTACHMENT_UPLOADED" },
+      }),
+    ).toBe(false);
+  });
+
+  it("归属实体的模块关掉时，附件事件仍要被挡住", () => {
+    const base = {
+      isStaff: false,
+      type: "PROJECT_UPDATED" as const,
+      customerUpdatesEnabled: false,
+      customerFilesEnabled: true,
+      showMilestones: false,
+      showProgress: false,
+    };
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          projectUpdateId: "update-1",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          milestoneId: "milestone-1",
+        },
+      }),
+    ).toBe(false);
+  });
 });

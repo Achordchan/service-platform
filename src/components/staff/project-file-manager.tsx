@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
 import { useRouter } from "next/navigation";
 import {
+  Chip,
   Button,
   Dialog,
   DialogActions,
@@ -43,13 +44,28 @@ import {
   createAttachmentDrafts,
   type AttachmentDraft,
 } from "@/lib/attachment-drafts";
-import { apiRequest } from "@/lib/api-client";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
 });
+
+type SourceFilter = "ALL" | "PROJECT" | "COLLECTED";
+
+const SOURCE_FILTERS: Array<{ value: SourceFilter; label: string }> = [
+  { value: "ALL", label: "全部" },
+  { value: "PROJECT", label: "项目文件" },
+  { value: "COLLECTED", label: "来自沟通" },
+];
+
+const SOURCE_LABELS: Record<string, string> = {
+  PROJECT: "项目文件",
+  REQUEST: "工单沟通",
+  UPDATE: "进度动态",
+  MILESTONE: "里程碑",
+};
 
 export function ProjectFileManager({
   projectId,
@@ -72,6 +88,35 @@ export function ProjectFileManager({
   const [draft, setDraft] = useState<AttachmentDraft | null>(null);
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   const [uploading, setUploading] = useState(false);
+  // 来源筛选：手动上传的项目文件 vs 从工单沟通/动态里收录进来的
+  const [source, setSource] = useState<SourceFilter>("ALL");
+  const [unpinning, setUnpinning] = useState<string | null>(null);
+  // 按 source 分类，不能按 pinned：动态/里程碑上的附件是服务端自动收录的，
+  // source 是 UPDATE/MILESTONE 但 pinnedToProjectAt 为空，用 pinned 判会把它们
+  // 错归成「项目文件」，「来自沟通」则只剩手动收录的工单附件。
+  // pinned 只用来决定能不能「移出项目文件」（自动收录的没有这个动作）。
+  const visibleFiles = files.filter((file) => {
+    if (source === "ALL") return true;
+    const collected = (file.source ?? "PROJECT") !== "PROJECT";
+    return source === "COLLECTED" ? collected : !collected;
+  });
+
+  async function unpinFile(attachmentId: string) {
+    setUnpinning(attachmentId);
+    try {
+      await apiRequest(
+        `/api/v1/attachments/${attachmentId}/pin`,
+        jsonRequest("POST", { pinned: false }),
+        "移出失败",
+      );
+      toast.success("已移出项目文件");
+      router.refresh();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "移出失败");
+    } finally {
+      setUnpinning(null);
+    }
+  }
 
   async function upload(current: AttachmentDraft) {
     setUploading(true);
@@ -148,8 +193,20 @@ export function ProjectFileManager({
           </Stack>
         </Paper>
       ) : null}
+      <Stack direction="row" spacing={1} sx={{ mb: 1.5, flexWrap: "wrap" }}>
+        {SOURCE_FILTERS.map((item) => (
+          <Chip
+            key={item.value}
+            label={item.label}
+            size="small"
+            color={source === item.value ? "primary" : "default"}
+            variant={source === item.value ? "filled" : "outlined"}
+            onClick={() => setSource(item.value)}
+          />
+        ))}
+      </Stack>
       <Paper variant="outlined">
-        {files.map((file, index) => (
+        {visibleFiles.map((file, index) => (
           <Stack
             key={file.id}
             direction={{ xs: "column", sm: "row" }}
@@ -158,7 +215,7 @@ export function ProjectFileManager({
               px: 2.5,
               py: 2,
               borderBottom:
-                index === files.length - 1 ? 0 : "1px solid",
+                index === visibleFiles.length - 1 ? 0 : "1px solid",
               borderColor: "divider",
               alignItems: { sm: "center" },
               justifyContent: "space-between",
@@ -178,6 +235,14 @@ export function ProjectFileManager({
                 </Typography>
                 {file.visibility === "INTERNAL" ? (
                   <LockOutlinedIcon fontSize="small" color="action" />
+                ) : null}
+                {(file.source ?? "PROJECT") !== "PROJECT" ? (
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color="primary"
+                    label={SOURCE_LABELS[file.source ?? "PROJECT"]}
+                  />
                 ) : null}
               </Stack>
               <Typography variant="body2" color="text.secondary">
@@ -234,11 +299,23 @@ export function ProjectFileManager({
                 >
                   下载
                 </Button>
+                {/* 手动收录进来的才有「移出」；自动收录的（动态/里程碑附件）
+                    跟着实体走，移不了，所以只认 pinned 而不是 source */}
+                {file.pinned ? (
+                  <Button
+                    variant="text"
+                    color="inherit"
+                    disabled={unpinning === file.id}
+                    onClick={() => void unpinFile(file.id)}
+                  >
+                    移出项目文件
+                  </Button>
+                ) : null}
               </Stack>
             ) : null}
           </Stack>
         ))}
-        {files.length === 0 ? (
+        {visibleFiles.length === 0 ? (
           <Typography
             color="text.secondary"
             sx={{ px: 2.5, py: 5, textAlign: "center" }}

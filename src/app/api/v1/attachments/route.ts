@@ -34,6 +34,8 @@ export async function POST(request: Request) {
     const serviceRequestId = formData.get("serviceRequestId");
     const projectId = formData.get("projectId");
     const requestMessageId = formData.get("requestMessageId");
+    const projectUpdateId = formData.get("projectUpdateId");
+    const milestoneId = formData.get("milestoneId");
     const visibility = formData.get("visibility");
     const inline = formData.get("inline") === "true";
     const inlineContext = formData.get("inlineContext");
@@ -56,6 +58,28 @@ export async function POST(request: Request) {
       typeof serviceRequestId === "string" ? serviceRequestId.trim() : "";
     const normalizedProjectId =
       typeof projectId === "string" ? projectId.trim() : "";
+    const normalizedUpdateId =
+      typeof projectUpdateId === "string" ? projectUpdateId.trim() : "";
+    const normalizedMilestoneId =
+      typeof milestoneId === "string" ? milestoneId.trim() : "";
+    if (normalizedUpdateId && normalizedMilestoneId) {
+      throw badRequest(
+        "ATTACHMENT_TARGET_CONFLICT",
+        "附件只能挂在进度动态或里程碑之一",
+      );
+    }
+    if ((normalizedUpdateId || normalizedMilestoneId) && !normalizedProjectId) {
+      throw badRequest(
+        "ATTACHMENT_PROJECT_REQUIRED",
+        "挂到进度动态或里程碑的附件必须指定项目",
+      );
+    }
+    if ((normalizedUpdateId || normalizedMilestoneId) && inline) {
+      throw badRequest(
+        "ATTACHMENT_TARGET_CONFLICT",
+        "正文内嵌图片不能同时挂为附件",
+      );
+    }
     if (
       inline &&
       normalizedProjectId &&
@@ -112,6 +136,11 @@ export async function POST(request: Request) {
           visibility: visibility ?? undefined,
           title: titleInput,
           note: noteInput,
+          attachTo: normalizedUpdateId
+            ? { kind: "PROJECT_UPDATE" as const, id: normalizedUpdateId }
+            : normalizedMilestoneId
+              ? { kind: "MILESTONE" as const, id: normalizedMilestoneId }
+              : undefined,
           inlineContext:
             inline && inlineContext === "REQUEST_DESCRIPTION"
               ? "REQUEST_DESCRIPTION"

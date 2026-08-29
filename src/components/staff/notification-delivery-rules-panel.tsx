@@ -16,6 +16,7 @@ import {
   Typography,
 } from "@mui/material";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
+import { invalidateDeliveryChannels } from "@/hooks/use-delivery-channels";
 import { useToast } from "@/components/shared/toast-provider";
 import type { NotificationDeliveryRuleView } from "@/modules/notifications/notification-delivery-rules";
 
@@ -105,6 +106,9 @@ export function NotificationDeliveryRulesPanel({
       setRules(next);
       setSavedRules(next);
       onRulesChange?.(next);
+      // 各处「本次提醒方式」提示行按会话缓存了通道开关，改完规则不失效
+      // 就会继续照旧通道说话，而实际投递已按新规则走
+      invalidateDeliveryChannels();
       toast.success("通知规则已保存，仅对后续新事件生效");
     },
     onError: (error) => {

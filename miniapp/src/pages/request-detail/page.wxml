@@ -14,6 +14,17 @@
     <view class="hero">
       <view class="info-head">
         <view class="info-number">{{request.number}}</view>
+        <view wx:if="{{counterpartOnline}}" class="presence">
+          <view class="presence-dot"></view>
+          <text class="presence-text">{{isStaff ? '客户在线' : '服务人员在线'}}</text>
+          <t-icon
+            wx:for="{{counterpartClients}}"
+            wx:key="*this"
+            name="{{item === 'MINIAPP' ? 'mobile' : 'desktop'}}"
+            size="26rpx"
+            color="#16a466"
+          />
+        </view>
         <view class="tag tag-{{statusTone}}">{{statusLabel}}</view>
       </view>
       <view class="info-title">{{request.title}}</view>
@@ -24,7 +35,64 @@
           <text class="info-label">优先级</text>
           <text class="info-value priority-{{request.priority}}">{{priorityLabel}}</text>
         </view>
-        <view class="info-item"><text class="info-label">负责人</text><text class="info-value">{{request.assignee ? request.assignee.name : '待指派'}}</text></view>
+        <view class="info-item"><text class="info-label">负责人</text><text class="info-value">{{assigneeText}}</text></view>
+      </view>
+
+      <!-- 员工操作区：状态变更 / 指派（能力由页面按权限推导，服务端最终裁决） -->
+      <view wx:if="{{staffCanChangeStatus || staffCanAssign || staffCanArchive}}" class="staff-actions">
+        <button
+          wx:if="{{staffCanChangeStatus}}"
+          class="plain-btn staff-action-btn"
+          hover-class="hover-plain"
+          disabled="{{statusSubmitting}}"
+          bindtap="onOpenStatusSheet"
+        >
+          更新状态
+        </button>
+        <button
+          wx:if="{{staffCanAssign}}"
+          class="plain-btn staff-action-btn"
+          hover-class="hover-plain"
+          bindtap="onOpenAssignPanel"
+        >
+          指派处理人
+        </button>
+        <button
+          wx:if="{{staffCanArchive}}"
+          class="plain-btn staff-action-btn"
+          hover-class="hover-plain"
+          loading="{{archiving}}"
+          disabled="{{archiving}}"
+          bindtap="onToggleArchive"
+        >
+          {{isArchived ? '恢复请求' : '归档请求'}}
+        </button>
+      </view>
+
+      <view wx:if="{{pendingStatus}}" class="status-pending">
+        <view class="status-pending-title">即将改为{{pendingStatus.label}}</view>
+        <delivery-notice
+          wx:if="{{statusScene}}"
+          scene="{{statusScene}}"
+          disabled="{{statusSubmitting}}"
+          bind:change="onStatusDeliveryChange"
+        />
+        <view class="status-pending-actions">
+          <button class="plain-btn status-pending-btn" hover-class="hover-plain" bindtap="onCancelStatusChange">取消</button>
+          <button
+            class="primary-btn status-pending-btn"
+            hover-class="hover-btn"
+            loading="{{statusSubmitting}}"
+            disabled="{{statusSubmitting}}"
+            bindtap="onConfirmStatusChange"
+          >
+            确认更新
+          </button>
+        </view>
+      </view>
+      <view wx:if="{{staffClaimRequired}}" class="claim-banner">
+        <t-icon name="info-circle" size="30rpx" color="#b45309" />
+        <text>该工单暂未分配，发送回复后将自动认领给你</text>
       </view>
     </view>
 
@@ -44,7 +112,7 @@
         data-id="{{item.id}}"
         bindlongpress="onLongPressMessage"
       >
-        <view class="bubble {{item.isMine ? 'bubble-mine' : ''}} {{item.isSystem ? 'bubble-system' : ''}}">
+        <view class="bubble {{item.isMine ? 'bubble-mine' : ''}} {{item.isSystem ? 'bubble-system' : ''}} {{item.isInternal ? 'bubble-internal' : ''}}">
           <view wx:if="{{item.isSystem}}" class="system-text">{{item.bodyText}}</view>
 
           <view wx:elif="{{item.revoked}}" class="revoked-notice">
@@ -56,13 +124,35 @@
             <view class="msg-author">
               <text class="msg-author-name">{{item.authorName}}</text>
               <text wx:if="{{item.isAdmin}}" class="msg-admin-badge">管理员</text>
+              <text wx:if="{{item.isInternal}}" class="msg-internal-badge">内部备注</text>
               <text class="msg-author-time"> · {{item.timeText}}</text>
             </view>
             <view wx:if="{{item.replyPreview}}" class="reply-quote">
               <view class="reply-quote-label">回复</view>
               <view class="reply-quote-body">{{item.replyPreview}}</view>
             </view>
-            <rich-text class="msg-body" nodes="{{item.body}}"></rich-text>
+            <!-- 处理指南：正文只含标题+摘要，全文在快照里，用卡片承载并可展开 -->
+            <view
+              wx:if="{{item.playbook}}"
+              class="playbook-card"
+              hover-class="hover-card"
+              data-id="{{item.id}}"
+              bindtap="onOpenPlaybookDetail"
+            >
+              <view class="playbook-head">
+                <t-icon name="book" size="32rpx" color="#1677ff" />
+                <text class="playbook-title">{{item.playbook.title}}</text>
+              </view>
+              <view class="playbook-summary">{{item.playbook.summary}}</view>
+              <view class="playbook-more">
+                查看完整指南<t-icon name="chevron-right" size="28rpx" color="#1677ff" />
+              </view>
+            </view>
+            <rich-text
+              wx:elif="{{item.bodyText}}"
+              class="msg-body"
+              nodes="{{item.body}}"
+            ></rich-text>
             <view wx:if="{{item.images.length > 0}}" class="msg-files">
               <view
                 wx:for="{{item.images}}"
@@ -71,7 +161,9 @@
                 class="msg-file msg-file-image"
                 hover-class="hover-card"
                 data-id="{{image.id}}"
+                data-name="{{image.name}}"
                 bindtap="onOpenImage"
+                bindlongpress="onLongPressAttachment"
               >
                 <t-icon name="image" size="40rpx" color="#16a466" />
                 <view class="file-main">
@@ -92,6 +184,7 @@
                 data-istext="{{file.isText}}"
                 data-name="{{file.name}}"
                 bindtap="onOpenFile"
+                bindlongpress="onLongPressAttachment"
               >
                 <t-icon name="file" size="40rpx" color="#1677ff" />
                 <view class="file-main">
@@ -133,11 +226,42 @@
     </view>
   </block>
 
-  <!-- 底部回复栏 -->
-  <view wx:if="{{request}}" class="reply-bar">
-    <view wx:if="{{request.contentRiskUiEnabled}}" class="risk-notice">
+  <!-- 底部回复栏：员工无回复权限时只读提示 -->
+  <view wx:if="{{request && isStaff && staffViewOnly}}" class="reply-bar reply-bar-notice">
+    <view class="staff-view-only">
+      <t-icon name="info-circle" size="30rpx" color="#667085" />
+      <text>{{request.status === 'CLOSED' ? '该服务请求已关闭，不能继续回复' : '当前请求未分配给你，仅可查看'}}</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{request}}" class="reply-bar">
+    <view wx:if="{{staffCanInternal}}" class="reply-mode-row">
+      <view
+        class="reply-mode-chip {{!internalMode ? 'reply-mode-active' : ''}}"
+        data-mode="public"
+        bindtap="onSetReplyMode"
+      >
+        回复客户
+      </view>
+      <view
+        class="reply-mode-chip {{internalMode ? 'reply-mode-internal-active' : ''}}"
+        data-mode="internal"
+        bindtap="onSetReplyMode"
+      >
+        内部备注
+      </view>
+      <view wx:if="{{internalMode}}" class="reply-mode-hint">仅内部可见，不会发送给客户</view>
+    </view>
+    <view wx:if="{{riskNoticeText}}" class="risk-notice">
       <t-icon name="info-circle" size="28rpx" color="#98a2b3" />
-      <text class="risk-notice-text">请勿发送联系方式或引导站外沟通、交易。平台无法保障站外沟通与交易安全，由此产生的风险和损失由相关方自行承担。</text>
+      <text class="risk-notice-text">{{riskNoticeText}}</text>
+    </view>
+    <view wx:if="{{isStaff && replyScene && !internalMode}}" class="reply-delivery">
+      <delivery-notice
+        scene="{{replyScene}}"
+        disabled="{{sending}}"
+        bind:change="onReplyDeliveryChange"
+      />
     </view>
     <view wx:if="{{replyTarget}}" class="reply-target">
       <view class="reply-target-main">
@@ -158,6 +282,7 @@
           value="{{item.title}}"
           maxlength="160"
           placeholder="展示标题（默认用文件名）"
+          placeholder-class="reply-file-placeholder"
           data-index="{{index}}"
           bindinput="onReplyFileTitleInput"
         />
@@ -166,6 +291,7 @@
           value="{{item.note}}"
           maxlength="500"
           placeholder="备注（可选）"
+          placeholder-class="reply-file-placeholder"
           data-index="{{index}}"
           bindinput="onReplyFileNoteInput"
         />
@@ -175,12 +301,20 @@
       <view class="reply-attach" hover-class="hover-plain" bindtap="onAddReplyFile">
         <t-icon name="file-attachment" size="40rpx" color="#667085" />
       </view>
+      <view
+        wx:if="{{isStaff && !internalMode}}"
+        class="reply-attach"
+        hover-class="hover-plain"
+        bindtap="onOpenPlaybooks"
+      >
+        <t-icon name="book" size="40rpx" color="#667085" />
+      </view>
       <textarea
-        class="reply-input"
+        class="reply-input {{internalMode ? 'reply-input-internal' : ''}}"
         value="{{replyText}}"
         auto-height
         maxlength="15000"
-        placeholder="输入回复…"
+        placeholder="{{internalMode ? '输入内部备注（客户不可见）…' : '输入回复…'}}"
         placeholder-class="reply-placeholder"
         bindinput="onReplyInput"
       ></textarea>
@@ -194,6 +328,122 @@
       >
         发送
       </button>
+    </view>
+  </view>
+
+  <!-- 指派处理人面板（平台管理员） -->
+  <view wx:if="{{assignPanelVisible}}" class="assign-mask" bindtap="onCloseAssignPanel"></view>
+  <view wx:if="{{assignPanelVisible}}" class="assign-panel">
+    <view class="assign-panel-title">指派处理人</view>
+    <view class="assign-panel-desc">可多选；全部取消则设为未分配</view>
+    <scroll-view scroll-y class="assign-list">
+      <view
+        wx:for="{{assignChoices}}"
+        wx:key="userId"
+        class="assign-item"
+        hover-class="hover-card"
+        data-id="{{item.userId}}"
+        bindtap="onToggleAssignee"
+      >
+        <view class="assign-item-main">
+          <view class="assign-item-name">{{item.name}}</view>
+          <view class="assign-item-role">{{item.roleLabel}}</view>
+        </view>
+        <t-icon
+          name="{{item.checked ? 'check-circle-filled' : 'circle'}}"
+          size="44rpx"
+          color="{{item.checked ? '#1677ff' : '#d0d5dd'}}"
+        />
+      </view>
+      <view wx:if="{{assignChoices.length === 0}}" class="assign-empty">该项目暂无可指派人员</view>
+    </scroll-view>
+    <view class="assign-panel-footer">
+      <button class="plain-btn assign-cancel-btn" hover-class="hover-plain" bindtap="onCloseAssignPanel">取消</button>
+      <button
+        class="primary-btn assign-confirm-btn"
+        hover-class="hover-btn"
+        loading="{{assignSubmitting}}"
+        disabled="{{assignSubmitting}}"
+        bindtap="onSubmitAssign"
+      >
+        确定
+      </button>
+    </view>
+  </view>
+
+  <!-- 处理指南选择：分类 tab + 关键词，对齐 Web 的回复助手 -->
+  <view wx:if="{{playbookPickerVisible}}" class="pb-mask" bindtap="onClosePlaybooks" catchtouchmove="noop">
+    <view class="pb-panel" catchtap="noop">
+      <view class="pb-panel-head">
+        <text class="pb-panel-title">处理指南</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onClosePlaybooks" />
+      </view>
+      <view class="pb-filter">
+        <input
+          class="pb-search"
+          placeholder="搜索处理方案"
+          placeholder-class="pb-search-placeholder"
+          value="{{playbookKeyword}}"
+          bindinput="onPlaybookKeyword"
+        />
+        <scroll-view scroll-x class="pb-tabs" enhanced show-scrollbar="{{false}}">
+          <view
+            wx:for="{{playbookCategories}}"
+            wx:key="value"
+            class="pb-tab {{playbookCategory === item.value ? 'pb-tab-active' : ''}}"
+            data-value="{{item.value}}"
+            bindtap="onPlaybookCategory"
+          >{{item.label}}</view>
+        </scroll-view>
+      </view>
+      <scroll-view scroll-y class="pb-panel-body">
+        <view wx:if="{{playbookLoading}}" class="pb-empty">加载中…</view>
+        <view wx:elif="{{playbookRows.length === 0}}" class="pb-empty">没有匹配的处理指南</view>
+        <view wx:for="{{playbookRows}}" wx:key="key" class="pb-item">
+          <view class="pb-item-main" data-key="{{item.key}}" bindtap="onPreviewPlaybook">
+            <view class="pb-item-title">{{item.title}}</view>
+            <view class="pb-item-summary">{{item.summary}}</view>
+            <view class="pb-item-preview">查看全文 ›</view>
+          </view>
+          <button
+            class="pb-item-send"
+            hover-class="hover-btn"
+            data-key="{{item.key}}"
+            bindtap="onPickPlaybook"
+          >发送</button>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+
+  <!-- 处理指南全文 -->
+  <view wx:if="{{playbookDetail}}" class="pb-mask" bindtap="onClosePlaybookDetail" catchtouchmove="noop">
+    <view class="pb-panel" catchtap="noop">
+      <view class="pb-panel-head">
+        <text class="pb-panel-title">{{playbookDetail.title}}</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onClosePlaybookDetail" />
+      </view>
+      <scroll-view scroll-y class="pb-panel-body">
+        <view class="pb-section-text">{{playbookDetail.introduction}}</view>
+
+        <block wx:if="{{playbookDetail.contentHtml}}">
+          <view class="pb-section-title">说明</view>
+          <rich-text nodes="{{playbookDetail.contentHtml}}"></rich-text>
+        </block>
+
+        <block wx:if="{{playbookDetail.steps.length > 0}}">
+          <view class="pb-section-title">操作步骤</view>
+          <view wx:for="{{playbookDetail.steps}}" wx:key="index" class="pb-step">
+            <text class="pb-step-index">{{index + 1}}</text>
+            <text class="pb-step-text">{{item}}</text>
+          </view>
+        </block>
+
+        <block wx:if="{{playbookDetail.safetyNotes.length > 0}}">
+          <view class="pb-section-title">安全提示</view>
+          <view wx:for="{{playbookDetail.safetyNotes}}" wx:key="index" class="pb-note">{{item}}</view>
+        </block>
+      </scroll-view>
     </view>
   </view>
 </view>

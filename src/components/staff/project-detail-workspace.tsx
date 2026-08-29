@@ -30,6 +30,7 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
+import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
@@ -581,6 +582,18 @@ export function ProjectDetailWorkspace({
                           <ImageOutlinedIcon sx={{ fontSize: 17 }} />
                           <Typography variant="body2">
                             包含图片，请查看详情
+                          </Typography>
+                        </Stack>
+                      ) : null}
+                      {!revoked && (update.attachments?.length ?? 0) > 0 ? (
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          sx={{ alignItems: "center", color: "text.secondary" }}
+                        >
+                          <AttachFileOutlinedIcon sx={{ fontSize: 17 }} />
+                          <Typography variant="body2">
+                            {update.attachments!.length} 个附件（已收录到项目文件）
                           </Typography>
                         </Stack>
                       ) : null}

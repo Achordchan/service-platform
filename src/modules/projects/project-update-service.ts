@@ -1,7 +1,8 @@
 import "server-only";
 
-import type { Prisma } from "@/generated/prisma/client";
+import type { ContentVisibility, Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { withActorDb } from "@/lib/actor";
 import {
   extractInlineAttachmentIds,
@@ -14,8 +15,10 @@ import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchProjectActivity,
   publishProjectChange,
+  previewProjectActivityRecipients,
 } from "@/modules/notifications/notification-service";
 import {
+  assertCanPublishProjectUpdate,
   assertCanCommentOnProjectUpdate,
   assertCanPublishActiveProjectUpdate,
   assertCanViewCustomerProjectFeature,
@@ -101,6 +104,24 @@ export function listProjectUpdates(actor: Actor, projectId: string) {
       include: {
         author: {
           select: { id: true, name: true },
+        },
+        attachments: {
+          where: {
+            inline: false,
+            ...(actor.isStaff ? {} : { visibility: "CUSTOMER_VISIBLE" as const }),
+          },
+          select: {
+            id: true,
+            originalName: true,
+            title: true,
+            note: true,
+            mimeType: true,
+            size: true,
+            previewStatus: true,
+            visibility: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "asc" as const },
         },
         comments: {
           where: {
@@ -234,6 +255,7 @@ export async function createProjectUpdate(
   actor: Actor,
   projectId: string,
   input: CreateProjectUpdateInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   const preflightContext = await withActorDb(actor, (tx) =>
     assertCanPublishActiveProjectUpdate(tx, actor, projectId),
@@ -322,8 +344,30 @@ export async function createProjectUpdate(
       customerSpaceId: context.customerSpaceId,
       projectId,
       contentRiskReviewId: contentRiskReview?.id,
+      deliveryOverride,
     });
     return { ...update, deliveryFeedback: delivery.feedback };
+  });
+}
+
+/** 发送前预览：与 createProjectUpdate 的 dispatch 参数保持一致 */
+export function previewProjectUpdateDelivery(
+  actor: Actor,
+  projectId: string,
+  visibility: ContentVisibility,
+) {
+  return withActorDb(actor, async (tx) => {
+    const context = await assertCanPublishProjectUpdate(tx, actor, projectId);
+    return previewProjectActivityRecipients(tx, actor, {
+      eventType: "PROJECT_UPDATE_CREATED",
+      eventPayload: { projectId, actorId: actor.id },
+      notificationType: "PROJECT_UPDATE",
+      notificationTitle: "",
+      notificationBody: "",
+      visibility,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+    });
   });
 }
 

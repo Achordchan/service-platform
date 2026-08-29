@@ -26,6 +26,7 @@ import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import type { ChatReplyTarget } from "@/components/shared/request-chat-types";
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
 import { SupportReplyAssistant } from "@/components/staff/support-reply-assistant";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -42,7 +43,10 @@ import {
   buildAttachmentOnlyMessage,
   hasMeaningfulHtml,
 } from "@/lib/message-content";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 
 const requestReplyComposerSchema = z
   .object({
@@ -88,6 +92,10 @@ export function RequestReplyComposer({
   const [editorVersion, setEditorVersion] = useState(0);
   const [playbookSending, setPlaybookSending] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
+  // 本次发送的提醒方式覆盖；内部备注本来就不外发，不显示提示行
+  const [deliveryOverride, setDeliveryOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const deliveryRule = useDeliveryChannelRule("REQUEST_PUBLIC_MESSAGE");
   const {
     control,
     handleSubmit,
@@ -152,10 +160,14 @@ export function RequestReplyComposer({
           visibility: "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
           supportPlaybookKey: playbookKey,
+          ...deliveryOverridePayload(deliveryOverride, deliveryRule),
         }),
       );
       toast.success("处理指南已发送");
       toast.delivery(result.deliveryFeedback);
+      // 覆盖是一次性的：不清掉的话，只要详情页不卸载，后续每条回复都会继续
+      // 带着上次的排除名单 / 强制邮件，用户却以为早已恢复默认
+      setDeliveryOverride({});
       onCancelReply?.();
       onSent?.();
       markRequestLocalMutation();
@@ -186,6 +198,9 @@ export function RequestReplyComposer({
             : buildAttachmentOnlyMessage(),
           visibility: submitInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
           replyToMessageId: replyTarget?.id,
+          ...(submitInternal
+            ? {}
+            : deliveryOverridePayload(deliveryOverride, deliveryRule)),
         }),
       );
       const failedFiles = await uploadFilesBestEffort(
@@ -207,6 +222,8 @@ export function RequestReplyComposer({
         },
       );
       reset({ body: "", internal: false, files: [] });
+      // 同上：一次性覆盖必须随本次发送一起归零
+      setDeliveryOverride({});
       setEditorVersion((version) => version + 1);
       if (failedFiles.length > 0) {
         toast.warning(
@@ -357,6 +374,14 @@ export function RequestReplyComposer({
                 : "发送回复"}
           </Button>
         </Stack>
+        {effectiveInternal ? null : (
+          <DeliveryNotice
+            scene={{ scene: "REQUEST_PUBLIC_MESSAGE", requestId }}
+            override={deliveryOverride}
+            onOverrideChange={setDeliveryOverride}
+            disabled={busy}
+          />
+        )}
         <Typography variant="body2" color="text.secondary">
           可粘贴图片，单个附件最大 {policy.maxSizeMb}MB。
         </Typography>

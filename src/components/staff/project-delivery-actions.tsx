@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -30,6 +31,22 @@ import { useToast } from "@/components/shared/toast-provider";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import { hasMeaningfulHtml } from "@/lib/message-content";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
+import {
+  FilePickerButton,
+  firstFileRejectionMessage,
+} from "@/components/shared/file-picker";
+import { RequestAttachmentDrafts } from "@/components/shared/request-chat-attachments";
+import { useAttachmentPolicy } from "@/hooks/use-attachment-policy";
+import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
+import {
+  appendDraftMeta,
+  createAttachmentDrafts,
+  type AttachmentDraft,
+} from "@/lib/attachment-drafts";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import type { DeliveryFeedback } from "@/lib/operation-feedback";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import type {
@@ -99,6 +116,38 @@ export function ProjectDeliveryActions({
   const router = useRouter();
   const toast = useToast();
   const [dialog, setDialog] = useState<DialogName>(null);
+  // 动态/里程碑的文件附件：与工单同一套两段式 —— 先建实体再带 id 上传，
+  // 避免草稿态附件先跑进项目文件列表
+  const { policy, validateFiles } = useAttachmentPolicy();
+  const [updateFiles, setUpdateFiles] = useState<AttachmentDraft[]>([]);
+  const [milestoneFiles, setMilestoneFiles] = useState<AttachmentDraft[]>([]);
+  // 本次发布的提醒方式覆盖：动态与里程碑各自一份，关弹窗时清掉
+  const [updateOverride, setUpdateOverride] =
+    useState<NotificationDeliveryOverride>({});
+  const [milestoneOverride, setMilestoneOverride] =
+    useState<NotificationDeliveryOverride>({});
+  // 实体已经建好、只有部分附件没传上去时的补传目标。
+  // 附件要绑回同一个动态/里程碑，关掉弹窗这个归属就没了 ——
+  // 去「文件」重新添加只会建出与该实体无关的普通项目文件。
+  const [retryAttach, setRetryAttach] = useState<{
+    field: "projectUpdateId" | "milestoneId";
+    entityId: string;
+  } | null>(null);
+  // 覆盖是一次性的：关闭对话框的所有路径（取消、点遮罩）都要归零，
+  // 否则自定义完再取消，下次打开会带着上次的强制/抑制设置提交
+  const closeDialog = () => {
+    setDialog(null);
+    setUpdateOverride({});
+    setMilestoneOverride({});
+    // 附件草稿和覆盖一样是一次性的：取消就该丢掉。
+    // 只在放弃补传时清的话，普通取消挑好的附件会静静留到下一次弹窗，
+    // 跟着下一条动态/里程碑一起传上去 —— 用户并没有再选过它们。
+    setRetryAttach(null);
+    setUpdateFiles([]);
+    setMilestoneFiles([]);
+  };
+  const updateDeliveryRule = useDeliveryChannelRule("PROJECT_UPDATE");
+  const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");
   const [submitting, setSubmitting] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const milestoneForm = useForm<MilestoneFormValues>({ resolver: zodResolver(milestoneFormSchema), defaultValues: { title: "", description: "", status: "NOT_STARTED", startDate: "", endDate: "" } });
@@ -137,21 +186,75 @@ export function ProjectDeliveryActions({
     context: "MILESTONE",
   });
   const deliveryActive = isProjectDeliveryActive(project.status);
+  const milestoneRetry = retryAttach?.field === "milestoneId";
+  const updateRetry = retryAttach?.field === "projectUpdateId";
 
-  async function execute<T>(
+  // 实体建好后再上传附件：服务端据此绑定归属，并按实体可见性派生附件可见性
+  function uploadAttachments(
+    files: AttachmentDraft[],
+    field: "projectUpdateId" | "milestoneId",
+    entityId: string,
+  ) {
+    return uploadFilesBestEffort(files, async (draft) => {
+      const formData = new FormData();
+      formData.append("file", draft.file);
+      formData.append("projectId", project.id);
+      formData.append(field, entityId);
+      appendDraftMeta(formData, draft);
+      await staffApi("/api/v1/attachments", {
+        method: "POST",
+        body: formData,
+      });
+    });
+  }
+
+  function keepFailedDrafts(
+    field: "projectUpdateId" | "milestoneId",
+    failed: AttachmentDraft[],
+  ) {
+    if (field === "projectUpdateId") setUpdateFiles(failed);
+    else setMilestoneFiles(failed);
+  }
+
+  async function execute<T extends { id?: string }>(
     url: string,
     body: unknown,
     successMessage: string,
     deliveryFeedback?: (result: T) => DeliveryFeedback | undefined,
+    attach?: {
+      files: AttachmentDraft[];
+      field: "projectUpdateId" | "milestoneId";
+    },
   ) {
     setSubmitting(true);
     try {
       const result = await staffApi<T>(url, jsonRequest("POST", body));
-      milestoneForm.reset();
-      updateForm.reset();
+      const failed =
+        attach && attach.files.length > 0 && result.id
+          ? await uploadAttachments(attach.files, attach.field, result.id)
+          : [];
       setInlineImageUploading(false);
-      setDialog(null);
-      toast.success(successMessage);
+      if (attach && failed.length > 0 && result.id) {
+        // 实体已经发出去了，正文不能再改；只把失败的附件留在原处等重试，
+        // 这样才能绑回同一个动态/里程碑。
+        keepFailedDrafts(attach.field, failed);
+        setRetryAttach({ field: attach.field, entityId: result.id });
+        toast.warning(
+          `${successMessage}，但 ${failed.length} 个附件上传失败：${fileNames(
+            failed.map((draft) => draft.file),
+          )}。已保留在下方，可直接重试。`,
+        );
+      } else {
+        milestoneForm.reset();
+        updateForm.reset();
+        setDialog(null);
+        setUpdateFiles([]);
+        setMilestoneFiles([]);
+        // 覆盖是一次性的，不跨下一次操作沿用
+        setUpdateOverride({});
+        setMilestoneOverride({});
+        toast.success(successMessage);
+      }
       toast.delivery(deliveryFeedback?.(result));
       router.refresh();
     } catch (submitError) {
@@ -163,8 +266,59 @@ export function ProjectDeliveryActions({
     }
   }
 
+  // 补传：实体已存在，只重传剩下的附件，不再建实体、不再发通知
+  async function retryAttachments(files: AttachmentDraft[]) {
+    const target = retryAttach;
+    if (!target || files.length === 0) return;
+    setSubmitting(true);
+    try {
+      const failed = await uploadAttachments(
+        files,
+        target.field,
+        target.entityId,
+      );
+      if (failed.length > 0) {
+        keepFailedDrafts(target.field, failed);
+        toast.warning(
+          `仍有 ${failed.length} 个附件上传失败：${fileNames(
+            failed.map((draft) => draft.file),
+          )}。`,
+        );
+        return;
+      }
+      milestoneForm.reset();
+      updateForm.reset();
+      setRetryAttach(null);
+      setDialog(null);
+      setUpdateFiles([]);
+      setMilestoneFiles([]);
+      setUpdateOverride({});
+      setMilestoneOverride({});
+      toast.success("附件已补传");
+      router.refresh();
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function submitHandler(
+    field: "projectUpdateId" | "milestoneId",
+    files: AttachmentDraft[],
+    create: (event: React.FormEvent) => unknown,
+  ) {
+    return (event: React.FormEvent) => {
+      // 补传模式下再点保存不能重新建实体 —— 那会多发一条动态/里程碑
+      if (retryAttach?.field === field) {
+        event.preventDefault();
+        void retryAttachments(files);
+        return;
+      }
+      create(event);
+    };
+  }
+
   const submitMilestone = milestoneForm.handleSubmit(async (values) => {
-    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+    await execute<{ id: string; deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/milestones`,
       {
         title: values.title,
@@ -179,22 +333,26 @@ export function ProjectDeliveryActions({
           ? new Date(values.endDate).toISOString()
           : null,
         sortOrder: project.milestones.length,
+        ...deliveryOverridePayload(milestoneOverride, milestoneDeliveryRule),
       },
       "里程碑已创建",
       (result) => result.deliveryFeedback,
+      { files: milestoneFiles, field: "milestoneId" },
     );
   });
 
   const submitUpdate = updateForm.handleSubmit(async (values) => {
-    await execute<{ deliveryFeedback: DeliveryFeedback }>(
+    await execute<{ id: string; deliveryFeedback: DeliveryFeedback }>(
       `/api/v1/projects/${project.id}/updates`,
       {
         title: values.title,
         body: values.body,
         visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        ...deliveryOverridePayload(updateOverride, updateDeliveryRule),
       },
       values.internal ? "内部进度已发布" : "客户进度已发布",
       (result) => result.deliveryFeedback,
+      { files: updateFiles, field: "projectUpdateId" },
     );
   });
 
@@ -344,7 +502,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "milestone"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -353,13 +511,19 @@ export function ProjectDeliveryActions({
       >
         <Stack
           component="form"
-          onSubmit={submitMilestone}
+          onSubmit={submitHandler("milestoneId", milestoneFiles, submitMilestone)}
           sx={{ minHeight: 0, maxHeight: "inherit", overflow: "hidden" }}
         >
           {submitting ? <LinearProgress /> : null}
-          <DialogTitle>新增里程碑</DialogTitle>
+          <DialogTitle>{milestoneRetry ? "补传里程碑附件" : "新增里程碑"}</DialogTitle>
           <DialogContent sx={{ overflowY: "auto" }}>
             <Stack spacing={2} sx={{ pt: 1 }}>
+              {milestoneRetry ? (
+                <Alert severity="warning">
+                  里程碑已创建、通知也已发出，只有下面的附件没传上去。这里只补传附件，不会重复创建。
+                </Alert>
+              ) : (
+              <>
               {contentRiskNoticeEnabled ? (
                 <ContentRiskNotice audience="STAFF" />
               ) : null}
@@ -405,18 +569,82 @@ export function ProjectDeliveryActions({
                   <RichTextEditor value={field.value} onChange={field.onChange} placeholder="说明里程碑目标、交付内容或验收标准" disabled={submitting} minHeight={130} maxHeight={260} uploadImage={uploadMilestoneImage} onImageUploadingChange={setInlineImageUploading} />
                 )} />
               </Stack>
+              </>
+              )}
+              <Stack spacing={1}>
+                <Typography sx={{ fontWeight: 650 }}>附件</Typography>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <FilePickerButton
+                    variant="outlined"
+                    disabled={submitting}
+                    multiple
+                    accept={policy.accept}
+                    maxSize={policy.maxSizeMb * 1024 * 1024}
+                    onFiles={(next) => {
+                      const { accepted, error } = validateFiles(
+                        next,
+                        milestoneFiles.length,
+                      );
+                      if (error) toast.warning(error);
+                      if (accepted.length > 0) {
+                        setMilestoneFiles((current) => [
+                          ...current,
+                          ...createAttachmentDrafts(accepted),
+                        ]);
+                      }
+                    }}
+                    onRejected={(rejections) =>
+                      toast.warning(firstFileRejectionMessage(rejections))
+                    }
+                  >
+                    添加附件
+                  </FilePickerButton>
+                  <Typography variant="body2" color="text.secondary">
+                    单个不超过 {policy.maxSizeMb}MB
+                  </Typography>
+                </Stack>
+                <RequestAttachmentDrafts
+                  drafts={milestoneFiles}
+                  disabled={submitting}
+                  onUpdate={(index, patch) =>
+                    setMilestoneFiles((current) =>
+                      current.map((draft, i) =>
+                        i === index ? { ...draft, ...patch } : draft,
+                      ),
+                    )
+                  }
+                  onRemove={(index) =>
+                    setMilestoneFiles((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </Stack>
+              {milestoneRetry ? null : (
+                <DeliveryNotice
+                  scene={{ scene: "PROJECT_MILESTONE", projectId: project.id }}
+                  override={milestoneOverride}
+                  onOverrideChange={setMilestoneOverride}
+                  disabled={submitting}
+                />
+              )}
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
-              取消
+            <Button onClick={closeDialog} disabled={submitting}>
+              {milestoneRetry ? "放弃补传" : "取消"}
             </Button>
             <Button
               type="submit"
               variant="contained"
-              disabled={submitting || inlineImageUploading}
+              disabled={
+                submitting ||
+                (milestoneRetry
+                  ? milestoneFiles.length === 0
+                  : inlineImageUploading)
+              }
             >
-              保存
+              {milestoneRetry ? "重试上传" : "保存"}
             </Button>
           </DialogActions>
         </Stack>
@@ -424,7 +652,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "stage"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="xs"
       >
@@ -439,7 +667,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button type="submit" variant="contained" disabled={submitting}>
@@ -451,7 +679,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "update"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -460,13 +688,19 @@ export function ProjectDeliveryActions({
       >
         <Stack
           component="form"
-          onSubmit={submitUpdate}
+          onSubmit={submitHandler("projectUpdateId", updateFiles, submitUpdate)}
           sx={{ minHeight: 0, maxHeight: "inherit", overflow: "hidden" }}
         >
           {submitting ? <LinearProgress /> : null}
-          <DialogTitle>发布项目进度</DialogTitle>
+          <DialogTitle>{updateRetry ? "补传动态附件" : "发布项目进度"}</DialogTitle>
           <DialogContent sx={{ overflowY: "auto" }}>
             <Stack spacing={2} sx={{ pt: 1 }}>
+              {updateRetry ? (
+                <Alert severity="warning">
+                  动态已发布、通知也已发出，只有下面的附件没传上去。这里只补传附件，不会重复发布。
+                </Alert>
+              ) : (
+              <>
               {contentRiskNoticeEnabled && !updateInternal ? (
                 <ContentRiskNotice audience="STAFF" />
               ) : null}
@@ -483,22 +717,86 @@ export function ProjectDeliveryActions({
               <Controller name="internal" control={updateForm.control} render={({ field }) => (
                 <FormControlLabel control={<Switch checked={field.value} onChange={(_, checked) => field.onChange(checked)} />} label="仅内部可见" />
               )} />
+              </>
+              )}
+              <Stack spacing={1}>
+                <Typography sx={{ fontWeight: 650 }}>附件</Typography>
+                <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
+                  <FilePickerButton
+                    variant="outlined"
+                    disabled={submitting}
+                    multiple
+                    accept={policy.accept}
+                    maxSize={policy.maxSizeMb * 1024 * 1024}
+                    onFiles={(next) => {
+                      const { accepted, error } = validateFiles(
+                        next,
+                        updateFiles.length,
+                      );
+                      if (error) toast.warning(error);
+                      if (accepted.length > 0) {
+                        setUpdateFiles((current) => [
+                          ...current,
+                          ...createAttachmentDrafts(accepted),
+                        ]);
+                      }
+                    }}
+                    onRejected={(rejections) =>
+                      toast.warning(firstFileRejectionMessage(rejections))
+                    }
+                  >
+                    添加附件
+                  </FilePickerButton>
+                  <Typography variant="body2" color="text.secondary">
+                    单个不超过 {policy.maxSizeMb}MB
+                  </Typography>
+                </Stack>
+                <RequestAttachmentDrafts
+                  drafts={updateFiles}
+                  disabled={submitting}
+                  onUpdate={(index, patch) =>
+                    setUpdateFiles((current) =>
+                      current.map((draft, i) =>
+                        i === index ? { ...draft, ...patch } : draft,
+                      ),
+                    )
+                  }
+                  onRemove={(index) =>
+                    setUpdateFiles((current) =>
+                      current.filter((_, i) => i !== index),
+                    )
+                  }
+                />
+              </Stack>
+              {updateRetry ? null : (
+                <DeliveryNotice
+                  scene={{
+                    scene: "PROJECT_UPDATE",
+                    projectId: project.id,
+                    visibility: updateInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+                  }}
+                  override={updateOverride}
+                  onOverrideChange={setUpdateOverride}
+                  disabled={submitting}
+                />
+              )}
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
-              取消
+            <Button onClick={closeDialog} disabled={submitting}>
+              {updateRetry ? "放弃补传" : "取消"}
             </Button>
             <Button
               type="submit"
               variant="contained"
               disabled={
                 submitting ||
-                inlineImageUploading ||
-                !hasMeaningfulHtml(updateBody)
+                (updateRetry
+                  ? updateFiles.length === 0
+                  : inlineImageUploading || !hasMeaningfulHtml(updateBody))
               }
             >
-              发布
+              {updateRetry ? "重试上传" : "发布"}
             </Button>
           </DialogActions>
         </Stack>
@@ -506,7 +804,7 @@ export function ProjectDeliveryActions({
 
       <Dialog
         open={dialog === "project"}
-        onClose={submitting ? undefined : () => setDialog(null)}
+        onClose={submitting ? undefined : closeDialog}
         fullWidth
         maxWidth="sm"
       >
@@ -575,7 +873,7 @@ export function ProjectDeliveryActions({
             </Stack>
           </DialogContent>
           <DialogActions sx={{ px: 3, pb: 3 }}>
-            <Button onClick={() => setDialog(null)} disabled={submitting}>
+            <Button onClick={closeDialog} disabled={submitting}>
               取消
             </Button>
             <Button type="submit" variant="contained" disabled={submitting}>

@@ -25,6 +25,8 @@ import type {
 import { PageHeading } from "@/components/customer/page-heading";
 import { RequestReplyForm } from "@/components/customer/request-reply-form";
 import { StatusIndicator } from "@/components/shared/status-indicator";
+import { useToast } from "@/components/shared/toast-provider";
+import { apiRequest as staffApi, jsonRequest } from "@/lib/api-client";
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -54,6 +56,7 @@ export function RequestDetail({
 }) {
   const priority = priorityMap[request.priority];
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
+  const toast = useToast();
   const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
   const presence = useRequestPresence(request.id, "CUSTOMER");
   useRequestRealtime(request.id, {
@@ -74,6 +77,7 @@ export function RequestDetail({
             <StatusIndicator status={request.status} audience="CUSTOMER" />
             <RequestPresenceIndicator
               online={presence.counterpartOnline}
+              clients={presence.counterpartClients}
               label="服务人员在线"
             />
           </>
@@ -93,6 +97,19 @@ export function RequestDetail({
             currentUserId={currentUserId}
             contentRiskEnabled={request.contentRiskUiEnabled}
             onReply={setReplyTarget}
+            onPinAttachmentToProject={async (file) => {
+              try {
+                await staffApi(
+                  `/api/v1/attachments/${file.id}/pin`,
+                  jsonRequest("POST", { pinned: true }),
+                );
+                toast.success("已添加到项目文件");
+              } catch (pinError) {
+                toast.error(
+                  pinError instanceof Error ? pinError.message : "添加失败",
+                );
+              }
+            }}
             onReedit={
               !request.archivedAt && request.status !== "CLOSED"
                 ? (message) => {

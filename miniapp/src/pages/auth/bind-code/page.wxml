@@ -13,6 +13,7 @@
       type="text"
       value="{{code}}"
       placeholder="例如 8F3K-29DA"
+      placeholder-class="code-placeholder"
       bindinput="onCodeInput"
     />
 

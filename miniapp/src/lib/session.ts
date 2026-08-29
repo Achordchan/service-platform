@@ -12,11 +12,25 @@ export function clearToken() {
   wx.removeStorageSync(TICKET_KEY);
 }
 
+/**
+ * 401 被踢下线时要归还的全局副作用（角标持有的常驻 SSE 租约）。
+ * 由 app.ts 接线 —— session ← badge 直接 import 会成环（badge → api → request → session）。
+ *
+ * 不接的话：401 只清 token + 跳登录页，常驻租约仍让 activePages > 0，
+ * 旧的已鉴权 SSE 会一直活到超时，之后还在登录页拿着空 token 反复重连。
+ */
+let onSessionEnd: (() => void) | null = null;
+
+export function setSessionEndedHandler(handler: () => void) {
+  onSessionEnd = handler;
+}
+
 const machine = new AuthMachine({
   clearToken,
   redirectToLogin: () => {
     wx.reLaunch({ url: "/pages/auth/login/page" });
   },
+  onSessionEnd: () => onSessionEnd?.(),
 });
 
 export function getAuthState(): AuthState {

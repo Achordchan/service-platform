@@ -54,3 +54,50 @@ describe("API 登录用户解析", () => {
     consoleError.mockRestore();
   });
 });
+
+describe("可选 JSON 请求体", () => {
+  it("空体按不带载荷处理，DELETE 才能既支持带覆盖也支持不带", async () => {
+    const { readOptionalJson } = await import("@/modules/projects/api-utils");
+
+    await expect(
+      readOptionalJson(new Request("https://test.local", { method: "DELETE" })),
+    ).resolves.toEqual({});
+  });
+
+  it("带载荷时照常解析", async () => {
+    const { readOptionalJson } = await import("@/modules/projects/api-utils");
+
+    await expect(
+      readOptionalJson(
+        new Request("https://test.local", {
+          method: "DELETE",
+          body: JSON.stringify({ deliveryOverride: { notification: false } }),
+        }),
+      ),
+    ).resolves.toEqual({ deliveryOverride: { notification: false } });
+  });
+
+  it("载荷是坏 JSON 时报错，而不是当成没传静默放过", async () => {
+    const { readOptionalJson } = await import("@/modules/projects/api-utils");
+
+    await expect(
+      readOptionalJson(
+        new Request("https://test.local", { method: "DELETE", body: "{oops" }),
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_JSON", status: 400 });
+  });
+
+  it("载荷超限时按 413 拒绝", async () => {
+    const { readOptionalJson } = await import("@/modules/projects/api-utils");
+
+    await expect(
+      readOptionalJson(
+        new Request("https://test.local", {
+          method: "DELETE",
+          body: JSON.stringify({ note: "x".repeat(64) }),
+        }),
+        { maxBytes: 16 },
+      ),
+    ).rejects.toMatchObject({ code: "REQUEST_BODY_TOO_LARGE", status: 413 });
+  });
+});

@@ -24,7 +24,11 @@ import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { DateStringPicker } from "@/components/shared/date-string-picker";
 import { MilestoneList } from "@/components/shared/milestone-list";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
+import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
+import { deliveryOverridePayload } from "@/lib/delivery-notice";
+import { useDeliveryChannelRule } from "@/hooks/use-delivery-channels";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
 import type {
   MilestoneStatus,
@@ -71,6 +75,16 @@ export function MilestoneManager({
   const router = useRouter();
   const toast = useToast();
   const [editing, setEditing] = useState<ProjectMilestone | null>(null);
+  // 本次保存的提醒方式覆盖（编辑里程碑同样会发 PROJECT_MILESTONE 通知）
+  const [editOverride, setEditOverride] =
+    useState<NotificationDeliveryOverride>({});
+  // 覆盖是一次性的：取消 / 点遮罩关闭也要归零，否则换一个里程碑再打开时
+  // 会带着上次的强制或抑制设置提交
+  const closeEditor = () => {
+    setEditing(null);
+    setEditOverride({});
+  };
+  const milestoneDeliveryRule = useDeliveryChannelRule("PROJECT_MILESTONE");
   const [deleting, setDeleting] = useState<ProjectMilestone | null>(null);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
   const [actionId, setActionId] = useState("");
@@ -122,6 +136,7 @@ export function MilestoneManager({
       endDate: dateInput(milestone.endDate),
     });
     setInlineImageUploading(false);
+    setEditOverride({});
     setEditing(milestone);
   }
 
@@ -147,9 +162,12 @@ export function MilestoneManager({
           endDate: values.endDate
             ? new Date(values.endDate).toISOString()
             : null,
+          ...deliveryOverridePayload(editOverride, milestoneDeliveryRule),
         }),
       );
       setEditing(null);
+      // 覆盖是一次性的，不跨下一次编辑沿用
+      setEditOverride({});
       toast.success("里程碑已更新");
       toast.delivery(result.deliveryFeedback);
       router.refresh();
@@ -255,7 +273,7 @@ export function MilestoneManager({
 
       <Dialog
         open={Boolean(editing)}
-        onClose={actionId ? undefined : () => setEditing(null)}
+        onClose={actionId ? undefined : closeEditor}
         fullWidth
         maxWidth="sm"
         slotProps={{
@@ -347,11 +365,17 @@ export function MilestoneManager({
                     )}
                   />
                 </Stack>
+                <DeliveryNotice
+                  scene={{ scene: "PROJECT_MILESTONE", projectId }}
+                  override={editOverride}
+                  onOverrideChange={setEditOverride}
+                  disabled={actionId === editing.id}
+                />
               </Stack>
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 3 }}>
               <Button
-                onClick={() => setEditing(null)}
+                onClick={closeEditor}
                 disabled={actionId === editing.id}
               >
                 取消

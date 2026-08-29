@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { checkRateLimit, clientIpFromRequest } from "@/lib/rate-limit";
+import { clientIpFromHeaders } from "@/lib/request-network";
 import { revokeMiniappSessionByAuthorization } from "@/modules/miniapp/session";
 import { miniappLoginSchema } from "@/modules/miniapp/schemas";
 import { createMiniappSessionForCode } from "@/modules/miniapp/wechat-binding-service";
@@ -18,7 +19,11 @@ export async function POST(request: Request) {
     const input = miniappLoginSchema.parse(
       await readJson(request, { maxBytes: 8 * 1024 }),
     );
-    const result = await createMiniappSessionForCode(input);
+    // 第二参保持默认微信 provider；第三参为登录审计的可信来源信息
+    const result = await createMiniappSessionForCode(input, undefined, {
+      ipAddress: clientIpFromHeaders(request.headers),
+      userAgent: request.headers.get("user-agent"),
+    });
     if (result.status === "SESSION_ISSUED") {
       return NextResponse.json({
         data: {

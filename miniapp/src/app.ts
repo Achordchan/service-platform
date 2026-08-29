@@ -1,9 +1,16 @@
-import { bootstrapAuth, setIdentitySwitchHandler } from "./lib/auth";
+import {
+  bootstrapAuth,
+  setIdentitySwitchHandler,
+  setSessionEndHandler,
+} from "./lib/auth";
+import { releaseBadgeSync } from "./lib/badge";
+import { setSessionEndedHandler } from "./lib/session";
 import { eventSync } from "./lib/events";
 import {
   invalidateSubscribeAuthorization,
   resetSubscribeState,
 } from "./lib/subscribe";
+import { clearDeliveryChannelsCache } from "./lib/delivery";
 
 let leftForeground = false;
 
@@ -12,6 +19,11 @@ App({
     // 账号切换时清空续额状态（在此接线，避免 auth ← subscribe 循环依赖）。
     // 登录/绑定都在 onLaunch 之后发生，注册早于任何 saveToken。
     setIdentitySwitchHandler(resetSubscribeState);
+    // 退出登录归还角标的常驻 SSE 租约（同样在此接线，避免 auth ← badge 循环依赖）
+    setSessionEndHandler(releaseBadgeSync);
+    // 401 被踢下线走的是另一条路（request.ts → session.handleUnauthorized），
+    // 不接这条的话租约不还，旧的已鉴权 SSE 会活到超时并在登录页空 token 重连
+    setSessionEndedHandler(releaseBadgeSync);
     // 监听注册不依赖登录态：首次登录后的新用户同样需要断网恢复补拉
     wx.onNetworkStatusChange((result) => {
       if (result.isConnected) {
@@ -33,5 +45,8 @@ App({
     // 用户可能刚在微信「设置-订阅消息」里关掉了某项，缓存里的 persistent
     // 已不可信；作废后由下次手势 hydrate（Codex P2）
     invalidateSubscribeAuthorization();
+    // 通道开关只能在 Web 后台改：小程序进程活着的这段时间里改动传不进来，
+    // 提示行就会照着旧通道说话。回前台作废，下次要用时重拉一次。
+    clearDeliveryChannelsCache();
   },
 });

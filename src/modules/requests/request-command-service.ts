@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma, RequestStatus } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
+import type { NotificationDeliveryOverride } from "@/modules/notifications/notification-delivery-override";
 import { withActorDb } from "@/lib/actor";
 import { enqueueMail } from "@/lib/jobs";
 import {
@@ -24,6 +25,7 @@ import { enqueueExternalRequestStatusMail } from "@/modules/integrations/externa
 import {
   dispatchRequestActivity,
   requestStatusLabel,
+  previewRequestActivityRecipients,
 } from "@/modules/notifications/notification-service";
 import {
   createContentRiskReview,
@@ -149,6 +151,20 @@ function externalConnection(
     : null;
 }
 
+/**
+ * 哪些目标状态才会给外部联系人发信。
+ *
+ * 预览与真正发送必须共用这一份：只按「联系人可发邮件」判定的话，
+ * 改成 IN_PROGRESS 时弹窗会说他会收到，提交后 statusMail 却返回 null 不发。
+ */
+const EXTERNAL_STATUS_MAIL_TEMPLATES: Partial<
+  Record<RequestStatus, MailTemplateKey>
+> = {
+  WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
+  RESOLVED: "EXTERNAL_REQUEST_RESOLVED",
+  CLOSED: "EXTERNAL_REQUEST_CLOSED",
+};
+
 function statusMail(
   request: NonNullable<Awaited<ReturnType<typeof findRequestContext>>>,
   status: RequestStatus,
@@ -156,12 +172,7 @@ function statusMail(
   const contact = request.createdByExternalContact;
   const connection = externalConnection(request);
   if (!canSendExternalContactMail(request) || !connection) return null;
-  const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
-    WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
-    RESOLVED: "EXTERNAL_REQUEST_RESOLVED",
-    CLOSED: "EXTERNAL_REQUEST_CLOSED",
-  };
-  const templateKey = statusTemplates[status];
+  const templateKey = EXTERNAL_STATUS_MAIL_TEMPLATES[status];
   if (!templateKey) return null;
   if (!contact?.email) return null;
   return {
@@ -584,6 +595,7 @@ export async function changeRequestStatus(
   actor: Actor,
   requestId: string,
   targetStatus: RequestStatus,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   const result = await withActorDb(actor, async (tx) => {
     const request = await findRequestContext(tx, requestId, actor.id);
@@ -634,10 +646,20 @@ export async function changeRequestStatus(
       request.status,
       targetStatus,
       true,
+      deliveryOverride,
     );
     return {
       updated,
-      externalMail: statusMail(request, targetStatus),
+      // 外部联系人的邮件不挂在 Notification 行上、由下面单独入队，
+      // 所以必须自己听一次本次覆盖：通道开关 + 逐人排除（预览里他用
+      // ExternalContact.id 占一个收件人位，排除名单就按这个 id 记）
+      externalMail:
+        delivery.emailChannelEnabled &&
+        !delivery.requestedExcludeUserIds.includes(
+          request.createdByExternalContactId ?? "",
+        )
+          ? statusMail(request, targetStatus)
+          : null,
       deliveryFeedback: delivery.feedback,
     };
   });
@@ -744,6 +766,7 @@ export async function addRequestMessage(
   actor: Actor,
   requestId: string,
   input: CreateRequestMessageInput,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   if (input.clientMutationKey) {
     const existing = await findRequestMessageByMutationKey(
@@ -949,6 +972,15 @@ export async function addRequestMessage(
       sourceType: "REQUEST_MESSAGE",
       sourceId: message.id,
       contentRiskReviewId: contentRiskReview?.id,
+      deliveryOverride,
+      // 本次本来会给外部联系人发信时告诉分发层，好让「只排除了他」的覆盖也能记审计
+      externalMailContactId:
+        !isInternal &&
+        !isCustomer &&
+        canSendExternalContactMail(request) &&
+        externalConnection(request)
+          ? (request.createdByExternalContactId ?? undefined)
+          : undefined,
     });
     const nextStatus = isCustomer
       ? statusAfterCustomerReply(request.status)
@@ -989,6 +1021,11 @@ export async function addRequestMessage(
     const externalMail =
       !isCustomer &&
       input.visibility === "CUSTOMER_VISIBLE" &&
+      // 同上：外部联系人邮件单独入队，要自己听一次本次覆盖（通道 + 逐人排除）
+      delivery.emailChannelEnabled &&
+      !delivery.requestedExcludeUserIds.includes(
+        request.createdByExternalContactId ?? "",
+      ) &&
       canSendExternalContactMail(request) &&
       contact &&
       connection
@@ -1195,6 +1232,98 @@ async function writeStatusAudit(
   });
 }
 
+/**
+ * 发送前预览：这次操作会通知到谁、每人各通道什么状态。
+ *
+ * 传给 previewRequestActivityRecipients 的这组 flag 必须与下面真正发送时
+ * 一模一样，否则预览会骗人 —— 收件人规则本身在 notification-service 里只有
+ * 一份实现，这里只负责把场景参数对齐。
+ */
+export function previewRequestDelivery(
+  actor: Actor,
+  requestId: string,
+  scene: "PUBLIC_MESSAGE" | "STATUS",
+  status?: RequestStatus,
+) {
+  return withActorDb(actor, async (tx) => {
+    const request = await findRequestContext(tx, requestId, actor.id);
+    if (!request) throw notFound();
+    // 预览要按「这次写操作本人做不做得了」把门：响应会披露收件人的邮件退订状态、
+    // 微信绑定与额度。只有查看权限的角色若能拿到，等于把预览变成偏好查询入口，
+    // 而他真去回复 / 改状态是会被拒的。
+    //
+    // 必须与真实写路径逐条对齐，不能只取其中一半：公开回复那条在 addRequestMessage
+    // 里是 canReplyToRequest || canClaimUnassignedRequest（未分配工单首次公开回复
+    // 会自动认领），只认前者的话，本来能开单回复的员工点开「本次提醒方式」就吃 403。
+    const previewContext = accessContext(request);
+    const allowed =
+      scene === "STATUS"
+        ? canChangeRequestStatus(actor, previewContext)
+        : canReplyToRequest(actor, previewContext) ||
+          canClaimUnassignedRequest(actor, previewContext);
+    if (!allowed) throw forbidden();
+    const assignedWorkers = workerIdsFromRequest(request);
+    // 外部门户联系人不是平台用户、没有站内通知，邮件由本模块单独入队。
+    // 但预览必须带上他：不带的话弹窗会说「0 人 / 本次没有需要提醒的人」，
+    // 提交后却照样给客户发了信，员工也没机会把他排除掉。
+    const contact = request.createdByExternalContact;
+    // 状态变更还要看目标状态有没有对应模板 —— 与 statusMail 同一份判定，
+    // 否则改成 IN_PROGRESS 时弹窗承诺会发信，实际却不发
+    const externalMailEligible =
+      canSendExternalContactMail(request) &&
+      Boolean(contact) &&
+      (scene !== "STATUS" ||
+        Boolean(
+          EXTERNAL_STATUS_MAIL_TEMPLATES[status ?? request.status],
+        ));
+    const externalEmailContacts =
+      externalMailEligible && contact
+        ? [{ id: contact.id, name: contact.displayName }]
+        : [];
+    if (scene === "STATUS") {
+      return previewRequestActivityRecipients(tx, actor, {
+        eventType: "REQUEST_STATUS_CHANGED",
+        eventPayload: {
+          requestId: request.id,
+          requestNumber: request.number,
+          previousStatus: request.status,
+          status: status ?? request.status,
+          actorId: actor.id,
+        },
+        notificationType: "REQUEST_STATUS",
+        notificationTitle: "",
+        notificationBody: "",
+        includeCustomers: includeCustomerMembers(request),
+        relevantWorkerUserIds: assignedWorkers,
+        notifyProjectManagers: false,
+        notifyPlatformAdmins: false,
+        customerSpaceId: request.project.customerSpaceId,
+        projectId: request.projectId,
+        serviceRequestId: request.id,
+      }).then((result) => ({ ...result, externalEmailContacts }));
+    }
+    return previewRequestActivityRecipients(tx, actor, {
+      eventType: "REQUEST_MESSAGE_CREATED",
+      eventPayload: {
+        requestId: request.id,
+        requestNumber: request.number,
+        actorId: actor.id,
+        visibility: "CUSTOMER_VISIBLE",
+      },
+      notificationType: "REQUEST_MESSAGE",
+      notificationTitle: "",
+      notificationBody: "",
+      includeCustomers: includeCustomerMembers(request),
+      relevantWorkerUserIds: assignedWorkers,
+      notifyProjectManagers: assignedWorkers.length === 0,
+      notifyPlatformAdmins: actor.platformRole === "CUSTOMER",
+      customerSpaceId: request.project.customerSpaceId,
+      projectId: request.projectId,
+      serviceRequestId: request.id,
+    }).then((result) => ({ ...result, externalEmailContacts }));
+  });
+}
+
 async function dispatchStatusActivity(
   tx: Parameters<typeof writeAuditLog>[0],
   actor: Actor,
@@ -1202,8 +1331,16 @@ async function dispatchStatusActivity(
   previousStatus: RequestStatus,
   status: RequestStatus,
   createNotifications: boolean,
+  deliveryOverride?: NotificationDeliveryOverride,
 ) {
   return dispatchRequestActivity(tx, actor, {
+    deliveryOverride,
+    // 本次本来会给外部联系人发信时告诉分发层，好让「只排除了他」的覆盖也能记审计
+    externalMailContactId:
+      canSendExternalContactMail(request) &&
+      EXTERNAL_STATUS_MAIL_TEMPLATES[status]
+        ? (request.createdByExternalContactId ?? undefined)
+        : undefined,
     eventType: "REQUEST_STATUS_CHANGED",
     eventPayload: {
       requestId: request.id,

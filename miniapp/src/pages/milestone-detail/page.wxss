@@ -1,0 +1,94 @@
+.ms-page {
+  padding: 24rpx;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.ms-load-error {
+  padding: 80rpx 0;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 26rpx;
+}
+
+.ms-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.ms-title {
+  font-size: 34rpx;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.ms-date {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+}
+
+.ms-body {
+  display: block;
+  margin-top: 24rpx;
+  font-size: 28rpx;
+  line-height: 1.75;
+}
+
+.ms-empty {
+  margin-top: 24rpx;
+  font-size: 26rpx;
+}
+
+.ms-section {
+  margin-top: 28rpx;
+}
+
+.ms-row {
+  display: flex;
+  align-items: center;
+  gap: 14rpx;
+  padding: 18rpx 0;
+  border-bottom: 2rpx solid rgba(16, 24, 40, 0.06);
+}
+
+.ms-row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.ms-row-name {
+  font-size: 27rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ms-row-sub {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  color: var(--text-tertiary);
+}
+
+.ms-row-hint {
+  flex-shrink: 0;
+  font-size: 23rpx;
+  color: var(--text-tertiary);
+}
+
+.ms-actions {
+  display: flex;
+  gap: 16rpx;
+  margin-top: 32rpx;
+}
+
+.ms-action-btn {
+  flex: 1;
+  margin: 0;
+}
+
+.ms-action-danger {
+  background: var(--error-soft);
+  color: var(--error);
+}

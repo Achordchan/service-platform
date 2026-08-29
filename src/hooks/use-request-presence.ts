@@ -38,6 +38,8 @@ export function useRequestPresence(
   currentGroup: PresenceGroup,
 ) {
   const [counterpartOnline, setCounterpartOnline] = useState(false);
+  // 对方在线来自哪些端（WEB / MINIAPP），用于在线标识旁的图标
+  const [counterpartClients, setCounterpartClients] = useState<string[]>([]);
   const [counterpartTyping, setCounterpartTyping] = useState(false);
   const sessionIdRef = useRef("");
   const sendRef = useRef<
@@ -172,6 +174,10 @@ export function useRequestPresence(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               sessionId: sessionIdRef.current,
+              client: "WEB",
+              // 只有客户端知道自己的时区；UA 与 IP 由服务端从请求头取
+              timezone:
+                Intl.DateTimeFormat().resolvedOptions().timeZone || undefined,
               ...payload,
             }),
             keepalive,
@@ -186,9 +192,10 @@ export function useRequestPresence(
           return;
         }
         const result = (await response.json()) as {
-          data?: { counterpartOnline?: boolean };
+          data?: { counterpartOnline?: boolean; counterpartClients?: string[] };
         };
         setCounterpartOnline(Boolean(result.data?.counterpartOnline));
+        setCounterpartClients(result.data?.counterpartClients ?? []);
       } catch {
         // Keep the last known state during a temporary network interruption.
       }
@@ -240,6 +247,13 @@ export function useRequestPresence(
 
       if (event.type === "REQUEST_PRESENCE_CHANGED") {
         setCounterpartOnline(payload.online === true);
+        // 事件只带 online，不带对方来自哪个端；上线时补一次心跳拿权威状态
+        // （含 counterpartClients），否则端图标要等下一次定时心跳才出现
+        if (payload.online === true) {
+          sendRef.current?.({ action: "heartbeat" });
+        } else {
+          setCounterpartClients([]);
+        }
         return;
       }
 
@@ -313,6 +327,7 @@ export function useRequestPresence(
 
   return {
     counterpartOnline,
+    counterpartClients,
     counterpartTyping,
     reportTypingActivity,
     stopTyping,

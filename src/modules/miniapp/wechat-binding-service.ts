@@ -7,6 +7,7 @@ import { auth } from "@/lib/auth";
 import { internalTurnstileBypassHeaders } from "@/lib/turnstile";
 import { prisma } from "@/lib/db";
 import { writeAuditLog } from "@/modules/audit/audit-service";
+import { recordAuthEvent } from "@/modules/audit/auth-audit";
 import {
   createAuthTicket,
   createMiniappSessionToken,
@@ -46,23 +47,28 @@ type PendingTicket = {
   unionid: string | null;
 };
 
+/** 请求边界解析的可信来源（路由层用 clientIpFromHeaders 提取），仅用于审计记录 */
+export type RequestNetwork = {
+  ipAddress: string | null;
+  userAgent: string | null;
+};
+
 export async function createMiniappSessionForCode(
   input: { code: string },
   provider: Pick<WechatProvider, "code2Session"> = getWechatProvider(),
+  network?: RequestNetwork,
 ): Promise<MiniappLoginResult> {
   const identity = await provider.code2Session(input.code);
   const binding = await prisma.wechatBinding.findUnique({
     where: { openid: identity.openid },
     select: {
       userId: true,
-      user: { select: { deletedAt: true, platformRole: true } },
+      // 客户与内部人员均可绑定登录；仅拦截已删除账号
+      user: { select: { deletedAt: true } },
     },
   });
   if (binding) {
-    if (
-      binding.user.deletedAt ||
-      binding.user.platformRole !== "CUSTOMER"
-    ) {
+    if (binding.user.deletedAt) {
       throw new DomainError(
         "BINDING_ACCOUNT_UNAVAILABLE",
         "绑定的账号当前不可用，请联系客服处理",
@@ -73,6 +79,15 @@ export async function createMiniappSessionForCode(
       binding.userId,
       identity.openid,
     );
+    // 小程序会话不经 better-auth adapter，databaseHooks 不触发，需显式补登录审计
+    await recordAuthEvent({
+      action: "USER_LOGIN",
+      actorUserId: binding.userId,
+      targetUserId: binding.userId,
+      ipAddress: network?.ipAddress ?? null,
+      userAgent: network?.userAgent ?? null,
+      metadata: { path: "miniapp" },
+    });
     return { status: "SESSION_ISSUED", ...session };
   }
 
@@ -92,12 +107,15 @@ export async function createMiniappSessionForCode(
   };
 }
 
-export async function bindTicketToAccount(input: {
-  bindingTicket: string;
-  email: string;
-  password?: string;
-  otp?: string;
-}): Promise<MiniappSessionIssued> {
+export async function bindTicketToAccount(
+  input: {
+    bindingTicket: string;
+    email: string;
+    password?: string;
+    otp?: string;
+  },
+  network?: RequestNetwork,
+): Promise<MiniappSessionIssued> {
   const ticket = await loadPendingTicket(input.bindingTicket);
   await assertBindNotLocked(ticket.openid, `email:${input.email}`);
 
@@ -122,6 +140,16 @@ export async function bindTicketToAccount(input: {
   } catch (error) {
     await recordBindFailure(ticket.openid).catch(() => undefined);
     await recordBindFailure(`email:${input.email}`).catch(() => undefined);
+    // better-auth 内部走 Turnstile 旁路头，Web 端登录失败钩子对其静默，
+    // 小程序侧的凭据验证失败在此补记（含被尝试的邮箱与可信来源）
+    await recordAuthEvent({
+      action: "USER_LOGIN_FAILED",
+      email: input.email,
+      result: "FAILURE",
+      ipAddress: network?.ipAddress ?? null,
+      userAgent: network?.userAgent ?? null,
+      metadata: { path: "miniapp-bind" },
+    });
     throw mapBetterAuthError(error, "身份验证失败，请检查邮箱与凭据");
   } finally {
     // better-auth 验证会签发 Web Session；此处仅作为验证手段，立即清除
@@ -132,7 +160,7 @@ export async function bindTicketToAccount(input: {
     }
   }
 
-  const user = await loadBindableCustomerUser(verifiedUserId);
+  const user = await loadBindableUser(verifiedUserId);
   return bindOpenidToUser({
     openid: ticket.openid,
     unionid: ticket.unionid,
@@ -141,6 +169,7 @@ export async function bindTicketToAccount(input: {
     userEmail: user.email,
     ticketId: ticket.id,
     method: "account",
+    network,
   });
 }
 
@@ -163,12 +192,12 @@ async function sendBindingOtpSilently(
 ): Promise<void> {
   const user = await prisma.user.findUnique({
     where: { email },
-    select: { id: true, deletedAt: true, platformRole: true },
+    select: { id: true, deletedAt: true },
   });
-  const bindable =
-    user && !user.deletedAt && user.platformRole === "CUSTOMER";
+  // 客户与内部人员账号均可绑定，仅排除已删除账号
+  const bindable = user && !user.deletedAt;
   if (!bindable) {
-    // 邮箱不是可绑定客户账号：计入防暴力计数，且不暴露存在性
+    // 邮箱不是可绑定账号：计入防暴力计数，且不暴露存在性
     await recordBindFailure(ticket.openid).catch(() => undefined);
     return;
   }
@@ -220,10 +249,13 @@ async function sendBindingOtpSilently(
   }
 }
 
-export async function bindTicketToCode(input: {
-  bindingTicket: string;
-  code: string;
-}): Promise<MiniappSessionIssued> {
+export async function bindTicketToCode(
+  input: {
+    bindingTicket: string;
+    code: string;
+  },
+  network?: RequestNetwork,
+): Promise<MiniappSessionIssued> {
   const ticket = await loadPendingTicket(input.bindingTicket);
   await assertBindNotLocked(ticket.openid);
 
@@ -242,7 +274,7 @@ export async function bindTicketToCode(input: {
     throw new DomainError("BINDING_CODE_INVALID", "绑定码无效或已过期", 400);
   }
 
-  const user = await loadBindableCustomerUser(codeRecord!.userId);
+  const user = await loadBindableUser(codeRecord!.userId);
   try {
     return await bindOpenidToUser({
       openid: ticket.openid,
@@ -253,6 +285,7 @@ export async function bindTicketToCode(input: {
       ticketId: ticket.id,
       method: "code",
       bindingCodeId: codeRecord!.id,
+      network,
     });
   } catch (error) {
     if (error instanceof DomainError && error.code === "BINDING_CODE_CLAIMED") {
@@ -272,19 +305,27 @@ export function getMiniappMe(actor: Actor) {
       where: { userId: actor.id },
       select: { createdAt: true, lastLoginAt: true },
     });
-    const spaces = await tx.membership.findMany({
-      where: {
-        userId: actor.id,
-        customerSpace: { kind: "STANDARD", status: "ACTIVE" },
-      },
-      select: {
-        role: true,
-        customerSpace: { select: { id: true, name: true } },
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    // 客户空间隶属只对客户账号有意义；内部人员走 ProjectStaff，不查 Membership
+    const spaces = actor.isStaff
+      ? []
+      : await tx.membership.findMany({
+          where: {
+            userId: actor.id,
+            customerSpace: { kind: "STANDARD", status: "ACTIVE" },
+          },
+          select: {
+            role: true,
+            customerSpace: { select: { id: true, name: true } },
+          },
+          orderBy: { createdAt: "asc" },
+        });
     return {
       user: { id: actor.id, name: actor.name, email: actor.email },
+      // 客户端按角色切换后台模式，并据权限清单决定展示哪些员工操作
+      platformRole: actor.platformRole,
+      isStaff: actor.isStaff,
+      isPlatformAdmin: actor.isPlatformAdmin,
+      permissions: actor.permissions ?? [],
       wechatBinding: binding
         ? { boundAt: binding.createdAt, lastLoginAt: binding.lastLoginAt }
         : null,
@@ -352,22 +393,15 @@ async function loadPendingTicket(ticket: string): Promise<PendingTicket> {
   return { id: record.id, openid: record.openid, unionid: record.unionid };
 }
 
-async function loadBindableCustomerUser(userId: string) {
+async function loadBindableUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, deletedAt: true, platformRole: true },
+    select: { id: true, name: true, email: true, deletedAt: true },
   });
   if (!user || user.deletedAt) {
     throw new DomainError(
       "BINDING_ACCOUNT_UNAVAILABLE",
       "账号当前不可用，无法完成绑定",
-      403,
-    );
-  }
-  if (user.platformRole !== "CUSTOMER") {
-    throw new DomainError(
-      "STAFF_ACCOUNT_NOT_SUPPORTED",
-      "仅客户账号可以绑定微信",
       403,
     );
   }
@@ -383,6 +417,7 @@ async function bindOpenidToUser(params: {
   ticketId: string;
   method: "account" | "code";
   bindingCodeId?: string;
+  network?: RequestNetwork;
 }): Promise<MiniappSessionIssued> {
   const tokenData = createMiniappSessionToken();
   const now = new Date();
@@ -465,6 +500,8 @@ async function bindOpenidToUser(params: {
             : "WECHAT_BOUND_VIA_ACCOUNT",
         resourceType: "WechatBinding",
         resourceId: binding.id,
+        ipAddress: params.network?.ipAddress ?? undefined,
+        userAgent: params.network?.userAgent ?? undefined,
         metadata: {
           openid: maskOpenid(params.openid),
           method: params.method,
@@ -483,6 +520,15 @@ async function bindOpenidToUser(params: {
     }
     throw error;
   }
+  // 绑定成功同时签发了小程序会话，等同一次登录；同样绕过 better-auth，显式补审计
+  await recordAuthEvent({
+    action: "USER_LOGIN",
+    actorUserId: params.userId,
+    targetUserId: params.userId,
+    ipAddress: params.network?.ipAddress ?? null,
+    userAgent: params.network?.userAgent ?? null,
+    metadata: { path: "miniapp-bind", method: params.method },
+  });
   return {
     token: tokenData.token,
     expiresAt: tokenData.expiresAt,

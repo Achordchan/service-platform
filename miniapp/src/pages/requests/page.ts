@@ -1,37 +1,69 @@
-import { ensureLoggedIn } from "../../lib/auth";
+import { cancelPendingActivate, ensureLoggedIn, fetchMeCached } from "../../lib/auth";
 import { ensureBadgeSync } from "../../lib/badge";
+import { eventSync } from "../../lib/events";
 import { listProjects, listRequests, type ServiceRequestSummary } from "../../lib/api";
 import { topUpSubscribeQuota } from "../../lib/subscribe";
 import {
-  REQUEST_STATUS_LABELS,
   REQUEST_STATUS_TONES,
   formatRelative,
+  requestStatusLabel,
   type RequestStatusValue,
 } from "../../lib/format";
 
-const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: "", label: "全部" },
-  { value: "PENDING", label: "待处理" },
-  { value: "IN_PROGRESS", label: "处理中" },
-  { value: "WAITING_CUSTOMER", label: "等待客户" },
-  { value: "RESOLVED", label: "已解决" },
-  { value: "CLOSED", label: "已关闭" },
-];
+const STATUS_VALUES = [
+  "",
+  "PENDING",
+  "IN_PROGRESS",
+  "WAITING_CUSTOMER",
+  "RESOLVED",
+  "CLOSED",
+] as const;
+
+// 状态筛选文案按身份生成：员工看「等待客户」，客户看「等待您回复」
+function statusOptionsFor(staffView: boolean) {
+  return STATUS_VALUES.map((value) => ({
+    value,
+    label: value ? requestStatusLabel(value, staffView) : "全部",
+  }));
+}
 
 type Row = ServiceRequestSummary & {
   statusLabel: string;
   statusTone: string;
   updatedText: string;
+  projectTitle: string;
 };
 
 Page({
   data: {
+    isStaff: false,
     projects: [] as Array<{ id: string; title: string }>,
     projectIndex: 0,
     projectFilterId: "",
-    statusOptions: STATUS_OPTIONS,
+    statusOptions: statusOptionsFor(false),
     statusIndex: 0,
     keyword: "",
+    // 更多筛选（优先级 / 归档范围 / 仅我处理）——面板里编辑 draft，应用后落到这三个
+    priority: "",
+    archived: "EXCLUDE" as "EXCLUDE" | "ONLY" | "ALL",
+    assignedToMe: false,
+    filterCount: 0,
+    filterVisible: false,
+    draftPriority: "",
+    draftArchived: "EXCLUDE" as "EXCLUDE" | "ONLY" | "ALL",
+    draftAssignedToMe: false,
+    priorityOptions: [
+      { value: "", label: "全部" },
+      { value: "URGENT", label: "紧急" },
+      { value: "HIGH", label: "高" },
+      { value: "NORMAL", label: "中" },
+      { value: "LOW", label: "低" },
+    ],
+    archivedOptions: [
+      { value: "EXCLUDE", label: "不含归档" },
+      { value: "ONLY", label: "只看归档" },
+      { value: "ALL", label: "全部" },
+    ],
     rows: [] as Row[],
     loading: true,
     loadingMore: false,
@@ -40,18 +72,81 @@ Page({
     nextOffset: 0,
     initializedFromProject: false,
   },
+  boundEventHandler: null as
+    | ((events: Array<{ type: string }>) => void)
+    | null,
+  sseStarted: false,
+  // 校验中挂起的 activate；onHide/onUnload 需取消
+  pendingActivate: null as (() => void) | null,
   onLoad(query: Record<string, string | undefined>) {
     this.setData({
       initializedFromProject: Boolean(query.projectId),
       projectFilterId: query.projectId ?? "",
     });
+    this.boundEventHandler = (events) => this.onRealtimeEvents(events);
   },
   onShow() {
-    if (!ensureLoggedIn(() => this.activate())) return;
-    this.activate();
+    // 必须存下同一个函数引用：cancelAuthWaiter 按引用取消，每次现造匿名箭头
+    // 函数就取消不掉 —— 校验完成后会唤醒已隐藏页面的 activate，
+    // eventSync 计数只增不减，最后连登出都清不干净
+    const activate = () => void this.activate();
+    this.pendingActivate = activate;
+    if (!ensureLoggedIn(activate)) return;
+    void this.activate();
   },
-  activate() {
+  teardown() {
+    if (this.pendingActivate) {
+      cancelPendingActivate(this.pendingActivate);
+      this.pendingActivate = null;
+    }
+    if (!this.sseStarted) return;
+    this.sseStarted = false;
+    if (this.boundEventHandler) {
+      eventSync.off(this.boundEventHandler);
+    }
+    eventSync.stop();
+  },
+  onHide() {
+    this.teardown();
+  },
+  onUnload() {
+    this.teardown();
+  },
+  /** 新工单/状态变化/换处理人都会改变列表，实时刷新 */
+  onRealtimeEvents(events: Array<{ type: string }>) {
+    if (
+      events.some(
+        (event) =>
+          event.type === "REQUEST_CREATED" ||
+          event.type === "REQUEST_STATUS_CHANGED" ||
+          event.type === "REQUEST_ASSIGNED" ||
+          event.type === "REQUEST_MESSAGE_CREATED" ||
+          event.type === "REQUEST_UPDATED",
+      )
+    ) {
+      void this.reload();
+    }
+  },
+  async activate() {
+    this.pendingActivate = null;
     ensureBadgeSync();
+    if (this.boundEventHandler) {
+      eventSync.on(this.boundEventHandler);
+    }
+    eventSync.start();
+    this.sseStarted = true;
+    // 先确定身份再拉列表：状态文案/项目筛选范围/新建入口都依赖角色
+    try {
+      const me = await fetchMeCached();
+      if (me.isStaff !== this.data.isStaff) {
+        this.setData({
+          isStaff: me.isStaff,
+          statusOptions: statusOptionsFor(me.isStaff),
+        });
+      }
+    } catch {
+      // 身份获取失败按客户视角展示，不阻塞列表加载
+    }
     if (this.data.projects.length === 0) {
       void this.loadProjects();
     }
@@ -68,7 +163,11 @@ Page({
     try {
       const projects = await listProjects();
       const options = projects
-        .filter((project) => project.customerRequestsEnabled !== false)
+        // 员工可以看到关闭了「客户提单」的项目里的工单，筛选不设此门槛
+        .filter(
+          (project) =>
+            this.data.isStaff || project.customerRequestsEnabled !== false,
+        )
         .map((project) => ({ id: project.id, title: project.title }));
       const presetIndex = options.findIndex(
         (option) => option.id === this.data.projectFilterId,
@@ -95,6 +194,57 @@ Page({
     this.setData({ statusIndex: index });
     void this.reload();
   },
+  // —— 更多筛选面板 ——
+  onOpenFilters() {
+    this.setData({
+      filterVisible: true,
+      draftPriority: this.data.priority,
+      draftArchived: this.data.archived,
+      draftAssignedToMe: this.data.assignedToMe,
+    });
+  },
+  onCloseFilters() {
+    this.setData({ filterVisible: false });
+  },
+  noop() {},
+  onDraftPriority(event: WechatMiniprogram.TouchEvent) {
+    this.setData({ draftPriority: String(event.currentTarget.dataset.value) });
+  },
+  onDraftArchived(event: WechatMiniprogram.TouchEvent) {
+    this.setData({
+      draftArchived: event.currentTarget.dataset.value as
+        | "EXCLUDE"
+        | "ONLY"
+        | "ALL",
+    });
+  },
+  onDraftAssigned(event: WechatMiniprogram.SwitchChange) {
+    this.setData({ draftAssignedToMe: event.detail.value });
+  },
+  onResetFilters() {
+    this.setData({
+      draftPriority: "",
+      draftArchived: "EXCLUDE",
+      draftAssignedToMe: false,
+    });
+  },
+  onApplyFilters() {
+    const priority = this.data.draftPriority;
+    const archived = this.data.draftArchived;
+    const assignedToMe = this.data.draftAssignedToMe;
+    this.setData({
+      priority,
+      archived,
+      assignedToMe,
+      filterVisible: false,
+      // 角标只数「偏离默认」的项，默认态不显示数字
+      filterCount:
+        (priority ? 1 : 0) +
+        (archived === "EXCLUDE" ? 0 : 1) +
+        (assignedToMe ? 1 : 0),
+    });
+    void this.reload();
+  },
   onKeywordInput(event: WechatMiniprogram.Input) {
     this.setData({ keyword: event.detail.value });
   },
@@ -117,8 +267,11 @@ Page({
       const result = await listRequests({
         projectId: this.data.projectFilterId || undefined,
         status:
-          STATUS_OPTIONS[this.data.statusIndex]?.value || undefined,
+          this.data.statusOptions[this.data.statusIndex]?.value || undefined,
         q: this.data.keyword.trim() || undefined,
+        priority: this.data.priority || undefined,
+        archived: this.data.archived,
+        assignedToMe: this.data.isStaff && this.data.assignedToMe,
         limit: 20,
         offset: 0,
       });
@@ -142,8 +295,11 @@ Page({
       const result = await listRequests({
         projectId: this.data.projectFilterId || undefined,
         status:
-          STATUS_OPTIONS[this.data.statusIndex]?.value || undefined,
+          this.data.statusOptions[this.data.statusIndex]?.value || undefined,
         q: this.data.keyword.trim() || undefined,
+        priority: this.data.priority || undefined,
+        archived: this.data.archived,
+        assignedToMe: this.data.isStaff && this.data.assignedToMe,
         limit: 20,
         offset: this.data.nextOffset,
       });
@@ -161,13 +317,12 @@ Page({
   decorate(requests: ServiceRequestSummary[]): Row[] {
     return requests.map((request) => ({
       ...request,
-      statusLabel:
-        REQUEST_STATUS_LABELS[request.status as RequestStatusValue] ??
-        request.status,
+      statusLabel: requestStatusLabel(request.status, this.data.isStaff),
       statusTone:
         REQUEST_STATUS_TONES[request.status as RequestStatusValue] ??
         "neutral",
       updatedText: formatRelative(request.updatedAt),
+      projectTitle: request.project?.title ?? "",
     }));
   },
 });

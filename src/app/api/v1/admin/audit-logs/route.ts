@@ -5,6 +5,11 @@ import {
   getAuditFacets,
   listAuditLogs,
 } from "@/modules/audit/audit-query";
+import {
+  auditActionLabel,
+  auditResourceLabel,
+  isUnauthenticatedAuditAction,
+} from "@/modules/audit/audit-labels";
 import { requireApiActor, routeError } from "@/modules/projects/api-utils";
 
 const optionalText = z
@@ -89,8 +94,23 @@ export async function GET(request: Request) {
         : Promise.resolve(undefined),
     ]);
 
+    // 附加 server 端已有的中文标签与操作者展示（附加字段，Web 端忽略即可）：
+    // 小程序简版审计据此直接渲染，无需在小程序复制这套 ~90 条动作码映射。
+    const rows = page.rows.map((row) => ({
+      ...row,
+      actionLabel: auditActionLabel(row.action, row.resourceType),
+      resourceLabel: auditResourceLabel(row.resourceType),
+      actorDisplay: row.actorName
+        ? { name: row.actorName, secondary: row.actorEmail ?? "—" }
+        : row.externalActorName
+          ? { name: row.externalActorName, secondary: "外部联系人" }
+          : isUnauthenticatedAuditAction(row.action)
+            ? { name: "未认证访客", secondary: "未登录尝试" }
+            : { name: "系统", secondary: "自动任务" },
+    }));
+
     // `apiRequest` unwraps `data`, so facets must travel inside it.
-    return NextResponse.json({ data: { ...page, facets } });
+    return NextResponse.json({ data: { ...page, rows, facets } });
   } catch (error) {
     return routeError(error, { operation: "audit_logs.list" });
   }

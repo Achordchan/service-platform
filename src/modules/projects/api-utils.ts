@@ -11,6 +11,7 @@ import {
   RequestBodyTooLargeError,
 } from "@/modules/http/bounded-request-body";
 import { DomainError } from "@/modules/projects/errors";
+import { notificationDeliveryOverrideSchema } from "@/modules/notifications/notification-delivery-override";
 
 type ActorResult =
   | { actor: Actor; response?: never }
@@ -56,6 +57,39 @@ export async function readJson(
         413,
       );
     }
+    throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
+  }
+}
+
+/**
+ * 没有必填载荷的方法（DELETE 等）读可选 JSON：空体按 {} 处理，
+ * 有内容仍按 JSON 严格解析 —— 别把语法错误的请求体当成「没传」静默放过。
+ */
+export async function readOptionalJson(
+  request: Request,
+  options: { maxBytes?: number } = {},
+) {
+  let text: string;
+  try {
+    const body = await readBoundedRequestBody(
+      request,
+      options.maxBytes ?? 16 * 1024,
+    );
+    text = new TextDecoder().decode(body);
+  } catch (error) {
+    if (error instanceof RequestBodyTooLargeError) {
+      throw new DomainError(
+        "REQUEST_BODY_TOO_LARGE",
+        "请求体超过允许的大小",
+        413,
+      );
+    }
+    throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
+  }
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
     throw new DomainError("INVALID_JSON", "请求体不是有效的 JSON", 400);
   }
 }
@@ -142,4 +176,26 @@ export function routeError(error: unknown, context?: Omit<ApiErrorContext, "sour
     source: "project-api",
     ...context,
   });
+}
+
+/**
+ * 从写操作的请求体里取出本次的投递覆盖。
+ *
+ * 刻意不放进各领域的输入 schema：它不是实体字段，而是一条投递指令，
+ * 混进去会污染「至少提交一个修改字段」这类校验。
+ */
+/**
+ * 读取本次操作的送达覆盖 —— 仅员工可用。
+ *
+ * 客户也会打这些接口（工单公开回复、确认关闭），若无条件解析，客户就能构造
+ * { notification: false } 把自己的回复对员工静音，或用 { email: true } 强制给
+ * 已退订的员工发邮件。覆盖是员工写操作专用的能力，非员工一律当没传。
+ * 服务层的 resolve*Plan 还会再丢一次，这里是第一道。
+ */
+export function readDeliveryOverride(actor: { isStaff: boolean }, body: unknown) {
+  if (!actor.isStaff) return undefined;
+  if (!body || typeof body !== "object") return undefined;
+  const raw = (body as Record<string, unknown>).deliveryOverride;
+  if (raw === undefined || raw === null) return undefined;
+  return notificationDeliveryOverrideSchema.parse(raw);
 }

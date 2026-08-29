@@ -5,6 +5,7 @@ import {
 } from "@/modules/projects/project-update-service";
 import { createProjectUpdateSchema } from "@/modules/projects/schemas";
 import {
+  readDeliveryOverride,
   readJson,
   requireApiActor,
   routeError,
@@ -36,8 +37,14 @@ export async function POST(request: Request, context: RouteContext) {
 
   try {
     const { projectId } = await context.params;
-    const input = createProjectUpdateSchema.parse(await readJson(request));
-    const result = await createProjectUpdate(auth.actor, projectId, input);
+    const body = await readJson(request);
+    const input = createProjectUpdateSchema.parse(body);
+    const result = await createProjectUpdate(
+      auth.actor,
+      projectId,
+      input,
+      readDeliveryOverride(auth.actor, body),
+    );
     return NextResponse.json({ data: result }, { status: 201 });
   } catch (error) {
     return routeError(error, {

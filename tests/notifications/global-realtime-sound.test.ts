@@ -17,6 +17,22 @@ function event(input?: Partial<RealtimeEvent>): RealtimeEvent {
 }
 
 describe("全局实时声音", () => {
+  it("被本次操作排除的收件人不响铃，其他人照响", () => {
+    const excluded = event({
+      payload: {
+        actorId: "other-user",
+        requestId: "request-1",
+        silencedUserIds: ["me", "someone-else"],
+      },
+    });
+    expect(shouldPlayGlobalRealtimeSound(excluded, "me", 0)).toBe(false);
+    expect(shouldPlayGlobalRealtimeSound(excluded, "not-excluded", 0)).toBe(true);
+  });
+
+  it("没有静音名单时不受影响", () => {
+    expect(shouldPlayGlobalRealtimeSound(event(), "me", 0)).toBe(true);
+  });
+
   it("覆盖业务信息更新，但排除在线、输入和插件进度", () => {
     expect(GLOBAL_SOUND_EVENT_TYPES).toEqual(
       expect.arrayContaining([

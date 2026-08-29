@@ -1,0 +1,6 @@
+{
+  "navigationBarTitleText": "项目设置",
+  "usingComponents": {
+    "t-icon": "tdesign-miniprogram/icon/icon"
+  }
+}

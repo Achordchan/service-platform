@@ -15,6 +15,7 @@ export const PROJECT_DELIVERY_NOTIFICATION_TYPES: NotificationType[] = [
   "PROJECT_STAGE",
   "PROJECT_MILESTONE",
   "PROJECT_FILE",
+  "PROJECT_STAFF",
 ];
 
 export const REQUEST_NOTIFICATION_TYPES: NotificationType[] = [

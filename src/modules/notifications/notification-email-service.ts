@@ -324,7 +324,9 @@ export async function createDueNotificationMailMessages() {
           ? requestTemplateFor(notification.type, customer)
           : notification.type === "PROJECT_CREATED"
             ? "STANDARD_PROJECT_CREATED"
-            : "STANDARD_PROJECT_CUSTOMER_UPDATE",
+            : notification.type === "PROJECT_STAFF"
+              ? "STANDARD_PROJECT_STAFF_CHANGE"
+              : "STANDARD_PROJECT_CUSTOMER_UPDATE",
         variables: contentRiskValid
           ? {
               recipientName: user.name,

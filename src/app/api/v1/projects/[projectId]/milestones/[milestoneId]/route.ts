@@ -5,6 +5,7 @@ import {
 } from "@/modules/projects/milestone-service";
 import { updateMilestoneSchema } from "@/modules/projects/schemas";
 import {
+  readDeliveryOverride,
   readJson,
   requireApiActor,
   routeError,
@@ -23,12 +24,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 
   try {
     const { projectId, milestoneId } = await context.params;
-    const input = updateMilestoneSchema.parse(await readJson(request));
+    const body = await readJson(request);
+    const input = updateMilestoneSchema.parse(body);
     const milestone = await updateMilestone(
       auth.actor,
       projectId,
       milestoneId,
       input,
+      readDeliveryOverride(auth.actor, body),
     );
     return NextResponse.json({ data: milestone });
   } catch (error) {

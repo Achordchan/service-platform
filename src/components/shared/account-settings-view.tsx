@@ -54,12 +54,10 @@ export async function AccountSettingsView({
         select: { id: true },
       }),
       getNotificationPreferences(actor),
-      actor.isStaff
-        ? Promise.resolve(null)
-        : prisma.wechatBinding.findUnique({
-            where: { userId: actor.id },
-            select: { createdAt: true, lastLoginAt: true, openid: true },
-          }),
+      prisma.wechatBinding.findUnique({
+        where: { userId: actor.id },
+        select: { createdAt: true, lastLoginAt: true, openid: true },
+      }),
     ]);
 
   const sections: AccountSettingsSection[] = [
@@ -110,8 +108,8 @@ export async function AccountSettingsView({
     },
   ];
 
-  // 微信提醒仅对客户开放（小程序是客户端，员工不通过微信接收推送）
-  if (!actor.isStaff) {
+  // 小程序已支持客户与内部人员：绑定入口对全部角色开放
+  {
     const wechatStatus: WechatBindingSettingsStatus = wechatBinding
       ? {
           bound: true,
@@ -122,8 +120,10 @@ export async function AccountSettingsView({
       : { bound: false };
     sections.push({
       key: "wechat",
-      label: "微信提醒",
-      description: "绑定微信小程序，及时接收项目进度推送",
+      label: "微信小程序",
+      description: actor.isStaff
+        ? "绑定微信小程序，在手机上处理工单并接收提醒"
+        : "绑定微信小程序，及时接收项目进度推送",
       content: <WechatBindingSettings status={wechatStatus} />,
     });
   }

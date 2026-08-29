@@ -6,6 +6,7 @@ export const NOTIFICATION_DELIVERY_RULES = [
   { key: "PROJECT_STAGE", category: "项目交付", label: "项目阶段变化", description: "项目当前阶段发生变化", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
   { key: "PROJECT_MILESTONE", category: "项目交付", label: "里程碑变化", description: "里程碑新增、修改或删除", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
   { key: "PROJECT_FILE", category: "项目交付", label: "项目文件上传", description: "非编辑器内嵌的公开项目文件", emailSupported: true, emailDefaultEnabled: false, dingtalkSupported: false, wechatSupported: false },
+  { key: "PROJECT_STAFF", category: "项目交付", label: "项目人员变动", description: "被加入项目、项目角色调整或被移出项目时通知当事人", customerHidden: true, emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: false },
   { key: "REQUEST_CREATED", category: "服务请求", label: "新建服务请求", description: "客户、外部联系人或后台人员创建新的服务请求", descriptionCustomer: "您提交的服务请求已创建", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: true, wechatSupported: false },
   { key: "REQUEST_ASSIGNED", category: "服务请求", label: "处理人分配", description: "处理人或协作人员发生变化", descriptionCustomer: "您的工单更换负责人时邮件提醒", emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: false },
   { key: "REQUEST_CLAIMED", category: "服务请求", label: "服务请求已接手", description: "项目人员首次公开回复并自动接手时通知平台管理员", customerHidden: true, emailSupported: true, emailDefaultEnabled: true, dingtalkSupported: false, wechatSupported: false },
@@ -45,6 +46,7 @@ export const STANDARD_PROJECT_EMAIL_RULE_KEYS = [
   "PROJECT_STAGE",
   "PROJECT_MILESTONE",
   "PROJECT_FILE",
+  "PROJECT_STAFF",
 ] as const satisfies readonly NotificationDeliveryRuleKey[];
 
 export const STANDARD_NOTIFICATION_EMAIL_RULE_KEYS = [
@@ -170,6 +172,7 @@ export function ruleKeyForNotificationEmail(type: string) {
   if (type === "PROJECT_STAGE") return "PROJECT_STAGE" as const;
   if (type === "PROJECT_MILESTONE") return "PROJECT_MILESTONE" as const;
   if (type === "PROJECT_FILE") return "PROJECT_FILE" as const;
+  if (type === "PROJECT_STAFF") return "PROJECT_STAFF" as const;
   if (type === "REQUEST_CREATED") return "REQUEST_CREATED" as const;
   if (type === "REQUEST_ASSIGNED") return "REQUEST_ASSIGNED" as const;
   if (type === "REQUEST_CLAIMED") return "REQUEST_CLAIMED" as const;
@@ -189,6 +192,7 @@ export function notificationTypesForEmailRule(
   if (key === "PROJECT_STAGE") return ["PROJECT_STAGE"] as const;
   if (key === "PROJECT_MILESTONE") return ["PROJECT_MILESTONE"] as const;
   if (key === "PROJECT_FILE") return ["PROJECT_FILE"] as const;
+  if (key === "PROJECT_STAFF") return ["PROJECT_STAFF"] as const;
   if (key === "REQUEST_CREATED") return ["REQUEST_CREATED"] as const;
   if (key === "REQUEST_ASSIGNED") return ["REQUEST_ASSIGNED"] as const;
   if (key === "REQUEST_CLAIMED") return ["REQUEST_CLAIMED"] as const;
@@ -224,6 +228,7 @@ export function ruleKeyForProjectNotification(type: string) {
   if (type === "PROJECT_STAGE") return "PROJECT_STAGE" as const;
   if (type === "PROJECT_MILESTONE") return "PROJECT_MILESTONE" as const;
   if (type === "PROJECT_FILE") return "PROJECT_FILE" as const;
+  if (type === "PROJECT_STAFF") return "PROJECT_STAFF" as const;
   return "PROJECT_UPDATE" as const;
 }
 

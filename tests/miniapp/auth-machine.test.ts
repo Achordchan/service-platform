@@ -4,8 +4,13 @@ import { AuthMachine } from "../../miniapp/src/lib/auth-machine";
 function makeMachine() {
   const clearToken = vi.fn();
   const redirectToLogin = vi.fn();
-  const machine = new AuthMachine({ clearToken, redirectToLogin });
-  return { machine, clearToken, redirectToLogin };
+  const onSessionEnd = vi.fn();
+  const machine = new AuthMachine({
+    clearToken,
+    redirectToLogin,
+    onSessionEnd,
+  });
+  return { machine, clearToken, redirectToLogin, onSessionEnd };
 }
 
 describe("AuthMachine 登录状态机", () => {
@@ -86,5 +91,23 @@ describe("AuthMachine 登录状态机", () => {
     machine.setAuthenticated();
     machine.handleUnauthorized();
     expect(redirectToLogin).toHaveBeenCalledTimes(2);
+  });
+
+  it("401 被踢：归还全局副作用（角标的常驻 SSE 租约），并发只归还一次", () => {
+    const { machine, clearToken, onSessionEnd } = makeMachine();
+    machine.setAuthenticated();
+    machine.handleUnauthorized();
+    machine.handleUnauthorized();
+    expect(clearToken).toHaveBeenCalledTimes(1);
+    // 不归还的话，常驻租约会让旧的已鉴权 SSE 活到超时，之后还在登录页空 token 重连
+    expect(onSessionEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("重新登录后再 401：租约可以再次归还", () => {
+    const { machine, onSessionEnd } = makeMachine();
+    machine.handleUnauthorized();
+    machine.setAuthenticated();
+    machine.handleUnauthorized();
+    expect(onSessionEnd).toHaveBeenCalledTimes(2);
   });
 });

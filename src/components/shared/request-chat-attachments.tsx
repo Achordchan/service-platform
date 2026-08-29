@@ -11,6 +11,7 @@ import {
   Typography,
 } from "@mui/material";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
+import LibraryAddOutlinedIcon from "@mui/icons-material/LibraryAddOutlined";
 import DownloadOutlinedIcon from "@mui/icons-material/DownloadOutlined";
 import InsertDriveFileOutlinedIcon from "@mui/icons-material/InsertDriveFileOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -71,11 +72,13 @@ function MessageImage({
   tone,
   resolveUrl,
   onPreview,
+  onPinToProject,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onPreview: (source: PreviewSource) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const inlineUrl = resolveUrl
     ? resolveUrl(file, true)
@@ -87,7 +90,7 @@ function MessageImage({
       ? file.title.trim()
       : "";
   return (
-    <Box sx={{ minWidth: 0 }}>
+    <Box sx={{ minWidth: 0, position: "relative" }}>
       {/* 原生 button 保证键盘可达（Tab + Enter/Space 打开灯箱） */}
       <Box
         component="button"
@@ -127,6 +130,28 @@ function MessageImage({
           }}
         />
       </Box>
+      {/* 与灯箱按钮同级而非嵌套：button 里不能再放 button */}
+      {onPinToProject ? (
+        <IconButton
+          onClick={(event: React.MouseEvent) => {
+            event.stopPropagation();
+            onPinToProject(file);
+          }}
+          aria-label={`把 ${displayName} 添加到项目文件`}
+          title="添加到项目文件"
+          size="small"
+          sx={{
+            position: "absolute",
+            top: 4,
+            right: 4,
+            color: "common.white",
+            bgcolor: "rgba(15,23,42,0.55)",
+            "&:hover": { bgcolor: "rgba(15,23,42,0.72)" },
+          }}
+        >
+          <LibraryAddOutlinedIcon fontSize="small" />
+        </IconButton>
+      ) : null}
       {customTitle || file.note?.trim() ? (
         <Box sx={{ px: 0.5, pt: 0.5, textAlign: "left" }}>
           {customTitle ? (
@@ -167,12 +192,14 @@ function MessageFile({
   resolveUrl,
   onDownload,
   onPreview,
+  onPinToProject,
 }: {
   file: ChatAttachment;
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
   onPreview?: (source: PreviewSource) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const colors = attachmentColors(tone);
   const displayName = attachmentDisplayName(file);
@@ -269,6 +296,20 @@ function MessageFile({
           </Typography>
         ) : null}
       </Box>
+      {onPinToProject ? (
+        <IconButton
+          onClick={(event: React.MouseEvent) => {
+            event.stopPropagation();
+            onPinToProject(file);
+          }}
+          aria-label={`把 ${displayName} 添加到项目文件`}
+          title="添加到项目文件"
+          size="small"
+          sx={{ color: colors.secondary }}
+        >
+          <LibraryAddOutlinedIcon fontSize="small" />
+        </IconButton>
+      ) : null}
       <IconButton
         {...(onDownload
           ? {
@@ -299,11 +340,13 @@ export function RequestMessageAttachments({
   tone,
   resolveUrl,
   onDownload,
+  onPinToProject,
 }: {
   files: ChatAttachment[];
   tone: AttachmentTone;
   resolveUrl?: (file: ChatAttachment, inline: boolean) => string;
   onDownload?: (file: ChatAttachment) => void;
+  onPinToProject?: (file: ChatAttachment) => void;
 }) {
   const [preview, setPreview] = useState<PreviewSource | null>(null);
   if (files.length === 0) return null;
@@ -330,6 +373,7 @@ export function RequestMessageAttachments({
               tone={tone}
               resolveUrl={resolveUrl}
               onPreview={setPreview}
+              onPinToProject={onPinToProject}
             />
           ))}
         </Box>
@@ -339,6 +383,7 @@ export function RequestMessageAttachments({
           key={file.id}
           file={file}
           tone={tone}
+          onPinToProject={onPinToProject}
           resolveUrl={resolveUrl}
           onDownload={onDownload}
           onPreview={setPreview}
