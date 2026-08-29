@@ -4,6 +4,7 @@ import {
   type DeliveryOverride,
   type DeliveryScene,
 } from "./api";
+import { createChannelCache } from "./delivery-channel-cache";
 
 export type { DeliveryChannelRule, DeliveryOverride, DeliveryScene };
 
@@ -23,31 +24,23 @@ export const RULE_KEY_BY_SCENE: Record<DeliveryScene["scene"], string> = {
   REQUEST_STATUS: "REQUEST_STATUS",
 };
 
-// 全场景共用一份：只是「哪些通道当前开着」，与收件人无关，一次会话拉一次
-let cache: DeliveryChannelRule[] | null = null;
-let inflight: Promise<DeliveryChannelRule[]> | null = null;
+// 全场景共用一份：只是「哪些通道当前开着」，与收件人无关，一次会话拉一次。
+// 缓存/作废/订阅的状态机在 delivery-channel-cache.ts，那边不依赖 wx，可直接测。
+const channelCache = createChannelCache<DeliveryChannelRule>(
+  listDeliveryChannels,
+);
 
 export function fetchDeliveryChannels(): Promise<DeliveryChannelRule[]> {
-  if (cache) return Promise.resolve(cache);
-  inflight ??= listDeliveryChannels()
-    .then((rules) => {
-      // 提示行是辅助信息：拿到非预期载荷就当没有规则，别把宿主页面打崩
-      cache = Array.isArray(rules) ? rules : [];
-      return cache;
-    })
-    .catch(() => {
-      cache = [];
-      return cache;
-    })
-    .then((rules) => {
-      inflight = null;
-      return rules;
-    });
-  return inflight;
+  return channelCache.get();
 }
 
 export function clearDeliveryChannelsCache() {
-  cache = null;
+  channelCache.invalidate();
+}
+
+/** 已挂载的提示行订阅这里：规则被作废时重拉，而不是等下次重新挂载 */
+export function subscribeDeliveryChannels(listener: () => void) {
+  return channelCache.subscribe(listener);
 }
 
 export async function fetchDeliveryRule(scene: DeliveryScene["scene"]) {

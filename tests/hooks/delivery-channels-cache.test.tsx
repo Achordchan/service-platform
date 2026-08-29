@@ -31,6 +31,14 @@ import {
 import { NotificationDeliveryRulesPanel } from "@/components/staff/notification-delivery-rules-panel";
 import type { NotificationDeliveryRuleView } from "@/modules/notifications/notification-delivery-rules";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
 function RuleProbe() {
   const rule = useDeliveryChannelRule("PROJECT_UPDATE");
   return <div data-testid="probe">{rule ? String(rule.emailEnabled) : "-"}</div>;
@@ -84,6 +92,25 @@ describe("送达通道缓存的失效", () => {
     invalidateDeliveryChannels();
 
     // 只清缓存不通知订阅者的话，这里会一直停在 true
+    await waitFor(() =>
+      expect(screen.getByTestId("probe").textContent).toBe("false"),
+    );
+    expect(staffApiMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("作废前发出的那次请求回来时，不会把旧规则写回缓存", async () => {
+    const first = deferred<unknown>();
+    staffApiMock.mockReturnValueOnce(first.promise);
+    render(<RuleProbe />);
+    await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
+
+    // 首次 GET 还在路上时管理员保存了规则
+    staffApiMock.mockResolvedValueOnce(channelRule(false));
+    invalidateDeliveryChannels();
+    // 旧请求这才回来，带的是保存前的规则
+    first.resolve(channelRule(true));
+
+    // 只清 cache 不管在途请求的话，它会把 true 写回缓存，作废等于没发生
     await waitFor(() =>
       expect(screen.getByTestId("probe").textContent).toBe("false"),
     );

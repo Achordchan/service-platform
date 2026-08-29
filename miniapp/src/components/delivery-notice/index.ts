@@ -4,11 +4,14 @@ import {
   fetchDeliveryRule,
   isDeliveryOverrideActive,
   materializeDeliveryOverride,
+  subscribeDeliveryChannels,
   type DeliveryChannelRule,
   type DeliveryOverride,
   type DeliveryScene,
 } from "../../lib/delivery";
 import { previewDelivery, type DeliveryPreview } from "../../lib/api";
+
+const channelUnsubscribers = new WeakMap<object, () => void>();
 
 type RecipientRow = DeliveryPreview["recipients"][number] & {
   emailLabel: string;
@@ -56,6 +59,24 @@ Component({
     scene(scene: DeliveryScene | null) {
       if (!scene) return;
       void this.loadRule(scene);
+    },
+  },
+  lifetimes: {
+    attached() {
+      // 通道开关只能在 Web 后台改，作废发生时 scene 没变，observer 不会再触发；
+      // 不订阅的话，停在编辑页的这份提示行会一直照着旧通道说话。
+      // 退订句柄挂 WeakMap 而不是实例字段：Component 的实例类型不含自定义字段。
+      channelUnsubscribers.set(
+        this,
+        subscribeDeliveryChannels(() => {
+          const scene = this.data.scene as DeliveryScene | null;
+          if (scene) void this.loadRule(scene);
+        }),
+      );
+    },
+    detached() {
+      channelUnsubscribers.get(this)?.();
+      channelUnsubscribers.delete(this);
     },
   },
   methods: {
