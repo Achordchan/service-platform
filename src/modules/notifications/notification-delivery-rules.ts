@@ -21,6 +21,16 @@ export const NOTIFICATION_DELIVERY_RULES = [
 export type NotificationDeliveryRuleKey =
   (typeof NOTIFICATION_DELIVERY_RULES)[number]["key"];
 
+/**
+ * 微信提醒只有用户主动授权且仍有额度才会发送，因此支持微信的客户提醒场景
+ * 可以安全地缺省开启；管理员明确保存的关闭值仍由数据库记录优先覆盖。
+ */
+const DEFAULT_WECHAT_ENABLED_RULE_KEYS = new Set<NotificationDeliveryRuleKey>([
+  "PROJECT_UPDATE",
+  "REQUEST_PUBLIC_MESSAGE",
+  "REQUEST_STATUS",
+]);
+
 export type NotificationDeliveryRuleState = {
   notificationEnabled: boolean;
   soundEnabled: boolean;
@@ -160,7 +170,7 @@ export function defaultNotificationDeliveryRuleState(
       definition && "dingtalkDefaultEnabled" in definition
         ? definition.dingtalkDefaultEnabled
         : false,
-    wechatEnabled: false,
+    wechatEnabled: DEFAULT_WECHAT_ENABLED_RULE_KEYS.has(key),
   };
 }
 

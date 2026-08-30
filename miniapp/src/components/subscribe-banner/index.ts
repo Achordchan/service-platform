@@ -4,10 +4,15 @@ import {
   requestSubscribe,
   isBannerDismissed,
   dismissBanner,
+  clearBannerDismiss,
   hasAutoPrompted,
   markAutoPrompted,
   type SubscribeTemplateState,
 } from "../../lib/subscribe";
+import {
+  presentSubscribeFailure,
+  presentSubscribeOutcome,
+} from "../../lib/subscribe-ui";
 
 /**
  * 订阅引导横幅：挂在各 Tab 页顶部。
@@ -71,15 +76,16 @@ Component({
       });
     },
     async doSubscribe() {
+      let openedSettings = false;
       try {
-        const accepted = await requestSubscribe(this.data.templates);
-        if (accepted > 0) {
-          wx.showToast({ title: `已开启 ${accepted} 类提醒`, icon: "none" });
-        }
-      } catch {
-        // 用户取消授权：静默，横幅仍按状态展示
+        const outcome = await requestSubscribe(this.data.templates);
+        if (outcome.acceptedCount > 0) clearBannerDismiss();
+        openedSettings = await presentSubscribeOutcome(outcome);
+      } catch (error) {
+        openedSettings = await presentSubscribeFailure(error);
       }
-      await this.refresh();
+      // 打开设置后由页面 onShow 重拉；其余情况立即刷新横幅状态。
+      if (!openedSettings) await this.refresh();
     },
     onEnable() {
       void this.doSubscribe();
