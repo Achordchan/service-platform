@@ -38,7 +38,16 @@
   },
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "miniprogram_npm/tdesign-miniprogram/chat-record"
+      },
+      {
+        "type": "folder",
+        "value": "miniprogram_npm/tdesign-miniprogram/qrcode"
+      }
+    ],
     "include": []
   },
   "editorSetting": {}
