@@ -44,6 +44,11 @@
 3. worker 增加 PROCESSING 僵尸回收（`WECHAT_PROCESSING_CLAIM_STALE_MS = 15min`，同邮件 outbox 模式；due/claim 条件同步放宽），集成测试覆盖「卡死投递被重新捞起并投递成功」。
 4. `config.ts` 异常兜底指向 PROD（develop 才显式判定），消除正式版探测异常时指向 localhost 的发版事故风险。
 
+   > ⚠️ 上条的「develop 才显式判定」已于 2026-08-30 推翻（PR #18），勿再照做：微信「审核版」的
+   > `envVersion` 也返回 `develop`，据此判定会让审核员在真机上连到本地地址。现改按运行平台判断——
+   > 仅 `platform === "devtools"` 连本机，真机一律走生产，见 `miniapp/src/lib/api-base-url.ts`
+   > （原委详见下文阶段 3 的同一注记）。**「异常兜底指向 PROD」这半仍然成立并已保留。**
+
 应修：members 页 403 判断改用 `ApiError.status`（原 message.includes 为死代码）；模板 ID 下发接口 `GET /api/miniapp/subscribe-message/config`（单一配置源=服务端 env，小程序无需发版）；TabBar 未读角标统一模块 `lib/badge.ts`（四个 Tab onShow + NOTIFICATION_CREATED 事件回调统一走 /summary，单条已读即时刷新数字）；`saveToken` 内 `eventSync.reset()`（覆盖 401 被踢后换号场景）；members 缺 spaceId 显示错误态而非永久 loading。
 
 可延后（顺手修复）：微信响应仅 `errcode === 0` 判 SENT（HTML 错误页不再误扣额度）；thing 字段截 20 字带省略号并清洗换行；`.env.example` 补 3 个模板 ID。
