@@ -44,6 +44,11 @@
 3. worker 增加 PROCESSING 僵尸回收（`WECHAT_PROCESSING_CLAIM_STALE_MS = 15min`，同邮件 outbox 模式；due/claim 条件同步放宽），集成测试覆盖「卡死投递被重新捞起并投递成功」。
 4. `config.ts` 异常兜底指向 PROD（develop 才显式判定），消除正式版探测异常时指向 localhost 的发版事故风险。
 
+   > ⚠️ 上条的「develop 才显式判定」已于 2026-08-30 推翻（PR #18），勿再照做：微信「审核版」的
+   > `envVersion` 也返回 `develop`，据此判定会让审核员在真机上连到本地地址。现改按运行平台判断——
+   > 仅 `platform === "devtools"` 连本机，真机一律走生产，见 `miniapp/src/lib/api-base-url.ts`
+   > （原委详见下文阶段 3 的同一注记）。**「异常兜底指向 PROD」这半仍然成立并已保留。**
+
 应修：members 页 403 判断改用 `ApiError.status`（原 message.includes 为死代码）；模板 ID 下发接口 `GET /api/miniapp/subscribe-message/config`（单一配置源=服务端 env，小程序无需发版）；TabBar 未读角标统一模块 `lib/badge.ts`（四个 Tab onShow + NOTIFICATION_CREATED 事件回调统一走 /summary，单条已读即时刷新数字）；`saveToken` 内 `eventSync.reset()`（覆盖 401 被踢后换号场景）；members 缺 spaceId 显示错误态而非永久 loading。
 
 可延后（顺手修复）：微信响应仅 `errcode === 0` 判 SENT（HTML 错误页不再误扣额度）；thing 字段截 20 字带省略号并清洗换行；`.env.example` 补 3 个模板 ID。
@@ -60,6 +65,12 @@
 2. 绑定 OTP 防枚举/防轰炸：sendBindingOtp 一律返回 `{sent:true}`（邮箱不存在/已绑定/冷却/超限不再区分）；失败计入 WechatBindGuard；按邮箱 60s 冷却（查 Verification 表 identifier 索引）。
 
 应修：isMine 改用当前用户 id（fetchMeCached）；登出清事件游标（eventSync.reset）；网络监听注册不依赖登录态；config 按 envVersion 切换 API 地址 + `.env.example` 补 4 个微信变量。
+
+> ⚠️ 上条的「config 按 envVersion 切换 API 地址」已于 2026-08-30 推翻（PR #18），勿再照做：
+> 微信「审核版」的 `envVersion` 返回 `develop` 而非 `trial`，据此切到本地地址会让审核员在真机上
+> 把请求打到 127.0.0.1，登录必然失败，已因此按《运营规范》3.3「功能报错」被驳回。
+> 现按运行平台判断——`platform === "devtools"` 才连本地，真机（预览/体验版/审核版/正式版）
+> 一律走生产，见 `miniapp/src/lib/api-base-url.ts`。
 
 可延后（已顺手修复）：富文本拼接前 escapeHtml；幂等键命中后校验父资源一致（不一致 409 IDEMPOTENCY_KEY_CONFLICT）；锁定触发时 failCount 归零；每日 `miniapp-identity-sweep` 清理过期票据/计数/会话。
 

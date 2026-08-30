@@ -7,9 +7,10 @@
 ```text
 src/
 ├── app.ts / app.json / app.wxss   # 4 Tab + 断网恢复补拉事件
-├── config.ts                      # API_BASE_URL（本机调试 → 生产域名）
+├── config.ts                      # 探测运行平台，导出 API_BASE_URL
 ├── components/states.wxml        # 共享视觉组件：骨架屏 / 空状态 / 错误态（含无权、可重试）
 ├── lib/
+│   ├── api-base-url.ts            # 后端地址选择：仅 devtools 连本机，真机一律生产
 │   ├── badge.ts                   # TabBar 未读角标统一刷新（Tab onShow + 事件回调）
 │   ├── request.ts                 # wx.request 封装：Bearer 注入、401 重登、X-Idempotency-Key
 │   ├── auth.ts                    # 登录 / 两种绑定 / 登出 / me
@@ -42,8 +43,17 @@ src/
    `MINIAPP_WECHAT_PROVIDER` 保持默认 `real`。
 
 2. **小程序**：微信开发者工具「导入项目」选择本目录（appid 可用测试号），
-   `src/config.ts` 的 `API_BASE_URL` 指向 `http://127.0.0.1:3000`，
-   详情设置勾选「不校验合法域名」。
+   详情设置勾选「不校验合法域名」。后端地址按运行平台选（`src/config.ts` 探测平台，
+   常量与选择逻辑在 `src/lib/api-base-url.ts`）：只有开发者工具（platform 为
+   `devtools`）连 `http://127.0.0.1:3000`，真机——预览、体验版、审核版、正式版——
+   一律走生产域名，没有开关可以覆盖。
+
+   真机需要连本机后端联调时，把 `src/lib/api-base-url.ts` 的 `PROD_API_BASE_URL`
+   临时改成电脑的局域网 IP（如 `http://192.168.1.5:3000`，手机与电脑连同一 WiFi），
+   **用完立刻改回**；忘了改回的话 `tests/miniapp/api-base-url.test.ts` 会在 CI 拦住。
+
+   ⚠️ 不要改回用 `envVersion` 判断环境：微信审核版的 `envVersion` 返回 `develop`，
+   会把审核员的真机请求打到 127.0.0.1 而导致「功能报错」驳回。
 
 3. **构建 npm（TDesign 组件库，首次必做）**：微信开发者工具菜单「工具 → 构建 npm」。
    项目已配置 `packNpmManually` + `packNpmRelationList`（npm 包在 miniapp/ 根，

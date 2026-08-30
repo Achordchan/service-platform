@@ -211,7 +211,9 @@ printf '\n本地服务将在前台运行： %s\n' "$LOCAL_APP_URL"
 if [[ "$HOST" == "0.0.0.0" ]]; then
   lan_ip="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || true)"
   if [[ -n "$lan_ip" ]]; then
-    printf '真机调试：手机（同一 WiFi）请求 http://%s:%s ，把小程序 DEV_API_BASE_URL 指到这里。\n' "$lan_ip" "$PORT"
+    printf '真机调试：手机（同一 WiFi）请求 http://%s:%s ，把小程序\n' "$lan_ip" "$PORT"
+    printf '  miniapp/src/lib/api-base-url.ts 的 PROD_API_BASE_URL 临时指到这里，用完改回。\n'
+    printf '  （DEV_API_BASE_URL 只对微信开发者工具生效，真机改它不起作用。）\n'
   else
     printf '真机调试：已对局域网开放，但未探测到局域网 IP，请手动查看本机 IP。\n'
   fi
