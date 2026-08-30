@@ -7,9 +7,10 @@
 ```text
 src/
 ├── app.ts / app.json / app.wxss   # 4 Tab + 断网恢复补拉事件
-├── config.ts                      # API_BASE_URL（本机调试 → 生产域名）
+├── config.ts                      # 探测运行平台，导出 API_BASE_URL
 ├── components/states.wxml        # 共享视觉组件：骨架屏 / 空状态 / 错误态（含无权、可重试）
 ├── lib/
+│   ├── api-base-url.ts            # 后端地址选择：仅 devtools 连本机，真机一律生产
 │   ├── badge.ts                   # TabBar 未读角标统一刷新（Tab onShow + 事件回调）
 │   ├── request.ts                 # wx.request 封装：Bearer 注入、401 重登、X-Idempotency-Key
 │   ├── auth.ts                    # 登录 / 两种绑定 / 登出 / me

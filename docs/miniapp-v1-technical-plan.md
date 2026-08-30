@@ -61,6 +61,12 @@
 
 应修：isMine 改用当前用户 id（fetchMeCached）；登出清事件游标（eventSync.reset）；网络监听注册不依赖登录态；config 按 envVersion 切换 API 地址 + `.env.example` 补 4 个微信变量。
 
+> ⚠️ 上条的「config 按 envVersion 切换 API 地址」已于 2026-08-30 推翻（PR #18），勿再照做：
+> 微信「审核版」的 `envVersion` 返回 `develop` 而非 `trial`，据此切到本地地址会让审核员在真机上
+> 把请求打到 127.0.0.1，登录必然失败，已因此按《运营规范》3.3「功能报错」被驳回。
+> 现按运行平台判断——`platform === "devtools"` 才连本地，真机（预览/体验版/审核版/正式版）
+> 一律走生产，见 `miniapp/src/lib/api-base-url.ts`。
+
 可延后（已顺手修复）：富文本拼接前 escapeHtml；幂等键命中后校验父资源一致（不一致 409 IDEMPOTENCY_KEY_CONFLICT）；锁定触发时 failCount 归零；每日 `miniapp-identity-sweep` 清理过期票据/计数/会话。
 
 ### 阶段 3（消息中心 + 微信订阅消息 + 我的/成员）已完成
