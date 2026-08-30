@@ -62,6 +62,33 @@ src/
 
 4. 类型检查：仓库根 `pnpm typecheck:miniapp`（或在 miniapp/ 下 `tsc --noEmit`）。
 
+## 隐私接口与上传包
+
+小程序目前只用了 TDesign 的一个组件（`t-icon`），但「构建 npm」会把整个
+`tdesign-miniprogram` 产出到 `src/miniprogram_npm/`（100+ 组件）。微信在上传代码时会
+**扫描包内代码**，把检测到的隐私接口列进「小程序设置 - 基本设置 - 服务内容声明 -
+用户隐私保护指引」，要求逐项填写用途。
+
+其中两个组件我们从未使用，却会凭空带来隐私声明项：
+
+| 组件 | 带来的隐私接口 | 处理 |
+| --- | --- | --- |
+| `chat-record` | `startRecord` 等录音接口 → 「麦克风(Record)」 | 已在 `packOptions.ignore` 中排除 |
+| `qrcode` | `saveImageToPhotosAlbum` → 「保存到相册」 | 已在 `packOptions.ignore` 中排除 |
+
+2026-08-30 就因此被驳回：后台隐私指引里列着「Record 访问你的麦克风」，用途只能写
+「无录音功能」，审核判定《用户隐私保护指引》描述不明确。**代码里确实没有任何录音功能。**
+
+因此 `project.config.json` 的 `packOptions.ignore` 排除了这两个目录：它们不被上传，
+微信也就扫不到对应接口。二者均无其它组件依赖（`icon` 只依赖 `common`），排除后不影响功能。
+
+⚠️ 若将来要用到 `chat-record` / `qrcode`，需同步删掉对应的 ignore 项，并在后台隐私指引里
+如实补充该接口的用途；反之，新引入的组件若带来不需要的隐私接口，按同样方式排除。
+
+业务代码真正使用的隐私接口只有两个，都在 `lib/pick-files.ts`：`wx.chooseMedia`（相册/拍照，
+仅 `mediaType: ["image"]`，不涉及视频与录音）与 `wx.chooseMessageFile`（聊天文件），
+用于上传工单附件、项目文件与头像。
+
 ## 登录/绑定流程
 
 ```text
