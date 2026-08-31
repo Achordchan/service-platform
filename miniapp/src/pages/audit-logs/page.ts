@@ -10,6 +10,7 @@ import {
   auditFilterCount,
   formatAuditMetadata,
   formatAuditTime,
+  keepActiveOption,
   shanghaiToday,
   type AuditDetailItem,
 } from "../../lib/audit";
@@ -118,6 +119,9 @@ Page({
   onOpenFilters() {
     this.setData({
       filterVisible: true,
+      // 页面一直停在前台跨过北京零点时 onShow 不会再触发，这里补算一次，
+      // 否则两个日期选择器都还卡在昨天，今天的日志选不了
+      maxDate: shanghaiToday(),
       draftAction: this.data.action,
       draftActionIndex: this.optionIndex(
         this.data.actionOptions,
@@ -286,14 +290,27 @@ Page({
     }
   },
   applyFacets(facets: AuditFacets) {
+    const data = this.data;
     this.setData({
       facetsLoaded: true,
-      actionOptions: [ALL_OPTION, ...facets.actionOptions],
-      resourceOptions: [ALL_OPTION, ...facets.resourceTypeOptions],
+      actionOptions: keepActiveOption(
+        [ALL_OPTION, ...facets.actionOptions],
+        data.actionOptions,
+        data.action,
+      ),
+      resourceOptions: keepActiveOption(
+        [ALL_OPTION, ...facets.resourceTypeOptions],
+        data.resourceOptions,
+        data.resourceType,
+      ),
       // 库里一条日志都没有时 facets 为空，结果 chips 回落到默认两项
-      resultOptions: facets.resultOptions.length
-        ? [ALL_OPTION, ...facets.resultOptions]
-        : DEFAULT_RESULT_OPTIONS,
+      resultOptions: keepActiveOption(
+        facets.resultOptions.length
+          ? [ALL_OPTION, ...facets.resultOptions]
+          : DEFAULT_RESULT_OPTIONS,
+        data.resultOptions,
+        data.result,
+      ),
     });
   },
   async loadMore() {
@@ -310,7 +327,9 @@ Page({
       if (seq !== this.reloadSeq) return;
       this.setData({
         loadingMore: false,
-        rows: [...this.data.rows, ...this.decorate(result.rows)],
+        // 已有行一并重算：页面跨过零点后，旧行的「只有时分」会被误读成今天，
+        // 且与新一页的「月-日 时分」混在一起（decorate 幂等，setData 本就整份下发）
+        rows: [...this.decorate(this.data.rows), ...this.decorate(result.rows)],
         page: result.page,
         total: result.total,
         hasMore: (result.page + 1) * result.pageSize < result.total,

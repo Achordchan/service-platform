@@ -6,6 +6,7 @@ import {
   auditFilterCount,
   formatAuditMetadata,
   formatAuditTime,
+  keepActiveOption,
   shanghaiToday,
 } from "../../miniapp/src/lib/audit";
 
@@ -82,6 +83,34 @@ describe("auditFilterCount", () => {
         to: "2026-08-31",
       }),
     ).toBe(4);
+  });
+});
+
+describe("keepActiveOption", () => {
+  const previous = [
+    { value: "", label: "全部" },
+    { value: "SUCCESS", label: "成功" },
+    { value: "FAILURE", label: "失败" },
+  ];
+
+  it("facets 没报的取值若仍在生效，带着原标签留在选项里", () => {
+    const next = [{ value: "", label: "全部" }, { value: "SUCCESS", label: "成功" }];
+    expect(keepActiveOption(next, previous, "FAILURE")).toEqual([
+      ...next,
+      { value: "FAILURE", label: "失败" },
+    ]);
+  });
+
+  it("旧选项里也查不到标签时回落原值，至少看得见、点得掉", () => {
+    expect(keepActiveOption([], [], "DENIED")).toEqual([
+      { value: "DENIED", label: "DENIED" },
+    ]);
+  });
+
+  it("未筛选或取值本就在列表里时原样返回", () => {
+    const next = [{ value: "", label: "全部" }, { value: "SUCCESS", label: "成功" }];
+    expect(keepActiveOption(next, previous, "")).toBe(next);
+    expect(keepActiveOption(next, previous, "SUCCESS")).toBe(next);
   });
 });
 

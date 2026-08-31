@@ -1,5 +1,5 @@
 // 审计日志的纯展示逻辑：列表时间、筛选角标、详情字段。页面只做取数与 setData。
-import type { AuditRow } from "./api";
+import type { AuditFacetOption, AuditRow } from "./api";
 import { formatDateTime } from "./format";
 
 export type AuditFilterState = {
@@ -34,6 +34,23 @@ export function auditFilterCount(
     (filters.from ? 1 : 0) +
     (filters.to ? 1 : 0)
   );
+}
+
+/**
+ * 合并筛选项时保住仍在生效的取值：facets 只报「库里现存的取值」，若用户先选了
+ * 一个（例如 facets 到达前从默认 chips 里选的 FAILURE）而服务端没报它，直接替换
+ * 选项会让条件还生效、界面上却看不见，列表空了也无从解释、更无从取消。
+ */
+export function keepActiveOption(
+  options: AuditFacetOption[],
+  previous: AuditFacetOption[],
+  active: string,
+): AuditFacetOption[] {
+  if (!active || options.some((option) => option.value === active)) {
+    return options;
+  }
+  const known = previous.find((option) => option.value === active);
+  return [...options, known ?? { value: active, label: active }];
 }
 
 /**
