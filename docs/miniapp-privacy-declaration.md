@@ -30,14 +30,18 @@
 不引用该目录下任何模板）。修完后包内已无任何未使用的隐私接口痕迹，两条声明都可以删。
 
 `tests/miniapp/privacy-api-surface.test.ts` 守住这条线。因为 `miniprogram_npm` 是「构建
-npm」产物、不入库，CI 上并不存在，所以防线分两层：
+npm」产物、不入库、CI 上并不存在，所以扫描建立在两类输入上：
 
-- **不依赖产物（CI 上同样有效）**：断言 `REQUIRED_VENDOR_IGNORES` 里含隐私接口的 TDesign
-  目录（`button`／`chat-record`／`common/template`／`qrcode`）都还在 `packOptions.ignore`
-  里，并扫描自有代码；误删 ignore 条目会直接失败。
-- **需要产物（本地构建后跑）**：按 `packOptions.ignore` 还原「真正会上传的文件集合」全量
-  扫描，并校验 TDesign 只剩 `icon` 与公共依赖进包——负责发现升级后新出现、清单尚未覆盖的
-  目录。CI 上这两条显式标记为 skipped。
+- **自有代码 + `node_modules/tdesign-miniprogram`（CI 上 `pnpm install` 之后都在，永远真的
+  在跑）**：扫已安装 TDesign 包里作为构建源的 `miniprogram_dist`，凡命中隐私接口的文件都必须
+  被 `packOptions.ignore` 覆盖。清单是动态推导的，升级 TDesign 引入新的隐私目录会直接失败，
+  不必手工维护;判定复用 `isIgnored`，`folder` 覆盖整棵子树、`file` 只精确匹配单个文件，
+  所以误删条目或把 `folder` 改成 `file` 都拦得住。
+- **`src/miniprogram_npm`（构建产物，只在本地）**：按 `packOptions.ignore` 还原「真正会上传
+  的文件集合」全量扫描，并校验 TDesign 只剩 `icon` 与公共依赖进包，作为最终一致性校验。
+  CI 上这两条显式标记为 skipped。
+
+`.wechatide.ib.json` 是开发者工具的 API 补全索引，列着全量接口名却不参与运行，已一并排除。
 
 ### 正确的操作顺序（顺序错了还会被驳）
 
@@ -114,8 +118,7 @@ npm」产物、不入库，CI 上并不存在，所以防线分两层：
 新增任何隐私接口（录音、定位、手机号快捷登录等）时：
 
 1. 先来本文件补一条正向说明，并同步到 mp 后台，同时把关键词从
-   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里移除
-   （若该接口来自某个 TDesign 目录，同步调整 `REQUIRED_VENDOR_IGNORES`）；
+   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里移除；
 2. 若届时开启了隐私校验（`app.json` 的 `__usePrivacyCheck__`），
    还需接入 `wx.onNeedPrivacyAuthorization` 隐私弹窗，否则接口调用会直接 fail；
    当前未开启，暂不需要。
