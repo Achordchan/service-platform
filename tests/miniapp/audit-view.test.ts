@@ -7,7 +7,7 @@ import {
   formatAuditMetadata,
   formatAuditTime,
   keepActiveOption,
-  msUntilNextLocalMidnight,
+  msUntilNextRollover,
   shanghaiToday,
 } from "../../miniapp/src/lib/audit";
 
@@ -87,22 +87,41 @@ describe("auditFilterCount", () => {
   });
 });
 
-describe("msUntilNextLocalMidnight", () => {
+describe("msUntilNextRollover", () => {
   // 断言落点而非具体毫秒数，跑测机器在哪个时区都成立
-  function landsOnNextMidnight(now: Date) {
-    const target = new Date(now.getTime() + msUntilNextLocalMidnight(now.getTime()));
-    expect([target.getHours(), target.getMinutes(), target.getSeconds()]).toEqual([0, 0, 0]);
-    expect(target.getDate()).toBe(new Date(now.getTime() + 86_400_000).getDate());
+  function nextBoundary(now: Date) {
+    return new Date(now.getTime() + msUntilNextRollover(now.getTime()));
   }
 
-  it("落在下一个本地零点，跨月跨年由 Date 自己进位", () => {
-    landsOnNextMidnight(new Date(2026, 7, 31, 23, 59, 30));
-    landsOnNextMidnight(new Date(2026, 11, 31, 12, 0, 0));
+  it("落在下一个日界上，跨月跨年由 Date 自己进位", () => {
+    for (const now of [
+      new Date(2026, 7, 31, 23, 59, 30),
+      new Date(2026, 11, 31, 12, 0, 0),
+    ]) {
+      const target = nextBoundary(now);
+      expect(target.getTime()).toBeGreaterThan(now.getTime());
+      // 本地零点或北京零点，先到者胜
+      const localMidnight =
+        target.getHours() === 0 &&
+        target.getMinutes() === 0 &&
+        target.getSeconds() === 0;
+      const shanghaiMidnight =
+        shanghaiToday(target.getTime() - 1) !== shanghaiToday(target.getTime());
+      expect(localMidnight || shanghaiMidnight).toBe(true);
+    }
+  });
+
+  // 设备不在 UTC+8 时两个零点不重合：北京日先翻的话必须在那一刻就醒
+  it("北京日先翻时不等到本地零点", () => {
+    const now = Date.parse("2026-08-30T15:30:00Z");
+    const target = now + msUntilNextRollover(now);
+    expect(shanghaiToday(target)).toBe("2026-08-31");
+    expect(target).toBeLessThanOrEqual(Date.parse("2026-08-30T16:00:00Z"));
   });
 
   it("至少 1 秒，不排出 0 延时的自触发循环", () => {
     const midnight = new Date(2026, 7, 31, 0, 0, 0).getTime();
-    expect(msUntilNextLocalMidnight(midnight)).toBeGreaterThanOrEqual(1000);
+    expect(msUntilNextRollover(midnight)).toBeGreaterThanOrEqual(1000);
   });
 });
 

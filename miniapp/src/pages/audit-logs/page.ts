@@ -11,7 +11,7 @@ import {
   formatAuditMetadata,
   formatAuditTime,
   keepActiveOption,
-  msUntilNextLocalMidnight,
+  msUntilNextRollover,
   shanghaiToday,
   type AuditDetailItem,
 } from "../../lib/audit";
@@ -93,9 +93,9 @@ Page({
     this.clearRollover();
   },
   /**
-   * 行的时间文案是取数那一刻算的：页面就停在前台跨过零点、期间既不翻页也不刷新
-   * 时，昨天的行会一直只显示时分，被读成今天——审计时间不能这么含糊。到点重排
-   * 一次并续上下一个零点。
+   * 页面停在前台跨过零点、期间既不翻页也不刷新时：行的时间文案（按设备本地日）
+   * 会把昨天的行显示成只有时分、被读成今天，日期上限（按北京日）则会滞留在昨
+   * 天、挡住当天日志。到点两样一起重排并续上下一个日界。
    */
   scheduleRollover() {
     this.clearRollover();
@@ -108,7 +108,7 @@ Page({
           : {}),
       });
       this.scheduleRollover();
-    }, msUntilNextLocalMidnight());
+    }, msUntilNextRollover());
   },
   clearRollover() {
     if (!this.rolloverTimer) return;

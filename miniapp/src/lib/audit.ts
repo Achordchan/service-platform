@@ -92,16 +92,26 @@ export function formatAuditTime(
     : `${date.getFullYear()}-${monthDay} ${clock}`;
 }
 
-/** 距下一个本地零点的毫秒数（跨月、跨年由 Date 自己进位）；至少给 1 秒，
- *  免得时钟回拨或边界抖动时排出一个 0 延时的自触发循环 */
-export function msUntilNextLocalMidnight(now: number = Date.now()): number {
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1000;
+
+/**
+ * 距下一个「日界」的毫秒数：页面上有两套日历在跑 —— 行的时间文案按设备本地日
+ * 算，日期上限按北京日算。设备不在 UTC+8 时这两个零点不重合，取先到的那个，
+ * 两者都不会滞留。跨月跨年由 Date 自己进位（+08:00 无夏令时，可以直接算）。
+ * 下限 1 秒，免得时钟回拨或边界抖动排出 0 延时的自触发循环。
+ */
+export function msUntilNextRollover(now: number = Date.now()): number {
   const current = new Date(now);
-  const midnight = new Date(
+  const localMidnight = new Date(
     current.getFullYear(),
     current.getMonth(),
     current.getDate() + 1,
   ).getTime();
-  return Math.max(midnight - now, 1000);
+  const shifted = now + SHANGHAI_OFFSET_MS;
+  const shanghaiMidnight =
+    Math.floor(shifted / DAY_MS) * DAY_MS + DAY_MS - SHANGHAI_OFFSET_MS;
+  return Math.max(Math.min(localMidnight, shanghaiMidnight) - now, 1000);
 }
 
 /** metadata 为 JSON 列，缩进后原样展示；空对象与不可序列化值都视作没有附加数据 */
