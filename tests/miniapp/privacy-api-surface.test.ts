@@ -76,6 +76,12 @@ const FORBIDDEN = [
   "startWifi",
   "getConnectedWifi",
   "getHCEState",
+  // 声明式入口：原生组件不经过任何 JS API 就能拿到摄像头/麦克风/微信身份，
+  // 只扫接口名会漏掉。带尖括号匹配，避免误伤 chooseMedia 的 sourceType: ["camera"]
+  "<camera",
+  "<live-pusher",
+  "<voip-room",
+  "<open-data",
 ];
 
 const SCANNED_EXT = new Set([".js", ".ts", ".wxml", ".wxs", ".json"]);
