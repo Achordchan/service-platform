@@ -200,8 +200,10 @@
 
     <!-- 文件：项目级附件列表 -->
     <block wx:if="{{activeTab === 'files'}}">
+      <!-- 空判据是 allFiles：拿 files 判会在「某个来源筛出 0 条」时连筛选条一起
+           收走，用户点进「来自沟通」就再也切不回「全部」 -->
       <template
-        wx:if="{{files.length === 0}}"
+        wx:if="{{allFiles.length === 0}}"
         is="state-empty"
         data="{{icon: 'folder', title: '暂无项目文件', desc: '项目交付文件会展示在这里'}}"
       />
@@ -216,6 +218,9 @@
               data-value="{{item.value}}"
               bindtap="onFileSource"
             >{{item.label}}</view>
+          </view>
+          <view wx:if="{{files.length === 0}}" class="file-empty text-secondary">
+            该来源下暂无文件
           </view>
           <view
             wx:for="{{files}}"

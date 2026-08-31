@@ -412,6 +412,12 @@
   font-weight: 500;
 }
 
+.file-empty {
+  padding: 48rpx 0;
+  text-align: center;
+  font-size: 25rpx;
+}
+
 .file-source-tag {
   margin-left: 12rpx;
   padding: 2rpx 12rpx;
