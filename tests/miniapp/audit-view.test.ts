@@ -7,6 +7,7 @@ import {
   formatAuditMetadata,
   formatAuditTime,
   keepActiveOption,
+  msUntilNextLocalMidnight,
   shanghaiToday,
 } from "../../miniapp/src/lib/audit";
 
@@ -83,6 +84,25 @@ describe("auditFilterCount", () => {
         to: "2026-08-31",
       }),
     ).toBe(4);
+  });
+});
+
+describe("msUntilNextLocalMidnight", () => {
+  // 断言落点而非具体毫秒数，跑测机器在哪个时区都成立
+  function landsOnNextMidnight(now: Date) {
+    const target = new Date(now.getTime() + msUntilNextLocalMidnight(now.getTime()));
+    expect([target.getHours(), target.getMinutes(), target.getSeconds()]).toEqual([0, 0, 0]);
+    expect(target.getDate()).toBe(new Date(now.getTime() + 86_400_000).getDate());
+  }
+
+  it("落在下一个本地零点，跨月跨年由 Date 自己进位", () => {
+    landsOnNextMidnight(new Date(2026, 7, 31, 23, 59, 30));
+    landsOnNextMidnight(new Date(2026, 11, 31, 12, 0, 0));
+  });
+
+  it("至少 1 秒，不排出 0 延时的自触发循环", () => {
+    const midnight = new Date(2026, 7, 31, 0, 0, 0).getTime();
+    expect(msUntilNextLocalMidnight(midnight)).toBeGreaterThanOrEqual(1000);
   });
 });
 

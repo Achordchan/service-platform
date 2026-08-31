@@ -92,6 +92,18 @@ export function formatAuditTime(
     : `${date.getFullYear()}-${monthDay} ${clock}`;
 }
 
+/** 距下一个本地零点的毫秒数（跨月、跨年由 Date 自己进位）；至少给 1 秒，
+ *  免得时钟回拨或边界抖动时排出一个 0 延时的自触发循环 */
+export function msUntilNextLocalMidnight(now: number = Date.now()): number {
+  const current = new Date(now);
+  const midnight = new Date(
+    current.getFullYear(),
+    current.getMonth(),
+    current.getDate() + 1,
+  ).getTime();
+  return Math.max(midnight - now, 1000);
+}
+
 /** metadata 为 JSON 列，缩进后原样展示；空对象与不可序列化值都视作没有附加数据 */
 export function formatAuditMetadata(metadata: unknown): string {
   if (metadata === null || metadata === undefined) return "";

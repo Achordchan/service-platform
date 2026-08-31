@@ -11,6 +11,7 @@ import {
   formatAuditMetadata,
   formatAuditTime,
   keepActiveOption,
+  msUntilNextLocalMidnight,
   shanghaiToday,
   type AuditDetailItem,
 } from "../../lib/audit";
@@ -76,11 +77,43 @@ Page({
    * 条件上，看起来像筛选没生效。
    */
   reloadSeq: 0,
+  /** 跨本地零点时重排时间文案的定时器（页面隐藏期间不留） */
+  rolloverTimer: 0,
   onShow() {
     // 日期选择器上限跟着当天走：应用长时间挂在后台跨过零点也不会停在昨天
     this.setData({ maxDate: shanghaiToday() });
+    this.scheduleRollover();
     if (!ensureLoggedIn(() => this.reload())) return;
     void this.reload();
+  },
+  onHide() {
+    this.clearRollover();
+  },
+  onUnload() {
+    this.clearRollover();
+  },
+  /**
+   * 行的时间文案是取数那一刻算的：页面就停在前台跨过零点、期间既不翻页也不刷新
+   * 时，昨天的行会一直只显示时分，被读成今天——审计时间不能这么含糊。到点重排
+   * 一次并续上下一个零点。
+   */
+  scheduleRollover() {
+    this.clearRollover();
+    this.rolloverTimer = setTimeout(() => {
+      this.rolloverTimer = 0;
+      this.setData({
+        maxDate: shanghaiToday(),
+        ...(this.data.rows.length
+          ? { rows: this.decorate(this.data.rows) }
+          : {}),
+      });
+      this.scheduleRollover();
+    }, msUntilNextLocalMidnight());
+  },
+  clearRollover() {
+    if (!this.rolloverTimer) return;
+    clearTimeout(this.rolloverTimer);
+    this.rolloverTimer = 0;
   },
   onRetry() {
     void this.reload();
@@ -291,18 +324,31 @@ Page({
   },
   applyFacets(facets: AuditFacets) {
     const data = this.data;
-    this.setData({
-      facetsLoaded: true,
-      actionOptions: keepActiveOption(
+    // 面板开着时下拉刷新的 facets 可能正好落地：草稿里选中的值也要留在选项里，
+    // 否则 picker 显示的是一个值、点「应用」提交的是另一个
+    const draftOf = (value: string) => (data.filterVisible ? value : "");
+    const actionOptions = keepActiveOption(
+      keepActiveOption(
         [ALL_OPTION, ...facets.actionOptions],
         data.actionOptions,
         data.action,
       ),
-      resourceOptions: keepActiveOption(
+      data.actionOptions,
+      draftOf(data.draftAction),
+    );
+    const resourceOptions = keepActiveOption(
+      keepActiveOption(
         [ALL_OPTION, ...facets.resourceTypeOptions],
         data.resourceOptions,
         data.resourceType,
       ),
+      data.resourceOptions,
+      draftOf(data.draftResourceType),
+    );
+    this.setData({
+      facetsLoaded: true,
+      actionOptions,
+      resourceOptions,
       // 库里一条日志都没有时 facets 为空，结果 chips 回落到默认两项
       resultOptions: keepActiveOption(
         facets.resultOptions.length
@@ -310,6 +356,12 @@ Page({
           : DEFAULT_RESULT_OPTIONS,
         data.resultOptions,
         data.result,
+      ),
+      // 选项列表换了，picker 的下标必须跟着新列表重算
+      draftActionIndex: this.optionIndex(actionOptions, data.draftAction),
+      draftResourceIndex: this.optionIndex(
+        resourceOptions,
+        data.draftResourceType,
       ),
     });
   },
