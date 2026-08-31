@@ -6,10 +6,14 @@ import { describe, expect, it } from "vitest";
 // 而声明了代码里没有的接口同样会被判「指引不明确」。2026-08-31 那次驳回的根因是
 // TDesign 的 common/template/button.wxml 带着 bind:getphonenumber 混进了包里，
 // 逼得后台必须声明手机号——删声明就被驳，留着又填不出真实用途。
-// 这里断言「实际会上传的文件」里不含任何未使用的隐私接口痕迹。
+//
+// miniprogram_npm 是「构建 npm」产物且不入库，CI 上并不存在，所以防线分两层：
+// 前两条只读 project.config.json 与自有代码，在 CI 上同样有效；后两条需要 vendor
+// 产物，负责兜住升级 TDesign 后新出现的目录。
 
 const MINIAPP_ROOT = path.join(__dirname, "../../miniapp");
 const SRC_ROOT = path.join(MINIAPP_ROOT, "src");
+const VENDOR_ROOT = path.join(SRC_ROOT, "miniprogram_npm/tdesign-miniprogram");
 
 // 代码里真正在用、且已在后台声明的接口不在此列（chooseMedia / chooseMessageFile /
 // getDeviceInfo）。新增隐私能力时先更新 docs/miniapp-privacy-declaration.md 再放开这里。
@@ -34,6 +38,18 @@ const FORBIDDEN = [
   "saveVideoToPhotosAlbum",
   "openBluetoothAdapter",
 ];
+
+// 全量扫描 tdesign-miniprogram 得出的、含隐私接口的目录（2026-08-31 核对）。
+// 项目只用到 icon，这些必须留在 packOptions.ignore 里才不会被打进上传包。
+// 值为该目录命中的接口，便于将来判断能否放开。
+const REQUIRED_VENDOR_IGNORES: Record<string, string> = {
+  "miniprogram_npm/tdesign-miniprogram/button":
+    "getphonenumber/getrealtimephonenumber/getuserinfo",
+  "miniprogram_npm/tdesign-miniprogram/chat-record": "startRecord",
+  "miniprogram_npm/tdesign-miniprogram/common/template":
+    "getphonenumber/getrealtimephonenumber/getuserinfo",
+  "miniprogram_npm/tdesign-miniprogram/qrcode": "saveImageToPhotosAlbum",
+};
 
 const SCANNED_EXT = new Set([".js", ".ts", ".wxml", ".wxs", ".json"]);
 
@@ -61,22 +77,40 @@ function shippedFiles(): string[] {
   return out;
 }
 
-describe("小程序上传包的隐私接口面", () => {
-  // miniprogram_npm 是「构建 npm」产物且不入库，CI 上不存在时这条只覆盖自有代码
-  const hasVendor = existsSync(path.join(SRC_ROOT, "miniprogram_npm"));
+function scanForbidden(relPaths: string[]): string[] {
+  const offenders: string[] = [];
+  for (const rel of relPaths) {
+    const text = readFileSync(path.join(SRC_ROOT, rel), "utf8");
+    const hit = FORBIDDEN.filter((k) => text.includes(k));
+    if (hit.length > 0) offenders.push(`${rel} -> ${hit.join(",")}`);
+  }
+  return offenders;
+}
 
-  it("包内不含未声明的隐私接口调用", () => {
-    const offenders: string[] = [];
-    for (const rel of shippedFiles()) {
-      const text = readFileSync(path.join(SRC_ROOT, rel), "utf8");
-      const hit = FORBIDDEN.filter((k) => text.includes(k));
-      if (hit.length > 0) offenders.push(`${rel} -> ${hit.join(",")}`);
-    }
-    expect(offenders).toEqual([]);
+describe("小程序上传包的隐私接口面", () => {
+  it("含隐私接口的 TDesign 目录必须留在 packOptions.ignore 里", () => {
+    // 不依赖 miniprogram_npm，CI 上同样能拦住「误删 ignore 条目」
+    const ignored = new Set(packIgnorePrefixes());
+    const missing = Object.entries(REQUIRED_VENDOR_IGNORES)
+      .filter(([dir]) => !ignored.has(dir))
+      .map(([dir, apis]) => `${dir}（含 ${apis}）`);
+    expect(missing).toEqual([]);
   });
 
-  it("TDesign 只用到 icon，其余组件必须排除在打包之外", () => {
-    if (!hasVendor) return;
+  it("自有代码不含未声明的隐私接口", () => {
+    const own = shippedFiles().filter((f) => !f.startsWith("miniprogram_npm/"));
+    expect(own.length).toBeGreaterThan(0);
+    expect(scanForbidden(own)).toEqual([]);
+  });
+
+  const hasVendor = existsSync(VENDOR_ROOT);
+
+  // 以下两条需要「构建 npm」产物，负责发现 REQUIRED_VENDOR_IGNORES 尚未覆盖的新目录
+  it.skipIf(!hasVendor)("上传包内不含未声明的隐私接口", () => {
+    expect(scanForbidden(shippedFiles())).toEqual([]);
+  });
+
+  it.skipIf(!hasVendor)("TDesign 只用到 icon，其余组件必须排除在打包之外", () => {
     const shipped = shippedFiles().filter((f) =>
       f.startsWith("miniprogram_npm/tdesign-miniprogram/"),
     );

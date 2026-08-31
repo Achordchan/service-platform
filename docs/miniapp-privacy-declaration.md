@@ -29,8 +29,15 @@
 `miniprogram_npm/tdesign-miniprogram/common/template`（`icon` 只依赖 `common/utils.wxs`，
 不引用该目录下任何模板）。修完后包内已无任何未使用的隐私接口痕迹，两条声明都可以删。
 
-`tests/miniapp/privacy-api-surface.test.ts` 会按 `packOptions.ignore` 还原「真正会上传的
-文件集合」并扫描隐私接口关键词，升级 TDesign 或重新构建 npm 把它们带回来时会直接失败。
+`tests/miniapp/privacy-api-surface.test.ts` 守住这条线。因为 `miniprogram_npm` 是「构建
+npm」产物、不入库，CI 上并不存在，所以防线分两层：
+
+- **不依赖产物（CI 上同样有效）**：断言 `REQUIRED_VENDOR_IGNORES` 里含隐私接口的 TDesign
+  目录（`button`／`chat-record`／`common/template`／`qrcode`）都还在 `packOptions.ignore`
+  里，并扫描自有代码；误删 ignore 条目会直接失败。
+- **需要产物（本地构建后跑）**：按 `packOptions.ignore` 还原「真正会上传的文件集合」全量
+  扫描，并校验 TDesign 只剩 `icon` 与公共依赖进包——负责发现升级后新出现、清单尚未覆盖的
+  目录。CI 上这两条显式标记为 skipped。
 
 ### 正确的操作顺序（顺序错了还会被驳）
 
@@ -107,7 +114,8 @@
 新增任何隐私接口（录音、定位、手机号快捷登录等）时：
 
 1. 先来本文件补一条正向说明，并同步到 mp 后台，同时把关键词从
-   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里移除；
+   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里移除
+   （若该接口来自某个 TDesign 目录，同步调整 `REQUIRED_VENDOR_IGNORES`）；
 2. 若届时开启了隐私校验（`app.json` 的 `__usePrivacyCheck__`），
    还需接入 `wx.onNeedPrivacyAuthorization` 隐私弹窗，否则接口调用会直接 fail；
    当前未开启，暂不需要。
