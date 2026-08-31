@@ -10,6 +10,14 @@ import {
   shouldHydrateQuota,
   takePendingGrantReports,
 } from "./subscribe-topup";
+import {
+  isSubscribeTemplateEnabled,
+  permissionFromSetting,
+  subscribeTemplateStatusText,
+  summarizeSubscribeDecisions,
+  type SubscribePermissionState,
+  type SubscribeRequestOutcome,
+} from "./subscribe-permission";
 
 // 订阅模板的中文名，用于设置页与引导文案（config 接口只回 key/id）
 const TEMPLATE_LABELS: Record<WechatTemplateKey, string> = {
@@ -22,19 +30,16 @@ export type SubscribeTemplateState = {
   templateKey: WechatTemplateKey;
   templateId: string;
   label: string;
+  /** 微信设置里可确认的模板状态；unknown 也可能仍有可用的一次性额度。 */
+  permission: SubscribePermissionState;
   /** 用户勾选「总是保持」的长期授权（wx.getSetting 实时可读，关闭即变 false） */
   persistent: boolean;
   /** 服务端剩余可发额度（一次性订阅每次发送消耗，发送遇 43101 归零） */
   remaining: number;
-  /**
-   * 是否确认已开启：长期授权（persistent）且仍有可发额度（remaining>0），二者缺一不可。
-   * - 仅信 remaining：用户在微信「设置-订阅消息」里手动关闭后，后端并不知情、
-   *   remaining 停在旧值，会误报已开启（用户反馈的 bug）；persistent 由 wx.getSetting
-   *   实时读取，关闭后立即 false，纠正这一点。
-   * - 仅信 persistent：一次性额度用完（remaining=0）后服务端不再发、也不触发 43101
-   *   归零，会永远显示已开启却收不到；叠加 remaining>0 可在耗尽时回落并提示重新开启，自愈。
-   */
+  /** 一次性额度可用且未被明确拒绝/封禁，即为真实可接收。 */
   subscribed: boolean;
+  /** 给设置页直接渲染的业务状态，避免在 WXML 里重写状态机。 */
+  statusText: string;
 };
 
 export type SubscribeState = {
@@ -52,20 +57,16 @@ export type SubscribeState = {
 };
 
 /**
- * 是否确认已开启：长期授权且仍有可发额度（判定理由见 SubscribeTemplateState.subscribed）。
- * fetchSubscribeState 与静默续额回写共用这一处，避免两边的判定漂移。
- */
-function isSubscribed(persistent: boolean, remaining: number): boolean {
-  return persistent && remaining > 0;
-}
-
-/**
  * wx.getSetting 的读取结果。**读失败必须与「读到了但没授权」区分开**：
  * 前者不能拿来断言用户没授权，否则一次瞬时失败就会把所有模板判成未授权
  * ——横幅平白弹出，静默续额也会整段停摆（Codex P2）。
  */
 type SubscriptionsSettingResult =
-  | { ok: true; itemSettings: Record<string, string> }
+  | {
+      ok: true;
+      mainSwitch: boolean;
+      itemSettings: Record<string, string>;
+    }
   | { ok: false };
 
 // 持久授权状态：itemSettings 以 templateId 为键
@@ -83,11 +84,12 @@ function getSubscriptionsSetting(): Promise<SubscriptionsSettingResult> {
         }
         // mainSwitch 关闭是「读到了」的真实状态：全部未持久授权
         if (setting.mainSwitch === false) {
-          resolve({ ok: true, itemSettings: {} });
+          resolve({ ok: true, mainSwitch: false, itemSettings: {} });
           return;
         }
         resolve({
           ok: true,
+          mainSwitch: true,
           itemSettings: (setting.itemSettings ?? {}) as Record<string, string>,
         });
       },
@@ -225,22 +227,37 @@ function applyCachedRemaining(
       ? {
           ...template,
           remaining,
-          subscribed: isSubscribed(template.persistent, remaining),
+          subscribed: isSubscribeTemplateEnabled(
+            template.permission,
+            remaining,
+          ),
+          statusText: subscribeTemplateStatusText(
+            template.permission,
+            remaining,
+          ),
         }
       : template,
   );
 }
 
-function applyCachedPersistent(
+function applyCachedPermission(
   templateKey: WechatTemplateKey,
-  persistent: boolean,
+  permission: SubscribePermissionState,
 ) {
   cachedTemplates = cachedTemplates.map((template) =>
     template.templateKey === templateKey
       ? {
           ...template,
-          persistent,
-          subscribed: isSubscribed(persistent, template.remaining),
+          permission,
+          persistent: permission === "accept",
+          subscribed: isSubscribeTemplateEnabled(
+            permission,
+            template.remaining,
+          ),
+          statusText: subscribeTemplateStatusText(
+            permission,
+            template.remaining,
+          ),
         }
       : template,
   );
@@ -272,10 +289,10 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   // 授权必须按 templateId 存：微信的授权表就是以模板 ID 为键的，按 templateKey 存
   // 会在运维轮换模板 ID 时把旧 ID 的「已长期授权」错安到新 ID 上，
   // 于是静默续额会对着一个从未授权的模板弹窗。
-  const knownPersistent = new Map(
+  const knownPermissions = new Map(
     cachedTemplates.map((template) => [
       template.templateId,
-      template.persistent,
+      template.permission,
     ]),
   );
   const remainingByKey = new Map(
@@ -288,18 +305,22 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
   );
   const templates: SubscribeTemplateState[] = config.templates.map(
     (template) => {
-      const persistent = settingResult.ok
-        ? settingResult.itemSettings[template.templateId] === "accept"
-        : (knownPersistent.get(template.templateId) ?? false);
+      const permission = settingResult.ok
+        ? permissionFromSetting(
+            settingResult.mainSwitch,
+            settingResult.itemSettings[template.templateId],
+          )
+        : (knownPermissions.get(template.templateId) ?? "unknown");
       const remaining = remainingByKey.get(template.templateKey) ?? 0;
       return {
         templateKey: template.templateKey,
         templateId: template.templateId,
         label: TEMPLATE_LABELS[template.templateKey] ?? template.templateKey,
-        persistent,
+        permission,
+        persistent: permission === "accept",
         remaining,
-        // 长期授权(可确认关闭) 且 仍有可发额度(耗尽自愈)，二者兼备才算确认已开启
-        subscribed: isSubscribed(persistent, remaining),
+        subscribed: isSubscribeTemplateEnabled(permission, remaining),
+        statusText: subscribeTemplateStatusText(permission, remaining),
       };
     },
   );
@@ -333,15 +354,26 @@ export async function fetchSubscribeState(): Promise<SubscribeState> {
 
 /**
  * 拉起微信订阅授权并回传结果。必须在用户点击回调内调用（微信限制）。
- * 返回本次被接受（accept）的模板数量。
+ * 返回微信逐模板决策与服务端实际记账数量，调用方据此给出可操作反馈。
  */
 export async function requestSubscribe(
   templates: Array<Pick<SubscribeTemplateState, "templateKey" | "templateId">>,
-): Promise<number> {
+): Promise<SubscribeRequestOutcome<WechatTemplateKey>> {
   const tmplIds = templates
     .map((template) => template.templateId)
     .filter(Boolean);
-  if (tmplIds.length === 0) return 0;
+  if (tmplIds.length === 0) {
+    return {
+      decisions: [],
+      acceptedCount: 0,
+      rejectedCount: 0,
+      bannedCount: 0,
+      filteredCount: 0,
+      unknownCount: 0,
+      recordedCount: 0,
+      identityChanged: false,
+    };
+  }
   // 记下发起时的身份代际：拉授权与逐个补报都是 await，其间若换账号，这些 accept 属于
   // 旧账号，绝不能用新账号的 token 报上去。全程复检，切换即整段作废（Codex P2）
   const gen = stateGeneration;
@@ -369,27 +401,46 @@ export async function requestSubscribe(
       (errCode === 20004 || errMsg.includes("20004"))
     ) {
       quotaReadAt = 0;
-      cachedTemplates = cachedTemplates.map((template) =>
-        template.persistent || template.subscribed
-          ? { ...template, persistent: false, subscribed: false }
-          : template,
-      );
+      cachedTemplates = cachedTemplates.map((template) => ({
+        ...template,
+        permission: "main-switch-off",
+        persistent: false,
+        subscribed: false,
+        statusText: subscribeTemplateStatusText(
+          "main-switch-off",
+          template.remaining,
+        ),
+      }));
     }
     throw err;
   }
   // 拉授权的 await 期间换了账号：这些 accept 属于旧账号，整段作废（Codex P2）
-  if (gen !== stateGeneration) return 0;
+  const summary = summarizeSubscribeDecisions(templates, result);
+  if (gen !== stateGeneration) {
+    return { ...summary, recordedCount: 0, identityChanged: true };
+  }
   // 显式订阅前先 hydrate：冷启后 pending 只在 storage 里，不先灌进内存的话下面
   // wasPending 的 .has() 会漏读，旧额度会被这次成功清掉且不再挂回（Codex P2）
   hydratePendingGrantReports();
   // 并丢掉 templateId 已轮换的旧 pending，wasPending 只认当前 ID 的待补报（Codex P2）
   prunePendingGrantsForRotatedIds();
-  let accepted = 0;
-  for (const template of templates) {
+  let recordedCount = 0;
+  for (const item of summary.decisions) {
     // 逐个补报是串行 await，其间也可能换账号：每轮开头复检，切换即停止处理（Codex P2）
     if (gen !== stateGeneration) break;
-    const status = result[template.templateId];
-    if (status === "accept") {
+    const template = templates.find(
+      (candidate) => candidate.templateKey === item.templateKey,
+    );
+    if (!template) continue;
+    if (item.decision === "accept") {
+      // 单次 accept 不等于勾选了「总是保持」。若缓存里原本是明确拒绝，
+      // 只能降为 unknown 并等待下一次 getSetting 确认，不能伪造成长期授权。
+      const cachedPermission = cachedTemplates.find(
+        (candidate) => candidate.templateKey === template.templateKey,
+      )?.permission;
+      if (cachedPermission && cachedPermission !== "accept") {
+        applyCachedPermission(template.templateKey, "unknown");
+      }
       // 这个模板本就有一份没记上的旧额度（pending）时，横幅/设置页的显式订阅又拿到了
       // 新的一份。reportGrantOrPend 成功会顺手 clearPendingGrant，等于拿「新额度记上了」
       // 冒充把旧额度也结清——但两次 accept 撞在服务端 60s 节流里只记得上一份，旧的那份
@@ -401,19 +452,26 @@ export async function requestSubscribe(
         template.templateId,
       );
       if (reported) {
-        accepted += 1;
-        if (wasPending) markPendingGrant(template.templateKey, template.templateId);
+        recordedCount += 1;
+        if (wasPending) {
+          markPendingGrant(template.templateKey, template.templateId);
+        }
       }
-    } else if (status) {
+    } else if (item.decision !== "unknown") {
       // reject/ban/filter 是微信对这项授权的明确回答：缓存里的 persistent 已不可信，
       // 就地纠正，后续手势不再把它选进静默续额（Codex P2）。
       // 但不清 pending：pending 记的是这个模板此前已 accept、只是 POST 没记上的旧额度，
       // 本次 reject 既没消费也没上报它，清掉就把那份旧额度永久丢了——旧额度仍走 POST 补报，
       // 补报按 templateKey 走，与当前 persistent 无关（Codex P2）
-      applyCachedPersistent(template.templateKey, false);
+      applyCachedPermission(
+        template.templateKey,
+        item.decision === "ban" || item.decision === "filter"
+          ? "ban"
+          : "reject",
+      );
     }
   }
-  if (accepted > 0 && gen === stateGeneration) {
+  if (recordedCount > 0 && gen === stateGeneration) {
     // 横幅/设置页的显式授权同样占掉了服务端 60s 的上报节流窗口：不刷新冷却的话，
     // 紧接着的静默续额会白拉一次微信额度、服务端却记不上（Codex P2）。
     // 换账号后不写：这份冷却属于旧账号，落到新账号会平白压掉一次续额。
@@ -421,7 +479,11 @@ export async function requestSubscribe(
     // quotaReadAt 不在此刷新：本次只重读了参与授权的模板，被跳过的（如已封顶的）
     // 没有重读，冒充整份快照新鲜会让那个 30 永远得不到复核。
   }
-  return accepted;
+  return {
+    ...summary,
+    recordedCount,
+    identityChanged: gen !== stateGeneration,
+  };
 }
 
 async function reportGrantOrPend(
@@ -532,9 +594,18 @@ export function topUpSubscribeQuota(): void {
   // requestSubscribe 的同步段就会调 wx.requestSubscribeMessage，手势不会丢。
   // 拉起失败时什么都没拿到（弹窗没出现、额度没记上），回滚冷却让下一个手势
   // 立刻能重试；仅当期间没有更新的冷却时才回滚，避免覆盖并发手势的时间戳（Codex P2）
-  void requestSubscribe(targets).catch(() => {
-    if (getLastTopUpAt() === now) setLastTopUpAt(0);
-  });
+  void requestSubscribe(targets)
+    .then((outcome) => {
+      if (
+        (outcome.identityChanged || outcome.acceptedCount === 0) &&
+        getLastTopUpAt() === now
+      ) {
+        setLastTopUpAt(0);
+      }
+    })
+    .catch(() => {
+      if (getLastTopUpAt() === now) setLastTopUpAt(0);
+    });
 }
 
 /**

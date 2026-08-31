@@ -124,7 +124,7 @@ describe("后台通知规则", () => {
       soundEnabled: true,
       emailEnabled: false,
       dingtalkEnabled: false,
-      wechatEnabled: false,
+      wechatEnabled: true,
     });
     expect(
       findNotificationDeliveryRuleViolation([
@@ -140,6 +140,19 @@ describe("后台通知规则", () => {
       dingtalkEnabled: false,
       wechatEnabled: false,
     });
+  });
+
+  it("有微信模板的三个客户提醒场景默认开启微信通道", () => {
+    expect(defaultNotificationDeliveryRuleState("PROJECT_UPDATE").wechatEnabled)
+      .toBe(true);
+    expect(
+      defaultNotificationDeliveryRuleState("REQUEST_PUBLIC_MESSAGE")
+        .wechatEnabled,
+    ).toBe(true);
+    expect(defaultNotificationDeliveryRuleState("REQUEST_STATUS").wechatEnabled)
+      .toBe(true);
+    expect(defaultNotificationDeliveryRuleState("REQUEST_CREATED").wechatEnabled)
+      .toBe(false);
   });
 
   it("邮件必须依赖未读通知，提示音规则不能被活动强制绕过", () => {

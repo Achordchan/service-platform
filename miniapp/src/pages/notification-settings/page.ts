@@ -9,6 +9,10 @@ import {
   clearBannerDismiss,
   type SubscribeTemplateState,
 } from "../../lib/subscribe";
+import {
+  presentSubscribeFailure,
+  presentSubscribeOutcome,
+} from "../../lib/subscribe-ui";
 
 Page({
   data: {
@@ -96,19 +100,18 @@ Page({
       return;
     }
     this.setData({ subscribing: true });
+    let openedSettings = false;
     try {
-      const accepted = await requestSubscribe(this.data.wechatTemplates);
-      wx.showToast({
-        title: accepted > 0 ? `已开启 ${accepted} 类提醒` : "未开启提醒",
-        icon: "none",
-      });
+      const outcome = await requestSubscribe(this.data.wechatTemplates);
       // 订阅状态有变化：清掉顶部横幅的「暂时忽略」，让横幅按最新状态即时反映
-      if (accepted > 0) clearBannerDismiss();
-      await this.load();
-    } catch {
-      wx.showToast({ title: "授权未完成", icon: "none" });
+      if (outcome.acceptedCount > 0) clearBannerDismiss();
+      openedSettings = await presentSubscribeOutcome(outcome);
+    } catch (error) {
+      openedSettings = await presentSubscribeFailure(error);
     } finally {
       this.setData({ subscribing: false });
     }
+    // 打开设置后由 onShow 重拉，避免并发两轮 load 用陈旧状态覆盖新结果。
+    if (!openedSettings) await this.load();
   },
 });
