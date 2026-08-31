@@ -76,6 +76,12 @@ const resourceLabels: Record<string, string> = {
   WechatBindingCode: "微信绑定码",
 };
 
+const resultLabels: Record<string, string> = {
+  SUCCESS: "成功",
+  FAILURE: "失败",
+  DENIED: "拒绝",
+};
+
 /**
  * Full Chinese phrase for each known audit action code. Keep in sync with the
  * ~90 `writeAuditLog` / `recordAuthEvent` call sites; unmapped codes degrade to
@@ -255,4 +261,9 @@ export function auditActionLabel(
     return verb ? `${resource} · ${verb}` : resource;
   }
   return verb ?? action;
+}
+
+/** Chinese name for an audit result, falling back to the raw value. */
+export function auditResultLabel(result: string): string {
+  return resultLabels[result] ?? result;
 }

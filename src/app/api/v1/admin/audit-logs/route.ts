@@ -8,6 +8,7 @@ import {
 import {
   auditActionLabel,
   auditResourceLabel,
+  auditResultLabel,
   isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 import { requireApiActor, routeError } from "@/modules/projects/api-utils";
@@ -100,6 +101,7 @@ export async function GET(request: Request) {
       ...row,
       actionLabel: auditActionLabel(row.action, row.resourceType),
       resourceLabel: auditResourceLabel(row.resourceType),
+      resultLabel: auditResultLabel(row.result),
       actorDisplay: row.actorName
         ? { name: row.actorName, secondary: row.actorEmail ?? "—" }
         : row.externalActorName
@@ -109,8 +111,28 @@ export async function GET(request: Request) {
             : { name: "系统", secondary: "自动任务" },
     }));
 
+    // 筛选项同样带上中文标签，两端共用同一份映射（小程序不再复制动作码字典）。
+    const labelledFacets = facets
+      ? {
+          actions: facets.actions.map((value) => ({
+            value,
+            label: auditActionLabel(value),
+          })),
+          resourceTypes: facets.resourceTypes.map((value) => ({
+            value,
+            label: auditResourceLabel(value),
+          })),
+          results: facets.results.map((value) => ({
+            value,
+            label: auditResultLabel(value),
+          })),
+        }
+      : undefined;
+
     // `apiRequest` unwraps `data`, so facets must travel inside it.
-    return NextResponse.json({ data: { ...page, rows, facets } });
+    return NextResponse.json({
+      data: { ...page, rows, facets: labelledFacets },
+    });
   } catch (error) {
     return routeError(error, { operation: "audit_logs.list" });
   }

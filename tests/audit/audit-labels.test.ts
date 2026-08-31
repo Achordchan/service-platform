@@ -3,6 +3,7 @@ import {
   auditActionLabel,
   auditActionVerb,
   auditResourceLabel,
+  auditResultLabel,
   isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 
@@ -84,5 +85,13 @@ describe("auditResourceLabel", () => {
     expect(auditResourceLabel("ServiceRequest")).toBe("服务请求");
     expect(auditResourceLabel("User")).toBe("用户");
     expect(auditResourceLabel("UnknownThing")).toBe("UnknownThing");
+  });
+});
+
+describe("auditResultLabel", () => {
+  it("已知结果返回中文，未知回落原值", () => {
+    expect(auditResultLabel("SUCCESS")).toBe("成功");
+    expect(auditResultLabel("FAILURE")).toBe("失败");
+    expect(auditResultLabel("WEIRD")).toBe("WEIRD");
   });
 });

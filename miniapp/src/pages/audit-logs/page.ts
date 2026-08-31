@@ -1,10 +1,36 @@
 import { ensureLoggedIn } from "../../lib/auth";
-import { listAuditLogs, type AuditRow } from "../../lib/api";
-import { formatDateTime } from "../../lib/format";
+import {
+  listAuditLogs,
+  type AuditFacetOption,
+  type AuditFacets,
+  type AuditRow,
+} from "../../lib/api";
+import {
+  auditDetailItems,
+  auditFilterCount,
+  formatAuditMetadata,
+  formatAuditTime,
+  type AuditDetailItem,
+} from "../../lib/audit";
 
 const PAGE_SIZE = 25;
 
+const ALL_OPTION: AuditFacetOption = { value: "", label: "全部" };
+
+// facets 回来前先用这两个已知取值撑住结果 chips，避免筛选条第一屏是空的
+const DEFAULT_RESULT_OPTIONS: AuditFacetOption[] = [
+  ALL_OPTION,
+  { value: "SUCCESS", label: "成功" },
+  { value: "FAILURE", label: "失败" },
+];
+
 type Row = AuditRow & { timeText: string; failed: boolean };
+
+function today(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
 
 Page({
   data: {
@@ -15,8 +41,42 @@ Page({
     total: 0,
     hasMore: false,
     loadingMore: false,
+
+    // 已生效的筛选条件（keyword 是输入框草稿，确认后才写进 search）
+    keyword: "",
+    search: "",
+    action: "",
+    resourceType: "",
+    result: "",
+    from: "",
+    to: "",
+    filterCount: 0,
+    filtersActive: false,
+
+    // 服务端下发的筛选项（已带中文标签）
+    facetsLoaded: false,
+    actionOptions: [ALL_OPTION] as AuditFacetOption[],
+    resourceOptions: [ALL_OPTION] as AuditFacetOption[],
+    resultOptions: DEFAULT_RESULT_OPTIONS,
+
+    // 更多筛选面板：面板内改 draft，点「应用」才落到上面的条件
+    filterVisible: false,
+    draftAction: "",
+    draftActionIndex: 0,
+    draftResourceType: "",
+    draftResourceIndex: 0,
+    draftFrom: "",
+    draftTo: "",
+    maxDate: today(),
+
+    detailVisible: false,
+    detailTitle: "",
+    detailItems: [] as AuditDetailItem[],
+    detailMetadata: "",
   },
   onShow() {
+    // 日期选择器上限跟着当天走：应用长时间挂在后台跨过零点也不会停在昨天
+    this.setData({ maxDate: today() });
     if (!ensureLoggedIn(() => this.reload())) return;
     void this.reload();
   },
@@ -24,23 +84,171 @@ Page({
     void this.reload();
   },
   onPullDownRefresh() {
+    // 手动刷新时连筛选项一起重取，新出现的操作码才会进到面板里
+    this.setData({ facetsLoaded: false });
     void this.reload().then(() => wx.stopPullDownRefresh());
   },
   onReachBottom() {
     if (!this.data.hasMore || this.data.loadingMore) return;
     void this.loadMore();
   },
+  noop() {},
+
+  // —— 搜索与结果 chips ——
+  onKeywordInput(event: WechatMiniprogram.Input) {
+    this.setData({ keyword: event.detail.value });
+  },
+  onSearchConfirm() {
+    const search = this.data.keyword.trim();
+    if (search === this.data.search) return;
+    this.setData({ search });
+    this.applyFilters();
+  },
+  onResultTap(event: WechatMiniprogram.TouchEvent) {
+    const value = String(event.currentTarget.dataset.value ?? "");
+    if (value === this.data.result) return;
+    this.setData({ result: value });
+    this.applyFilters();
+  },
+
+  // —— 更多筛选面板 ——
+  onOpenFilters() {
+    this.setData({
+      filterVisible: true,
+      draftAction: this.data.action,
+      draftActionIndex: this.optionIndex(
+        this.data.actionOptions,
+        this.data.action,
+      ),
+      draftResourceType: this.data.resourceType,
+      draftResourceIndex: this.optionIndex(
+        this.data.resourceOptions,
+        this.data.resourceType,
+      ),
+      draftFrom: this.data.from,
+      draftTo: this.data.to,
+    });
+  },
+  onCloseFilters() {
+    this.setData({ filterVisible: false });
+  },
+  optionIndex(options: AuditFacetOption[], value: string): number {
+    const index = options.findIndex((option) => option.value === value);
+    return index >= 0 ? index : 0;
+  },
+  onDraftAction(event: WechatMiniprogram.PickerChange) {
+    const index = Number(event.detail.value);
+    this.setData({
+      draftActionIndex: index,
+      draftAction: this.data.actionOptions[index]?.value ?? "",
+    });
+  },
+  onDraftResource(event: WechatMiniprogram.PickerChange) {
+    const index = Number(event.detail.value);
+    this.setData({
+      draftResourceIndex: index,
+      draftResourceType: this.data.resourceOptions[index]?.value ?? "",
+    });
+  },
+  onDraftFrom(event: WechatMiniprogram.PickerChange) {
+    this.setData({ draftFrom: String(event.detail.value) });
+  },
+  onDraftTo(event: WechatMiniprogram.PickerChange) {
+    this.setData({ draftTo: String(event.detail.value) });
+  },
+  onClearFrom() {
+    this.setData({ draftFrom: "" });
+  },
+  onClearTo() {
+    this.setData({ draftTo: "" });
+  },
+  onResetFilters() {
+    this.setData({
+      draftAction: "",
+      draftActionIndex: 0,
+      draftResourceType: "",
+      draftResourceIndex: 0,
+      draftFrom: "",
+      draftTo: "",
+    });
+  },
+  onApplyFilters() {
+    this.setData({
+      action: this.data.draftAction,
+      resourceType: this.data.draftResourceType,
+      from: this.data.draftFrom,
+      to: this.data.draftTo,
+      filterVisible: false,
+    });
+    this.applyFilters();
+  },
+  /** 条件变化后统一重算角标并回到第一页 */
+  applyFilters() {
+    this.setData({
+      filterCount: auditFilterCount(this.data),
+      filtersActive: Boolean(
+        this.data.search ||
+          this.data.action ||
+          this.data.resourceType ||
+          this.data.result ||
+          this.data.from ||
+          this.data.to,
+      ),
+    });
+    void this.reload();
+  },
+  currentFilters() {
+    return {
+      search: this.data.search || undefined,
+      action: this.data.action || undefined,
+      resourceType: this.data.resourceType || undefined,
+      result: this.data.result || undefined,
+      from: this.data.from || undefined,
+      to: this.data.to || undefined,
+    };
+  },
+
+  // —— 详情 ——
+  onOpenDetail(event: WechatMiniprogram.TouchEvent) {
+    const index = Number(event.currentTarget.dataset.index);
+    const row = this.data.rows[index];
+    if (!row) return;
+    this.setData({
+      detailVisible: true,
+      detailTitle: row.actionLabel,
+      detailItems: auditDetailItems(row),
+      detailMetadata: formatAuditMetadata(row.metadata),
+    });
+  },
+  onCloseDetail() {
+    this.setData({ detailVisible: false });
+  },
+  onCopyValue(event: WechatMiniprogram.TouchEvent) {
+    const { copy, value } = event.currentTarget.dataset as {
+      copy?: boolean;
+      value?: string;
+    };
+    if (!copy || !value) return;
+    wx.setClipboardData({ data: value, success: () => undefined });
+  },
+
   decorate(rows: AuditRow[]): Row[] {
     return rows.map((row) => ({
       ...row,
-      timeText: formatDateTime(row.createdAt),
-      failed: row.result === "FAILURE",
+      timeText: formatAuditTime(row.createdAt),
+      failed: row.result !== "SUCCESS",
     }));
   },
   async reload() {
     this.setData({ loading: true, loadError: "" });
     try {
-      const result = await listAuditLogs({ page: 0, pageSize: PAGE_SIZE });
+      const result = await listAuditLogs({
+        ...this.currentFilters(),
+        page: 0,
+        pageSize: PAGE_SIZE,
+        // 筛选项与当前条件无关，只在首次加载时取一次
+        withFacets: !this.data.facetsLoaded,
+      });
       this.setData({
         loading: false,
         rows: this.decorate(result.rows),
@@ -48,6 +256,7 @@ Page({
         total: result.total,
         hasMore: (result.page + 1) * result.pageSize < result.total,
       });
+      if (result.facets) this.applyFacets(result.facets);
     } catch (error) {
       const denied =
         error instanceof Error &&
@@ -62,11 +271,23 @@ Page({
       });
     }
   },
+  applyFacets(facets: AuditFacets) {
+    this.setData({
+      facetsLoaded: true,
+      actionOptions: [ALL_OPTION, ...facets.actions],
+      resourceOptions: [ALL_OPTION, ...facets.resourceTypes],
+      // 库里一条日志都没有时 facets 为空，结果 chips 回落到默认两项
+      resultOptions: facets.results.length
+        ? [ALL_OPTION, ...facets.results]
+        : DEFAULT_RESULT_OPTIONS,
+    });
+  },
   async loadMore() {
     const nextPage = this.data.page + 1;
     this.setData({ loadingMore: true });
     try {
       const result = await listAuditLogs({
+        ...this.currentFilters(),
         page: nextPage,
         pageSize: PAGE_SIZE,
       });
