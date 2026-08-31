@@ -53,23 +53,42 @@ const REQUIRED_VENDOR_IGNORES: Record<string, string> = {
 
 const SCANNED_EXT = new Set([".js", ".ts", ".wxml", ".wxs", ".json"]);
 
-function packIgnorePrefixes(): string[] {
+type IgnoreEntry = { type: string; value: string };
+
+function packIgnoreEntries(): IgnoreEntry[] {
   const cfg = JSON.parse(
     readFileSync(path.join(MINIAPP_ROOT, "project.config.json"), "utf8"),
-  ) as { packOptions?: { ignore?: { type: string; value: string }[] } };
-  return (cfg.packOptions?.ignore ?? []).map((entry) => entry.value);
+  ) as { packOptions?: { ignore?: IgnoreEntry[] } };
+  return cfg.packOptions?.ignore ?? [];
 }
 
-/** 枚举打包后仍会上传的文件（相对 src/），packOptions.ignore 命中的整目录跳过。 */
+/**
+ * 条目的 type 决定排除范围，不能只看 value：把某条从 folder 误改成 file 时，
+ * 微信只会漏掉那一个路径、整个目录照样进包，这里必须跟着只排除单个文件，
+ * 否则扫描会假装子树已被排除而放行。folder / file 之外的取值（suffix、glob 等）
+ * 语义未建模，一律按「不排除」处理——宁可多扫也不能漏扫。
+ */
+function isIgnored(rel: string, isDir: boolean, entries: IgnoreEntry[]): boolean {
+  return entries.some((entry) => {
+    if (entry.type === "folder") {
+      return rel === entry.value || rel.startsWith(`${entry.value}/`);
+    }
+    if (entry.type === "file") return !isDir && rel === entry.value;
+    return false;
+  });
+}
+
+/** 枚举打包后仍会上传的文件（相对 src/）。 */
 function shippedFiles(): string[] {
-  const ignored = packIgnorePrefixes();
+  const entries = packIgnoreEntries();
   const out: string[] = [];
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
       const abs = path.join(dir, name);
       const rel = path.relative(SRC_ROOT, abs).split(path.sep).join("/");
-      if (ignored.some((i) => rel === i || rel.startsWith(`${i}/`))) continue;
-      if (statSync(abs).isDirectory()) walk(abs);
+      const isDir = statSync(abs).isDirectory();
+      if (isIgnored(rel, isDir, entries)) continue;
+      if (isDir) walk(abs);
       else if (SCANNED_EXT.has(path.extname(name))) out.push(rel);
     }
   };
@@ -88,13 +107,21 @@ function scanForbidden(relPaths: string[]): string[] {
 }
 
 describe("小程序上传包的隐私接口面", () => {
-  it("含隐私接口的 TDesign 目录必须留在 packOptions.ignore 里", () => {
-    // 不依赖 miniprogram_npm，CI 上同样能拦住「误删 ignore 条目」
-    const ignored = new Set(packIgnorePrefixes());
-    const missing = Object.entries(REQUIRED_VENDOR_IGNORES)
-      .filter(([dir]) => !ignored.has(dir))
-      .map(([dir, apis]) => `${dir}（含 ${apis}）`);
-    expect(missing).toEqual([]);
+  it("含隐私接口的 TDesign 目录必须以 folder 形式留在 packOptions.ignore 里", () => {
+    // 不依赖 miniprogram_npm，CI 上同样能拦住「误删 ignore 条目」；
+    // 同时校验 type——写成 file 的话微信并不会排除整个目录，隐私模板照样进包
+    const entries = packIgnoreEntries();
+    const broken = Object.entries(REQUIRED_VENDOR_IGNORES)
+      .map(([dir, apis]) => {
+        const hit = entries.find((entry) => entry.value === dir);
+        if (!hit) return `${dir}（含 ${apis}）缺少 ignore 条目`;
+        if (hit.type !== "folder") {
+          return `${dir}（含 ${apis}）的 type 是 ${hit.type}，必须是 folder`;
+        }
+        return null;
+      })
+      .filter((msg): msg is string => msg !== null);
+    expect(broken).toEqual([]);
   });
 
   it("自有代码不含未声明的隐私接口", () => {
