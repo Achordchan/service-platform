@@ -10,6 +10,7 @@ import {
   auditFilterCount,
   formatAuditMetadata,
   formatAuditTime,
+  shanghaiToday,
   type AuditDetailItem,
 } from "../../lib/audit";
 
@@ -25,12 +26,6 @@ const DEFAULT_RESULT_OPTIONS: AuditFacetOption[] = [
 ];
 
 type Row = AuditRow & { timeText: string; failed: boolean };
-
-function today(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-}
 
 Page({
   data: {
@@ -67,16 +62,22 @@ Page({
     draftResourceIndex: 0,
     draftFrom: "",
     draftTo: "",
-    maxDate: today(),
+    maxDate: shanghaiToday(),
 
     detailVisible: false,
     detailTitle: "",
     detailItems: [] as AuditDetailItem[],
     detailMetadata: "",
   },
+  /**
+   * reload 代次。切筛选条件会并发出多个请求，只有最新一次的响应能落到 data ——
+   * 否则「初次未筛选的请求」后到就会盖掉刚选的条件下的列表，而 chips 还停在新
+   * 条件上，看起来像筛选没生效。
+   */
+  reloadSeq: 0,
   onShow() {
     // 日期选择器上限跟着当天走：应用长时间挂在后台跨过零点也不会停在昨天
-    this.setData({ maxDate: today() });
+    this.setData({ maxDate: shanghaiToday() });
     if (!ensureLoggedIn(() => this.reload())) return;
     void this.reload();
   },
@@ -240,7 +241,9 @@ Page({
     }));
   },
   async reload() {
-    this.setData({ loading: true, loadError: "" });
+    const seq = ++this.reloadSeq;
+    // 顺带把 loadingMore 归位：在途的翻页属于旧条件，稍后会被代次挡掉
+    this.setData({ loading: true, loadError: "", loadingMore: false });
     try {
       const result = await listAuditLogs({
         ...this.currentFilters(),
@@ -249,6 +252,7 @@ Page({
         // 筛选项与当前条件无关，只在首次加载时取一次
         withFacets: !this.data.facetsLoaded,
       });
+      if (seq !== this.reloadSeq) return;
       this.setData({
         loading: false,
         rows: this.decorate(result.rows),
@@ -258,6 +262,7 @@ Page({
       });
       if (result.facets) this.applyFacets(result.facets);
     } catch (error) {
+      if (seq !== this.reloadSeq) return;
       const denied =
         error instanceof Error &&
         (error as { status?: number }).status === 403;
@@ -283,6 +288,7 @@ Page({
     });
   },
   async loadMore() {
+    const seq = this.reloadSeq;
     const nextPage = this.data.page + 1;
     this.setData({ loadingMore: true });
     try {
@@ -291,6 +297,8 @@ Page({
         page: nextPage,
         pageSize: PAGE_SIZE,
       });
+      // 期间换过筛选条件：这页属于旧条件，接到新列表后面就是串数据
+      if (seq !== this.reloadSeq) return;
       this.setData({
         loadingMore: false,
         rows: [...this.data.rows, ...this.decorate(result.rows)],
@@ -299,6 +307,7 @@ Page({
         hasMore: (result.page + 1) * result.pageSize < result.total,
       });
     } catch {
+      if (seq !== this.reloadSeq) return;
       this.setData({ loadingMore: false });
       wx.showToast({ title: "加载更多失败", icon: "none" });
     }

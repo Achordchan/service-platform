@@ -37,6 +37,17 @@ export function auditFilterCount(
 }
 
 /**
+ * 服务端把 from/to 当作 +08:00 的日历日，日期选择器的上限必须用同一时区推算：
+ * 设备时区偏西时，跨日界那几个小时会把服务端的「今天」挡住；偏东则能选到服务端
+ * 还没到来的日子。先把时刻平移 +8 小时，再取 UTC 日期即为北京日历日。
+ */
+export function shanghaiToday(now: number = Date.now()): string {
+  const shifted = new Date(now + 8 * 60 * 60 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+/**
  * 列表行的时间：当天只给时分，同年补月日，跨年才带年份 —— 单行卡片留给操作文案
  * 的宽度有限，而审计场景又不能像别处那样退化成「3 小时前」。
  */

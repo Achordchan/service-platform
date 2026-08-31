@@ -6,6 +6,7 @@ import {
   auditFilterCount,
   formatAuditMetadata,
   formatAuditTime,
+  shanghaiToday,
 } from "../../miniapp/src/lib/audit";
 
 function row(overrides: Partial<AuditRow> = {}): AuditRow {
@@ -52,6 +53,19 @@ describe("formatAuditTime", () => {
   it("空值与坏时间戳都退化为占位符", () => {
     expect(formatAuditTime(null, noon)).toBe("—");
     expect(formatAuditTime("not-a-date", noon)).toBe("—");
+  });
+});
+
+// 服务端按 +08:00 解释日界，日期上限必须同口径 —— 断言不依赖跑测机器的时区
+describe("shanghaiToday", () => {
+  it("按北京日历日推算，跨过 UTC 日界也不早退一天", () => {
+    expect(shanghaiToday(Date.parse("2026-08-30T15:59:59Z"))).toBe("2026-08-30");
+    expect(shanghaiToday(Date.parse("2026-08-30T16:00:00Z"))).toBe("2026-08-31");
+  });
+
+  it("跨月与跨年边界照样落在北京日", () => {
+    expect(shanghaiToday(Date.parse("2026-08-31T16:00:00Z"))).toBe("2026-09-01");
+    expect(shanghaiToday(Date.parse("2026-12-31T16:00:00Z"))).toBe("2027-01-01");
   });
 });
 
