@@ -19,9 +19,12 @@
 }
 
 .ms-title {
+  flex: 1;
+  min-width: 0;
   font-size: 34rpx;
   font-weight: 600;
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .ms-date {
@@ -34,6 +37,7 @@
   margin-top: 24rpx;
   font-size: 28rpx;
   line-height: 1.75;
+  overflow-wrap: anywhere;
 }
 
 .ms-empty {

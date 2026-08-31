@@ -14,6 +14,7 @@
   margin-top: 20rpx;
   font-size: 28rpx;
   line-height: 1.8;
+  overflow-wrap: anywhere;
 }
 
 .image-section {
@@ -83,6 +84,7 @@
   margin-top: 8rpx;
   font-size: 26rpx;
   line-height: 1.7;
+  overflow-wrap: anywhere;
 }
 
 /* —— 动态操作 + 评论（员工）—— */
