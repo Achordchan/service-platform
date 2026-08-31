@@ -6,7 +6,6 @@ import {
   downloadAttachment,
   createUpdateComment,
   editUpdateComment,
-  deleteUpdateComment,
   deleteProjectUpdate,
   type ProjectUpdate,
 } from "../../lib/api";
@@ -197,6 +196,9 @@ Page({
           const caps = projectDeliveryCaps(this.me, project.staff);
           canPublishUpdate = caps.canPublishUpdate;
           canComment = caps.canComment;
+        } else {
+          // 客户：能看到这条动态即可评论，服务端会把可见性强制为 CUSTOMER_VISIBLE
+          canComment = true;
         }
       } catch {
         // 拿不到身份/项目：按无写权限展示
@@ -329,13 +331,8 @@ Page({
     const id = event.currentTarget.dataset.id as string;
     const comment = this.data.comments.find((item) => item.id === id);
     if (!comment || !comment.isMine) return;
-    wx.showActionSheet({
-      itemList: ["编辑评论", "删除评论"],
-      success: (res) => {
-        if (res.tapIndex === 0) this.editComment(comment);
-        else if (res.tapIndex === 1) this.deleteComment(comment.id);
-      },
-    });
+    // 删除评论暂时下架（后端尚无删除接口），长按仅进入编辑
+    this.editComment(comment);
   },
   editComment(comment: CommentView) {
     wx.showModal({
@@ -362,32 +359,6 @@ Page({
           .catch((error: unknown) => {
             wx.showToast({
               title: error instanceof Error ? error.message : "更新失败",
-              icon: "none",
-            });
-          });
-      },
-    });
-  },
-  deleteComment(commentId: string) {
-    wx.showModal({
-      title: "删除评论",
-      content: "确定删除这条评论吗？",
-      confirmText: "删除",
-      confirmColor: "#d14343",
-      success: (res) => {
-        if (!res.confirm) return;
-        void deleteUpdateComment(
-          this.data.projectId,
-          this.data.updateId,
-          commentId,
-        )
-          .then(() => {
-            wx.showToast({ title: "已删除", icon: "success" });
-            void this.load();
-          })
-          .catch((error: unknown) => {
-            wx.showToast({
-              title: error instanceof Error ? error.message : "删除失败",
               icon: "none",
             });
           });

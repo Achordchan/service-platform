@@ -83,7 +83,7 @@
           <text class="text-secondary comment-time">{{item.timeText}}</text>
         </view>
         <view class="comment-body">{{item.body}}</view>
-        <view wx:if="{{item.isMine}}" class="comment-mine-hint text-secondary">长按可编辑 / 删除</view>
+        <view wx:if="{{item.isMine}}" class="comment-mine-hint text-secondary">长按可编辑</view>
       </view>
     </view>
   </block>
