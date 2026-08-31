@@ -191,6 +191,10 @@ export default async function StaffProjectDetailPage({
   const canUploadFiles =
     actor.isPlatformAdmin ||
     (isProjectManager && hasRolePermission(actor, "file.upload"));
+  const canComment =
+    actor.isPlatformAdmin ||
+    (currentAssignment != null &&
+      hasRolePermission(actor, "update.comment"));
   const canEditProject = actor.isPlatformAdmin;
 
   return (
@@ -227,6 +231,7 @@ export default async function StaffProjectDetailPage({
           canPublishUpdate={canPublishUpdate}
           canManageStaff={canManageStaff}
           canUploadFiles={canUploadFiles}
+          canComment={canComment}
           canEditProject={canEditProject}
           staffCandidates={staffCandidates}
           contentRiskNoticeEnabled={

@@ -39,6 +39,7 @@ import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { useToast } from "@/components/shared/toast-provider";
 import { useInlineImageUpload } from "@/hooks/use-inline-image-upload";
 import {
+  escapeHtmlText,
   extractInlineAttachmentIds,
   hasMeaningfulHtml,
   htmlToPlainText,
@@ -150,6 +151,13 @@ type CommentEditFormValues = z.infer<typeof commentEditFormSchema>;
 
 type CommentItem = ProjectUpdate["comments"][number];
 
+/** 纯文本评论转安全 HTML：转义后保留换行，与小程序端一致。 */
+function commentTextToHtml(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return `<p>${escapeHtmlText(trimmed).replace(/\n/g, "<br/>")}</p>`;
+}
+
 function SummaryField({
   label,
   value,
@@ -175,6 +183,7 @@ export function ProjectDetailWorkspace({
   canPublishUpdate,
   canManageStaff,
   canUploadFiles,
+  canComment,
   canEditProject,
   staffCandidates,
   contentRiskNoticeEnabled = false,
@@ -186,6 +195,7 @@ export function ProjectDetailWorkspace({
   canPublishUpdate: boolean;
   canManageStaff: boolean;
   canUploadFiles: boolean;
+  canComment: boolean;
   canEditProject: boolean;
   staffCandidates: StaffCandidate[];
   contentRiskNoticeEnabled?: boolean;
@@ -230,6 +240,11 @@ export function ProjectDetailWorkspace({
     resolver: zodResolver(commentEditFormSchema),
     defaultValues: { body: "", internal: false },
   });
+  const commentCreateForm = useForm<CommentEditFormValues>({
+    resolver: zodResolver(commentEditFormSchema),
+    defaultValues: { body: "", internal: false },
+  });
+  const [postingComment, setPostingComment] = useState(false);
   const activeTab = tab;
   const deliveryActive = isProjectDeliveryActive(project.status);
   const detailUpdate =
@@ -261,6 +276,12 @@ export function ProjectDetailWorkspace({
     if (projectScopeCounts[scope] === 0) return;
     markRead({ projectId: project.id, projectScope: scope });
   }, [activeTab, markRead, project.id, projectScopeCounts]);
+
+  useEffect(() => {
+    if (detailId == null) {
+      commentCreateForm.reset({ body: "", internal: false });
+    }
+  }, [detailId, commentCreateForm]);
 
   async function confirmDeleteUpdate() {
     if (!deleteTarget) return;
@@ -338,6 +359,27 @@ export function ProjectDetailWorkspace({
       toast.error(error instanceof Error ? error.message : "评论更新失败");
     } finally {
       setSavingEdit(false);
+    }
+  });
+
+  const submitCreateComment = commentCreateForm.handleSubmit(async (values) => {
+    if (!detailUpdate) return;
+    setPostingComment(true);
+    try {
+      await staffApi(
+        `/api/v1/projects/${project.id}/updates/${detailUpdate.id}/comments`,
+        jsonRequest("POST", {
+          body: commentTextToHtml(values.body),
+          visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        }),
+      );
+      commentCreateForm.reset({ body: "", internal: false });
+      toast.success("评论已发送");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "评论发送失败");
+    } finally {
+      setPostingComment(false);
     }
   });
 
@@ -860,6 +902,68 @@ export function ProjectDetailWorkspace({
                           ))}
                         </Stack>
                       </>
+                    ) : null}
+                    {canComment &&
+                    detailUpdate.contentRiskStatus !== "REVOKED" ? (
+                      <Box component="form" onSubmit={submitCreateComment}>
+                        <Divider sx={{ mb: 1.5 }} />
+                        <Controller
+                          control={commentCreateForm.control}
+                          name="body"
+                          render={({ field }) => (
+                            <TextField
+                              {...field}
+                              label="写评论"
+                              placeholder="回复客户或记录说明…"
+                              fullWidth
+                              multiline
+                              minRows={2}
+                              maxRows={8}
+                              disabled={postingComment}
+                              error={Boolean(
+                                commentCreateForm.formState.errors.body,
+                              )}
+                              helperText={
+                                commentCreateForm.formState.errors.body?.message
+                              }
+                            />
+                          )}
+                        />
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{
+                            mt: 1,
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                          }}
+                        >
+                          <Controller
+                            control={commentCreateForm.control}
+                            name="internal"
+                            render={({ field }) => (
+                              <FormControlLabel
+                                control={
+                                  <Switch
+                                    checked={field.value}
+                                    onChange={(event) =>
+                                      field.onChange(event.target.checked)
+                                    }
+                                  />
+                                }
+                                label="仅内部可见"
+                              />
+                            )}
+                          />
+                          <Button
+                            type="submit"
+                            variant="contained"
+                            disabled={postingComment}
+                          >
+                            {postingComment ? "正在发送" : "发送"}
+                          </Button>
+                        </Stack>
+                      </Box>
                     ) : null}
                   </Stack>
                 </DialogContent>
