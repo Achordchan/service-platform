@@ -11,6 +11,8 @@ type Harness = {
   emitReady: () => void;
   emitFailed: () => void;
   confirms: UpdateConfirmOptions[];
+  /** 预设答案用尽后 confirm 会挂起，resolver 在此排队，用于模拟「用户还没点」 */
+  resolvers: ((value: boolean) => void)[];
   warns: string[];
 };
 
@@ -21,6 +23,7 @@ function setup(confirmAnswers: boolean[] = []): Harness {
     failed?: () => void;
   } = {};
   const confirms: UpdateConfirmOptions[] = [];
+  const resolvers: ((value: boolean) => void)[] = [];
   const warns: string[] = [];
   const answers = [...confirmAnswers];
   const manager = {
@@ -39,7 +42,10 @@ function setup(confirmAnswers: boolean[] = []): Harness {
     getUpdateManager: () => manager,
     confirm: (options) => {
       confirms.push(options);
-      return Promise.resolve(answers.shift() ?? false);
+      if (answers.length > 0) return Promise.resolve(answers.shift()!);
+      return new Promise<boolean>((resolve) => {
+        resolvers.push(resolve);
+      });
     },
     warn: (message) => {
       warns.push(message);
@@ -51,6 +57,7 @@ function setup(confirmAnswers: boolean[] = []): Harness {
     emitReady: () => callbacks.ready?.(),
     emitFailed: () => callbacks.failed?.(),
     confirms,
+    resolvers,
     warns,
   };
 }
@@ -104,6 +111,15 @@ describe("小程序版本更新提示", () => {
     h.emitReady();
     await vi.waitFor(() => expect(h.confirms).toHaveLength(1));
     expect(h.manager.applyUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("弹窗还没点时重复触发不会叠第二个窗", async () => {
+    const h = setup();
+    h.emitReady();
+    h.emitReady();
+    expect(h.confirms).toHaveLength(1);
+    h.resolvers[0]!(true);
+    await vi.waitFor(() => expect(h.manager.applyUpdate).toHaveBeenCalledTimes(1));
   });
 
   it("下载失败提示删除重进，且不重启", async () => {

@@ -45,9 +45,13 @@ export function checkForUpdate(deps: UpdateDeps): void {
 
   // applyUpdate 会强杀当前进程重启，正在填的工单表单/草稿会丢，所以一定要询问；
   // 用户选「稍后」就什么都不做——新包已经落地，下次冷启动自然生效。
-  let applying = false;
+  // 守卫必须在 confirm 之前置位、且不再复位：一次冷启动只问一次。
+  // 放到 then 里置位的话，弹窗待确认期间回调再次触发会叠第二个窗，
+  // 两个窗都点确认就会调两次 applyUpdate。
+  let asked = false;
   manager.onUpdateReady(() => {
-    if (applying) return;
+    if (asked) return;
+    asked = true;
     void deps
       .confirm({
         title: "有新版本",
@@ -57,8 +61,8 @@ export function checkForUpdate(deps: UpdateDeps): void {
         showCancel: true,
       })
       .then((confirmed) => {
+        // 用户已表态「稍后」，同一次冷启动内不再重复打扰
         if (!confirmed) return;
-        applying = true;
         // 常驻 SSE 租约随进程一起断开，服务端按超时回收，与用户手动杀进程同路径
         manager.applyUpdate();
       });
