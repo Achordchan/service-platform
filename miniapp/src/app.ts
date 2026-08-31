@@ -11,7 +11,7 @@ import {
   resetSubscribeState,
 } from "./lib/subscribe";
 import { clearDeliveryChannelsCache } from "./lib/delivery";
-import { HOME_PAGE } from "./lib/routes";
+import { handleMissingPage } from "./lib/page-not-found";
 
 let leftForeground = false;
 
@@ -37,14 +37,14 @@ App({
     void bootstrapAuth();
   },
   onPageNotFound(res) {
-    // 体验版/旧二维码/历史分享链接可能指向早已不存在的路径（如 pages/index/index），
-    // 不接这条用户会停在「页面不存在」，只能自己手动回首页。
-    console.warn("[app] page not found, redirect to home:", res.path);
-    // onLaunch 的 bootstrapAuth 可能已在跳登录页（未登录冷启）：此时再 reLaunch
-    // 首页会盖掉那次跳转，而状态机已置 redirecting，首页 onShow 不会重跳，
-    // 用户就卡在未登录的空首页上。让登录跳转赢，它同样离开了不存在的页面。
-    if (getAuthState() === "redirecting") return;
-    wx.reLaunch({ url: HOME_PAGE });
+    handleMissingPage(
+      {
+        getAuthState,
+        reLaunch: (url) => wx.reLaunch({ url }),
+        warn: (message, path) => console.warn(message, path),
+      },
+      res.path,
+    );
   },
   onHide() {
     // 进后台后再回前台才作废：冷启的 onShow 不能把还没写过的快照提前作废
