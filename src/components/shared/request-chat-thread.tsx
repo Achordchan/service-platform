@@ -230,19 +230,30 @@ export function RequestChatThread({
   const hiddenCount = Math.max(0, sorted.length - visibleCount);
   const visibleMessages = sorted.slice(hiddenCount);
 
-  // 到点自动收起「重新编辑」：只为最近的那个截止时刻排一个定时器，不做秒级轮询
+  // 到点自动收起「重新编辑」：只为最近的那个截止时刻排一个定时器，不做秒级轮询。
+  // 延时一律按 Date.now() 算：reeditNowMs 只是「上次把时钟拨到了哪」，而消息列表
+  // 一变（新消息推送）这个 effect 就会重跑，拿旧时钟算延时会把入口越拖越久。
   useEffect(() => {
-    let nearest: number | null = null;
+    const now = Date.now();
+    let wakeAt: number | null = null;
     for (const message of sorted) {
       if (!message.reeditBody || !message.reeditExpiresAt) continue;
       const expiresAtMs = new Date(message.reeditExpiresAt).getTime();
-      if (Number.isNaN(expiresAtMs) || expiresAtMs <= reeditNowMs) continue;
-      if (nearest === null || expiresAtMs < nearest) nearest = expiresAtMs;
+      if (Number.isNaN(expiresAtMs)) continue;
+      // 已过期的：只有当时钟还落在它之前（渲染仍在显示这个入口）才需要马上拨钟
+      const at =
+        expiresAtMs <= now
+          ? expiresAtMs > reeditNowMs
+            ? now
+            : null
+          : expiresAtMs;
+      if (at === null) continue;
+      if (wakeAt === null || at < wakeAt) wakeAt = at;
     }
-    if (nearest === null) return;
+    if (wakeAt === null) return;
     const timer = setTimeout(
       () => setReeditNowMs(Date.now()),
-      nearest - reeditNowMs + 250,
+      Math.max(0, wakeAt - now) + 250,
     );
     return () => clearTimeout(timer);
   }, [sorted, reeditNowMs]);

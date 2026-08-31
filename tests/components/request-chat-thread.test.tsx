@@ -218,4 +218,44 @@ describe("服务请求消息人工撤回", () => {
       vi.useRealTimers();
     }
   });
+
+  it("窗口内来了新消息也不会把重新编辑入口续期", () => {
+    vi.useFakeTimers();
+    try {
+      const soonExpiring: ChatMessage = {
+        ...message,
+        contentRiskStatus: "REVOKED",
+        reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
+        reeditAttachmentCount: 0,
+        reeditExpiresAt: new Date(Date.now() + 2_000).toISOString(),
+      };
+      const props = {
+        currentUserId: "customer-1",
+        contentRiskEnabled: true,
+        onReedit: vi.fn(),
+      };
+      const { rerender } = render(
+        <RequestChatThread messages={[soonExpiring]} {...props} />,
+      );
+
+      // 截止前来了一条新消息：重排定时器时必须按当下时刻算，不能拿挂载时的旧时钟
+      act(() => {
+        vi.advanceTimersByTime(1_500);
+      });
+      rerender(
+        <RequestChatThread
+          messages={[soonExpiring, { ...message, id: "message-2" }]}
+          {...props}
+        />,
+      );
+      expect(screen.getByRole("button", { name: "重新编辑" })).toBeTruthy();
+
+      act(() => {
+        vi.advanceTimersByTime(1_000);
+      });
+      expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
