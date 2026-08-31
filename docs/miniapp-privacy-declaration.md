@@ -132,8 +132,16 @@ API 时也会静默失效。`COVERAGE_SAMPLES` 里放着每个域的代表性入
 
 ### 需要删除的条目
 
-- ❌ PhoneNumber 收集你的手机号
-- ❌ Record 访问你的麦克风
+凡是「本项目不用、说明只能写否定句」的一律删掉。2026-08-31 后台实际出现过这些：
+
+| 条目 | 曾经填的否定句 | 代码实情 |
+|---|---|---|
+| PhoneNumber 收集你的手机号 | 从未调用 getPhoneNumber | 包里已无痕迹，**已删成功** |
+| Record 访问你的麦克风 | 无录音功能 | `chat-record` 已排除打包 |
+| 相册（仅写入）权限 | 没有 saveImageToPhotosAlbum | `qrcode` 已排除打包 |
+| 剪切板（读取） | 没有 getClipboardData 调用 | 只用 `setClipboardData`（写入），本就无需声明 |
+
+后三条在「设置-服务内容声明」页删不动，是现网版锁定，按第一节走提审流程删。
 
 ## 五、指引里其他必填项
 
