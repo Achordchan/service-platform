@@ -26,6 +26,7 @@ import { gridSx } from "@/lib/data-grid-styles";
 import { queryKeys } from "@/lib/query-keys";
 import {
   auditActionLabel,
+  auditResourceLabel,
   auditResultLabel,
   isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
@@ -48,18 +49,12 @@ type AuditLogRow = {
   serviceRequestId: string | null;
 };
 
-type FacetOption = { value: string; label: string };
-
 type AuditResponse = {
   rows: AuditLogRow[];
   total: number;
   page: number;
   pageSize: number;
-  facets?: {
-    actions: FacetOption[];
-    resourceTypes: FacetOption[];
-    results: FacetOption[];
-  };
+  facets?: { actions: string[]; resourceTypes: string[]; results: string[] };
 };
 
 const emptyFilters = {
@@ -243,8 +238,8 @@ export function AuditLogWorkspace() {
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.actions ?? []).map((action) => (
-              <MenuItem key={action.value} value={action.value}>
-                {action.label}
+              <MenuItem key={action} value={action}>
+                {auditActionLabel(action)}
               </MenuItem>
             ))}
           </TextField>
@@ -258,8 +253,8 @@ export function AuditLogWorkspace() {
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.resourceTypes ?? []).map((type) => (
-              <MenuItem key={type.value} value={type.value}>
-                {type.label}
+              <MenuItem key={type} value={type}>
+                {auditResourceLabel(type)}
               </MenuItem>
             ))}
           </TextField>
@@ -273,8 +268,8 @@ export function AuditLogWorkspace() {
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.results ?? []).map((result) => (
-              <MenuItem key={result.value} value={result.value}>
-                {result.label}
+              <MenuItem key={result} value={result}>
+                {auditResultLabel(result)}
               </MenuItem>
             ))}
           </TextField>

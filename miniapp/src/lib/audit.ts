@@ -82,7 +82,8 @@ export function formatAuditMetadata(metadata: unknown): string {
     return "";
   }
   try {
-    return JSON.stringify(metadata, null, 2);
+    // 函数、Symbol 这类顶层值 stringify 出来是 undefined，一并按「没有」处理
+    return JSON.stringify(metadata, null, 2) ?? "";
   } catch {
     return "";
   }

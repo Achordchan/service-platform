@@ -96,6 +96,11 @@ describe("formatAuditMetadata", () => {
     expect(formatAuditMetadata({})).toBe("");
   });
 
+  it("stringify 结果为 undefined 的顶层值也当作没有附加数据", () => {
+    expect(formatAuditMetadata(() => undefined)).toBe("");
+    expect(formatAuditMetadata(Symbol("x"))).toBe("");
+  });
+
   it("循环引用不炸页面", () => {
     const cyclic: Record<string, unknown> = { name: "x" };
     cyclic.self = cyclic;

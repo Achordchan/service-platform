@@ -1022,10 +1022,12 @@ export type AuditRow = {
 /** 筛选项由服务端连中文标签一起下发，小程序不复制那套动作码字典 */
 export type AuditFacetOption = { value: string; label: string };
 
+/** 只声明带标签的三个字段：同层的 actions/resourceTypes/results 是 Web 在用的
+ *  原始字符串数组，小程序不消费 */
 export type AuditFacets = {
-  actions: AuditFacetOption[];
-  resourceTypes: AuditFacetOption[];
-  results: AuditFacetOption[];
+  actionOptions: AuditFacetOption[];
+  resourceTypeOptions: AuditFacetOption[];
+  resultOptions: AuditFacetOption[];
 };
 
 export type AuditPage = {

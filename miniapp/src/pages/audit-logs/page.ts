@@ -90,7 +90,9 @@ Page({
     void this.reload().then(() => wx.stopPullDownRefresh());
   },
   onReachBottom() {
-    if (!this.data.hasMore || this.data.loadingMore) return;
+    // reload 在途时 page/hasMore 仍属于旧列表，此时翻页会把旧条件的第 N 页接到
+    // 新的第 0 页后面（代次相同，挡不住），必须等 reload 落地
+    if (this.data.loading || !this.data.hasMore || this.data.loadingMore) return;
     void this.loadMore();
   },
   noop() {},
@@ -242,8 +244,15 @@ Page({
   },
   async reload() {
     const seq = ++this.reloadSeq;
-    // 顺带把 loadingMore 归位：在途的翻页属于旧条件，稍后会被代次挡掉
-    this.setData({ loading: true, loadError: "", loadingMore: false });
+    // 分页状态一并清空：在途的翻页属于旧条件（稍后被代次挡掉），而残留的
+    // page/hasMore 会让 onReachBottom 拿旧页码去翻新列表
+    this.setData({
+      loading: true,
+      loadError: "",
+      loadingMore: false,
+      page: 0,
+      hasMore: false,
+    });
     try {
       const result = await listAuditLogs({
         ...this.currentFilters(),
@@ -279,11 +288,11 @@ Page({
   applyFacets(facets: AuditFacets) {
     this.setData({
       facetsLoaded: true,
-      actionOptions: [ALL_OPTION, ...facets.actions],
-      resourceOptions: [ALL_OPTION, ...facets.resourceTypes],
+      actionOptions: [ALL_OPTION, ...facets.actionOptions],
+      resourceOptions: [ALL_OPTION, ...facets.resourceTypeOptions],
       // 库里一条日志都没有时 facets 为空，结果 chips 回落到默认两项
-      resultOptions: facets.results.length
-        ? [ALL_OPTION, ...facets.results]
+      resultOptions: facets.resultOptions.length
+        ? [ALL_OPTION, ...facets.resultOptions]
         : DEFAULT_RESULT_OPTIONS,
     });
   },

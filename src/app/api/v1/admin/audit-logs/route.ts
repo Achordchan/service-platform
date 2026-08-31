@@ -111,18 +111,21 @@ export async function GET(request: Request) {
             : { name: "系统", secondary: "自动任务" },
     }));
 
-    // 筛选项同样带上中文标签，两端共用同一份映射（小程序不再复制动作码字典）。
+    // 带中文标签的筛选项（小程序据此渲染，不再复制那套动作码字典）。必须与原有的
+    // actions/resourceTypes/results 三个字符串数组并存：部署瞬间浏览器里还挂着旧
+    // 的 Web bundle，它把每一项当字符串用，改形状会让那些页面的筛选直接渲染坏。
     const labelledFacets = facets
       ? {
-          actions: facets.actions.map((value) => ({
+          ...facets,
+          actionOptions: facets.actions.map((value) => ({
             value,
             label: auditActionLabel(value),
           })),
-          resourceTypes: facets.resourceTypes.map((value) => ({
+          resourceTypeOptions: facets.resourceTypes.map((value) => ({
             value,
             label: auditResourceLabel(value),
           })),
-          results: facets.results.map((value) => ({
+          resultOptions: facets.results.map((value) => ({
             value,
             label: auditResultLabel(value),
           })),
