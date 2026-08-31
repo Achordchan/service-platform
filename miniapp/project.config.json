@@ -437,6 +437,10 @@
       },
       {
         "type": "folder",
+        "value": "miniprogram_npm/tdesign-miniprogram/common/template"
+      },
+      {
+        "type": "folder",
         "value": "miniprogram_npm/tdesign-miniprogram/common/shared"
       },
       {
@@ -450,6 +454,10 @@
       {
         "type": "folder",
         "value": "miniprogram_npm/tdesign-miniprogram/miniprogram_npm/tinycolor2"
+      },
+      {
+        "type": "file",
+        "value": "miniprogram_npm/tdesign-miniprogram/.wechatide.ib.json"
       }
     ],
     "include": []
