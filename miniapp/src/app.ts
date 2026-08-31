@@ -4,13 +4,14 @@ import {
   setSessionEndHandler,
 } from "./lib/auth";
 import { releaseBadgeSync } from "./lib/badge";
-import { setSessionEndedHandler } from "./lib/session";
+import { getAuthState, setSessionEndedHandler } from "./lib/session";
 import { eventSync } from "./lib/events";
 import {
   invalidateSubscribeAuthorization,
   resetSubscribeState,
 } from "./lib/subscribe";
 import { clearDeliveryChannelsCache } from "./lib/delivery";
+import { HOME_PAGE } from "./lib/routes";
 
 let leftForeground = false;
 
@@ -34,6 +35,16 @@ App({
     // 启动先完成一次身份校验：校验完成前各页 onShow 会挂起，不启动业务请求，
     // 避免未绑定/失效态下并发业务请求触发 401 风暴与页面跳转打断。
     void bootstrapAuth();
+  },
+  onPageNotFound(res) {
+    // 体验版/旧二维码/历史分享链接可能指向早已不存在的路径（如 pages/index/index），
+    // 不接这条用户会停在「页面不存在」，只能自己手动回首页。
+    console.warn("[app] page not found, redirect to home:", res.path);
+    // onLaunch 的 bootstrapAuth 可能已在跳登录页（未登录冷启）：此时再 reLaunch
+    // 首页会盖掉那次跳转，而状态机已置 redirecting，首页 onShow 不会重跳，
+    // 用户就卡在未登录的空首页上。让登录跳转赢，它同样离开了不存在的页面。
+    if (getAuthState() === "redirecting") return;
+    wx.reLaunch({ url: HOME_PAGE });
   },
   onHide() {
     // 进后台后再回前台才作废：冷启的 onShow 不能把还没写过的快照提前作废
