@@ -12,6 +12,7 @@ import {
 } from "./lib/subscribe";
 import { clearDeliveryChannelsCache } from "./lib/delivery";
 import { handleMissingPage } from "./lib/page-not-found";
+import { checkForUpdate } from "./lib/update";
 
 let leftForeground = false;
 
@@ -31,6 +32,21 @@ App({
         // 网络恢复：清退避立即重连事件流（不使用轮询）
         eventSync.wake();
       }
+    });
+    // 微信默认不提示「有新版本」：冷启动只异步下载新包，本次仍跑旧包，要等下一次
+    // 冷启动才生效。接上 UpdateManager，下好了就问一句用户要不要现在重启套用。
+    checkForUpdate({
+      getUpdateManager: () =>
+        typeof wx.getUpdateManager === "function" ? wx.getUpdateManager() : null,
+      confirm: (options) =>
+        new Promise((resolve) => {
+          wx.showModal({
+            ...options,
+            success: (result) => resolve(Boolean(result.confirm)),
+            fail: () => resolve(false),
+          });
+        }),
+      warn: (message, detail) => console.warn(message, detail),
     });
     // 启动先完成一次身份校验：校验完成前各页 onShow 会挂起，不启动业务请求，
     // 避免未绑定/失效态下并发业务请求触发 401 风暴与页面跳转打断。
