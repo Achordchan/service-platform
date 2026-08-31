@@ -4,13 +4,14 @@ import {
   setSessionEndHandler,
 } from "./lib/auth";
 import { releaseBadgeSync } from "./lib/badge";
-import { setSessionEndedHandler } from "./lib/session";
+import { getAuthState, setSessionEndedHandler } from "./lib/session";
 import { eventSync } from "./lib/events";
 import {
   invalidateSubscribeAuthorization,
   resetSubscribeState,
 } from "./lib/subscribe";
 import { clearDeliveryChannelsCache } from "./lib/delivery";
+import { handleMissingPage } from "./lib/page-not-found";
 
 let leftForeground = false;
 
@@ -34,6 +35,16 @@ App({
     // 启动先完成一次身份校验：校验完成前各页 onShow 会挂起，不启动业务请求，
     // 避免未绑定/失效态下并发业务请求触发 401 风暴与页面跳转打断。
     void bootstrapAuth();
+  },
+  onPageNotFound(res) {
+    handleMissingPage(
+      {
+        getAuthState,
+        reLaunch: (url) => wx.reLaunch({ url }),
+        warn: (message, path) => console.warn(message, path),
+      },
+      res.path,
+    );
   },
   onHide() {
     // 进后台后再回前台才作废：冷启的 onShow 不能把还没写过的快照提前作废
