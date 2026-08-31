@@ -8,6 +8,7 @@ import {
 import {
   auditActionLabel,
   auditResourceLabel,
+  auditResultLabel,
   isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 import { requireApiActor, routeError } from "@/modules/projects/api-utils";
@@ -100,6 +101,7 @@ export async function GET(request: Request) {
       ...row,
       actionLabel: auditActionLabel(row.action, row.resourceType),
       resourceLabel: auditResourceLabel(row.resourceType),
+      resultLabel: auditResultLabel(row.result),
       actorDisplay: row.actorName
         ? { name: row.actorName, secondary: row.actorEmail ?? "—" }
         : row.externalActorName
@@ -109,8 +111,31 @@ export async function GET(request: Request) {
             : { name: "系统", secondary: "自动任务" },
     }));
 
+    // 带中文标签的筛选项（小程序据此渲染，不再复制那套动作码字典）。必须与原有的
+    // actions/resourceTypes/results 三个字符串数组并存：部署瞬间浏览器里还挂着旧
+    // 的 Web bundle，它把每一项当字符串用，改形状会让那些页面的筛选直接渲染坏。
+    const labelledFacets = facets
+      ? {
+          ...facets,
+          actionOptions: facets.actions.map((value) => ({
+            value,
+            label: auditActionLabel(value),
+          })),
+          resourceTypeOptions: facets.resourceTypes.map((value) => ({
+            value,
+            label: auditResourceLabel(value),
+          })),
+          resultOptions: facets.results.map((value) => ({
+            value,
+            label: auditResultLabel(value),
+          })),
+        }
+      : undefined;
+
     // `apiRequest` unwraps `data`, so facets must travel inside it.
-    return NextResponse.json({ data: { ...page, rows, facets } });
+    return NextResponse.json({
+      data: { ...page, rows, facets: labelledFacets },
+    });
   } catch (error) {
     return routeError(error, { operation: "audit_logs.list" });
   }

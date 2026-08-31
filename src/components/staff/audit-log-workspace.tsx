@@ -27,6 +27,7 @@ import { queryKeys } from "@/lib/query-keys";
 import {
   auditActionLabel,
   auditResourceLabel,
+  auditResultLabel,
   isUnauthenticatedAuditAction,
 } from "@/modules/audit/audit-labels";
 
@@ -180,7 +181,7 @@ export function AuditLogWorkspace() {
         renderCell: ({ row }) => (
           <Chip
             size="small"
-            label={row.result === "SUCCESS" ? "成功" : row.result}
+            label={auditResultLabel(row.result)}
             color={row.result === "SUCCESS" ? "success" : "warning"}
             variant="outlined"
           />
@@ -268,7 +269,7 @@ export function AuditLogWorkspace() {
             <MenuItem value="">全部</MenuItem>
             {(facets?.results ?? []).map((result) => (
               <MenuItem key={result} value={result}>
-                {result === "SUCCESS" ? "成功" : result}
+                {auditResultLabel(result)}
               </MenuItem>
             ))}
           </TextField>
@@ -376,7 +377,7 @@ export function AuditLogWorkspace() {
                     </Typography>
                     <Chip
                       size="small"
-                      label={row.result === "SUCCESS" ? "成功" : row.result}
+                      label={auditResultLabel(row.result)}
                       color={row.result === "SUCCESS" ? "success" : "warning"}
                       variant="outlined"
                       sx={{ ml: 1, flexShrink: 0 }}
@@ -483,7 +484,7 @@ function AuditDetailDialog({
                         : "系统 / 自动任务"
                 }
               />
-              <DetailRow label="结果" value={detail.result} />
+              <DetailRow label="结果" value={auditResultLabel(detail.result)} />
               <DetailRow label="对象 ID" value={detail.resourceId} mono />
               <DetailRow label="所属项目" value={detail.projectId} mono />
               <DetailRow label="客户空间" value={detail.customerSpaceId} mono />

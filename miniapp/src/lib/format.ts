@@ -119,12 +119,16 @@ export function todayLabel(now: Date = new Date()): string {
   return `${now.getMonth() + 1}月${now.getDate()}日 周${weekdays[now.getDay()]}`;
 }
 
-export function formatDateTime(value: string | null | undefined): string {
+export function formatDateTime(
+  value: string | null | undefined,
+  options: { seconds?: boolean } = {},
+): string {
   if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  const seconds = options.seconds ? `:${pad(date.getSeconds())}` : "";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}${seconds}`;
 }
 
 export function formatRelative(value: string | null | undefined): string {

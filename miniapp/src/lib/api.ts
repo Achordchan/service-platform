@@ -1008,9 +1008,26 @@ export type AuditRow = {
   resourceLabel: string;
   resourceId: string | null;
   result: string;
+  resultLabel: string;
   createdAt: string;
   ipAddress: string | null;
+  userAgent: string | null;
+  metadata: unknown;
+  projectId: string | null;
+  customerSpaceId: string | null;
+  serviceRequestId: string | null;
   actorDisplay: { name: string; secondary: string };
+};
+
+/** 筛选项由服务端连中文标签一起下发，小程序不复制那套动作码字典 */
+export type AuditFacetOption = { value: string; label: string };
+
+/** 只声明带标签的三个字段：同层的 actions/resourceTypes/results 是 Web 在用的
+ *  原始字符串数组，小程序不消费 */
+export type AuditFacets = {
+  actionOptions: AuditFacetOption[];
+  resourceTypeOptions: AuditFacetOption[];
+  resultOptions: AuditFacetOption[];
 };
 
 export type AuditPage = {
@@ -1018,15 +1035,38 @@ export type AuditPage = {
   page: number;
   pageSize: number;
   rows: AuditRow[];
+  facets?: AuditFacets;
 };
 
-export function listAuditLogs(params: {
-  page?: number;
-  pageSize?: number;
-}): Promise<AuditPage> {
+export type AuditFilters = {
+  search?: string;
+  action?: string;
+  resourceType?: string;
+  result?: string;
+  /** YYYY-MM-DD，服务端按 +08:00 换算日界 */
+  from?: string;
+  to?: string;
+};
+
+export function listAuditLogs(
+  params: AuditFilters & {
+    page?: number;
+    pageSize?: number;
+    withFacets?: boolean;
+  },
+): Promise<AuditPage> {
   const query = new Array<string>();
+  if (params.search) query.push(`search=${encodeURIComponent(params.search)}`);
+  if (params.action) query.push(`action=${encodeURIComponent(params.action)}`);
+  if (params.resourceType) {
+    query.push(`resourceType=${encodeURIComponent(params.resourceType)}`);
+  }
+  if (params.result) query.push(`result=${encodeURIComponent(params.result)}`);
+  if (params.from) query.push(`from=${params.from}`);
+  if (params.to) query.push(`to=${params.to}`);
   if (params.page !== undefined) query.push(`page=${params.page}`);
   if (params.pageSize !== undefined) query.push(`pageSize=${params.pageSize}`);
+  if (params.withFacets) query.push("withFacets=1");
   const suffix = query.length ? `?${query.join("&")}` : "";
   return request<AuditPage>(`/api/v1/admin/audit-logs${suffix}`, {
     timeoutMs: 20000,

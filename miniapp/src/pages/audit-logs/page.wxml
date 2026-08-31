@@ -1,7 +1,40 @@
 <import src="/components/states.wxml" />
 
 <view class="audit-page">
-  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 5}}" />
+  <view class="filter-bar">
+    <input
+      class="search-input"
+      placeholder="搜索操作码 / 对象 ID / 执行人 / IP"
+      placeholder-class="search-placeholder"
+      value="{{keyword}}"
+      confirm-type="search"
+      bindinput="onKeywordInput"
+      bindconfirm="onSearchConfirm"
+      bindblur="onSearchConfirm"
+    />
+    <view
+      class="filter-btn {{filterCount > 0 ? 'filter-btn-active' : ''}}"
+      hover-class="hover-plain"
+      bindtap="onOpenFilters"
+    >
+      <t-icon name="filter" size="34rpx" color="{{filterCount > 0 ? '#1677ff' : '#667085'}}" />
+      <text wx:if="{{filterCount > 0}}" class="filter-badge">{{filterCount}}</text>
+    </view>
+  </view>
+
+  <scroll-view scroll-x class="status-bar" enhanced show-scrollbar="{{false}}">
+    <view
+      wx:for="{{resultOptions}}"
+      wx:key="value"
+      class="status-chip {{result === item.value ? 'status-chip-active' : ''}}"
+      data-value="{{item.value}}"
+      bindtap="onResultTap"
+    >
+      {{item.label}}
+    </view>
+  </scroll-view>
+
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 6}}" />
 
   <template
     wx:elif="{{loadError}}"
@@ -12,28 +45,153 @@
   <template
     wx:elif="{{rows.length === 0}}"
     is="state-empty"
-    data="{{icon: 'file', title: '暂无审计记录', desc: '系统操作会记录在这里'}}"
+    data="{{icon: 'file', title: '暂无审计记录', desc: filtersActive ? '当前筛选下没有记录，换个条件试试' : '系统操作会记录在这里'}}"
   />
 
   <block wx:else>
     <view class="audit-total text-secondary">共 {{total}} 条记录</view>
-    <view wx:for="{{rows}}" wx:key="id" class="audit-item">
-      <view class="audit-head">
-        <view class="audit-action {{item.failed ? 'audit-failed' : ''}}">
-          {{item.actionLabel}}
+    <view class="audit-list">
+      <view
+        wx:for="{{rows}}"
+        wx:key="id"
+        class="audit-row"
+        hover-class="hover-row"
+        hover-stay-time="80"
+        data-index="{{index}}"
+        bindtap="onOpenDetail"
+      >
+        <view class="audit-line">
+          <text class="audit-action {{item.failed ? 'audit-failed' : ''}}">{{item.actionLabel}}</text>
+          <text wx:if="{{item.failed}}" class="audit-flag">{{item.resultLabel}}</text>
+          <text class="audit-time text-secondary">{{item.timeText}}</text>
         </view>
-        <view class="audit-time text-secondary">{{item.timeText}}</view>
-      </view>
-      <view class="audit-actor">
-        <text class="audit-actor-name">{{item.actorDisplay.name}}</text>
-        <text class="audit-actor-sec text-secondary"> · {{item.actorDisplay.secondary}}</text>
-      </view>
-      <view class="audit-meta text-secondary">
-        {{item.resourceLabel}}{{item.ipAddress ? ' · ' + item.ipAddress : ''}}{{item.failed ? ' · 失败' : ''}}
+        <view class="audit-line audit-sub text-secondary">
+          {{item.actorDisplay.name}} · {{item.resourceLabel}}{{item.resourceId ? ' · ' + item.resourceId : ''}}
+        </view>
       </view>
     </view>
 
-    <view wx:if="{{loadingMore}}" class="audit-more">加载中…</view>
-    <view wx:elif="{{!hasMore}}" class="audit-more">没有更多了</view>
+    <view wx:if="{{loadingMore}}" class="load-more">加载中…</view>
+    <view wx:elif="{{!hasMore}}" class="load-more">没有更多了</view>
   </block>
+
+  <!-- 更多筛选：操作类型 / 资源类型 / 时间范围 -->
+  <view wx:if="{{filterVisible}}" class="sheet-mask" bindtap="onCloseFilters" catchtouchmove="noop">
+    <view class="sheet-panel" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">更多筛选</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onCloseFilters" />
+      </view>
+
+      <view class="filter-group-label">操作类型</view>
+      <picker
+        range="{{actionOptions}}"
+        range-key="label"
+        value="{{draftActionIndex}}"
+        bindchange="onDraftAction"
+      >
+        <view class="picker-value">
+          <text class="picker-text">{{actionOptions[draftActionIndex].label}}</text>
+          <t-icon name="caret-down" size="32rpx" color="#98a2b3" />
+        </view>
+      </picker>
+
+      <view class="filter-group-label">资源类型</view>
+      <picker
+        range="{{resourceOptions}}"
+        range-key="label"
+        value="{{draftResourceIndex}}"
+        bindchange="onDraftResource"
+      >
+        <view class="picker-value">
+          <text class="picker-text">{{resourceOptions[draftResourceIndex].label}}</text>
+          <t-icon name="caret-down" size="32rpx" color="#98a2b3" />
+        </view>
+      </picker>
+
+      <view class="filter-group-label">时间范围</view>
+      <view class="date-row">
+        <picker
+          class="date-picker"
+          mode="date"
+          value="{{draftFrom}}"
+          end="{{draftTo || maxDate}}"
+          bindchange="onDraftFrom"
+        >
+          <view class="picker-value">
+            <text class="picker-text {{draftFrom ? '' : 'picker-placeholder'}}">{{draftFrom || '起始日期'}}</text>
+            <t-icon
+              wx:if="{{draftFrom}}"
+              name="close-circle-filled"
+              size="30rpx"
+              color="#98a2b3"
+              catchtap="onClearFrom"
+            />
+          </view>
+        </picker>
+        <text class="date-sep text-secondary">至</text>
+        <picker
+          class="date-picker"
+          mode="date"
+          value="{{draftTo}}"
+          start="{{draftFrom}}"
+          end="{{maxDate}}"
+          bindchange="onDraftTo"
+        >
+          <view class="picker-value">
+            <text class="picker-text {{draftTo ? '' : 'picker-placeholder'}}">{{draftTo || '结束日期'}}</text>
+            <t-icon
+              wx:if="{{draftTo}}"
+              name="close-circle-filled"
+              size="30rpx"
+              color="#98a2b3"
+              catchtap="onClearTo"
+            />
+          </view>
+        </picker>
+      </view>
+
+      <view class="sheet-foot">
+        <button class="plain-btn sheet-foot-btn" hover-class="hover-plain" bindtap="onResetFilters">重置</button>
+        <button class="primary-btn sheet-foot-btn" hover-class="hover-btn" bindtap="onApplyFilters">应用</button>
+      </view>
+    </view>
+  </view>
+
+  <!-- 单条详情：字段与 Web 端弹窗一致，等宽字段轻触复制 -->
+  <view wx:if="{{detailVisible}}" class="sheet-mask" bindtap="onCloseDetail" catchtouchmove="noop">
+    <view class="sheet-panel" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{detailTitle}}</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onCloseDetail" />
+      </view>
+
+      <scroll-view scroll-y class="detail-scroll" enhanced show-scrollbar="{{false}}">
+        <view
+          wx:for="{{detailItems}}"
+          wx:key="label"
+          class="detail-item"
+          data-copy="{{item.mono}}"
+          data-value="{{item.value}}"
+          bindtap="onCopyValue"
+        >
+          <view class="detail-label text-secondary">{{item.label}}</view>
+          <view class="detail-value {{item.mono ? 'detail-mono' : ''}}">{{item.value}}</view>
+        </view>
+
+        <view
+          wx:if="{{detailMetadata}}"
+          class="detail-item"
+          data-copy="{{true}}"
+          data-value="{{detailMetadata}}"
+          bindtap="onCopyValue"
+        >
+          <view class="detail-label text-secondary">附加数据</view>
+          <view class="detail-json">{{detailMetadata}}</view>
+        </view>
+
+        <view class="detail-hint text-secondary">轻触等宽字段可复制</view>
+      </scroll-view>
+    </view>
+  </view>
 </view>
