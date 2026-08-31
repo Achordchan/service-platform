@@ -134,6 +134,25 @@ export function feedbackForSubscribeOutcome(
   const pendingSyncCount = outcome.acceptedCount - outcome.recordedCount;
   const notAcceptedCount =
     outcome.rejectedCount + unavailableCount + outcome.unknownCount;
+
+  /** 未授权成功的各类结果说明，部分成功与完全失败两条路径共用同一套聚合口径。 */
+  const notAcceptedDetails: string[] = [];
+  if (outcome.rejectedCount > 0) {
+    notAcceptedDetails.push(
+      `${outcome.rejectedCount} 类未允许，可前往微信设置重新开启`,
+    );
+  }
+  if (unavailableCount > 0) {
+    notAcceptedDetails.push(
+      `${unavailableCount} 类模板不可用，请联系平台管理员`,
+    );
+  }
+  if (outcome.unknownCount > 0) {
+    notAcceptedDetails.push(
+      `${outcome.unknownCount} 类未返回明确结果，请重试`,
+    );
+  }
+
   if (
     outcome.acceptedCount > 0 &&
     (pendingSyncCount > 0 || notAcceptedCount > 0)
@@ -147,17 +166,7 @@ export function feedbackForSubscribeOutcome(
         `${pendingSyncCount} 类已允许但状态暂未同步，将在下次操作时自动重试`,
       );
     }
-    if (outcome.rejectedCount > 0) {
-      details.push(
-        `${outcome.rejectedCount} 类未允许，可前往微信设置重新开启`,
-      );
-    }
-    if (unavailableCount > 0) {
-      details.push(`${unavailableCount} 类模板不可用，请联系平台管理员`);
-    }
-    if (outcome.unknownCount > 0) {
-      details.push(`${outcome.unknownCount} 类未返回明确结果，请重试`);
-    }
+    details.push(...notAcceptedDetails);
     return {
       mode: "modal",
       title:
@@ -170,19 +179,30 @@ export function feedbackForSubscribeOutcome(
   if (outcome.acceptedCount > 0) {
     return { mode: "toast", title: `已开启 ${outcome.recordedCount} 类提醒` };
   }
-  if (unavailableCount > 0) {
+
+  // 完全没有授权成功时：单一类别沿用专属文案；多类别混合必须逐类说明，
+  // 否则 ban/filter 会掩盖用户拒绝，并连带吞掉「去设置」这条恢复路径。
+  if (notAcceptedCount > 0 && outcome.rejectedCount === notAcceptedCount) {
+    return {
+      mode: "modal",
+      title: "微信提醒未开启",
+      content: "你已拒绝订阅提醒，请前往微信设置重新允许。",
+      openSettings: true,
+    };
+  }
+  if (notAcceptedCount > 0 && unavailableCount === notAcceptedCount) {
     return {
       mode: "modal",
       title: "微信提醒暂不可用",
       content: "当前订阅模板不可用，请联系平台管理员检查微信模板配置。",
     };
   }
-  if (outcome.rejectedCount > 0) {
+  if (notAcceptedDetails.length > 1) {
     return {
       mode: "modal",
-      title: "微信提醒未开启",
-      content: "你已拒绝订阅提醒，请前往微信设置重新允许。",
-      openSettings: true,
+      title: outcome.rejectedCount > 0 ? "微信提醒未开启" : "微信提醒暂不可用",
+      content: `${notAcceptedDetails.join("；")}。`,
+      openSettings: outcome.rejectedCount > 0,
     };
   }
   return { mode: "toast", title: "未获取到授权结果，请重试" };

@@ -81,6 +81,65 @@ describe("微信订阅授权反馈", () => {
     );
   });
 
+  it("拒绝与模板不可用混合时，逐类说明并保留去设置入口", () => {
+    expect(
+      feedbackForSubscribeOutcome({
+        decisions: [],
+        acceptedCount: 0,
+        recordedCount: 0,
+        rejectedCount: 1,
+        bannedCount: 2,
+        filteredCount: 0,
+        unknownCount: 0,
+        identityChanged: false,
+      }),
+    ).toEqual({
+      mode: "modal",
+      title: "微信提醒未开启",
+      content: "1 类未允许，可前往微信设置重新开启；2 类模板不可用，请联系平台管理员。",
+      openSettings: true,
+    });
+  });
+
+  it("模板不可用与未知结果混合时，不谎称可通过设置恢复", () => {
+    expect(
+      feedbackForSubscribeOutcome({
+        decisions: [],
+        acceptedCount: 0,
+        recordedCount: 0,
+        rejectedCount: 0,
+        bannedCount: 1,
+        filteredCount: 0,
+        unknownCount: 1,
+        identityChanged: false,
+      }),
+    ).toEqual({
+      mode: "modal",
+      title: "微信提醒暂不可用",
+      content: "1 类模板不可用，请联系平台管理员；1 类未返回明确结果，请重试。",
+      openSettings: false,
+    });
+  });
+
+  it("全部模板不可用时沿用专属文案", () => {
+    expect(
+      feedbackForSubscribeOutcome({
+        decisions: [],
+        acceptedCount: 0,
+        recordedCount: 0,
+        rejectedCount: 0,
+        bannedCount: 2,
+        filteredCount: 1,
+        unknownCount: 0,
+        identityChanged: false,
+      }),
+    ).toEqual({
+      mode: "modal",
+      title: "微信提醒暂不可用",
+      content: "当前订阅模板不可用，请联系平台管理员检查微信模板配置。",
+    });
+  });
+
   it("微信已允许但服务端同步失败时，不再误报未开启", () => {
     expect(
       feedbackForSubscribeOutcome({
