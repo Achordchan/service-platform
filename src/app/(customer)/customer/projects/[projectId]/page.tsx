@@ -241,6 +241,7 @@ export default async function CustomerProjectPage({
         <Box sx={{ pt: 3 }}>
           <ProjectUpdates
             updates={projectView.updates}
+            projectId={project.id}
             contentRiskEnabled={projectView.contentRiskUiEnabled}
           />
         </Box>

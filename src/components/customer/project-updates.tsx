@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Box,
   Button,
@@ -9,8 +10,10 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  LinearProgress,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
@@ -20,10 +23,20 @@ import type { ProjectUpdate } from "@/components/customer/customer-types";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
+import { useToast } from "@/components/shared/toast-provider";
+import { apiRequest, jsonRequest } from "@/lib/api-client";
 import {
+  escapeHtmlText,
   extractInlineAttachmentIds,
   htmlToPlainText,
 } from "@/lib/message-content";
+
+/** 纯文本评论转安全 HTML：转义后保留换行，与小程序端一致。 */
+function commentTextToHtml(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  return `<p>${escapeHtmlText(trimmed).replace(/\n/g, "<br/>")}</p>`;
+}
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
   year: "numeric",
@@ -42,14 +55,53 @@ function editedSuffix(createdAt: string, updatedAt: string) {
 
 export function ProjectUpdates({
   updates,
+  projectId,
   compact = false,
   contentRiskEnabled = false,
 }: {
   updates: ProjectUpdate[];
+  projectId?: string;
   compact?: boolean;
   contentRiskEnabled?: boolean;
 }) {
-  const [detail, setDetail] = useState<ProjectUpdate | null>(null);
+  const router = useRouter();
+  const toast = useToast();
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [postingComment, setPostingComment] = useState(false);
+  const detail = detailId
+    ? updates.find((item) => item.id === detailId) ?? null
+    : null;
+
+  function closeDetail() {
+    setDetailId(null);
+    setCommentText("");
+  }
+
+  async function submitComment() {
+    if (!detail || !projectId) return;
+    const body = commentTextToHtml(commentText);
+    if (!body) {
+      toast.warning("请输入评论内容");
+      return;
+    }
+    setPostingComment(true);
+    try {
+      await apiRequest(
+        `/api/v1/projects/${projectId}/updates/${detail.id}/comments`,
+        jsonRequest("POST", { body }),
+        "评论发送失败",
+      );
+      setCommentText("");
+      toast.success("评论已发送");
+      router.refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "评论发送失败");
+    } finally {
+      setPostingComment(false);
+    }
+  }
+
   const visibleUpdates = compact ? updates.slice(0, 3) : updates;
   if (visibleUpdates.length === 0) {
     return (
@@ -235,7 +287,7 @@ export function ProjectUpdates({
                       size="small"
                       color="primary"
                       startIcon={<VisibilityOutlinedIcon />}
-                      onClick={() => setDetail(update)}
+                      onClick={() => setDetailId(update.id)}
                     >
                       查看详情
                     </Button>
@@ -249,7 +301,7 @@ export function ProjectUpdates({
 
       <Dialog
         open={Boolean(detail)}
-        onClose={() => setDetail(null)}
+        onClose={closeDetail}
         fullWidth
         maxWidth="md"
         slotProps={{
@@ -332,11 +384,39 @@ export function ProjectUpdates({
                   </Stack>
                 </>
               ) : null}
+              {projectId && detail.contentRiskStatus !== "REVOKED" ? (
+                <Box>
+                  <Divider sx={{ mb: 1.5 }} />
+                  <Typography variant="body2" sx={{ fontWeight: 650, mb: 1 }}>
+                    发表评论
+                  </Typography>
+                  {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
+                  <TextField
+                    value={commentText}
+                    onChange={(event) => setCommentText(event.target.value)}
+                    fullWidth
+                    multiline
+                    minRows={2}
+                    maxRows={8}
+                    placeholder="向服务人员留言…"
+                    disabled={postingComment}
+                  />
+                  <Stack direction="row" sx={{ mt: 1, justifyContent: "flex-end" }}>
+                    <Button
+                      variant="contained"
+                      onClick={() => void submitComment()}
+                      disabled={postingComment || commentText.trim().length === 0}
+                    >
+                      发送
+                    </Button>
+                  </Stack>
+                </Box>
+              ) : null}
             </Stack>
           ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setDetail(null)}>关闭</Button>
+          <Button onClick={closeDetail}>关闭</Button>
         </DialogActions>
       </Dialog>
     </>
