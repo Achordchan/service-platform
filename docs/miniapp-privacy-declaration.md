@@ -43,9 +43,16 @@ npm」产物、不入库、CI 上并不存在，所以扫描建立在两类输�
 
 `.wechatide.ib.json` 是开发者工具的 API 补全索引，列着全量接口名却不参与运行，已一并排除。
 
-扫描对象不只是 JS 接口名：`<camera>`、`<live-pusher>`、`<voip-room>`、`<open-data>` 这类原生
-组件不经过任何 API 就能拿到摄像头／麦克风／微信身份，同样在关键词里（带尖括号匹配，避免误伤
-`chooseMedia` 的 `sourceType: ["album", "camera"]`）。
+扫描按**能力域**匹配而不是枚举 API 名——蓝牙、Wi-Fi、NFC 这类一个能力就有十几个入口
+（`startBluetoothDevicesDiscovery`、`getConnectedBluetoothDevices`…），枚举必然漏，微信新增
+API 时也会静默失效。`COVERAGE_SAMPLES` 里放着每个域的代表性入口，收紧正则时会先失败，防止
+顺手漏掉真实接口。
+
+扫描对象也不只是 JS 接口名：`<camera>`、`<live-pusher>`、`<voip-room>`、`<open-data>` 这类原生
+组件不经过任何 API 就能拿到摄像头／麦克风／微信身份，同样在匹配范围内（带尖括号，避免误伤
+`chooseMedia` 的 `sourceType: ["album", "camera"]`）；`chooseAvatar` 则只认
+`open-type="chooseAvatar"` / `bind:chooseavatar` 的声明式写法，因为项目里的 `onChooseAvatar`
+是自己的方法名、走的是 `chooseMedia`。
 
 ### 正确的操作顺序（顺序错了还会被驳）
 
@@ -122,7 +129,8 @@ npm」产物、不入库、CI 上并不存在，所以扫描建立在两类输�
 新增任何隐私接口（录音、定位、手机号快捷登录等）时：
 
 1. 先来本文件补一条正向说明，并同步到 mp 后台，同时把关键词从
-   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里移除；
+   `tests/miniapp/privacy-api-surface.test.ts` 的 `FORBIDDEN` 里放开对应的域
+   （连同 `COVERAGE_SAMPLES` 里的样本一起调整）；
 2. 若届时开启了隐私校验（`app.json` 的 `__usePrivacyCheck__`），
    还需接入 `wx.onNeedPrivacyAuthorization` 隐私弹窗，否则接口调用会直接 fail；
    当前未开启，暂不需要。

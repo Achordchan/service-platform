@@ -20,68 +20,88 @@ const TDESIGN_PACK_PREFIX = "miniprogram_npm/tdesign-miniprogram";
 
 // 微信隐私接口清单里、本项目未使用的入口。真正在用且已声明的三个不在此列：
 // chooseMedia、chooseMessageFile、getDeviceInfo/getSystemInfo。
-// 新增隐私能力时先更新 docs/miniapp-privacy-declaration.md，再从这里移除对应关键词。
-const FORBIDDEN = [
-  // 手机号
-  "getPhoneNumber",
-  "getphonenumber",
-  "getRealtimePhoneNumber",
-  "getrealtimephonenumber",
-  // 位置
-  "getLocation",
-  "getFuzzyLocation",
-  "onLocationChange",
-  "startLocationUpdate",
-  "chooseLocation",
-  "choosePoi",
-  "chooseAddress",
-  // 麦克风与音视频通话
-  "RecorderManager",
-  "startRecord",
-  "joinVoIPChat",
-  "createLivePusherContext",
-  // 摄像头与扫码
-  "createCameraContext",
-  "createVKSession",
-  "scanCode",
-  // 相册（写入）与旧版选择接口
-  "saveImageToPhotosAlbum",
-  "saveVideoToPhotosAlbum",
-  "chooseImage",
-  "chooseVideo",
-  // 微信身份信息
-  "getUserProfile",
-  "getUserInfo",
-  "getuserinfo",
-  "chooseAvatar",
-  "chooseavatar",
-  // 剪贴板（读取）
-  "getClipboardData",
-  // 通讯录与日历
-  "addPhoneContact",
-  "chooseContact",
-  "addPhoneCalendar",
-  "addPhoneRepeatCalendar",
-  // 发票与卡包
-  "chooseInvoice",
-  "chooseInvoiceTitle",
-  "addCard",
-  "openCard",
-  // 微信运动
-  "getWeRunData",
-  // 蓝牙、Wi-Fi、NFC
-  "openBluetoothAdapter",
-  "createBLEConnection",
-  "startBeaconDiscovery",
-  "startWifi",
-  "getConnectedWifi",
-  "getHCEState",
-  // 声明式入口：原生组件不经过任何 JS API 就能拿到摄像头/麦克风/微信身份，
-  // 只扫接口名会漏掉。带尖括号匹配，避免误伤 chooseMedia 的 sourceType: ["camera"]
-  "<camera",
-  "<live-pusher",
-  "<voip-room",
-  "<open-data",
+// 按「能力域」用正则覆盖而不是逐个枚举 API 名——蓝牙、Wi-Fi、NFC 这类一个能力
+// 就有十几个入口（startBluetoothDevicesDiscovery、getConnectedBluetoothDevices…），
+// 枚举必然漏，且微信新增 API 时会静默失效。
+// 新增隐私能力时先更新 docs/miniapp-privacy-declaration.md，再放开对应的域。
+const FORBIDDEN: { label: string; pattern: RegExp }[] = [
+  { label: "手机号", pattern: /get(Phone|RealtimePhone)Number/i },
+  {
+    label: "位置",
+    pattern:
+      /getLocation|getFuzzyLocation|Location(Change|Update)|chooseLocation|choosePoi|chooseAddress/i,
+  },
+  {
+    label: "麦克风与音视频",
+    pattern:
+      /RecorderManager|start(Record|RecordVoice)|joinVoIPChat|LivePusherContext|<live-pusher|<voip-room/i,
+  },
+  {
+    label: "摄像头与扫码",
+    pattern: /createCameraContext|createVKSession|scanCode|<camera/i,
+  },
+  {
+    label: "相册",
+    pattern: /save(Image|Video)ToPhotosAlbum|choose(Image|Video)\b/i,
+  },
+  {
+    label: "微信身份",
+    // chooseAvatar 只认声明式写法：项目里 onChooseAvatar 是自己的方法名，
+    // 走的是 chooseMedia，不能算成微信的头像快捷填充能力
+    pattern:
+      /getUserProfile|getUserInfo|open-type=["']?chooseAvatar|bind:?chooseavatar|<open-data/i,
+  },
+  { label: "剪贴板", pattern: /getClipboardData/i },
+  {
+    label: "通讯录与日历",
+    pattern: /addPhoneContact|chooseContact|addPhone(Calendar|RepeatCalendar)/i,
+  },
+  {
+    label: "发票与卡包",
+    pattern: /chooseInvoice(Title)?|addCard|openCard/i,
+  },
+  { label: "微信运动", pattern: /getWeRunData/i },
+  // 大小写敏感的 BLE 前缀，避免 /i 把任意 "ble" 子串都算进来
+  { label: "蓝牙", pattern: /[Bb]luetooth|[Bb]eacon|BLE[A-Z]/ },
+  { label: "Wi-Fi", pattern: /[Ww]i[Ff]i/ },
+  { label: "NFC", pattern: /NFCAdapter|HCE/ },
+];
+
+// 上面每个域必须能命中的代表性入口。改动 pattern 时这条会先失败，
+// 防止「收紧正则顺手把某个真实接口漏掉」。
+const COVERAGE_SAMPLES = [
+  "wx.getPhoneNumber",
+  "bind:getrealtimephonenumber",
+  "wx.getLocation",
+  "wx.getFuzzyLocation",
+  "wx.startLocationUpdate",
+  "wx.onLocationChange",
+  "wx.chooseLocation",
+  "wx.getRecorderManager",
+  "wx.joinVoIPChat",
+  "<live-pusher />",
+  "wx.createCameraContext",
+  "wx.scanCode",
+  "<camera />",
+  "wx.saveImageToPhotosAlbum",
+  "wx.chooseImage",
+  "wx.getUserProfile",
+  '<button open-type="chooseAvatar" bind:chooseavatar="onAvatar" />',
+  "<open-data type=\"userNickName\" />",
+  "wx.getClipboardData",
+  "wx.addPhoneContact",
+  "wx.chooseInvoiceTitle",
+  "wx.getWeRunData",
+  "wx.openBluetoothAdapter",
+  "wx.startBluetoothDevicesDiscovery",
+  "wx.getBluetoothDevices",
+  "wx.getConnectedBluetoothDevices",
+  "wx.createBLEConnection",
+  "wx.startBeaconDiscovery",
+  "wx.startWifi",
+  "wx.getConnectedWifi",
+  "wx.getNFCAdapter().startDiscovery()",
+  "wx.getHCEState",
 ];
 
 const SCANNED_EXT = new Set([".js", ".ts", ".wxml", ".wxs", ".json"]);
@@ -133,7 +153,9 @@ function collectFiles(
 
 function hitsIn(root: string, rel: string): string[] {
   const text = readFileSync(path.join(root, rel), "utf8");
-  return FORBIDDEN.filter((keyword) => text.includes(keyword));
+  return FORBIDDEN.filter(({ pattern }) => pattern.test(text)).map(
+    ({ label }) => label,
+  );
 }
 
 /** 枚举打包后仍会上传的文件（相对 src/）。 */
@@ -151,6 +173,13 @@ function tdesignDistRoot(): string {
 }
 
 describe("小程序上传包的隐私接口面", () => {
+  it("关键词覆盖微信隐私接口清单里的代表性入口", () => {
+    const uncovered = COVERAGE_SAMPLES.filter(
+      (sample) => !FORBIDDEN.some(({ pattern }) => pattern.test(sample)),
+    );
+    expect(uncovered).toEqual([]);
+  });
+
   it("自有代码不含未声明的隐私接口", () => {
     const own = shippedFiles().filter((f) => !f.startsWith("miniprogram_npm/"));
     expect(own.length).toBeGreaterThan(0);
