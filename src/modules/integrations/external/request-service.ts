@@ -14,7 +14,6 @@ import {
   sanitizeMessageHtml,
   sanitizeReeditableMessageHtml,
 } from "@/lib/sanitize-html";
-import { contentReeditExpiresAt } from "@/lib/content-reedit-window";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import { claimExternalInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { writeExternalAuditLog } from "@/modules/audit/audit-service";
@@ -28,6 +27,7 @@ import {
   enforceExternalPublicContentRules,
 } from "@/modules/plugins/content-risk-service";
 import {
+  contentReeditDeadlineFor,
   contentRiskReasonFor,
   contentRiskStatusFor,
   loadContentRiskPageState,
@@ -627,15 +627,14 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       const contentRiskReason = contentRiskReasonFor(
         messageRiskState(message),
       );
-      // 重新编辑是限时的（见 content-reedit-window）：超时后连撤回原文都不再下发
-      const reeditExpiresAt = contentReeditExpiresAt(
-        messageRiskState(message)?.revokedAt,
+      // 与员工/客户端同一套判定：管理员人工撤回不给重新编辑，其余看时限
+      const reeditExpiresAt = contentReeditDeadlineFor(
+        messageRiskState(message),
       );
       const canReeditRevokedMessage =
         contentRiskStatus === "REVOKED" &&
         message.externalAuthorId === actor.id &&
-        reeditExpiresAt !== null &&
-        reeditExpiresAt.getTime() > Date.now();
+        reeditExpiresAt !== null;
       const replyTo = message.replyToMessageId
         ? messageById.get(message.replyToMessageId)
         : null;

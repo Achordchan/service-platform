@@ -170,24 +170,33 @@ describe("服务请求消息人工撤回", () => {
   });
 
   it("重新编辑窗口过期后不再显示入口", () => {
-    const expiredMessage: ChatMessage = {
-      ...message,
-      contentRiskStatus: "REVOKED",
-      contentRiskReason: "包含站外联系方式引导",
-      reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
-      reeditAttachmentCount: 0,
-      reeditExpiresAt: new Date(Date.now() - 1_000).toISOString(),
-    };
-    render(
-      <RequestChatThread
-        messages={[expiredMessage]}
-        currentUserId="customer-1"
-        contentRiskEnabled
-        onReedit={vi.fn()}
-      />,
-    );
+    vi.useFakeTimers();
+    try {
+      const expiredMessage: ChatMessage = {
+        ...message,
+        contentRiskStatus: "REVOKED",
+        contentRiskReason: "包含站外联系方式引导",
+        reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
+        reeditAttachmentCount: 0,
+        reeditExpiresAt: new Date(Date.now() - 1_000).toISOString(),
+      };
+      render(
+        <RequestChatThread
+          messages={[expiredMessage]}
+          currentUserId="customer-1"
+          contentRiskEnabled
+          onReedit={vi.fn()}
+        />,
+      );
 
-    expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
+      // 首屏按服务端下发的内容渲染（时钟未起步，避免水合不匹配），挂载后立刻收起
+      act(() => {
+        vi.advanceTimersByTime(0);
+      });
+      expect(screen.queryByRole("button", { name: "重新编辑" })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("窗口内的重新编辑入口到点自动消失", () => {

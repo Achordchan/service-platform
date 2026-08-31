@@ -219,13 +219,16 @@ describe("请求聊天生产流程", () => {
       (message) => message.id === reply.message.id,
     );
 
+    // 管理员人工撤回的不给作者重新编辑：那是带理由的人工裁决，一键把原话送回
+    // 输入框重发等于让裁决可被单方面绕过
     expect(customerMessage).toMatchObject({
       body: "该内容已撤回",
       contentRiskStatus: "REVOKED",
       contentRiskReason: "包含站外联系方式引导",
       attachments: [],
-      reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
+      reeditBody: null,
       reeditAttachmentCount: 0,
+      reeditExpiresAt: null,
     });
     expect(managerMessage).toMatchObject({
       body: "该内容已撤回",
@@ -249,7 +252,21 @@ describe("请求聊天生产流程", () => {
       email_due: "0",
     });
 
-    // 重新编辑是限时的：窗口一过，连撤回原文都不再下发给作者
+    // 改判成 AI 撤回（风控插件的常规路径）后才给重新编辑，且是限时的
+    await ownerPool.query(
+      `UPDATE "ContentRiskReview" SET source = 'AI'
+        WHERE "targetType" = 'REQUEST_MESSAGE' AND "targetId" = $1`,
+      [reply.message.id],
+    );
+    const aiRevokedView = await getRequest(customer, created.id);
+    expect(
+      aiRevokedView.messages.find((message) => message.id === reply.message.id),
+    ).toMatchObject({
+      contentRiskStatus: "REVOKED",
+      reeditBody: "<p>这条公开回复需要由管理员撤回</p>",
+    });
+
+    // 窗口一过，连撤回原文都不再下发给作者
     await ownerPool.query(
       // revokedAt 是无时区列（Prisma 按 UTC 读写），必须写 UTC 墙钟，
       // 直接写 now() 会按会话时区落成本地时间，读回来就凭空跑到未来

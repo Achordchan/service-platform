@@ -81,11 +81,11 @@ function looksLikeHtml(body: string) {
 
 /**
  * 重新编辑窗口是否还开着。服务端已经按同一时限决定要不要下发 reeditBody，这里
- * 只负责让停留在页面上不刷新的人也能看到入口到点消失；没有下发时限就以服务端
- * 给出的 reeditBody 为准。
+ * 只负责让停留在页面上不刷新的人也能看到入口到点消失；没有下发时限、或时钟还没
+ * 起步（nowMs 为 null，即 SSR 与水合那两次渲染）就以服务端给出的 reeditBody 为准。
  */
-function reeditWindowOpen(message: ChatMessage, nowMs: number) {
-  if (!message.reeditExpiresAt) return true;
+function reeditWindowOpen(message: ChatMessage, nowMs: number | null) {
+  if (nowMs === null || !message.reeditExpiresAt) return true;
   const expiresAtMs = new Date(message.reeditExpiresAt).getTime();
   return Number.isNaN(expiresAtMs) || expiresAtMs > nowMs;
 }
@@ -216,7 +216,10 @@ export function RequestChatThread({
     [messages],
   );
   const [extraVisible, setExtraVisible] = useState(0);
-  const [reeditNowMs, setReeditNowMs] = useState(() => Date.now());
+  // 初始时钟必须是确定值：SSR 与水合各自跑一次 Date.now()，若截止时刻正好落在
+  // 两次之间，服务端渲染出按钮而客户端不渲染，React 会判定水合不匹配并重建整棵
+  // 聊天子树。null = 尚未起步，先信服务端下发的 reeditBody，挂载后再拨到真实时间。
+  const [reeditNowMs, setReeditNowMs] = useState<number | null>(null);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const loadingEarlierRef = useRef(false);
@@ -240,10 +243,11 @@ export function RequestChatThread({
       if (!message.reeditBody || !message.reeditExpiresAt) continue;
       const expiresAtMs = new Date(message.reeditExpiresAt).getTime();
       if (Number.isNaN(expiresAtMs)) continue;
-      // 已过期的：只有当时钟还落在它之前（渲染仍在显示这个入口）才需要马上拨钟
+      // 已过期的：只有当时钟还落在它之前（渲染仍在显示这个入口）才需要马上拨钟；
+      // 时钟未起步时同理 —— 挂载后第一轮就要把已过期的入口收掉
       const at =
         expiresAtMs <= now
-          ? expiresAtMs > reeditNowMs
+          ? reeditNowMs === null || expiresAtMs > reeditNowMs
             ? now
             : null
           : expiresAtMs;
@@ -253,7 +257,7 @@ export function RequestChatThread({
     if (wakeAt === null) return;
     const timer = setTimeout(
       () => setReeditNowMs(Date.now()),
-      Math.max(0, wakeAt - now) + 250,
+      wakeAt <= now ? 0 : wakeAt - now + 250,
     );
     return () => clearTimeout(timer);
   }, [sorted, reeditNowMs]);
