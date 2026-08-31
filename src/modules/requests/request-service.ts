@@ -11,6 +11,7 @@ import {
   enforceActorPublicContentRules,
 } from "@/modules/plugins/content-risk-service";
 import {
+  contentReeditDeadlineFor,
   contentRiskReasonFor,
   contentRiskStatusFor,
   loadContentRiskPageState,
@@ -803,10 +804,16 @@ export function getRequest(actor: Actor, requestId: string) {
         const contentRiskReason = contentRiskReasonFor(
           messageRiskState(message),
         );
+        // 重新编辑限管理员人工撤回之外、且在时限内（见 contentReeditDeadlineFor）：
+        // 不满足时连撤回原文都不下发
+        const reeditExpiresAt = contentReeditDeadlineFor(
+          messageRiskState(message),
+        );
         const canReeditRevokedMessage =
           contentRiskStatus === "REVOKED" &&
           (message.authorId === actor.id ||
-            message.externalAuthorId === actor.id);
+            message.externalAuthorId === actor.id) &&
+          reeditExpiresAt !== null;
         const replyTo = message.replyToMessageId
           ? messageById.get(message.replyToMessageId)
           : null;
@@ -826,6 +833,7 @@ export function getRequest(actor: Actor, requestId: string) {
           reeditAttachmentCount: canReeditRevokedMessage
             ? (attachmentsByMessageId.get(message.id) ?? []).length
             : 0,
+          reeditExpiresAt: canReeditRevokedMessage ? reeditExpiresAt : null,
           supportPlaybook:
             !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
               ? null

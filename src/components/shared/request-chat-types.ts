@@ -51,6 +51,8 @@ export type ChatMessage = {
   contentRiskReason?: string | null;
   reeditBody?: string | null;
   reeditAttachmentCount?: number;
+  /** 重新编辑截止时刻（ISO）；到点后入口消失，缺省表示服务端未下发时限 */
+  reeditExpiresAt?: string | null;
 };
 
 export type ChatReplyTarget = Pick<

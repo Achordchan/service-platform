@@ -49,6 +49,7 @@ import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
+import { UpdateCommentList } from "@/components/shared/update-comment-list";
 import {
   ContentRiskNotice,
   ContentRiskStatusLine,
@@ -215,6 +216,8 @@ export function ProjectDetailWorkspace({
     comment: CommentItem;
   } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  // 评论区跟着列表行展开，不再藏在详情弹窗里；一次只展开一条
+  const [commentOpenId, setCommentOpenId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
 
@@ -278,10 +281,8 @@ export function ProjectDetailWorkspace({
   }, [activeTab, markRead, project.id, projectScopeCounts]);
 
   useEffect(() => {
-    if (detailId == null) {
-      commentCreateForm.reset({ body: "", internal: false });
-    }
-  }, [detailId, commentCreateForm]);
+    commentCreateForm.reset({ body: "", internal: false });
+  }, [commentOpenId, commentCreateForm]);
 
   async function confirmDeleteUpdate() {
     if (!deleteTarget) return;
@@ -335,7 +336,9 @@ export function ProjectDetailWorkspace({
 
   function openEditComment(update: ProjectUpdate, comment: CommentItem) {
     commentEditForm.reset({
-      body: comment.body,
+      // 评论各端都只产出纯文本（转义后包一层 <p>），编辑框里要还原成纯文本，
+      // 否则用户看到并且会一起改掉 <p>/<br/> 标签本身
+      body: htmlToPlainText(comment.body),
       internal: comment.visibility === "INTERNAL",
     });
     setEditCommentTarget({ update, comment });
@@ -348,7 +351,7 @@ export function ProjectDetailWorkspace({
       await staffApi(
         `/api/v1/projects/${project.id}/updates/${editCommentTarget.update.id}/comments/${editCommentTarget.comment.id}`,
         jsonRequest("PATCH", {
-          body: values.body,
+          body: commentTextToHtml(values.body),
           visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
         }),
       );
@@ -363,11 +366,11 @@ export function ProjectDetailWorkspace({
   });
 
   const submitCreateComment = commentCreateForm.handleSubmit(async (values) => {
-    if (!detailUpdate) return;
+    if (!commentOpenId) return;
     setPostingComment(true);
     try {
       await staffApi(
-        `/api/v1/projects/${project.id}/updates/${detailUpdate.id}/comments`,
+        `/api/v1/projects/${project.id}/updates/${commentOpenId}/comments`,
         jsonRequest("POST", {
           body: commentTextToHtml(values.body),
           visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
@@ -553,191 +556,334 @@ export function ProjectDetailWorkspace({
                   extractInlineAttachmentIds(update.body).length > 0 ||
                   /<img\b/i.test(update.body);
                 const replyCount = update.comments.length;
+                const commentsOpen = commentOpenId === update.id;
                 return (
                   <Box
                     key={update.id}
                     sx={{
                       p: { xs: 1.25, md: 1.5 },
-                      display: "grid",
-                      gridTemplateColumns: {
-                        xs: "minmax(0, 1fr)",
-                        md: "minmax(0, 1fr) minmax(190px, auto)",
-                      },
-                      columnGap: 3,
-                      rowGap: 1.25,
                       borderBottom:
                         index === project.updates.length - 1 ? 0 : "1px solid",
                       borderColor: "divider",
-                      alignItems: "start",
                     }}
                   >
-                    <Stack spacing={0.75} sx={{ minWidth: 0 }}>
-                      {revoked ? (
-                        <ContentRiskStatusLine
-                          status="REVOKED"
-                          pluginEnabled={Boolean(project.contentRiskUiEnabled)}
-                        />
-                      ) : (
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          useFlexGap
-                          sx={{ alignItems: "center", flexWrap: "wrap" }}
-                        >
-                          <Typography
-                            sx={{ fontWeight: 650, overflowWrap: "anywhere" }}
-                          >
-                            {update.title}
-                          </Typography>
-                          {update.visibility === "INTERNAL" ? (
-                            <LockOutlinedIcon fontSize="small" color="action" />
-                          ) : null}
-                        </Stack>
-                      )}
-                      {!revoked && update.contentRiskStatus === "PENDING" ? (
-                        <ContentRiskStatusLine
-                          status="PENDING"
-                          pluginEnabled={Boolean(project.contentRiskUiEnabled)}
-                        />
-                      ) : null}
-                      {!revoked && preview ? (
-                        <Typography
-                          color="text.secondary"
-                          sx={{
-                            lineHeight: 1.7,
-                            display: "-webkit-box",
-                            WebkitBoxOrient: "vertical",
-                            WebkitLineClamp: 2,
-                            overflow: "hidden",
-                            wordBreak: "break-word",
-                          }}
-                        >
-                          {preview}
-                        </Typography>
-                      ) : null}
-                      {!revoked && hasImages ? (
-                        <Stack
-                          direction="row"
-                          spacing={0.75}
-                          sx={{ alignItems: "center", color: "text.secondary" }}
-                        >
-                          <ImageOutlinedIcon sx={{ fontSize: 17 }} />
-                          <Typography variant="body2">
-                            包含图片，请查看详情
-                          </Typography>
-                        </Stack>
-                      ) : null}
-                      {!revoked && (update.attachments?.length ?? 0) > 0 ? (
-                        <Stack
-                          direction="row"
-                          spacing={0.75}
-                          sx={{ alignItems: "center", color: "text.secondary" }}
-                        >
-                          <AttachFileOutlinedIcon sx={{ fontSize: 17 }} />
-                          <Typography variant="body2">
-                            {update.attachments!.length} 个附件（已收录到项目文件）
-                          </Typography>
-                        </Stack>
-                      ) : null}
-                      {!revoked && replyCount > 0 ? (
-                        <Stack
-                          direction="row"
-                          spacing={0.75}
-                          sx={{ alignItems: "center", color: "text.secondary" }}
-                        >
-                          <ChatBubbleOutlineOutlinedIcon sx={{ fontSize: 17 }} />
-                          <Typography variant="body2">
-                            {replyCount} 条回复
-                          </Typography>
-                        </Stack>
-                      ) : null}
-                    </Stack>
-                    <Stack
-                      spacing={0.75}
+                    <Box
                       sx={{
-                        minWidth: 0,
-                        pt: { xs: 1.25, md: 0 },
-                        borderTop: { xs: "1px solid", md: 0 },
-                        borderColor: "divider",
-                        alignItems: { xs: "flex-start", md: "flex-end" },
-                        textAlign: { xs: "left", md: "right" },
+                        display: "grid",
+                        gridTemplateColumns: {
+                          xs: "minmax(0, 1fr)",
+                          md: "minmax(0, 1fr) minmax(190px, auto)",
+                        },
+                        columnGap: 3,
+                        rowGap: 1.25,
+                        alignItems: "start",
                       }}
                     >
-                      <Box>
-                        <Typography variant="body2" color="text.secondary">
-                          {update.authorName}
-                        </Typography>
-                      </Box>
-                      <Box>
-                        <Typography variant="body2" color="text.secondary">
-                          {dateTimeFormatter.format(new Date(update.createdAt))}
-                          {update.hasEditHistory ? (
-                            <EditedAtLabel
-                              updatedAt={update.updatedAt}
-                              onClick={() =>
-                                setHistoryTarget({
-                                  kind: "update",
-                                  projectId: project.id,
-                                  projectUpdateId: update.id,
-                                  label: update.title,
-                                })
-                              }
-                            />
-                          ) : null}
-                        </Typography>
-                      </Box>
-                      <Stack
-                        direction="row"
-                        spacing={0.75}
-                        useFlexGap
-                        sx={{
-                          width: "100%",
-                          alignItems: "center",
-                          justifyContent: { xs: "flex-start", md: "flex-end" },
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        {!revoked ? (
-                          <Button
-                            size="small"
-                            color="primary"
-                            startIcon={<VisibilityOutlinedIcon />}
-                            onClick={() => setDetailId(update.id)}
+                      <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+                        {revoked ? (
+                          <ContentRiskStatusLine
+                            status="REVOKED"
+                            pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                          />
+                        ) : (
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            useFlexGap
+                            sx={{ alignItems: "center", flexWrap: "wrap" }}
                           >
-                            查看详情
-                          </Button>
+                            <Typography
+                              sx={{ fontWeight: 650, overflowWrap: "anywhere" }}
+                            >
+                              {update.title}
+                            </Typography>
+                            {update.visibility === "INTERNAL" ? (
+                              <LockOutlinedIcon fontSize="small" color="action" />
+                            ) : null}
+                          </Stack>
+                        )}
+                        {!revoked && update.contentRiskStatus === "PENDING" ? (
+                          <ContentRiskStatusLine
+                            status="PENDING"
+                            pluginEnabled={Boolean(project.contentRiskUiEnabled)}
+                          />
                         ) : null}
-                        {canPublishUpdate ? (
-                          <>
-                            <Tooltip title="编辑进度">
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  aria-label={`编辑进度 ${update.title}`}
-                                  onClick={() => openEditUpdate(update)}
-                                  disabled={update.contentRiskStatus === "REVOKED"}
-                                >
-                                  <EditOutlinedIcon fontSize="small" />
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                            <Tooltip title="删除进度">
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  aria-label={`删除进度 ${update.title}`}
-                                  onClick={() => setDeleteTarget(update)}
-                                  disabled={deleting}
-                                >
-                                  <DeleteOutlineOutlinedIcon fontSize="small" />
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                          </>
+                        {!revoked && preview ? (
+                          <Typography
+                            color="text.secondary"
+                            sx={{
+                              lineHeight: 1.7,
+                              display: "-webkit-box",
+                              WebkitBoxOrient: "vertical",
+                              WebkitLineClamp: 2,
+                              overflow: "hidden",
+                              wordBreak: "break-word",
+                            }}
+                          >
+                            {preview}
+                          </Typography>
+                        ) : null}
+                        {!revoked && hasImages ? (
+                          <Stack
+                            direction="row"
+                            spacing={0.75}
+                            sx={{ alignItems: "center", color: "text.secondary" }}
+                          >
+                            <ImageOutlinedIcon sx={{ fontSize: 17 }} />
+                            <Typography variant="body2">
+                              包含图片，请查看详情
+                            </Typography>
+                          </Stack>
+                        ) : null}
+                        {!revoked && (update.attachments?.length ?? 0) > 0 ? (
+                          <Stack
+                            direction="row"
+                            spacing={0.75}
+                            sx={{ alignItems: "center", color: "text.secondary" }}
+                          >
+                            <AttachFileOutlinedIcon sx={{ fontSize: 17 }} />
+                            <Typography variant="body2">
+                              {update.attachments!.length} 个附件（已收录到项目文件）
+                            </Typography>
+                          </Stack>
                         ) : null}
                       </Stack>
-                    </Stack>
+                      <Stack
+                        spacing={0.75}
+                        sx={{
+                          minWidth: 0,
+                          pt: { xs: 1.25, md: 0 },
+                          borderTop: { xs: "1px solid", md: 0 },
+                          borderColor: "divider",
+                          alignItems: { xs: "flex-start", md: "flex-end" },
+                          textAlign: { xs: "left", md: "right" },
+                        }}
+                      >
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">
+                            {update.authorName}
+                          </Typography>
+                        </Box>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary">
+                            {dateTimeFormatter.format(new Date(update.createdAt))}
+                            {update.hasEditHistory ? (
+                              <EditedAtLabel
+                                updatedAt={update.updatedAt}
+                                onClick={() =>
+                                  setHistoryTarget({
+                                    kind: "update",
+                                    projectId: project.id,
+                                    projectUpdateId: update.id,
+                                    label: update.title,
+                                  })
+                                }
+                              />
+                            ) : null}
+                          </Typography>
+                        </Box>
+                        <Stack
+                          direction="row"
+                          spacing={0.75}
+                          useFlexGap
+                          sx={{
+                            width: "100%",
+                            alignItems: "center",
+                            justifyContent: { xs: "flex-start", md: "flex-end" },
+                            flexWrap: "wrap",
+                          }}
+                        >
+                          {!revoked ? (
+                            <>
+                              <Button
+                                size="small"
+                                color="primary"
+                                startIcon={<VisibilityOutlinedIcon />}
+                                onClick={() => setDetailId(update.id)}
+                              >
+                                查看详情
+                              </Button>
+                              <Button
+                                size="small"
+                                color={commentsOpen ? "primary" : "inherit"}
+                                startIcon={<ChatBubbleOutlineOutlinedIcon />}
+                                onClick={() =>
+                                  setCommentOpenId((current) =>
+                                    current === update.id ? null : update.id,
+                                  )
+                                }
+                                aria-expanded={commentsOpen}
+                              >
+                                评论{replyCount > 0 ? ` ${replyCount}` : ""}
+                              </Button>
+                            </>
+                          ) : null}
+                          {canPublishUpdate ? (
+                            <>
+                              <Tooltip title="编辑进度">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    aria-label={`编辑进度 ${update.title}`}
+                                    onClick={() => openEditUpdate(update)}
+                                    disabled={update.contentRiskStatus === "REVOKED"}
+                                  >
+                                    <EditOutlinedIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="删除进度">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    aria-label={`删除进度 ${update.title}`}
+                                    onClick={() => setDeleteTarget(update)}
+                                    disabled={deleting}
+                                  >
+                                    <DeleteOutlineOutlinedIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </>
+                          ) : null}
+                        </Stack>
+                      </Stack>
+                    </Box>
+                    {!revoked && commentsOpen ? (
+                      <Box
+                        sx={{
+                          mt: 1.5,
+                          p: { xs: 1.25, md: 1.5 },
+                          borderRadius: 1.5,
+                          bgcolor: "action.hover",
+                        }}
+                      >
+                        <UpdateCommentList
+                          items={update.comments.map((comment) => ({
+                            id: comment.id,
+                            body: comment.body,
+                            authorId: comment.authorId,
+                            authorName: comment.authorName,
+                            authorImage: comment.authorImage,
+                            createdAt: comment.createdAt,
+                            contentRiskStatus: comment.contentRiskStatus,
+                            badge:
+                              comment.visibility === "INTERNAL"
+                                ? " · 内部评论"
+                                : null,
+                            meta: comment.hasEditHistory ? (
+                              <EditedAtLabel
+                                updatedAt={comment.updatedAt}
+                                onClick={() =>
+                                  setHistoryTarget({
+                                    kind: "comment",
+                                    projectId: project.id,
+                                    projectUpdateId: update.id,
+                                    updateCommentId: comment.id,
+                                    label: `${update.title} · 评论`,
+                                  })
+                                }
+                              />
+                            ) : null,
+                            action:
+                              (canEditProject ||
+                                comment.authorId === currentUserId) &&
+                              comment.contentRiskStatus !== "REVOKED" ? (
+                                <Tooltip title="编辑评论">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      aria-label="编辑评论"
+                                      onClick={() =>
+                                        openEditComment(update, comment)
+                                      }
+                                      sx={{ flexShrink: 0 }}
+                                    >
+                                      <EditOutlinedIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              ) : null,
+                          }))}
+                          contentRiskEnabled={Boolean(
+                            project.contentRiskUiEnabled,
+                          )}
+                          dateFormatter={dateTimeFormatter}
+                        />
+                        {canComment ? (
+                          <Box
+                            component="form"
+                            onSubmit={submitCreateComment}
+                            sx={{ mt: 1.5 }}
+                          >
+                            {postingComment ? (
+                              <LinearProgress sx={{ mb: 1 }} />
+                            ) : null}
+                            <Controller
+                              control={commentCreateForm.control}
+                              name="body"
+                              render={({ field }) => (
+                                <TextField
+                                  {...field}
+                                  placeholder="回复客户或记录说明…"
+                                  fullWidth
+                                  multiline
+                                  minRows={2}
+                                  maxRows={8}
+                                  size="small"
+                                  disabled={postingComment}
+                                  sx={{ bgcolor: "background.paper" }}
+                                  error={Boolean(
+                                    commentCreateForm.formState.errors.body,
+                                  )}
+                                  helperText={
+                                    commentCreateForm.formState.errors.body
+                                      ?.message
+                                  }
+                                />
+                              )}
+                            />
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              sx={{
+                                mt: 1,
+                                alignItems: "center",
+                                justifyContent: "space-between",
+                              }}
+                            >
+                              <Controller
+                                control={commentCreateForm.control}
+                                name="internal"
+                                render={({ field }) => (
+                                  <FormControlLabel
+                                    control={
+                                      <Switch
+                                        size="small"
+                                        checked={field.value}
+                                        onChange={(event) =>
+                                          field.onChange(event.target.checked)
+                                        }
+                                      />
+                                    }
+                                    label="仅内部可见"
+                                  />
+                                )}
+                              />
+                              <Button
+                                type="submit"
+                                size="small"
+                                variant="contained"
+                                disabled={postingComment}
+                              >
+                                {postingComment ? "正在发送" : "发送"}
+                              </Button>
+                            </Stack>
+                          </Box>
+                        ) : null}
+                      </Box>
+                    ) : null}
                   </Box>
                 );
               })}
@@ -802,172 +948,25 @@ export function ProjectDetailWorkspace({
                       text={detailUpdate.body}
                       collapsible={false}
                     />
-                    {detailUpdate.comments.length > 0 ? (
-                      <>
-                        <Divider />
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{ alignItems: "center" }}
-                        >
-                          <ChatBubbleOutlineOutlinedIcon
-                            sx={{ fontSize: 18, color: "text.secondary" }}
-                          />
-                          <Typography variant="body2" color="text.secondary">
-                            {detailUpdate.comments.length} 条回复
-                          </Typography>
-                        </Stack>
-                        <Stack
-                          spacing={1.5}
-                          sx={{
-                            pl: 2,
-                            borderLeft: "2px solid",
-                            borderColor: "divider",
-                          }}
-                        >
-                          {detailUpdate.comments.map((comment) => (
-                            <Box key={comment.id}>
-                              <Stack
-                                direction="row"
-                                spacing={1}
-                                sx={{
-                                  alignItems: "flex-start",
-                                  justifyContent: "space-between",
-                                }}
-                              >
-                                <Typography
-                                  variant="body2"
-                                  sx={{ fontWeight: 650 }}
-                                >
-                                  {comment.authorName}
-                                  {comment.visibility === "INTERNAL"
-                                    ? " · 内部评论"
-                                    : ""}
-                                  {comment.hasEditHistory ? (
-                                    <EditedAtLabel
-                                      updatedAt={comment.updatedAt}
-                                      onClick={() =>
-                                        setHistoryTarget({
-                                          kind: "comment",
-                                          projectId: project.id,
-                                          projectUpdateId: detailUpdate.id,
-                                          updateCommentId: comment.id,
-                                          label: `${detailUpdate.title} · 评论`,
-                                        })
-                                      }
-                                    />
-                                  ) : null}
-                                </Typography>
-                                {(canEditProject ||
-                                  comment.authorId === currentUserId) &&
-                                comment.contentRiskStatus !== "REVOKED" ? (
-                                  <Tooltip title="编辑评论">
-                                    <span>
-                                      <IconButton
-                                        size="small"
-                                        aria-label="编辑评论"
-                                        onClick={() =>
-                                          openEditComment(detailUpdate, comment)
-                                        }
-                                        sx={{ flexShrink: 0 }}
-                                      >
-                                        <EditOutlinedIcon fontSize="small" />
-                                      </IconButton>
-                                    </span>
-                                  </Tooltip>
-                                ) : null}
-                              </Stack>
-                              {comment.contentRiskStatus === "REVOKED" ? (
-                                <ContentRiskStatusLine
-                                  status="REVOKED"
-                                  pluginEnabled={Boolean(
-                                    project.contentRiskUiEnabled,
-                                  )}
-                                />
-                              ) : (
-                                <>
-                                  <CollapsibleText
-                                    text={comment.body}
-                                    maxLines={6}
-                                  />
-                                  <ContentRiskStatusLine
-                                    status={comment.contentRiskStatus}
-                                    pluginEnabled={Boolean(
-                                      project.contentRiskUiEnabled,
-                                    )}
-                                  />
-                                </>
-                              )}
-                            </Box>
-                          ))}
-                        </Stack>
-                      </>
-                    ) : null}
-                    {canComment &&
-                    detailUpdate.contentRiskStatus !== "REVOKED" ? (
-                      <Box component="form" onSubmit={submitCreateComment}>
-                        <Divider sx={{ mb: 1.5 }} />
-                        <Controller
-                          control={commentCreateForm.control}
-                          name="body"
-                          render={({ field }) => (
-                            <TextField
-                              {...field}
-                              label="写评论"
-                              placeholder="回复客户或记录说明…"
-                              fullWidth
-                              multiline
-                              minRows={2}
-                              maxRows={8}
-                              disabled={postingComment}
-                              error={Boolean(
-                                commentCreateForm.formState.errors.body,
-                              )}
-                              helperText={
-                                commentCreateForm.formState.errors.body?.message
-                              }
-                            />
-                          )}
-                        />
-                        <Stack
-                          direction="row"
-                          spacing={1}
-                          sx={{
-                            mt: 1,
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                          }}
-                        >
-                          <Controller
-                            control={commentCreateForm.control}
-                            name="internal"
-                            render={({ field }) => (
-                              <FormControlLabel
-                                control={
-                                  <Switch
-                                    checked={field.value}
-                                    onChange={(event) =>
-                                      field.onChange(event.target.checked)
-                                    }
-                                  />
-                                }
-                                label="仅内部可见"
-                              />
-                            )}
-                          />
-                          <Button
-                            type="submit"
-                            variant="contained"
-                            disabled={postingComment}
-                          >
-                            {postingComment ? "正在发送" : "发送"}
-                          </Button>
-                        </Stack>
-                      </Box>
-                    ) : null}
                   </Stack>
                 </DialogContent>
                 <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                  {detailUpdate.contentRiskStatus !== "REVOKED" ? (
+                    <Button
+                      startIcon={<ChatBubbleOutlineOutlinedIcon />}
+                      onClick={() => {
+                        // 评论区在列表行里，关掉详情直接把对应的那条展开
+                        setCommentOpenId(detailUpdate.id);
+                        setDetailId(null);
+                      }}
+                      sx={{ mr: "auto" }}
+                    >
+                      评论
+                      {detailUpdate.comments.length > 0
+                        ? ` ${detailUpdate.comments.length}`
+                        : ""}
+                    </Button>
+                  ) : null}
                   <Button onClick={() => setDetailId(null)}>关闭</Button>
                 </DialogActions>
               </>

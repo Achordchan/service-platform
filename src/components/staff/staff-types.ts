@@ -110,6 +110,7 @@ export type ProjectUpdate = {
     visibility: ContentVisibility;
     authorId: string;
     authorName: string;
+    authorImage?: string | null;
     createdAt: string;
     updatedAt: string;
     hasEditHistory: boolean;
@@ -227,6 +228,7 @@ export type RequestDetail = RequestListItem & {
     contentRiskReason?: string | null;
     reeditBody?: string | null;
     reeditAttachmentCount?: number;
+    reeditExpiresAt?: string | null;
   }>;
 };
 

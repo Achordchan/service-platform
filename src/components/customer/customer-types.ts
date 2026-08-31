@@ -87,7 +87,9 @@ export type ProjectUpdate = {
   comments: Array<{
     id: string;
     body: string;
+    authorId?: string;
     authorName: string;
+    authorImage?: string | null;
     createdAt: string;
     updatedAt: string;
     contentRiskStatus?: "PENDING" | "REVOKED" | null;
@@ -178,6 +180,7 @@ export type RequestMessage = {
   contentRiskReason?: string | null;
   reeditBody?: string | null;
   reeditAttachmentCount?: number;
+  reeditExpiresAt?: string | null;
 };
 
 export type ServiceRequestDetail = ServiceRequestSummary & {

@@ -128,6 +128,7 @@ type RequestDetailView = RequestSummary & {
     contentRiskReason?: string | null;
     reeditBody?: string | null;
     reeditAttachmentCount?: number;
+    reeditExpiresAt?: string | null;
     replyTo: null | {
       id: string;
       body: string;
@@ -701,6 +702,7 @@ function ExternalEmbedPortal({
     contentRiskReason: message.contentRiskReason,
     reeditBody: message.reeditBody,
     reeditAttachmentCount: message.reeditAttachmentCount,
+    reeditExpiresAt: message.reeditExpiresAt,
   })) ?? [], [detail]);
 
   if (loading) {

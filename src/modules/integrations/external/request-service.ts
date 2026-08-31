@@ -27,6 +27,7 @@ import {
   enforceExternalPublicContentRules,
 } from "@/modules/plugins/content-risk-service";
 import {
+  contentReeditDeadlineFor,
   contentRiskReasonFor,
   contentRiskStatusFor,
   loadContentRiskPageState,
@@ -626,9 +627,14 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       const contentRiskReason = contentRiskReasonFor(
         messageRiskState(message),
       );
+      // 与员工/客户端同一套判定：管理员人工撤回不给重新编辑，其余看时限
+      const reeditExpiresAt = contentReeditDeadlineFor(
+        messageRiskState(message),
+      );
       const canReeditRevokedMessage =
         contentRiskStatus === "REVOKED" &&
-        message.externalAuthorId === actor.id;
+        message.externalAuthorId === actor.id &&
+        reeditExpiresAt !== null;
       const replyTo = message.replyToMessageId
         ? messageById.get(message.replyToMessageId)
         : null;
@@ -656,6 +662,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         reeditAttachmentCount: canReeditRevokedMessage
           ? (attachmentsByMessageId.get(message.id) ?? []).length
           : 0,
+        reeditExpiresAt: canReeditRevokedMessage ? reeditExpiresAt : null,
         author: serializeAuthor(authorFor(message), actor),
         attachments: (contentRiskStatus === "REVOKED"
           ? []
