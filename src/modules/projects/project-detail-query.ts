@@ -119,7 +119,8 @@ export async function loadProjectDetail(
         ),
       },
     },
-    select: { id: true, name: true },
+    // image：动态/评论列表要显示作者头像
+    select: { id: true, name: true, image: true },
   });
   // 不在这里按 customerFilesEnabled 一刀切：RLS 的
   // app_project_attachment_feature_enabled 已经按附件挂在谁身上分别裁决 ——

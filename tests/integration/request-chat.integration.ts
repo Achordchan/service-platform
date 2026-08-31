@@ -248,6 +248,24 @@ describe("请求聊天生产流程", () => {
       unread: "0",
       email_due: "0",
     });
+
+    // 重新编辑是限时的：窗口一过，连撤回原文都不再下发给作者
+    await ownerPool.query(
+      // revokedAt 是无时区列（Prisma 按 UTC 读写），必须写 UTC 墙钟，
+      // 直接写 now() 会按会话时区落成本地时间，读回来就凭空跑到未来
+      `UPDATE "ContentRiskState"
+          SET "revokedAt" = (now() AT TIME ZONE 'UTC') - interval '10 minutes'
+        WHERE "targetType" = 'REQUEST_MESSAGE' AND "targetId" = $1`,
+      [reply.message.id],
+    );
+    const expiredView = await getRequest(customer, created.id);
+    expect(
+      expiredView.messages.find((message) => message.id === reply.message.id),
+    ).toMatchObject({
+      contentRiskStatus: "REVOKED",
+      reeditBody: null,
+      reeditExpiresAt: null,
+    });
   });
 
   it("创建请求时同步生成包含标题和描述的首条消息", async () => {

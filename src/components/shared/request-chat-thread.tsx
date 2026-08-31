@@ -79,6 +79,17 @@ function looksLikeHtml(body: string) {
   return /<\/?[a-z][\s\S]*>/i.test(body);
 }
 
+/**
+ * 重新编辑窗口是否还开着。服务端已经按同一时限决定要不要下发 reeditBody，这里
+ * 只负责让停留在页面上不刷新的人也能看到入口到点消失；没有下发时限就以服务端
+ * 给出的 reeditBody 为准。
+ */
+function reeditWindowOpen(message: ChatMessage, nowMs: number) {
+  if (!message.reeditExpiresAt) return true;
+  const expiresAtMs = new Date(message.reeditExpiresAt).getTime();
+  return Number.isNaN(expiresAtMs) || expiresAtMs > nowMs;
+}
+
 function RequestTypingBubble({ label }: { label: string }) {
   return (
     <Stack
@@ -205,6 +216,7 @@ export function RequestChatThread({
     [messages],
   );
   const [extraVisible, setExtraVisible] = useState(0);
+  const [reeditNowMs, setReeditNowMs] = useState(() => Date.now());
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const loadingEarlierRef = useRef(false);
@@ -217,6 +229,23 @@ export function RequestChatThread({
   const visibleCount = Math.min(sorted.length, baseVisible + extraVisible);
   const hiddenCount = Math.max(0, sorted.length - visibleCount);
   const visibleMessages = sorted.slice(hiddenCount);
+
+  // 到点自动收起「重新编辑」：只为最近的那个截止时刻排一个定时器，不做秒级轮询
+  useEffect(() => {
+    let nearest: number | null = null;
+    for (const message of sorted) {
+      if (!message.reeditBody || !message.reeditExpiresAt) continue;
+      const expiresAtMs = new Date(message.reeditExpiresAt).getTime();
+      if (Number.isNaN(expiresAtMs) || expiresAtMs <= reeditNowMs) continue;
+      if (nearest === null || expiresAtMs < nearest) nearest = expiresAtMs;
+    }
+    if (nearest === null) return;
+    const timer = setTimeout(
+      () => setReeditNowMs(Date.now()),
+      nearest - reeditNowMs + 250,
+    );
+    return () => clearTimeout(timer);
+  }, [sorted, reeditNowMs]);
 
   useLayoutEffect(() => {
     const node = scrollerRef.current;
@@ -757,7 +786,10 @@ export function RequestChatThread({
                         ) : null}
                       </>
                     )}
-                    {isRevoked && message.reeditBody && onReedit ? (
+                    {isRevoked &&
+                    message.reeditBody &&
+                    onReedit &&
+                    reeditWindowOpen(message, reeditNowMs) ? (
                       <Button
                         size="small"
                         color="error"

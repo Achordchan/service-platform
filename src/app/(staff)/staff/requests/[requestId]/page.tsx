@@ -200,6 +200,7 @@ export default async function StaffRequestDetailPage({
       contentRiskReason: message.contentRiskReason,
       reeditBody: message.reeditBody,
       reeditAttachmentCount: message.reeditAttachmentCount,
+      reeditExpiresAt: message.reeditExpiresAt?.toISOString() ?? null,
     })),
   };
 

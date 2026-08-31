@@ -14,6 +14,7 @@ import {
   sanitizeMessageHtml,
   sanitizeReeditableMessageHtml,
 } from "@/lib/sanitize-html";
+import { contentReeditExpiresAt } from "@/lib/content-reedit-window";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import { claimExternalInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { writeExternalAuditLog } from "@/modules/audit/audit-service";
@@ -626,9 +627,15 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
       const contentRiskReason = contentRiskReasonFor(
         messageRiskState(message),
       );
+      // 重新编辑是限时的（见 content-reedit-window）：超时后连撤回原文都不再下发
+      const reeditExpiresAt = contentReeditExpiresAt(
+        messageRiskState(message)?.revokedAt,
+      );
       const canReeditRevokedMessage =
         contentRiskStatus === "REVOKED" &&
-        message.externalAuthorId === actor.id;
+        message.externalAuthorId === actor.id &&
+        reeditExpiresAt !== null &&
+        reeditExpiresAt.getTime() > Date.now();
       const replyTo = message.replyToMessageId
         ? messageById.get(message.replyToMessageId)
         : null;
@@ -656,6 +663,7 @@ export function getExternalRequest(actor: ExternalActor, requestId: string) {
         reeditAttachmentCount: canReeditRevokedMessage
           ? (attachmentsByMessageId.get(message.id) ?? []).length
           : 0,
+        reeditExpiresAt: canReeditRevokedMessage ? reeditExpiresAt : null,
         author: serializeAuthor(authorFor(message), actor),
         attachments: (contentRiskStatus === "REVOKED"
           ? []

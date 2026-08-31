@@ -152,7 +152,9 @@ export default async function CustomerProjectPage({
       comments: update.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
+        authorId: comment.authorId,
         authorName: comment.author.name,
+        authorImage: comment.author.image,
         createdAt: comment.createdAt.toISOString(),
         updatedAt: comment.updatedAt.toISOString(),
         contentRiskStatus: comment.contentRiskStatus,

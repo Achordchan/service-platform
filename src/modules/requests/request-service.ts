@@ -30,6 +30,7 @@ import {
   sanitizeMessageHtml,
   sanitizeReeditableMessageHtml,
 } from "@/lib/sanitize-html";
+import { contentReeditExpiresAt } from "@/lib/content-reedit-window";
 import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { parseSupportPlaybookSnapshot } from "@/lib/support-reply-playbooks";
 import {
@@ -803,10 +804,16 @@ export function getRequest(actor: Actor, requestId: string) {
         const contentRiskReason = contentRiskReasonFor(
           messageRiskState(message),
         );
+        // 重新编辑是限时的（见 content-reedit-window）：超时后连撤回原文都不再下发
+        const reeditExpiresAt = contentReeditExpiresAt(
+          messageRiskState(message)?.revokedAt,
+        );
         const canReeditRevokedMessage =
           contentRiskStatus === "REVOKED" &&
           (message.authorId === actor.id ||
-            message.externalAuthorId === actor.id);
+            message.externalAuthorId === actor.id) &&
+          reeditExpiresAt !== null &&
+          reeditExpiresAt.getTime() > Date.now();
         const replyTo = message.replyToMessageId
           ? messageById.get(message.replyToMessageId)
           : null;
@@ -826,6 +833,7 @@ export function getRequest(actor: Actor, requestId: string) {
           reeditAttachmentCount: canReeditRevokedMessage
             ? (attachmentsByMessageId.get(message.id) ?? []).length
             : 0,
+          reeditExpiresAt: canReeditRevokedMessage ? reeditExpiresAt : null,
           supportPlaybook:
             !actor.isPlatformAdmin && contentRiskStatus === "REVOKED"
               ? null

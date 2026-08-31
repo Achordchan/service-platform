@@ -115,6 +115,7 @@ export default async function StaffProjectDetailPage({
         visibility: comment.visibility,
         authorId: comment.authorId,
         authorName: comment.author.name,
+        authorImage: comment.author.image,
         createdAt: comment.createdAt.toISOString(),
         updatedAt: comment.updatedAt.toISOString(),
         hasEditHistory: comment.hasEditHistory,

@@ -21,6 +21,8 @@ export type ContentRiskViewState = {
     | null;
   reviewSource: "RULE" | "AI" | "ADMIN" | null;
   decisionReason: string | null;
+  /** 撤回时刻；「重新编辑」时限从这里起算（见 content-reedit-window） */
+  revokedAt: Date | null;
 };
 
 export type PublicContentRiskStatus = "PENDING" | "REVOKED" | null;
@@ -80,6 +82,7 @@ export async function loadContentRiskPageState(
             decisionReason: state.latestReviewId
               ? reviewById.get(state.latestReviewId)?.decisionReason ?? null
               : null,
+            revokedAt: state.revokedAt,
           } satisfies ContentRiskViewState,
         ]),
       ),

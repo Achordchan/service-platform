@@ -108,6 +108,7 @@ export default async function CustomerRequestDetailPage({
       contentRiskReason: message.contentRiskReason,
       reeditBody: message.reeditBody,
       reeditAttachmentCount: message.reeditAttachmentCount,
+      reeditExpiresAt: message.reeditExpiresAt?.toISOString() ?? null,
     })),
   };
 
