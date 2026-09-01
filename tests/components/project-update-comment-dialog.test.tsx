@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -130,21 +131,23 @@ const project = {
   ],
 } as unknown as ProjectDetail;
 
+function workspaceProps(current: ProjectDetail) {
+  return {
+    project: current,
+    requests: [],
+    currentUserId: "staff-1",
+    canManageDelivery: true,
+    canPublishUpdate: true,
+    canManageStaff: true,
+    canUploadFiles: true,
+    canComment: true,
+    canEditProject: true,
+    staffCandidates: [],
+  };
+}
+
 function renderWorkspace() {
-  render(
-    <ProjectDetailWorkspace
-      project={project}
-      requests={[]}
-      currentUserId="staff-1"
-      canManageDelivery
-      canPublishUpdate
-      canManageStaff
-      canUploadFiles
-      canComment
-      canEditProject
-      staffCandidates={[]}
-    />,
-  );
+  render(<ProjectDetailWorkspace {...workspaceProps(project)} />);
   fireEvent.click(screen.getByRole("tab", { name: /进度动态/ }));
 }
 
@@ -160,6 +163,32 @@ describe("项目动态评论", () => {
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("我的回复")).toBeDefined();
     expect(within(dialog).getByText("客户的留言")).toBeDefined();
+  });
+
+  it("动态被撤回后评论弹窗跟着关掉，不留评论和输入框", async () => {
+    const { rerender } = render(
+      <ProjectDetailWorkspace {...workspaceProps(project)} />,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: /进度动态/ }));
+    fireEvent.click(screen.getByRole("button", { name: /评论 2/ }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+
+    rerender(
+      <ProjectDetailWorkspace
+        {...workspaceProps({
+          ...project,
+          updates: project.updates.map((update) => ({
+            ...update,
+            contentRiskStatus: "REVOKED" as const,
+          })),
+        })}
+      />,
+    );
+
+    // 撤回后弹窗立刻不再有评论与输入框，随即卸载
+    expect(screen.queryByText("客户的留言")).toBeNull();
+    expect(screen.queryByPlaceholderText("回复客户或记录说明…")).toBeNull();
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("只有自己发的评论给编辑入口，客户的不给", () => {

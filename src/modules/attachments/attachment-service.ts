@@ -972,7 +972,11 @@ export async function setAttachmentProjectPin(
  * 「移出项目文件」，真要删得回工单里删，否则从项目页就能抹掉聊天记录。
  * 正文内嵌图同理，跟着正文走，编辑正文时才会被清理。
  *
- * 项目处于 DRAFT 也允许删除：清理错传的文件不该等外部接入激活。
+ * 项目处于 DRAFT 不额外拦：清理错传的文件不该等外部接入激活。注意这只是
+ * 服务端不设限，前台「文件资料」tab 本就只在交付激活后才渲染（DRAFT 项目
+ * 一律不展示交付相关 tab），所以 DRAFT 目前没有入口 —— 何况上传走的是
+ * assertCanUploadActiveProjectFile，DRAFT 期间根本传不进新文件。要不要给
+ * DRAFT 开一个文件入口是交付流程自己的产品决定，不在删除能力的范围里。
  */
 export async function deleteProjectAttachment(
   actor: Actor,

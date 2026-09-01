@@ -254,9 +254,14 @@ export function ProjectDetailWorkspace({
     detailId != null
       ? project.updates.find((item) => item.id === detailId) ?? null
       : null;
+  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
+  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
   const commentUpdate =
     commentOpenId != null
-      ? project.updates.find((item) => item.id === commentOpenId) ?? null
+      ? project.updates.find(
+          (item) =>
+            item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
+        ) ?? null
       : null;
   const { unread } = useUnreadNotifications();
   const { mutate: markRead } = useMarkNotificationsRead();
@@ -891,7 +896,9 @@ export function ProjectDetailWorkspace({
             dateFormatter={dateTimeFormatter}
             busy={postingComment}
             composer={
-              canComment ? (
+              // 也要看 commentUpdate：动态被撤回时选中项会置空，
+              // 输入框不能还留在淡出中的弹窗里等人发评论
+              canComment && commentUpdate ? (
                 <Box component="form" onSubmit={submitCreateComment}>
                   {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
                   <Controller

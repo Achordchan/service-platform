@@ -74,8 +74,13 @@ export function ProjectUpdates({
   const detail = detailId
     ? updates.find((item) => item.id === detailId) ?? null
     : null;
+  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
+  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
   const commentUpdate = commentOpenId
-    ? updates.find((item) => item.id === commentOpenId) ?? null
+    ? updates.find(
+        (item) =>
+          item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
+      ) ?? null
     : null;
 
   function closeDetail() {
