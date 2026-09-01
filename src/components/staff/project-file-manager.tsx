@@ -17,6 +17,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import FileUploadOutlinedIcon from "@mui/icons-material/FileUploadOutlined";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
@@ -71,12 +72,16 @@ export function ProjectFileManager({
   projectId,
   files,
   canUpload,
+  canPublishUpdate = false,
+  canManageDelivery = false,
   contentRiskEnabled = false,
   contentRiskNoticeEnabled = false,
 }: {
   projectId: string;
   files: RequestAttachment[];
   canUpload: boolean;
+  canPublishUpdate?: boolean;
+  canManageDelivery?: boolean;
   contentRiskEnabled?: boolean;
   contentRiskNoticeEnabled?: boolean;
 }) {
@@ -91,6 +96,10 @@ export function ProjectFileManager({
   // 来源筛选：手动上传的项目文件 vs 从工单沟通/动态里收录进来的
   const [source, setSource] = useState<SourceFilter>("ALL");
   const [unpinning, setUnpinning] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RequestAttachment | null>(
+    null,
+  );
+  const [deleting, setDeleting] = useState(false);
   // 按 source 分类，不能按 pinned：动态/里程碑上的附件是服务端自动收录的，
   // source 是 UPDATE/MILESTONE 但 pinnedToProjectAt 为空，用 pinned 判会把它们
   // 错归成「项目文件」，「来自沟通」则只剩手动收录的工单附件。
@@ -100,6 +109,22 @@ export function ProjectFileManager({
     const collected = (file.source ?? "PROJECT") !== "PROJECT";
     return source === "COLLECTED" ? collected : !collected;
   });
+
+  // 删除权限跟着文件的归属走，与服务端 deleteProjectAttachment 同口径：
+  // 动态附件要发布权限、里程碑附件要交付管理权限、项目文件要上传权限；
+  // 工单沟通收录进来的一律不给删（那是会话内容，只能「移出项目文件」）。
+  function canDeleteFile(file: RequestAttachment) {
+    switch (file.source ?? "PROJECT") {
+      case "REQUEST":
+        return false;
+      case "UPDATE":
+        return canPublishUpdate;
+      case "MILESTONE":
+        return canManageDelivery;
+      default:
+        return canUpload;
+    }
+  }
 
   async function unpinFile(attachmentId: string) {
     setUnpinning(attachmentId);
@@ -115,6 +140,25 @@ export function ProjectFileManager({
       toast.error(cause instanceof Error ? cause.message : "移出失败");
     } finally {
       setUnpinning(null);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      await apiRequest(
+        `/api/v1/attachments/${deleteTarget.id}`,
+        { method: "DELETE" },
+        "文件删除失败",
+      );
+      setDeleteTarget(null);
+      toast.success("文件已删除");
+      router.refresh();
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "文件删除失败");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -311,6 +355,16 @@ export function ProjectFileManager({
                     移出项目文件
                   </Button>
                 ) : null}
+                {canDeleteFile(file) ? (
+                  <Button
+                    variant="text"
+                    color="error"
+                    startIcon={<DeleteOutlineOutlinedIcon />}
+                    onClick={() => setDeleteTarget(file)}
+                  >
+                    删除
+                  </Button>
+                ) : null}
               </Stack>
             ) : null}
           </Stack>
@@ -404,6 +458,37 @@ export function ProjectFileManager({
             disabled={uploading}
           >
             {uploading ? "正在上传" : "确认上传"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+      <Dialog
+        open={Boolean(deleteTarget)}
+        onClose={deleting ? undefined : () => setDeleteTarget(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>删除文件</DialogTitle>
+        <DialogContent>
+          <Typography color="text.secondary">
+            确认删除“
+            {deleteTarget?.title?.trim() || deleteTarget?.originalName}
+            ”？此操作不可恢复。
+            {deleteTarget && (deleteTarget.source ?? "PROJECT") !== "PROJECT"
+              ? `该文件来自${SOURCE_LABELS[deleteTarget.source ?? "PROJECT"]}，删除后在那里也不再显示。`
+              : ""}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 3 }}>
+          <Button onClick={() => setDeleteTarget(null)} disabled={deleting}>
+            取消
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            onClick={() => void confirmDelete()}
+            disabled={deleting}
+          >
+            {deleting ? "删除中..." : "确认删除"}
           </Button>
         </DialogActions>
       </Dialog>

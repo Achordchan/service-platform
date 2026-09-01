@@ -37,10 +37,15 @@ import {
 import { queueAttachmentPreviewRender } from "@/lib/jobs";
 import {
   assertCanManageActiveProjectDelivery,
+  assertCanManageProjectDelivery,
   assertCanPublishActiveProjectUpdate,
+  assertCanPublishProjectUpdate,
   assertCanUploadActiveProjectFile,
   assertCanViewCustomerProjectFeature,
+  loadProjectAccess,
 } from "@/modules/projects/project-access";
+import { assertAllowed } from "@/modules/projects/errors";
+import { canUploadProjectFile } from "@/modules/projects/permissions";
 import {
   badRequest,
   conflict,
@@ -951,5 +956,141 @@ export async function setAttachmentProjectPin(
       });
     }
     return { id: attachment.id, pinned };
+  });
+}
+
+/**
+ * 删除项目文件。
+ *
+ * 只处理「项目文件」列表里能自主管理的那几类，权限跟着文件的归属走 ——
+ * 谁能把它放进来，谁才能删：
+ *   - 项目级手动上传的文件 → 与上传同权（管理员 / 有 file.upload 的负责人）
+ *   - 挂在进度动态或其评论上的附件 → 与发布进度同权
+ *   - 挂在里程碑上的附件 → 与管理交付同权
+ * 工单沟通里收录进来的文件不在此列：那是工单会话的内容，这里只提供
+ * 「移出项目文件」，真要删得回工单里删，否则从项目页就能抹掉聊天记录。
+ * 正文内嵌图同理，跟着正文走，编辑正文时才会被清理。
+ *
+ * 项目处于 DRAFT 也允许删除：清理错传的文件不该等外部接入激活。
+ */
+export async function deleteProjectAttachment(
+  actor: Actor,
+  attachmentId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    const attachment = await tx.attachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true,
+        originalName: true,
+        title: true,
+        mimeType: true,
+        size: true,
+        visibility: true,
+        inline: true,
+        storageKey: true,
+        previewStorageKey: true,
+        projectId: true,
+        customerSpaceId: true,
+        serviceRequestId: true,
+        requestMessageId: true,
+        projectUpdateId: true,
+        updateCommentId: true,
+        milestoneId: true,
+      },
+    });
+    if (!attachment) throw notFound("附件不存在");
+    if (!attachment.projectId) {
+      throw badRequest("ATTACHMENT_NOT_IN_PROJECT", "该附件不属于任何项目");
+    }
+    if (attachment.serviceRequestId || attachment.requestMessageId) {
+      throw badRequest(
+        "ATTACHMENT_FROM_REQUEST",
+        "来自工单沟通的文件请在工单中删除，这里可以将它移出项目文件",
+      );
+    }
+    if (attachment.inline) {
+      throw badRequest(
+        "ATTACHMENT_INLINE",
+        "正文中的图片请通过编辑正文删除",
+      );
+    }
+
+    const projectId = attachment.projectId;
+    if (attachment.projectUpdateId || attachment.updateCommentId) {
+      await assertCanPublishProjectUpdate(tx, actor, projectId);
+    } else if (attachment.milestoneId) {
+      await assertCanManageProjectDelivery(tx, actor, projectId);
+    } else {
+      const context = await loadProjectAccess(tx, actor, projectId);
+      assertAllowed(
+        canUploadProjectFile(actor, context.access),
+        "仅管理员或有文件上传权限的项目负责人可以删除项目文件",
+      );
+    }
+
+    await tx.attachment.delete({ where: { id: attachment.id } });
+    await writeAuditLog(tx, actor, {
+      action: "PROJECT_ATTACHMENT_DELETED",
+      resourceType: "Attachment",
+      resourceId: attachment.id,
+      customerSpaceId: attachment.customerSpaceId ?? undefined,
+      projectId,
+      metadata: {
+        originalName: attachment.originalName,
+        title: attachment.title,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        visibility: attachment.visibility,
+      },
+    });
+    // 与上传/收录同样的静默刷新：别人开着的项目页要跟着把这行去掉，
+    // 但删文件不值得给客户推一条提醒，所以 audible: false、不建通知行。
+    if (attachment.customerSpaceId) {
+      await publishEvent(tx, {
+        type: "PROJECT_UPDATED",
+        payload: {
+          change: "PROJECT_ATTACHMENT_DELETED",
+          actorId: actor.id,
+          audible: false,
+          projectId,
+          attachmentId: attachment.id,
+          visibility: attachment.visibility,
+          // 归属要带上：realtime-event-visibility 按它判这条事件属于
+          // 动态 / 里程碑 / 项目文件哪个模块，客户关掉对应模块就收不到
+          ...(attachment.projectUpdateId
+            ? { projectUpdateId: attachment.projectUpdateId }
+            : {}),
+          ...(attachment.updateCommentId
+            ? { updateCommentId: attachment.updateCommentId }
+            : {}),
+          ...(attachment.milestoneId
+            ? { milestoneId: attachment.milestoneId }
+            : {}),
+        },
+        customerSpaceId: attachment.customerSpaceId,
+        projectId,
+      });
+    }
+    return {
+      storageKeys: [
+        attachment.storageKey,
+        attachment.previewStorageKey,
+      ].filter((value): value is string => Boolean(value)),
+    };
+  }).then(async ({ storageKeys }) => {
+    // 库里的行已经没了，文件删不掉只留日志：再抛错只会让调用方以为没删成
+    for (const storageKey of storageKeys) {
+      try {
+        await removePrivateFile(storageKey);
+      } catch (error) {
+        console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
+          attachmentId,
+          storageKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return { deleted: true as const };
   });
 }

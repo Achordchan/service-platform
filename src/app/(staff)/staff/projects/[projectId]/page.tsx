@@ -133,6 +133,10 @@ export default async function StaffProjectDetailPage({
       visibility: attachment.visibility,
       createdAt: attachment.createdAt.toISOString(),
       contentRiskStatus: attachment.contentRiskStatus,
+      // 来源与收录标记：文件列表靠它们分流「项目文件 / 来自沟通」，
+      // 并决定这行给的是「移出项目文件」还是「删除」
+      source: attachment.source,
+      pinned: attachment.pinned,
     })),
   };
   const requestRows: RequestListItem[] = requests.map((request) => {
