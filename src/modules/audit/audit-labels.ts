@@ -106,6 +106,8 @@ const actionLabels: Record<string, string> = {
   PROJECT_UPDATE_UPDATED: "编辑项目进度",
   PROJECT_UPDATE_DELETED: "删除项目进度",
   PROJECT_ATTACHMENT_UPLOADED: "上传项目附件",
+  PROJECT_ATTACHMENT_DELETED: "删除项目附件",
+  PROJECT_ATTACHMENT_FILE_DELETE_FAILED: "项目附件文件清理失败",
   UPDATE_COMMENT_CREATED: "发表进度评论",
   UPDATE_COMMENT_UPDATED: "编辑进度评论",
   MILESTONE_CREATED: "创建里程碑",

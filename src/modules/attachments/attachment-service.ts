@@ -36,11 +36,17 @@ import {
 } from "@/modules/attachments/attachment-meta";
 import { queueAttachmentPreviewRender } from "@/lib/jobs";
 import {
+  assertCanContributeToProject,
   assertCanManageActiveProjectDelivery,
+  assertCanManageProjectDelivery,
   assertCanPublishActiveProjectUpdate,
+  assertCanPublishProjectUpdate,
   assertCanUploadActiveProjectFile,
   assertCanViewCustomerProjectFeature,
+  loadProjectAccess,
 } from "@/modules/projects/project-access";
+import { assertAllowed } from "@/modules/projects/errors";
+import { canUploadProjectFile } from "@/modules/projects/permissions";
 import {
   badRequest,
   conflict,
@@ -951,5 +957,184 @@ export async function setAttachmentProjectPin(
       });
     }
     return { id: attachment.id, pinned };
+  });
+}
+
+/**
+ * 删除项目文件。
+ *
+ * 只处理「项目文件」列表里能自主管理的那几类，权限跟着文件的归属走 ——
+ * 谁能把它放进来，谁才能删：
+ *   - 项目级手动上传的文件 → 与上传同权（管理员 / 有 file.upload 的负责人）
+ *   - 挂在进度动态或其评论上的附件 → 与发布进度同权
+ *   - 挂在里程碑上的附件 → 与管理交付同权
+ * 工单沟通里收录进来的文件不在此列：那是工单会话的内容，这里只提供
+ * 「移出项目文件」，真要删得回工单里删，否则从项目页就能抹掉聊天记录。
+ * 正文内嵌图同理，跟着正文走，编辑正文时才会被清理。
+ *
+ * 项目处于 DRAFT 不额外拦：清理错传的文件不该等外部接入激活。注意这只是
+ * 服务端不设限，前台「文件资料」tab 本就只在交付激活后才渲染（DRAFT 项目
+ * 一律不展示交付相关 tab），所以 DRAFT 目前没有入口 —— 何况上传走的是
+ * assertCanUploadActiveProjectFile，DRAFT 期间根本传不进新文件。要不要给
+ * DRAFT 开一个文件入口是交付流程自己的产品决定，不在删除能力的范围里。
+ */
+export async function deleteProjectAttachment(
+  actor: Actor,
+  attachmentId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    const attachment = await tx.attachment.findUnique({
+      where: { id: attachmentId },
+      select: {
+        id: true,
+        originalName: true,
+        title: true,
+        mimeType: true,
+        size: true,
+        visibility: true,
+        inline: true,
+        storageKey: true,
+        previewStorageKey: true,
+        projectId: true,
+        customerSpaceId: true,
+        serviceRequestId: true,
+        requestMessageId: true,
+        projectUpdateId: true,
+        updateCommentId: true,
+        milestoneId: true,
+      },
+    });
+    if (!attachment) throw notFound("附件不存在");
+    if (!attachment.projectId) {
+      throw badRequest("ATTACHMENT_NOT_IN_PROJECT", "该附件不属于任何项目");
+    }
+    const projectId = attachment.projectId;
+    // 授权在前、业务规则在后：看不见这个附件的人被 RLS 挡在 findUnique
+    // （attachment_select 按 app_can_access_project / app_can_access_request 裁决，
+    // 拿到的是「附件不存在」），这里再要求调用者是项目内部人员，免得下面几条
+    // 按归属给的提示把「这文件来自工单沟通」透给只是空间成员的客户。
+    await assertCanContributeToProject(tx, actor, projectId);
+    if (attachment.serviceRequestId || attachment.requestMessageId) {
+      throw badRequest(
+        "ATTACHMENT_FROM_REQUEST",
+        "来自工单沟通的文件请在工单中删除，这里可以将它移出项目文件",
+      );
+    }
+    if (attachment.inline) {
+      throw badRequest(
+        "ATTACHMENT_INLINE",
+        "正文中的图片请通过编辑正文删除",
+      );
+    }
+
+    if (attachment.projectUpdateId || attachment.updateCommentId) {
+      await assertCanPublishProjectUpdate(tx, actor, projectId);
+    } else if (attachment.milestoneId) {
+      await assertCanManageProjectDelivery(tx, actor, projectId);
+    } else {
+      const context = await loadProjectAccess(tx, actor, projectId);
+      assertAllowed(
+        canUploadProjectFile(actor, context.access),
+        "仅管理员或有文件上传权限的项目负责人可以删除项目文件",
+      );
+    }
+
+    const storageKeys = [
+      attachment.storageKey,
+      attachment.previewStorageKey,
+    ].filter((value): value is string => Boolean(value));
+
+    await tx.attachment.delete({ where: { id: attachment.id } });
+    // storageKeys 跟着删除审计一起进同一个事务：提交后到 removePrivateFile
+    // 之间进程要是没了（重启 / 重新部署），文件就成了没有任何行指向的孤儿。
+    // 键在这条审计里，按 action 即可捞出该删而未删的文件。
+    await writeAuditLog(tx, actor, {
+      action: "PROJECT_ATTACHMENT_DELETED",
+      resourceType: "Attachment",
+      resourceId: attachment.id,
+      customerSpaceId: attachment.customerSpaceId ?? undefined,
+      projectId,
+      metadata: {
+        originalName: attachment.originalName,
+        title: attachment.title,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        visibility: attachment.visibility,
+        storageKeys,
+      },
+    });
+    // 与上传/收录同样的静默刷新：别人开着的项目页要跟着把这行去掉，
+    // 但删文件不值得给客户推一条提醒，所以 audible: false、不建通知行。
+    if (attachment.customerSpaceId) {
+      await publishEvent(tx, {
+        type: "PROJECT_UPDATED",
+        payload: {
+          change: "PROJECT_ATTACHMENT_DELETED",
+          actorId: actor.id,
+          audible: false,
+          projectId,
+          attachmentId: attachment.id,
+          visibility: attachment.visibility,
+          // 归属要带上：realtime-event-visibility 按它判这条事件属于
+          // 动态 / 里程碑 / 项目文件哪个模块，客户关掉对应模块就收不到
+          ...(attachment.projectUpdateId
+            ? { projectUpdateId: attachment.projectUpdateId }
+            : {}),
+          ...(attachment.updateCommentId
+            ? { updateCommentId: attachment.updateCommentId }
+            : {}),
+          ...(attachment.milestoneId
+            ? { milestoneId: attachment.milestoneId }
+            : {}),
+        },
+        customerSpaceId: attachment.customerSpaceId,
+        projectId,
+      });
+    }
+    return { projectId, storageKeys };
+  }).then(async ({ projectId, storageKeys }) => {
+    // 行已经删了，此时再抛错只会让调用方以为没删成。删失败的键再单独落一条
+    // result: FAILED 的审计，把「该删而未删」直接标出来，省得运维拿上面那条
+    // 删除审计里的 storageKeys 去逐个比对磁盘。文件本身没有可访问入口
+    // （下载一律经附件行 + RLS），所以这是磁盘占用问题而非泄露；定时重试要
+    // 覆盖动态/里程碑删除等同类路径，归到统一的存储清理任务，不在本次范围。
+    const failed: Array<{ storageKey: string; error: string }> = [];
+    for (const storageKey of storageKeys) {
+      try {
+        await removePrivateFile(storageKey);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failed.push({ storageKey, error: message });
+        console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
+          attachmentId,
+          storageKey,
+          error: message,
+        });
+      }
+    }
+    if (failed.length > 0) {
+      try {
+        await withActorDb(actor, (tx) =>
+          writeAuditLog(tx, actor, {
+            action: "PROJECT_ATTACHMENT_FILE_DELETE_FAILED",
+            resourceType: "Attachment",
+            resourceId: attachmentId,
+            result: "FAILED",
+            projectId,
+            metadata: { failed },
+          }),
+        );
+      } catch (auditError) {
+        // 审计也写不进去就只剩日志了，但不能因此把已完成的删除报成失败
+        console.error("PROJECT_ATTACHMENT_FILE_DELETE_AUDIT_FAILED", {
+          attachmentId,
+          error:
+            auditError instanceof Error
+              ? auditError.message
+              : String(auditError),
+        });
+      }
+    }
+    return { deleted: true as const };
   });
 }

@@ -901,8 +901,10 @@ export async function updateUpdateComment(
       },
     });
     assertFound(comment, "评论不存在");
+    // 作者本人才行，管理员也不例外：改客户说过的话不该是后台的能力，
+    // 违规内容走内容风控的撤回，而不是替对方改写
     assertAllowed(
-      actor.isPlatformAdmin || comment.authorId === actor.id,
+      comment.authorId === actor.id,
       "只能修改自己发布的评论",
     );
     assertAllowed(

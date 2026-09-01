@@ -22,7 +22,7 @@ import type { ProjectUpdate } from "@/components/customer/customer-types";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
-import { UpdateCommentList } from "@/components/shared/update-comment-list";
+import { UpdateCommentDialog } from "@/components/shared/update-comment-dialog";
 import { useToast } from "@/components/shared/toast-provider";
 import { apiRequest, jsonRequest } from "@/lib/api-client";
 import {
@@ -67,20 +67,28 @@ export function ProjectUpdates({
   const router = useRouter();
   const toast = useToast();
   const [detailId, setDetailId] = useState<string | null>(null);
-  // 评论区跟着列表行展开，不再藏在详情弹窗里；一次只展开一条
+  // 评论走独立弹窗：一条动态的评论可能很多，展开在行里会把列表撑爆
   const [commentOpenId, setCommentOpenId] = useState<string | null>(null);
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const detail = detailId
     ? updates.find((item) => item.id === detailId) ?? null
     : null;
+  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
+  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
+  const commentUpdate = commentOpenId
+    ? updates.find(
+        (item) =>
+          item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
+      ) ?? null
+    : null;
 
   function closeDetail() {
     setDetailId(null);
   }
 
-  function toggleComments(updateId: string) {
-    setCommentOpenId((current) => (current === updateId ? null : updateId));
+  function openComments(updateId: string) {
+    setCommentOpenId(updateId);
     setCommentText("");
   }
 
@@ -180,7 +188,6 @@ export function ProjectUpdates({
             extractInlineAttachmentIds(update.body).length > 0 ||
             /<img\b/i.test(update.body);
           const replyCount = update.comments.length;
-          const commentsOpen = commentOpenId === update.id;
           return (
             <Box
               key={update.id}
@@ -294,10 +301,10 @@ export function ProjectUpdates({
                       ) : null}
                       <Button
                         size="small"
-                        color={commentsOpen ? "primary" : "inherit"}
+                        color="inherit"
                         startIcon={<ChatBubbleOutlineOutlinedIcon />}
-                        onClick={() => toggleComments(update.id)}
-                        aria-expanded={commentsOpen}
+                        onClick={() => openComments(update.id)}
+                        aria-haspopup="dialog"
                       >
                         评论{replyCount > 0 ? ` ${replyCount}` : ""}
                       </Button>
@@ -305,67 +312,57 @@ export function ProjectUpdates({
                   ) : null}
                 </Stack>
               </Box>
-              {!revoked && commentsOpen ? (
-                <Box
-                  sx={{
-                    mt: 1.5,
-                    p: { xs: 1.25, md: 1.5 },
-                    borderRadius: 1.5,
-                    bgcolor: "action.hover",
-                  }}
-                >
-                  <UpdateCommentList
-                    items={update.comments.map((comment) => ({
-                      id: comment.id,
-                      body: comment.body,
-                      authorId: comment.authorId,
-                      authorName: comment.authorName,
-                      authorImage: comment.authorImage,
-                      createdAt: comment.createdAt,
-                      contentRiskStatus: comment.contentRiskStatus,
-                      meta: editedSuffix(comment.createdAt, comment.updatedAt),
-                    }))}
-                    contentRiskEnabled={contentRiskEnabled}
-                    dateFormatter={dateFormatter}
-                  />
-                  {projectId ? (
-                    <Box sx={{ mt: 1.5 }}>
-                      {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
-                      <TextField
-                        value={commentText}
-                        onChange={(event) => setCommentText(event.target.value)}
-                        fullWidth
-                        multiline
-                        minRows={2}
-                        maxRows={8}
-                        size="small"
-                        placeholder="向服务人员留言…"
-                        disabled={postingComment}
-                        sx={{ bgcolor: "background.paper" }}
-                      />
-                      <Stack
-                        direction="row"
-                        sx={{ mt: 1, justifyContent: "flex-end" }}
-                      >
-                        <Button
-                          size="small"
-                          variant="contained"
-                          onClick={() => void submitComment(update.id)}
-                          disabled={
-                            postingComment || commentText.trim().length === 0
-                          }
-                        >
-                          发送
-                        </Button>
-                      </Stack>
-                    </Box>
-                  ) : null}
-                </Box>
-              ) : null}
             </Box>
           );
         })}
       </Paper>
+
+      <UpdateCommentDialog
+        open={Boolean(commentUpdate)}
+        onClose={() => setCommentOpenId(null)}
+        title={commentUpdate?.title}
+        items={(commentUpdate?.comments ?? []).map((comment) => ({
+          id: comment.id,
+          body: comment.body,
+          authorId: comment.authorId,
+          authorName: comment.authorName,
+          authorImage: comment.authorImage,
+          createdAt: comment.createdAt,
+          contentRiskStatus: comment.contentRiskStatus,
+          meta: editedSuffix(comment.createdAt, comment.updatedAt),
+        }))}
+        contentRiskEnabled={contentRiskEnabled}
+        dateFormatter={dateFormatter}
+        busy={postingComment}
+        composer={
+          projectId && commentUpdate ? (
+            <Box>
+              {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
+              <TextField
+                value={commentText}
+                onChange={(event) => setCommentText(event.target.value)}
+                fullWidth
+                multiline
+                minRows={2}
+                maxRows={6}
+                size="small"
+                placeholder="向服务人员留言…"
+                disabled={postingComment}
+              />
+              <Stack direction="row" sx={{ mt: 1, justifyContent: "flex-end" }}>
+                <Button
+                  size="small"
+                  variant="contained"
+                  onClick={() => void submitComment(commentUpdate.id)}
+                  disabled={postingComment || commentText.trim().length === 0}
+                >
+                  发送
+                </Button>
+              </Stack>
+            </Box>
+          ) : null
+        }
+      />
 
       <Dialog
         open={Boolean(detail)}
@@ -409,9 +406,8 @@ export function ProjectUpdates({
             <Button
               startIcon={<ChatBubbleOutlineOutlinedIcon />}
               onClick={() => {
-                // 评论区在列表行里，关掉详情直接把对应的那条展开
-                setCommentOpenId(detail.id);
-                setCommentText("");
+                // 详情与评论是两个弹窗，同屏叠着看不清：关掉详情再开评论
+                openComments(detail.id);
                 setDetailId(null);
               }}
               sx={{ mr: "auto" }}

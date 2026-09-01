@@ -49,7 +49,7 @@ import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
-import { UpdateCommentList } from "@/components/shared/update-comment-list";
+import { UpdateCommentDialog } from "@/components/shared/update-comment-dialog";
 import {
   ContentRiskNotice,
   ContentRiskStatusLine,
@@ -216,7 +216,7 @@ export function ProjectDetailWorkspace({
     comment: CommentItem;
   } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
-  // 评论区跟着列表行展开，不再藏在详情弹窗里；一次只展开一条
+  // 评论走独立弹窗：一条动态的评论可能很多，展开在行里会把列表撑爆
   const [commentOpenId, setCommentOpenId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
@@ -253,6 +253,15 @@ export function ProjectDetailWorkspace({
   const detailUpdate =
     detailId != null
       ? project.updates.find((item) => item.id === detailId) ?? null
+      : null;
+  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
+  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
+  const commentUpdate =
+    commentOpenId != null
+      ? project.updates.find(
+          (item) =>
+            item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
+        ) ?? null
       : null;
   const { unread } = useUnreadNotifications();
   const { mutate: markRead } = useMarkNotificationsRead();
@@ -556,7 +565,6 @@ export function ProjectDetailWorkspace({
                   extractInlineAttachmentIds(update.body).length > 0 ||
                   /<img\b/i.test(update.body);
                 const replyCount = update.comments.length;
-                const commentsOpen = commentOpenId === update.id;
                 return (
                   <Box
                     key={update.id}
@@ -705,14 +713,10 @@ export function ProjectDetailWorkspace({
                               </Button>
                               <Button
                                 size="small"
-                                color={commentsOpen ? "primary" : "inherit"}
+                                color="inherit"
                                 startIcon={<ChatBubbleOutlineOutlinedIcon />}
-                                onClick={() =>
-                                  setCommentOpenId((current) =>
-                                    current === update.id ? null : update.id,
-                                  )
-                                }
-                                aria-expanded={commentsOpen}
+                                onClick={() => setCommentOpenId(update.id)}
+                                aria-haspopup="dialog"
                               >
                                 评论{replyCount > 0 ? ` ${replyCount}` : ""}
                               </Button>
@@ -750,140 +754,6 @@ export function ProjectDetailWorkspace({
                         </Stack>
                       </Stack>
                     </Box>
-                    {!revoked && commentsOpen ? (
-                      <Box
-                        sx={{
-                          mt: 1.5,
-                          p: { xs: 1.25, md: 1.5 },
-                          borderRadius: 1.5,
-                          bgcolor: "action.hover",
-                        }}
-                      >
-                        <UpdateCommentList
-                          items={update.comments.map((comment) => ({
-                            id: comment.id,
-                            body: comment.body,
-                            authorId: comment.authorId,
-                            authorName: comment.authorName,
-                            authorImage: comment.authorImage,
-                            createdAt: comment.createdAt,
-                            contentRiskStatus: comment.contentRiskStatus,
-                            badge:
-                              comment.visibility === "INTERNAL"
-                                ? " · 内部评论"
-                                : null,
-                            meta: comment.hasEditHistory ? (
-                              <EditedAtLabel
-                                updatedAt={comment.updatedAt}
-                                onClick={() =>
-                                  setHistoryTarget({
-                                    kind: "comment",
-                                    projectId: project.id,
-                                    projectUpdateId: update.id,
-                                    updateCommentId: comment.id,
-                                    label: `${update.title} · 评论`,
-                                  })
-                                }
-                              />
-                            ) : null,
-                            action:
-                              (canEditProject ||
-                                comment.authorId === currentUserId) &&
-                              comment.contentRiskStatus !== "REVOKED" ? (
-                                <Tooltip title="编辑评论">
-                                  <span>
-                                    <IconButton
-                                      size="small"
-                                      aria-label="编辑评论"
-                                      onClick={() =>
-                                        openEditComment(update, comment)
-                                      }
-                                      sx={{ flexShrink: 0 }}
-                                    >
-                                      <EditOutlinedIcon fontSize="small" />
-                                    </IconButton>
-                                  </span>
-                                </Tooltip>
-                              ) : null,
-                          }))}
-                          contentRiskEnabled={Boolean(
-                            project.contentRiskUiEnabled,
-                          )}
-                          dateFormatter={dateTimeFormatter}
-                        />
-                        {canComment ? (
-                          <Box
-                            component="form"
-                            onSubmit={submitCreateComment}
-                            sx={{ mt: 1.5 }}
-                          >
-                            {postingComment ? (
-                              <LinearProgress sx={{ mb: 1 }} />
-                            ) : null}
-                            <Controller
-                              control={commentCreateForm.control}
-                              name="body"
-                              render={({ field }) => (
-                                <TextField
-                                  {...field}
-                                  placeholder="回复客户或记录说明…"
-                                  fullWidth
-                                  multiline
-                                  minRows={2}
-                                  maxRows={8}
-                                  size="small"
-                                  disabled={postingComment}
-                                  sx={{ bgcolor: "background.paper" }}
-                                  error={Boolean(
-                                    commentCreateForm.formState.errors.body,
-                                  )}
-                                  helperText={
-                                    commentCreateForm.formState.errors.body
-                                      ?.message
-                                  }
-                                />
-                              )}
-                            />
-                            <Stack
-                              direction="row"
-                              spacing={1}
-                              sx={{
-                                mt: 1,
-                                alignItems: "center",
-                                justifyContent: "space-between",
-                              }}
-                            >
-                              <Controller
-                                control={commentCreateForm.control}
-                                name="internal"
-                                render={({ field }) => (
-                                  <FormControlLabel
-                                    control={
-                                      <Switch
-                                        size="small"
-                                        checked={field.value}
-                                        onChange={(event) =>
-                                          field.onChange(event.target.checked)
-                                        }
-                                      />
-                                    }
-                                    label="仅内部可见"
-                                  />
-                                )}
-                              />
-                              <Button
-                                type="submit"
-                                size="small"
-                                variant="contained"
-                                disabled={postingComment}
-                              >
-                                {postingComment ? "正在发送" : "发送"}
-                              </Button>
-                            </Stack>
-                          </Box>
-                        ) : null}
-                      </Box>
-                    ) : null}
                   </Box>
                 );
               })}
@@ -955,7 +825,7 @@ export function ProjectDetailWorkspace({
                     <Button
                       startIcon={<ChatBubbleOutlineOutlinedIcon />}
                       onClick={() => {
-                        // 评论区在列表行里，关掉详情直接把对应的那条展开
+                        // 详情与评论是两个弹窗，同屏叠着看不清：关掉详情再开评论
                         setCommentOpenId(detailUpdate.id);
                         setDetailId(null);
                       }}
@@ -972,6 +842,125 @@ export function ProjectDetailWorkspace({
               </>
             ) : null}
           </Dialog>
+
+          <UpdateCommentDialog
+            open={Boolean(commentUpdate)}
+            onClose={() => setCommentOpenId(null)}
+            title={commentUpdate?.title}
+            items={(commentUpdate?.comments ?? []).map((comment) => ({
+              id: comment.id,
+              body: comment.body,
+              authorId: comment.authorId,
+              authorName: comment.authorName,
+              authorImage: comment.authorImage,
+              createdAt: comment.createdAt,
+              contentRiskStatus: comment.contentRiskStatus,
+              badge:
+                comment.visibility === "INTERNAL" ? " · 内部评论" : null,
+              meta:
+                comment.hasEditHistory && commentUpdate ? (
+                  <EditedAtLabel
+                    updatedAt={comment.updatedAt}
+                    onClick={() =>
+                      setHistoryTarget({
+                        kind: "comment",
+                        projectId: project.id,
+                        projectUpdateId: commentUpdate.id,
+                        updateCommentId: comment.id,
+                        label: `${commentUpdate.title} · 评论`,
+                      })
+                    }
+                  />
+                ) : null,
+              // 只能编辑自己发的：客户的留言不归后台改，
+              // 服务端也只放行作者本人（见 updateUpdateComment）
+              action:
+                commentUpdate &&
+                comment.authorId === currentUserId &&
+                comment.contentRiskStatus !== "REVOKED" ? (
+                  <Tooltip title="编辑评论">
+                    <span>
+                      <IconButton
+                        size="small"
+                        aria-label="编辑评论"
+                        onClick={() => openEditComment(commentUpdate, comment)}
+                        sx={{ flexShrink: 0 }}
+                      >
+                        <EditOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                ) : null,
+            }))}
+            contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+            dateFormatter={dateTimeFormatter}
+            busy={postingComment}
+            composer={
+              // 也要看 commentUpdate：动态被撤回时选中项会置空，
+              // 输入框不能还留在淡出中的弹窗里等人发评论
+              canComment && commentUpdate ? (
+                <Box component="form" onSubmit={submitCreateComment}>
+                  {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
+                  <Controller
+                    control={commentCreateForm.control}
+                    name="body"
+                    render={({ field }) => (
+                      <TextField
+                        {...field}
+                        placeholder="回复客户或记录说明…"
+                        fullWidth
+                        multiline
+                        minRows={2}
+                        maxRows={6}
+                        size="small"
+                        disabled={postingComment}
+                        error={Boolean(commentCreateForm.formState.errors.body)}
+                        helperText={
+                          commentCreateForm.formState.errors.body?.message
+                        }
+                      />
+                    )}
+                  />
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{
+                      mt: 1,
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                    }}
+                  >
+                    <Controller
+                      control={commentCreateForm.control}
+                      name="internal"
+                      render={({ field }) => (
+                        <FormControlLabel
+                          control={
+                            <Switch
+                              size="small"
+                              checked={field.value}
+                              onChange={(event) =>
+                                field.onChange(event.target.checked)
+                              }
+                            />
+                          }
+                          label="仅内部可见"
+                        />
+                      )}
+                    />
+                    <Button
+                      type="submit"
+                      size="small"
+                      variant="contained"
+                      disabled={postingComment}
+                    >
+                      {postingComment ? "正在发送" : "发送"}
+                    </Button>
+                  </Stack>
+                </Box>
+              ) : null
+            }
+          />
 
           <Dialog
             open={Boolean(deleteTarget)}
@@ -1173,6 +1162,8 @@ export function ProjectDetailWorkspace({
           projectId={project.id}
           files={project.attachments}
           canUpload={canUploadFiles}
+          canPublishUpdate={canPublishUpdate}
+          canManageDelivery={canManageDelivery}
           contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
           contentRiskNoticeEnabled={contentRiskNoticeEnabled}
         />

@@ -1,4 +1,7 @@
-import { readAttachmentDownload } from "@/modules/attachments/attachment-service";
+import {
+  deleteProjectAttachment,
+  readAttachmentDownload,
+} from "@/modules/attachments/attachment-service";
 import { isInlinePreviewableMimeType } from "@/modules/attachments/attachment-meta";
 import {
   apiErrorResponse,
@@ -48,6 +51,20 @@ export async function GET(request: Request, context: RouteContext) {
     return apiErrorResponse(error, {
       request,
       operation: "attachment.download",
+    });
+  }
+}
+
+export async function DELETE(request: Request, context: RouteContext) {
+  try {
+    const actor = await requireApiActor();
+    const { attachmentId } = await context.params;
+    const result = await deleteProjectAttachment(actor, attachmentId);
+    return Response.json({ data: result });
+  } catch (error) {
+    return apiErrorResponse(error, {
+      request,
+      operation: "attachment.delete",
     });
   }
 }

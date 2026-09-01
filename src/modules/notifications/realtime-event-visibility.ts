@@ -54,6 +54,7 @@ function attachmentEventOwner(type: EventType, payload: Prisma.JsonValue) {
   const change = eventPayloadString(payload, "change");
   if (
     change !== "PROJECT_ATTACHMENT_UPLOADED" &&
+    change !== "PROJECT_ATTACHMENT_DELETED" &&
     change !== "ATTACHMENT_OPTIMIZED" &&
     change !== "ATTACHMENT_PREVIEW_READY"
   ) {
