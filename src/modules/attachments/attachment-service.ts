@@ -36,6 +36,7 @@ import {
 } from "@/modules/attachments/attachment-meta";
 import { queueAttachmentPreviewRender } from "@/lib/jobs";
 import {
+  assertCanContributeToProject,
   assertCanManageActiveProjectDelivery,
   assertCanManageProjectDelivery,
   assertCanPublishActiveProjectUpdate,
@@ -1003,6 +1004,12 @@ export async function deleteProjectAttachment(
     if (!attachment.projectId) {
       throw badRequest("ATTACHMENT_NOT_IN_PROJECT", "该附件不属于任何项目");
     }
+    const projectId = attachment.projectId;
+    // 授权在前、业务规则在后：看不见这个附件的人被 RLS 挡在 findUnique
+    // （attachment_select 按 app_can_access_project / app_can_access_request 裁决，
+    // 拿到的是「附件不存在」），这里再要求调用者是项目内部人员，免得下面几条
+    // 按归属给的提示把「这文件来自工单沟通」透给只是空间成员的客户。
+    await assertCanContributeToProject(tx, actor, projectId);
     if (attachment.serviceRequestId || attachment.requestMessageId) {
       throw badRequest(
         "ATTACHMENT_FROM_REQUEST",
@@ -1016,7 +1023,6 @@ export async function deleteProjectAttachment(
       );
     }
 
-    const projectId = attachment.projectId;
     if (attachment.projectUpdateId || attachment.updateCommentId) {
       await assertCanPublishProjectUpdate(tx, actor, projectId);
     } else if (attachment.milestoneId) {
@@ -1073,21 +1079,53 @@ export async function deleteProjectAttachment(
       });
     }
     return {
+      projectId,
       storageKeys: [
         attachment.storageKey,
         attachment.previewStorageKey,
       ].filter((value): value is string => Boolean(value)),
     };
-  }).then(async ({ storageKeys }) => {
-    // 库里的行已经没了，文件删不掉只留日志：再抛错只会让调用方以为没删成
+  }).then(async ({ projectId, storageKeys }) => {
+    // 行已经删了，此时再抛错只会让调用方以为没删成。但也不能只喊一声就算了：
+    // 留在磁盘上的孤儿文件已经没有任何行指向它，只靠容器日志谁都捞不回来。
+    // 失败的 storageKey 落一条审计（result: FAILED），运维可按 action 查出
+    // 待清理的键。文件本身不含可访问入口（下载一律经附件行 + RLS），
+    // 因此这是磁盘占用问题而非泄露；真正的定时重试要覆盖动态/里程碑删除
+    // 等同类路径，归到统一的存储清理任务里做，不在本次范围。
+    const failed: Array<{ storageKey: string; error: string }> = [];
     for (const storageKey of storageKeys) {
       try {
         await removePrivateFile(storageKey);
       } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failed.push({ storageKey, error: message });
         console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
           attachmentId,
           storageKey,
-          error: error instanceof Error ? error.message : String(error),
+          error: message,
+        });
+      }
+    }
+    if (failed.length > 0) {
+      try {
+        await withActorDb(actor, (tx) =>
+          writeAuditLog(tx, actor, {
+            action: "PROJECT_ATTACHMENT_FILE_DELETE_FAILED",
+            resourceType: "Attachment",
+            resourceId: attachmentId,
+            result: "FAILED",
+            projectId,
+            metadata: { failed },
+          }),
+        );
+      } catch (auditError) {
+        // 审计也写不进去就只剩日志了，但不能因此把已完成的删除报成失败
+        console.error("PROJECT_ATTACHMENT_FILE_DELETE_AUDIT_FAILED", {
+          attachmentId,
+          error:
+            auditError instanceof Error
+              ? auditError.message
+              : String(auditError),
         });
       }
     }

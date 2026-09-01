@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   publishEvent: vi.fn(),
   removePrivateFile: vi.fn(),
   loadProjectAccess: vi.fn(),
+  assertCanContributeToProject: vi.fn(),
   assertCanPublishProjectUpdate: vi.fn(),
   assertCanManageProjectDelivery: vi.fn(),
 }));
@@ -63,6 +64,7 @@ vi.mock("@/modules/plugins/content-risk-service", () => ({
 }));
 
 vi.mock("@/modules/projects/project-access", () => ({
+  assertCanContributeToProject: mocks.assertCanContributeToProject,
   assertCanManageActiveProjectDelivery: vi.fn(),
   assertCanManageProjectDelivery: mocks.assertCanManageProjectDelivery,
   assertCanPublishActiveProjectUpdate: vi.fn(),
@@ -148,6 +150,43 @@ describe("删除项目文件", () => {
           change: "PROJECT_ATTACHMENT_DELETED",
           audible: false,
         }),
+      }),
+    );
+  });
+
+  it("先确认调用者在项目里，再判归属：越权时不会先漏出文件出处", async () => {
+    mocks.attachmentFindUnique.mockResolvedValue({
+      ...baseAttachment,
+      serviceRequestId: "request-1",
+    });
+    mocks.assertCanContributeToProject.mockRejectedValueOnce(
+      Object.assign(new Error("仅项目内部人员可以执行此操作"), {
+        code: "FORBIDDEN",
+      }),
+    );
+
+    await expect(
+      deleteProjectAttachment(admin, "attachment-1"),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(mocks.attachmentDelete).not.toHaveBeenCalled();
+  });
+
+  it("存储文件删不掉时仍算删除成功，但把 storageKey 记进审计", async () => {
+    mocks.attachmentFindUnique.mockResolvedValue(baseAttachment);
+    mocks.removePrivateFile.mockRejectedValueOnce(new Error("EACCES"));
+
+    const result = await deleteProjectAttachment(admin, "attachment-1");
+
+    expect(result).toEqual({ deleted: true });
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      admin,
+      expect.objectContaining({
+        action: "PROJECT_ATTACHMENT_FILE_DELETE_FAILED",
+        result: "FAILED",
+        metadata: {
+          failed: [{ storageKey: "projects/p1/a1.pdf", error: "EACCES" }],
+        },
       }),
     );
   });
