@@ -128,6 +128,7 @@ describe("删除项目文件", () => {
     expect(mocks.attachmentDelete).toHaveBeenCalledWith({
       where: { id: "attachment-1" },
     });
+    // storageKeys 必须跟着删除审计进同一个事务：提交后进程没了也捞得回来
     expect(mocks.writeAuditLog).toHaveBeenCalledWith(
       expect.anything(),
       admin,
@@ -135,6 +136,12 @@ describe("删除项目文件", () => {
         action: "PROJECT_ATTACHMENT_DELETED",
         resourceId: "attachment-1",
         projectId: "project-1",
+        metadata: expect.objectContaining({
+          storageKeys: [
+            "projects/p1/a1.pdf",
+            "projects/p1/a1.preview.pdf",
+          ],
+        }),
       }),
     );
     // 派生预览件也要一起清掉，否则磁盘上留孤儿

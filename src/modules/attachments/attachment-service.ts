@@ -1039,7 +1039,15 @@ export async function deleteProjectAttachment(
       );
     }
 
+    const storageKeys = [
+      attachment.storageKey,
+      attachment.previewStorageKey,
+    ].filter((value): value is string => Boolean(value));
+
     await tx.attachment.delete({ where: { id: attachment.id } });
+    // storageKeys 跟着删除审计一起进同一个事务：提交后到 removePrivateFile
+    // 之间进程要是没了（重启 / 重新部署），文件就成了没有任何行指向的孤儿。
+    // 键在这条审计里，按 action 即可捞出该删而未删的文件。
     await writeAuditLog(tx, actor, {
       action: "PROJECT_ATTACHMENT_DELETED",
       resourceType: "Attachment",
@@ -1052,6 +1060,7 @@ export async function deleteProjectAttachment(
         mimeType: attachment.mimeType,
         size: attachment.size,
         visibility: attachment.visibility,
+        storageKeys,
       },
     });
     // 与上传/收录同样的静默刷新：别人开着的项目页要跟着把这行去掉，
@@ -1082,20 +1091,13 @@ export async function deleteProjectAttachment(
         projectId,
       });
     }
-    return {
-      projectId,
-      storageKeys: [
-        attachment.storageKey,
-        attachment.previewStorageKey,
-      ].filter((value): value is string => Boolean(value)),
-    };
+    return { projectId, storageKeys };
   }).then(async ({ projectId, storageKeys }) => {
-    // 行已经删了，此时再抛错只会让调用方以为没删成。但也不能只喊一声就算了：
-    // 留在磁盘上的孤儿文件已经没有任何行指向它，只靠容器日志谁都捞不回来。
-    // 失败的 storageKey 落一条审计（result: FAILED），运维可按 action 查出
-    // 待清理的键。文件本身不含可访问入口（下载一律经附件行 + RLS），
-    // 因此这是磁盘占用问题而非泄露；真正的定时重试要覆盖动态/里程碑删除
-    // 等同类路径，归到统一的存储清理任务里做，不在本次范围。
+    // 行已经删了，此时再抛错只会让调用方以为没删成。删失败的键再单独落一条
+    // result: FAILED 的审计，把「该删而未删」直接标出来，省得运维拿上面那条
+    // 删除审计里的 storageKeys 去逐个比对磁盘。文件本身没有可访问入口
+    // （下载一律经附件行 + RLS），所以这是磁盘占用问题而非泄露；定时重试要
+    // 覆盖动态/里程碑删除等同类路径，归到统一的存储清理任务，不在本次范围。
     const failed: Array<{ storageKey: string; error: string }> = [];
     for (const storageKey of storageKeys) {
       try {
