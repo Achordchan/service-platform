@@ -370,73 +370,79 @@ export function MilestoneList({
               {/* 评论区常驻详情弹窗；父里程碑被撤回后，评论与输入同时隐藏，
                   不能继续对已撤回内容发言。 */}
               {detail.contentRiskStatus !== "REVOKED" ? (
-              <CommentSection
-                comments={(detail.comments ?? []).map((comment) => ({
-                  ...comment,
-                  badge:
-                    comment.visibility === "INTERNAL" ? " · 内部评论" : null,
-                }))}
-                currentUserId={currentUserId}
-                contentRiskEnabled={contentRiskEnabled}
-                dateFormatter={timestampFormatter}
-                emptyText="还没有评论"
-                busy={commentBusy}
-                // 回调没传就不亮对应按钮（CommentSection 按有无 onEdit/onDelete 判断）
-                {...(onEditComment
-                  ? {
-                      onEdit: (comment: MilestoneCommentItem) =>
-                        onEditComment(detail, comment),
-                    }
-                  : {})}
-                {...(onDeleteComment
-                  ? {
-                      onDelete: (comment: MilestoneCommentItem) =>
-                        onDeleteComment(detail, comment),
-                    }
-                  : {})}
-                {...(canDeleteComment
-                  ? {
-                      canDeleteComment: (comment: MilestoneCommentItem) =>
-                        canDeleteComment(comment),
-                    }
-                  : {})}
-                composer={
-                  canComment && onComposerChange ? (
-                    <Stack spacing={1}>
-                      <Stack
-                        direction="row"
-                        spacing={1}
-                        sx={{ alignItems: "flex-start" }}
-                      >
-                        <TextField
-                          value={composerValue}
-                          onChange={(event) => onComposerChange(event.target.value)}
-                          fullWidth
-                          multiline
-                          minRows={2}
-                          maxRows={6}
-                          size="small"
-                          placeholder={composerPlaceholder ?? "写下你的评论…"}
-                          disabled={commentBusy}
-                        />
-                        <Button
-                          size="small"
-                          variant="contained"
-                          onClick={() => {
-                            if (detail) onSubmitComment?.(detail);
-                          }}
-                          disabled={
-                            commentBusy || composerValue.trim().length === 0
-                          }
+                <CommentSection
+                  comments={(detail.comments ?? []).map((comment) => ({
+                    ...comment,
+                    badge:
+                      comment.visibility === "INTERNAL"
+                        ? " · 内部评论"
+                        : null,
+                  }))}
+                  currentUserId={currentUserId}
+                  contentRiskEnabled={contentRiskEnabled}
+                  dateFormatter={timestampFormatter}
+                  emptyText="还没有评论"
+                  busy={commentBusy}
+                  // 回调没传就不亮对应按钮（CommentSection 按有无 onEdit/onDelete 判断）
+                  {...(onEditComment
+                    ? {
+                        onEdit: (comment: MilestoneCommentItem) =>
+                          onEditComment(detail, comment),
+                      }
+                    : {})}
+                  {...(onDeleteComment
+                    ? {
+                        onDelete: (comment: MilestoneCommentItem) =>
+                          onDeleteComment(detail, comment),
+                      }
+                    : {})}
+                  {...(canDeleteComment
+                    ? {
+                        canDeleteComment: (comment: MilestoneCommentItem) =>
+                          canDeleteComment(comment),
+                      }
+                    : {})}
+                  composer={
+                    canComment && onComposerChange ? (
+                      <Stack spacing={1}>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "flex-start" }}
                         >
-                          发送
-                        </Button>
+                          <TextField
+                            value={composerValue}
+                            onChange={(event) =>
+                              onComposerChange(event.target.value)
+                            }
+                            fullWidth
+                            multiline
+                            minRows={2}
+                            maxRows={6}
+                            size="small"
+                            placeholder={
+                              composerPlaceholder ?? "写下你的评论…"
+                            }
+                            disabled={commentBusy}
+                          />
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => {
+                              if (detail) onSubmitComment?.(detail);
+                            }}
+                            disabled={
+                              commentBusy || composerValue.trim().length === 0
+                            }
+                          >
+                            发送
+                          </Button>
+                        </Stack>
+                        {composerExtra}
                       </Stack>
-                      {composerExtra}
-                    </Stack>
-                  ) : null
-                }
-              />
+                    ) : null
+                  }
+                />
               ) : null}
             </Stack>
           ) : null}
