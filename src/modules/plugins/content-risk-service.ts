@@ -496,6 +496,7 @@ function contentRiskTargetLabel(targetType: ContentRiskTargetType) {
     REQUEST_MESSAGE: "服务请求公开回复",
     PROJECT_UPDATE: "项目进度",
     UPDATE_COMMENT: "项目进度评论",
+    MILESTONE_COMMENT: "项目里程碑评论",
     MILESTONE: "项目里程碑",
     ATTACHMENT: "公开附件",
   };

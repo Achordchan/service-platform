@@ -1002,6 +1002,7 @@ export async function deleteProjectAttachment(
         projectUpdateId: true,
         updateCommentId: true,
         milestoneId: true,
+        milestoneCommentId: true,
       },
     });
     if (!attachment) throw notFound("附件不存在");
@@ -1029,7 +1030,8 @@ export async function deleteProjectAttachment(
 
     if (attachment.projectUpdateId || attachment.updateCommentId) {
       await assertCanPublishProjectUpdate(tx, actor, projectId);
-    } else if (attachment.milestoneId) {
+      // 里程碑评论的附件与里程碑同模块，按交付管理权限裁
+    } else if (attachment.milestoneId || attachment.milestoneCommentId) {
       await assertCanManageProjectDelivery(tx, actor, projectId);
     } else {
       const context = await loadProjectAccess(tx, actor, projectId);

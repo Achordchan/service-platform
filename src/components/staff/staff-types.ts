@@ -88,6 +88,16 @@ export type ProjectMilestone = {
   status: MilestoneStatus;
   startDate?: string | null;
   endDate?: string | null;
+  comments?: Array<{
+    id: string;
+    body: string;
+    visibility: ContentVisibility;
+    authorId?: string | null;
+    authorName: string;
+    authorImage?: string | null;
+    createdAt: string;
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  }>;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
   attachments?: RequestAttachment[];

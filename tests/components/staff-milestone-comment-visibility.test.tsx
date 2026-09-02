@@ -1,0 +1,171 @@
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ThemeProvider } from "@mui/material/styles";
+import { MilestoneManager } from "@/components/staff/milestone-manager";
+import type { ProjectMilestone } from "@/components/staff/staff-types";
+import { appTheme } from "@/theme/theme";
+
+const staffApi = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
+vi.mock("@/components/staff/staff-api", () => ({
+  staffApi: (...args: unknown[]) => staffApi(...args),
+  jsonRequest: (method: string, body?: unknown) => ({ method, json: body }),
+}));
+vi.mock("@/components/shared/toast-provider", () => ({
+  useToast: () => ({
+    success: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    delivery: vi.fn(),
+  }),
+}));
+vi.mock("@/hooks/use-delivery-channels", () => ({
+  useDeliveryChannelRule: () => ({ channels: {} }),
+}));
+vi.mock("@/hooks/use-inline-image-upload", () => ({
+  useInlineImageUpload: () => vi.fn(),
+}));
+
+globalThis.ResizeObserver = class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+} as unknown as typeof ResizeObserver;
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+});
+
+const milestone: ProjectMilestone = {
+  id: "milestone-1",
+  title: "上线验收",
+  description: null,
+  status: "IN_PROGRESS",
+  createdAt: "2026-09-01T10:00:00.000Z",
+  comments: [],
+};
+
+describe("员工里程碑评论可见性", () => {
+  it("内部开关打开时提交 INTERNAL，并在发送后复位", async () => {
+    staffApi.mockResolvedValue({});
+    render(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneManager
+          projectId="project-1"
+          milestones={[milestone]}
+          canManage={false}
+          canComment
+          currentUserId="staff-1"
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    fireEvent.change(screen.getByPlaceholderText("回复客户或记录说明…"), {
+      target: { value: "仅供内部跟进" },
+    });
+    const internalSwitch = screen.getByRole("switch", {
+      name: "仅内部可见",
+    }) as HTMLInputElement;
+    fireEvent.click(internalSwitch);
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() =>
+      expect(staffApi).toHaveBeenCalledWith(
+        "/api/v1/projects/project-1/milestones/milestone-1/comments",
+        {
+          method: "POST",
+          json: {
+            body: "<p>仅供内部跟进</p>",
+            visibility: "INTERNAL",
+          },
+        },
+      ),
+    );
+    await waitFor(() => expect(internalSwitch.checked).toBe(false));
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "回复客户或记录说明…",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
+  });
+
+  it("内部评论显示明确标记", () => {
+    render(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneManager
+          projectId="project-1"
+          milestones={[
+            {
+              ...milestone,
+              comments: [
+                {
+                  id: "comment-1",
+                  body: "<p>内部备注</p>",
+                  visibility: "INTERNAL",
+                  authorId: "staff-1",
+                  authorName: "员工甲",
+                  createdAt: "2026-09-01T11:00:00.000Z",
+                },
+              ],
+            },
+          ]}
+          canManage={false}
+          canComment
+          currentUserId="staff-1"
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.getByText(/内部评论/)).toBeTruthy();
+  });
+
+  it("失去评论权限后不显示编辑，但仍可删除自己的评论", () => {
+    render(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneManager
+          projectId="project-1"
+          milestones={[
+            {
+              ...milestone,
+              comments: [
+                {
+                  id: "own-comment",
+                  body: "<p>自己的评论</p>",
+                  visibility: "CUSTOMER_VISIBLE",
+                  authorId: "staff-1",
+                  authorName: "员工甲",
+                  createdAt: "2026-09-01T11:00:00.000Z",
+                },
+                {
+                  id: "customer-comment",
+                  body: "<p>客户的评论</p>",
+                  visibility: "CUSTOMER_VISIBLE",
+                  authorId: "customer-1",
+                  authorName: "客户甲",
+                  createdAt: "2026-09-01T12:00:00.000Z",
+                },
+              ],
+            },
+          ]}
+          canManage={false}
+          canComment={false}
+          currentUserId="staff-1"
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.queryByRole("button", { name: "编辑评论" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "删除评论" })).toHaveLength(
+      1,
+    );
+  });
+});

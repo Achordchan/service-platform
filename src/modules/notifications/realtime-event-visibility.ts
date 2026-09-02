@@ -30,6 +30,12 @@ export function canReceiveProjectRealtimeEvent(input: {
     return false;
   }
   if (
+    isProjectMilestoneCommentEvent(input.type, input.payload) &&
+    !input.showMilestones
+  ) {
+    return false;
+  }
+  if (
     isProjectMilestoneEvent(input.type, input.payload) &&
     !input.showMilestones &&
     !input.showProgress
@@ -62,6 +68,9 @@ function attachmentEventOwner(type: EventType, payload: Prisma.JsonValue) {
   }
   if (eventPayloadString(payload, "projectUpdateId")) return "UPDATE" as const;
   if (eventPayloadString(payload, "updateCommentId")) return "UPDATE" as const;
+  // 里程碑评论附件跟随里程碑区域（showMilestones 门控）；
+  // 要放在 milestoneId 之前 —— 评论事件的 payload 同时携带两者
+  if (eventPayloadString(payload, "milestoneCommentId")) return "MILESTONE" as const;
   if (eventPayloadString(payload, "milestoneId")) return "MILESTONE" as const;
   return "PROJECT_FILE" as const;
 }
@@ -93,7 +102,25 @@ function isProjectMilestoneEvent(type: EventType, payload: Prisma.JsonValue) {
   return (
     change === "MILESTONE_CREATED" ||
     change === "MILESTONE_UPDATED" ||
-    change === "MILESTONE_DELETED"
+    change === "MILESTONE_DELETED" ||
+    // 里程碑评论还会被上方更严格的 showMilestones 门控。
+    change === "MILESTONE_COMMENT_CREATED" ||
+    change === "MILESTONE_COMMENT_UPDATED" ||
+    change === "MILESTONE_COMMENT_DELETED"
+  );
+}
+
+function isProjectMilestoneCommentEvent(
+  type: EventType,
+  payload: Prisma.JsonValue,
+) {
+  if (type !== "PROJECT_UPDATED") return false;
+  if (eventPayloadString(payload, "milestoneCommentId")) return true;
+  const change = eventPayloadString(payload, "change");
+  return (
+    change === "MILESTONE_COMMENT_CREATED" ||
+    change === "MILESTONE_COMMENT_UPDATED" ||
+    change === "MILESTONE_COMMENT_DELETED"
   );
 }
 

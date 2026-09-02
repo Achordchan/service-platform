@@ -510,6 +510,15 @@ export function deleteMilestone(
         attachments: {
           select: { storageKey: true, previewStorageKey: true },
         },
+        // 里程碑删了评论跟着级联删除，评论自己的附件文件也得跟着清，
+        // 否则数据库行没了、磁盘文件成了孤儿
+        comments: {
+          select: {
+            attachments: {
+              select: { storageKey: true, previewStorageKey: true },
+            },
+          },
+        },
       },
     });
     assertFound(existing, "里程碑不存在");
@@ -541,11 +550,20 @@ export function deleteMilestone(
       customerSpaceId: context.customerSpaceId,
       projectId,
     });
-    return existing.attachments.flatMap((attachment) =>
-      [attachment.storageKey, attachment.previewStorageKey].filter(
-        (value): value is string => Boolean(value),
+    return [
+      ...existing.attachments.flatMap((attachment) =>
+        [attachment.storageKey, attachment.previewStorageKey].filter(
+          (value): value is string => Boolean(value),
+        ),
       ),
-    );
+      ...existing.comments.flatMap((comment) =>
+        comment.attachments.flatMap((attachment) =>
+          [attachment.storageKey, attachment.previewStorageKey].filter(
+            (value): value is string => Boolean(value),
+          ),
+        ),
+      ),
+    ];
   }).then((storageKeys) => removeMilestoneFiles(milestoneId, storageKeys));
 }
 

@@ -65,6 +65,16 @@ export async function loadProjectDetail(
         orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
       })
     : [];
+  // 里程碑评论跟着里程碑走：里程碑加载了才加载，可见性口径与里程碑一致
+  const milestoneComments = shouldLoadMilestones
+    ? await tx.milestoneComment.findMany({
+        where: {
+          milestoneId: { in: milestoneRows.map((milestone) => milestone.id) },
+          ...(actor.isStaff ? {} : { visibility: "CUSTOMER_VISIBLE" as const }),
+        },
+        orderBy: { createdAt: "asc" },
+      })
+    : [];
   const updates =
     actor.isStaff || project.customerUpdatesEnabled
       ? await tx.projectUpdate.findMany({
@@ -115,6 +125,7 @@ export async function loadProjectDetail(
           new Set([
             ...updates.map((update) => update.authorId),
             ...comments.map((comment) => comment.authorId),
+            ...milestoneComments.map((comment) => comment.authorId),
           ]),
         ),
       },
@@ -140,6 +151,7 @@ export async function loadProjectDetail(
           projectUpdateId: null,
           updateCommentId: null,
           milestoneId: null,
+          milestoneCommentId: null,
           serviceRequestId: null,
           requestMessageId: null,
           inline: false,
@@ -169,6 +181,7 @@ export async function loadProjectDetail(
       projectUpdateId: true,
       updateCommentId: true,
       milestoneId: true,
+      milestoneCommentId: true,
       inline: true,
     },
     orderBy: { createdAt: "desc" },
@@ -187,7 +200,7 @@ export async function loadProjectDetail(
         ? ("REQUEST" as const)
         : attachment.projectUpdateId || attachment.updateCommentId
           ? ("UPDATE" as const)
-          : attachment.milestoneId
+          : attachment.milestoneId || attachment.milestoneCommentId
             ? ("MILESTONE" as const)
             : ("PROJECT" as const),
       pinned: Boolean(attachment.pinnedToProjectAt),
@@ -224,6 +237,10 @@ export async function loadProjectDetail(
         targetType: "MILESTONE" as const,
         targetId: milestone.id,
       })),
+      ...milestoneComments.map((comment) => ({
+        targetType: "MILESTONE_COMMENT" as const,
+        targetId: comment.id,
+      })),
       ...updates.map((update) => ({
         targetType: "PROJECT_UPDATE" as const,
         targetId: update.id,
@@ -240,7 +257,12 @@ export async function loadProjectDetail(
     tx,
   );
   const riskStatus = (
-    targetType: "MILESTONE" | "PROJECT_UPDATE" | "UPDATE_COMMENT" | "ATTACHMENT",
+    targetType:
+      | "MILESTONE"
+      | "MILESTONE_COMMENT"
+      | "PROJECT_UPDATE"
+      | "UPDATE_COMMENT"
+      | "ATTACHMENT",
     targetId: string,
     authoredByCurrentUser: boolean,
   ) =>
@@ -261,6 +283,12 @@ export async function loadProjectDetail(
     const current = commentsByUpdateId.get(comment.projectUpdateId) ?? [];
     current.push(comment);
     commentsByUpdateId.set(comment.projectUpdateId, current);
+  }
+  const commentsByMilestoneId = new Map<string, typeof milestoneComments>();
+  for (const comment of milestoneComments) {
+    const current = commentsByMilestoneId.get(comment.milestoneId) ?? [];
+    current.push(comment);
+    commentsByMilestoneId.set(comment.milestoneId, current);
   }
   const milestones =
     actor.isStaff || project.showMilestones ? milestoneRows : [];
@@ -290,29 +318,51 @@ export async function loadProjectDetail(
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item)),
-    milestones: milestones.map((milestone) => ({
-      ...milestone,
-      title:
+    milestones: milestones.map((milestone) => {
+      const revokedForActor =
         !actor.isPlatformAdmin &&
-        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
-          ? ""
-          : milestone.title,
-      contentRiskStatus: riskStatus(
-        "MILESTONE",
-        milestone.id,
-        milestone.createdById === actor.id,
-      ),
-      description:
-        !actor.isPlatformAdmin &&
-        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
+        isContentRiskStateRevoked(
+          contentRisk.states.get(`MILESTONE:${milestone.id}`),
+        );
+      return {
+        ...milestone,
+        title: revokedForActor ? "" : milestone.title,
+        contentRiskStatus: riskStatus(
+          "MILESTONE",
+          milestone.id,
+          milestone.createdById === actor.id,
+        ),
+        description: revokedForActor
           ? null
           : milestone.description
             ? sanitizeMessageHtml(milestone.description)
             : null,
-      attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
-        decorateAttachment,
-      ),
-    })),
+        attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
+          decorateAttachment,
+        ),
+        // 父里程碑撤回后不能只靠 UI 隐藏：Server Component props
+        // 会序列化到 RSC 响应，所以非管理员的详情数据必须直接去掉评论。
+        comments: revokedForActor
+          ? []
+          : (commentsByMilestoneId.get(milestone.id) ?? []).map(
+              (comment) => ({
+                ...comment,
+                contentRiskStatus: riskStatus(
+                  "MILESTONE_COMMENT",
+                  comment.id,
+                  comment.authorId === actor.id,
+                ),
+                body:
+                  !actor.isPlatformAdmin &&
+                  riskStatus("MILESTONE_COMMENT", comment.id, false) ===
+                    "REVOKED"
+                    ? ""
+                    : sanitizeMessageHtml(comment.body),
+                author: authorById.get(comment.authorId)!,
+              }),
+            ),
+      };
+    }),
     updates: updates.map((update) => ({
       ...update,
       title:

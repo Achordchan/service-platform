@@ -32,7 +32,6 @@ import UpdateOutlinedIcon from "@mui/icons-material/UpdateOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
-import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
@@ -49,7 +48,7 @@ import { ProjectFileManager } from "@/components/staff/project-file-manager";
 import { isProjectDeliveryActive } from "@/components/staff/project-delivery-state";
 import { MilestoneManager } from "@/components/staff/milestone-manager";
 import { TabBadgeLabel } from "@/components/shared/tab-badge-label";
-import { UpdateCommentDialog } from "@/components/shared/update-comment-dialog";
+import { CommentSection } from "@/components/shared/comment-section";
 import {
   ContentRiskNotice,
   ContentRiskStatusLine,
@@ -216,8 +215,6 @@ export function ProjectDetailWorkspace({
     comment: CommentItem;
   } | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
-  // 评论走独立弹窗：一条动态的评论可能很多，展开在行里会把列表撑爆
-  const [commentOpenId, setCommentOpenId] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
   const [inlineImageUploading, setInlineImageUploading] = useState(false);
 
@@ -254,15 +251,6 @@ export function ProjectDetailWorkspace({
     detailId != null
       ? project.updates.find((item) => item.id === detailId) ?? null
       : null;
-  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
-  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
-  const commentUpdate =
-    commentOpenId != null
-      ? project.updates.find(
-          (item) =>
-            item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
-        ) ?? null
-      : null;
   const { unread } = useUnreadNotifications();
   const { mutate: markRead } = useMarkNotificationsRead();
   const requestIdSet = new Set(requests.map((item) => item.id));
@@ -290,8 +278,9 @@ export function ProjectDetailWorkspace({
   }, [activeTab, markRead, project.id, projectScopeCounts]);
 
   useEffect(() => {
+    // 换一条动态（或关掉弹窗）时清空评论输入，别把上一条的内容带过去
     commentCreateForm.reset({ body: "", internal: false });
-  }, [commentOpenId, commentCreateForm]);
+  }, [detailId, commentCreateForm]);
 
   async function confirmDeleteUpdate() {
     if (!deleteTarget) return;
@@ -375,11 +364,11 @@ export function ProjectDetailWorkspace({
   });
 
   const submitCreateComment = commentCreateForm.handleSubmit(async (values) => {
-    if (!commentOpenId) return;
+    if (!detailUpdate) return;
     setPostingComment(true);
     try {
       await staffApi(
-        `/api/v1/projects/${project.id}/updates/${commentOpenId}/comments`,
+        `/api/v1/projects/${project.id}/updates/${detailUpdate.id}/comments`,
         jsonRequest("POST", {
           body: commentTextToHtml(values.body),
           visibility: values.internal ? "INTERNAL" : "CUSTOMER_VISIBLE",
@@ -549,6 +538,8 @@ export function ProjectDetailWorkspace({
           projectId={project.id}
           milestones={project.milestones}
           canManage={canManageDelivery}
+          canComment={canComment}
+          currentUserId={currentUserId}
           contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
           contentRiskNoticeEnabled={contentRiskNoticeEnabled}
         />
@@ -711,15 +702,10 @@ export function ProjectDetailWorkspace({
                               >
                                 查看详情
                               </Button>
-                              <Button
-                                size="small"
-                                color="inherit"
-                                startIcon={<ChatBubbleOutlineOutlinedIcon />}
-                                onClick={() => setCommentOpenId(update.id)}
-                                aria-haspopup="dialog"
-                              >
-                                评论{replyCount > 0 ? ` ${replyCount}` : ""}
-                              </Button>
+                              {/* 评论在详情弹窗里常驻：回复数只做提示，不再单独开弹窗 */}
+                              <Typography variant="body2" color="text.secondary">
+                                {replyCount > 0 ? `${replyCount} 条评论` : null}
+                              </Typography>
                             </>
                           ) : null}
                           {canPublishUpdate ? (
@@ -818,149 +804,125 @@ export function ProjectDetailWorkspace({
                       text={detailUpdate.body}
                       collapsible={false}
                     />
+                    {/* 评论区常驻详情弹窗：评论跟着内容走，进来就能看能回 */}
+                    {detailUpdate.contentRiskStatus !== "REVOKED" ? (
+                      <CommentSection
+                        comments={detailUpdate.comments.map((comment) => ({
+                          id: comment.id,
+                          body: comment.body,
+                          authorId: comment.authorId,
+                          authorName: comment.authorName,
+                          authorImage: comment.authorImage,
+                          createdAt: comment.createdAt,
+                          contentRiskStatus: comment.contentRiskStatus,
+                          badge:
+                            comment.visibility === "INTERNAL"
+                              ? " · 内部评论"
+                              : null,
+                          meta: comment.hasEditHistory ? (
+                            <EditedAtLabel
+                              updatedAt={comment.updatedAt}
+                              onClick={() =>
+                                setHistoryTarget({
+                                  kind: "comment",
+                                  projectId: project.id,
+                                  projectUpdateId: detailUpdate.id,
+                                  updateCommentId: comment.id,
+                                  label: `${detailUpdate.title} · 评论`,
+                                })
+                              }
+                            />
+                          ) : null,
+                        }))}
+                        currentUserId={currentUserId}
+                        contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
+                        dateFormatter={dateTimeFormatter}
+                        emptyText="还没有评论"
+                        onEdit={(comment) => {
+                          const target = detailUpdate.comments.find(
+                            (item) => item.id === comment.id,
+                          );
+                          if (target) openEditComment(detailUpdate, target);
+                        }}
+                        composer={
+                          canComment ? (
+                            <Box component="form" onSubmit={submitCreateComment}>
+                              {postingComment ? (
+                                <LinearProgress sx={{ mb: 1 }} />
+                              ) : null}
+                              <Controller
+                                control={commentCreateForm.control}
+                                name="body"
+                                render={({ field }) => (
+                                  <TextField
+                                    {...field}
+                                    placeholder="回复客户或记录说明…"
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                    maxRows={6}
+                                    size="small"
+                                    disabled={postingComment}
+                                    error={Boolean(
+                                      commentCreateForm.formState.errors.body,
+                                    )}
+                                    helperText={
+                                      commentCreateForm.formState.errors.body
+                                        ?.message
+                                    }
+                                  />
+                                )}
+                              />
+                              <Stack
+                                direction="row"
+                                spacing={1}
+                                sx={{
+                                  mt: 1,
+                                  alignItems: "center",
+                                  justifyContent: "space-between",
+                                }}
+                              >
+                                <Controller
+                                  control={commentCreateForm.control}
+                                  name="internal"
+                                  render={({ field }) => (
+                                    <FormControlLabel
+                                      control={
+                                        <Switch
+                                          size="small"
+                                          checked={field.value}
+                                          onChange={(event) =>
+                                            field.onChange(event.target.checked)
+                                          }
+                                        />
+                                      }
+                                      label="仅内部可见"
+                                    />
+                                  )}
+                                />
+                                <Button
+                                  type="submit"
+                                  size="small"
+                                  variant="contained"
+                                  disabled={postingComment}
+                                >
+                                  {postingComment ? "正在发送" : "发送"}
+                                </Button>
+                              </Stack>
+                            </Box>
+                          ) : null
+                        }
+                      />
+                    ) : null}
                   </Stack>
                 </DialogContent>
                 <DialogActions sx={{ px: 3, pb: 2.5 }}>
-                  {detailUpdate.contentRiskStatus !== "REVOKED" ? (
-                    <Button
-                      startIcon={<ChatBubbleOutlineOutlinedIcon />}
-                      onClick={() => {
-                        // 详情与评论是两个弹窗，同屏叠着看不清：关掉详情再开评论
-                        setCommentOpenId(detailUpdate.id);
-                        setDetailId(null);
-                      }}
-                      sx={{ mr: "auto" }}
-                    >
-                      评论
-                      {detailUpdate.comments.length > 0
-                        ? ` ${detailUpdate.comments.length}`
-                        : ""}
-                    </Button>
-                  ) : null}
                   <Button onClick={() => setDetailId(null)}>关闭</Button>
                 </DialogActions>
               </>
             ) : null}
           </Dialog>
 
-          <UpdateCommentDialog
-            open={Boolean(commentUpdate)}
-            onClose={() => setCommentOpenId(null)}
-            title={commentUpdate?.title}
-            items={(commentUpdate?.comments ?? []).map((comment) => ({
-              id: comment.id,
-              body: comment.body,
-              authorId: comment.authorId,
-              authorName: comment.authorName,
-              authorImage: comment.authorImage,
-              createdAt: comment.createdAt,
-              contentRiskStatus: comment.contentRiskStatus,
-              badge:
-                comment.visibility === "INTERNAL" ? " · 内部评论" : null,
-              meta:
-                comment.hasEditHistory && commentUpdate ? (
-                  <EditedAtLabel
-                    updatedAt={comment.updatedAt}
-                    onClick={() =>
-                      setHistoryTarget({
-                        kind: "comment",
-                        projectId: project.id,
-                        projectUpdateId: commentUpdate.id,
-                        updateCommentId: comment.id,
-                        label: `${commentUpdate.title} · 评论`,
-                      })
-                    }
-                  />
-                ) : null,
-              // 只能编辑自己发的：客户的留言不归后台改，
-              // 服务端也只放行作者本人（见 updateUpdateComment）
-              action:
-                commentUpdate &&
-                comment.authorId === currentUserId &&
-                comment.contentRiskStatus !== "REVOKED" ? (
-                  <Tooltip title="编辑评论">
-                    <span>
-                      <IconButton
-                        size="small"
-                        aria-label="编辑评论"
-                        onClick={() => openEditComment(commentUpdate, comment)}
-                        sx={{ flexShrink: 0 }}
-                      >
-                        <EditOutlinedIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                ) : null,
-            }))}
-            contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
-            dateFormatter={dateTimeFormatter}
-            busy={postingComment}
-            composer={
-              // 也要看 commentUpdate：动态被撤回时选中项会置空，
-              // 输入框不能还留在淡出中的弹窗里等人发评论
-              canComment && commentUpdate ? (
-                <Box component="form" onSubmit={submitCreateComment}>
-                  {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
-                  <Controller
-                    control={commentCreateForm.control}
-                    name="body"
-                    render={({ field }) => (
-                      <TextField
-                        {...field}
-                        placeholder="回复客户或记录说明…"
-                        fullWidth
-                        multiline
-                        minRows={2}
-                        maxRows={6}
-                        size="small"
-                        disabled={postingComment}
-                        error={Boolean(commentCreateForm.formState.errors.body)}
-                        helperText={
-                          commentCreateForm.formState.errors.body?.message
-                        }
-                      />
-                    )}
-                  />
-                  <Stack
-                    direction="row"
-                    spacing={1}
-                    sx={{
-                      mt: 1,
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                    }}
-                  >
-                    <Controller
-                      control={commentCreateForm.control}
-                      name="internal"
-                      render={({ field }) => (
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              size="small"
-                              checked={field.value}
-                              onChange={(event) =>
-                                field.onChange(event.target.checked)
-                              }
-                            />
-                          }
-                          label="仅内部可见"
-                        />
-                      )}
-                    />
-                    <Button
-                      type="submit"
-                      size="small"
-                      variant="contained"
-                      disabled={postingComment}
-                    >
-                      {postingComment ? "正在发送" : "发送"}
-                    </Button>
-                  </Stack>
-                </Box>
-              ) : null
-            }
-          />
 
           <Dialog
             open={Boolean(deleteTarget)}

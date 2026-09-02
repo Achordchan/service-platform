@@ -11,6 +11,7 @@ import {
   DialogTitle,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
@@ -18,6 +19,7 @@ import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
+import { CommentSection } from "@/components/shared/comment-section";
 import type { MilestoneStatus } from "@/components/customer/customer-types";
 import {
   extractInlineAttachmentIds,
@@ -34,6 +36,19 @@ export type MilestoneListItem = {
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
   attachments?: Array<{ id: string }>;
+  comments?: MilestoneCommentItem[];
+};
+
+/** 与 UpdateCommentListItem 对齐的评论条目（作者/时间/正文/风控状态） */
+export type MilestoneCommentItem = {
+  id: string;
+  body: string;
+  visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
+  authorId?: string | null;
+  authorName: string;
+  authorImage?: string | null;
+  createdAt: string;
+  contentRiskStatus?: "PENDING" | "REVOKED" | null;
 };
 
 const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
@@ -71,6 +86,18 @@ export function MilestoneList({
   contentRiskEnabled = false,
   collapsible = false,
   collapsedCount = DEFAULT_COLLAPSED_COUNT,
+  currentUserId,
+  canComment = false,
+  composerValue = "",
+  onComposerChange,
+  composerPlaceholder,
+  composerExtra,
+  commentBusy = false,
+  onSubmitComment,
+  onEditComment,
+  onDeleteComment,
+  canDeleteComment,
+  onDetailChange,
 }: {
   milestones: MilestoneListItem[];
   emptyText?: string;
@@ -79,14 +106,48 @@ export function MilestoneList({
   /** 条目多时默认折叠（客户视角），避免里程碑随条数增长把页面拉得过长 */
   collapsible?: boolean;
   collapsedCount?: number;
+  /** 详情弹窗评论区的当前用户 id：只对自己的评论亮出编辑/删除 */
+  currentUserId?: string | null;
+  /** 详情弹窗评论区能否发言 */
+  canComment?: boolean;
+  /** 评论输入框的值由父组件持有：切换里程碑或提交后由它清空 */
+  composerValue?: string;
+  onComposerChange?: (value: string) => void;
+  composerPlaceholder?: string;
+  /** 员工端的「仅内部可见」等附加控制 */
+  composerExtra?: ReactNode;
+  /** 发送/编辑/删除进行中：期间禁用输入与按钮 */
+  commentBusy?: boolean;
+  /** 发送评论：参数是当前打开详情的里程碑 */
+  onSubmitComment?: (milestone: MilestoneListItem) => void;
+  onEditComment?: (
+    milestone: MilestoneListItem,
+    comment: MilestoneCommentItem,
+  ) => void;
+  onDeleteComment?: (
+    milestone: MilestoneListItem,
+    comment: MilestoneCommentItem,
+  ) => void;
+  /** 不传时删除默认只限作者本人；员工端可传 canComment 放行管理删除 */
+  canDeleteComment?: (comment: MilestoneCommentItem) => boolean;
+  /** 切换/关闭详情时通知父组件清空共享评论草稿 */
+  onDetailChange?: (milestoneId: string | null) => void;
 }) {
-  const [detail, setDetail] = useState<MilestoneListItem | null>(null);
+  // 详情存 id 而不是对象：router.refresh 换掉 props 后，弹窗内容才跟着
+  // 新数据走（不然刚发的评论在弹窗里看不到，还停在刷新前的空列表上）
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const detail = detailId ? milestones.find((item) => item.id === detailId) ?? null : null;
   const [expanded, setExpanded] = useState(false);
   const shouldCollapse =
     collapsible && milestones.length > collapsedCount && !expanded;
   const visibleMilestones = shouldCollapse
     ? milestones.slice(0, collapsedCount)
     : milestones;
+
+  function changeDetail(nextId: string | null) {
+    setDetailId(nextId);
+    onDetailChange?.(nextId);
+  }
 
   return (
     <>
@@ -204,7 +265,16 @@ export function MilestoneList({
                     {milestone.attachments!.length} 个附件（已收录到项目文件）
                   </Typography>
                 ) : null}
-                {!revoked && (milestone.description || renderActions) ? (
+                {!revoked && (milestone.comments?.length ?? 0) > 0 ? (
+                  <Typography variant="body2" color="text.secondary">
+                    {milestone.comments!.length} 条评论
+                  </Typography>
+                ) : null}
+                {!revoked &&
+                (milestone.description ||
+                  (milestone.comments?.length ?? 0) > 0 ||
+                  canComment ||
+                  renderActions) ? (
                   <Stack
                     direction="row"
                     spacing={0.75}
@@ -216,12 +286,14 @@ export function MilestoneList({
                       flexWrap: "wrap",
                     }}
                   >
-                    {milestone.description ? (
+                    {milestone.description ||
+                    (milestone.comments?.length ?? 0) > 0 ||
+                    canComment ? (
                       <Button
                         size="small"
                         color="primary"
                         startIcon={<VisibilityOutlinedIcon />}
-                        onClick={() => setDetail(milestone)}
+                        onClick={() => changeDetail(milestone.id)}
                       >
                         查看详情
                       </Button>
@@ -262,7 +334,7 @@ export function MilestoneList({
 
       <Dialog
         open={Boolean(detail)}
-        onClose={() => setDetail(null)}
+        onClose={() => changeDetail(null)}
         fullWidth
         maxWidth="md"
         slotProps={{
@@ -295,11 +367,88 @@ export function MilestoneList({
                   collapsible={false}
                 />
               ) : null}
+              {/* 评论区常驻详情弹窗；父里程碑被撤回后，评论与输入同时隐藏，
+                  不能继续对已撤回内容发言。 */}
+              {detail.contentRiskStatus !== "REVOKED" ? (
+                <CommentSection
+                  comments={(detail.comments ?? []).map((comment) => ({
+                    ...comment,
+                    badge:
+                      comment.visibility === "INTERNAL"
+                        ? " · 内部评论"
+                        : null,
+                  }))}
+                  currentUserId={currentUserId}
+                  contentRiskEnabled={contentRiskEnabled}
+                  dateFormatter={timestampFormatter}
+                  emptyText="还没有评论"
+                  busy={commentBusy}
+                  // 回调没传就不亮对应按钮（CommentSection 按有无 onEdit/onDelete 判断）
+                  {...(onEditComment
+                    ? {
+                        onEdit: (comment: MilestoneCommentItem) =>
+                          onEditComment(detail, comment),
+                      }
+                    : {})}
+                  {...(onDeleteComment
+                    ? {
+                        onDelete: (comment: MilestoneCommentItem) =>
+                          onDeleteComment(detail, comment),
+                      }
+                    : {})}
+                  {...(canDeleteComment
+                    ? {
+                        canDeleteComment: (comment: MilestoneCommentItem) =>
+                          canDeleteComment(comment),
+                      }
+                    : {})}
+                  composer={
+                    canComment && onComposerChange ? (
+                      <Stack spacing={1}>
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "flex-start" }}
+                        >
+                          <TextField
+                            value={composerValue}
+                            onChange={(event) =>
+                              onComposerChange(event.target.value)
+                            }
+                            fullWidth
+                            multiline
+                            minRows={2}
+                            maxRows={6}
+                            size="small"
+                            placeholder={
+                              composerPlaceholder ?? "写下你的评论…"
+                            }
+                            disabled={commentBusy}
+                          />
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => {
+                              if (detail) onSubmitComment?.(detail);
+                            }}
+                            disabled={
+                              commentBusy || composerValue.trim().length === 0
+                            }
+                          >
+                            发送
+                          </Button>
+                        </Stack>
+                        {composerExtra}
+                      </Stack>
+                    ) : null
+                  }
+                />
+              ) : null}
             </Stack>
           ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setDetail(null)}>关闭</Button>
+          <Button onClick={() => changeDetail(null)}>关闭</Button>
         </DialogActions>
       </Dialog>
     </>
