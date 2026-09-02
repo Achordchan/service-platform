@@ -318,45 +318,51 @@ export async function loadProjectDetail(
         };
       })
       .filter((item): item is NonNullable<typeof item> => Boolean(item)),
-    milestones: milestones.map((milestone) => ({
-      ...milestone,
-      title:
+    milestones: milestones.map((milestone) => {
+      const revokedForActor =
         !actor.isPlatformAdmin &&
-        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
-          ? ""
-          : milestone.title,
-      contentRiskStatus: riskStatus(
-        "MILESTONE",
-        milestone.id,
-        milestone.createdById === actor.id,
-      ),
-      description:
-        !actor.isPlatformAdmin &&
-        riskStatus("MILESTONE", milestone.id, false) === "REVOKED"
+        isContentRiskStateRevoked(
+          contentRisk.states.get(`MILESTONE:${milestone.id}`),
+        );
+      return {
+        ...milestone,
+        title: revokedForActor ? "" : milestone.title,
+        contentRiskStatus: riskStatus(
+          "MILESTONE",
+          milestone.id,
+          milestone.createdById === actor.id,
+        ),
+        description: revokedForActor
           ? null
           : milestone.description
             ? sanitizeMessageHtml(milestone.description)
             : null,
-      attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
-        decorateAttachment,
-      ),
-      comments: (commentsByMilestoneId.get(milestone.id) ?? []).map(
-        (comment) => ({
-          ...comment,
-          contentRiskStatus: riskStatus(
-            "MILESTONE_COMMENT",
-            comment.id,
-            comment.authorId === actor.id,
-          ),
-          body:
-            !actor.isPlatformAdmin &&
-            riskStatus("MILESTONE_COMMENT", comment.id, false) === "REVOKED"
-              ? ""
-              : sanitizeMessageHtml(comment.body),
-          author: authorById.get(comment.authorId)!,
-        }),
-      ),
-    })),
+        attachments: (attachmentsByMilestoneId.get(milestone.id) ?? []).map(
+          decorateAttachment,
+        ),
+        // 父里程碑撤回后不能只靠 UI 隐藏：Server Component props
+        // 会序列化到 RSC 响应，所以非管理员的详情数据必须直接去掉评论。
+        comments: revokedForActor
+          ? []
+          : (commentsByMilestoneId.get(milestone.id) ?? []).map(
+              (comment) => ({
+                ...comment,
+                contentRiskStatus: riskStatus(
+                  "MILESTONE_COMMENT",
+                  comment.id,
+                  comment.authorId === actor.id,
+                ),
+                body:
+                  !actor.isPlatformAdmin &&
+                  riskStatus("MILESTONE_COMMENT", comment.id, false) ===
+                    "REVOKED"
+                    ? ""
+                    : sanitizeMessageHtml(comment.body),
+                author: authorById.get(comment.authorId)!,
+              }),
+            ),
+      };
+    }),
     updates: updates.map((update) => ({
       ...update,
       title:

@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
+import type { Actor } from "@/lib/actor";
+import { prisma } from "@/lib/db";
+import { getProject } from "@/modules/projects/project-service";
 
 const client = new Client({
   connectionString: process.env.DATABASE_MIGRATION_URL,
@@ -11,6 +14,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await client.end().catch(() => undefined);
+  await prisma.$disconnect();
 });
 
 describe("里程碑评论数据库安全", () => {
@@ -159,6 +163,95 @@ describe("里程碑评论数据库安全", () => {
       expect(visible.rows).toEqual([]);
     } finally {
       await client.query("ROLLBACK");
+    }
+  });
+
+  it("项目详情响应不序列化撤回里程碑下的评论正文", async () => {
+    const target = await client.query<{
+      milestone_id: string;
+      project_id: string;
+      customer_id: string;
+      customer_name: string;
+      customer_email: string;
+      show_milestones: boolean;
+      show_progress: boolean;
+    }>(`
+      SELECT
+        milestone.id AS milestone_id,
+        project.id AS project_id,
+        membership."userId" AS customer_id,
+        user_row.name AS customer_name,
+        user_row.email AS customer_email,
+        project."showMilestones" AS show_milestones,
+        project."showProgress" AS show_progress
+      FROM "Milestone" milestone
+      JOIN "Project" project ON project.id = milestone."projectId"
+      JOIN "Membership" membership
+        ON membership."customerSpaceId" = project."customerSpaceId"
+      JOIN "User" user_row ON user_row.id = membership."userId"
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM "ContentRiskState" risk
+        WHERE risk."targetType" = 'MILESTONE'
+          AND risk."targetId" = milestone.id
+      )
+      ORDER BY milestone.id, membership."userId"
+      LIMIT 1
+    `);
+    const row = target.rows[0];
+    expect(row).toBeTruthy();
+
+    const commentId = `revoked-parent-comment-${Date.now()}`;
+    const riskStateId = `revoked-parent-state-${Date.now()}`;
+    await client.query(
+      `UPDATE "Project"
+       SET "showMilestones" = TRUE, "showProgress" = TRUE
+       WHERE id = $1`,
+      [row!.project_id],
+    );
+    await client.query(
+      `INSERT INTO "MilestoneComment"
+        (id, body, visibility, "milestoneId", "authorId", "updatedAt")
+       VALUES ($1, '<p>must-not-leak</p>', 'CUSTOMER_VISIBLE', $2, $3, NOW())`,
+      [commentId, row!.milestone_id, row!.customer_id],
+    );
+    await client.query(
+      `INSERT INTO "ContentRiskState" (
+        id, "targetType", "targetId", "displayState", "revokedAt", "updatedAt"
+      ) VALUES ($1, 'MILESTONE', $2, 'REVOKED', NOW(), NOW())`,
+      [riskStateId, row!.milestone_id],
+    );
+
+    try {
+      const customerActor: Actor = {
+        id: row!.customer_id,
+        name: row!.customer_name,
+        email: row!.customer_email,
+        platformRole: "CUSTOMER",
+        isPlatformAdmin: false,
+        isStaff: false,
+      };
+      const project = await getProject(customerActor, row!.project_id);
+      const milestone = project.milestones.find(
+        (item) => item.id === row!.milestone_id,
+      );
+      expect(milestone).toBeTruthy();
+      expect(milestone?.contentRiskStatus).toBe("REVOKED");
+      expect(milestone?.comments).toEqual([]);
+      expect(JSON.stringify(milestone)).not.toContain("must-not-leak");
+    } finally {
+      await client.query(`DELETE FROM "ContentRiskState" WHERE id = $1`, [
+        riskStateId,
+      ]);
+      await client.query(`DELETE FROM "MilestoneComment" WHERE id = $1`, [
+        commentId,
+      ]);
+      await client.query(
+        `UPDATE "Project"
+         SET "showMilestones" = $2, "showProgress" = $3
+         WHERE id = $1`,
+        [row!.project_id, row!.show_milestones, row!.show_progress],
+      );
     }
   });
 
