@@ -123,6 +123,11 @@ ALTER TABLE "Attachment" ADD COLUMN IF NOT EXISTS "milestoneCommentId" TEXT;
 ALTER TABLE "Attachment" ADD CONSTRAINT "Attachment_milestoneCommentId_fkey" FOREIGN KEY ("milestoneCommentId") REFERENCES "MilestoneComment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 CREATE INDEX IF NOT EXISTS "Attachment_milestoneCommentId_idx" ON "Attachment"("milestoneCommentId");
 
+-- 附件的模块开关函数补一个六参重载（多出的里程碑评论归属列）。
+-- 升级动作放在本迁移而不是回改旧迁移：旧迁移执行时本表和枚举值还不存在。
+-- 旧五参版本被既有 attachment_* 策略引用，保留原样（重载并存无害）；
+-- 当前策略已不调用它（见 support_playbook 迁移重写），六参版供内容风控
+-- 恢复路径的附件裁决使用。
 CREATE OR REPLACE FUNCTION app_project_attachment_feature_enabled(
   target_project_id text,
   target_project_update_id text,
@@ -159,3 +164,106 @@ $$;
 GRANT EXECUTE ON FUNCTION app_project_attachment_feature_enabled(
   text, text, text, text, boolean, text
 ) TO service_platform_app;
+
+-- 内容风控的目标可见性函数补上里程碑评论分支（枚举值在文件头已 ADD）。
+-- 风控记录的插入策略按它裁决「作者是否够得着这个目标」。
+CREATE OR REPLACE FUNCTION app_can_access_content_risk_target(
+  target_type TEXT,
+  target_id TEXT
+)
+RETURNS BOOLEAN
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+  SELECT app_is_platform_admin() OR CASE target_type
+    WHEN 'SERVICE_REQUEST' THEN EXISTS (
+      SELECT 1
+      FROM "ServiceRequest" request
+      WHERE request.id = target_id
+        AND (
+          app_can_access_request(request.id)
+          OR (
+            app_external_contact_id() IS NOT NULL
+            AND request."createdByExternalContactId" = app_external_contact_id()
+            AND app_external_contact_can_access_project(request."projectId")
+          )
+        )
+    )
+    WHEN 'REQUEST_MESSAGE' THEN EXISTS (
+      SELECT 1
+      FROM "RequestMessage" message
+      JOIN "ServiceRequest" request ON request.id = message."serviceRequestId"
+      WHERE message.id = target_id
+        AND (
+          app_can_access_request(request.id)
+          OR (
+            app_external_contact_id() IS NOT NULL
+            AND request."createdByExternalContactId" = app_external_contact_id()
+            AND app_external_contact_can_access_project(request."projectId")
+          )
+        )
+    )
+    WHEN 'PROJECT_UPDATE' THEN EXISTS (
+      SELECT 1 FROM "ProjectUpdate" item
+      WHERE item.id = target_id AND app_can_access_project(item."projectId")
+    )
+    WHEN 'UPDATE_COMMENT' THEN EXISTS (
+      SELECT 1
+      FROM "UpdateComment" comment
+      JOIN "ProjectUpdate" item ON item.id = comment."projectUpdateId"
+      WHERE comment.id = target_id AND app_can_access_project(item."projectId")
+    )
+    WHEN 'MILESTONE_COMMENT' THEN EXISTS (
+      SELECT 1
+      FROM "MilestoneComment" comment
+      JOIN "Milestone" item ON item.id = comment."milestoneId"
+      WHERE comment.id = target_id AND app_can_access_project(item."projectId")
+    )
+    WHEN 'MILESTONE' THEN EXISTS (
+      SELECT 1 FROM "Milestone" item
+      WHERE item.id = target_id AND app_can_access_project(item."projectId")
+    )
+    WHEN 'ATTACHMENT' THEN EXISTS (
+      SELECT 1
+      FROM "Attachment" attachment
+      LEFT JOIN "RequestMessage" message ON message.id = attachment."requestMessageId"
+      LEFT JOIN "ServiceRequest" request ON request.id = COALESCE(
+        attachment."serviceRequestId",
+        message."serviceRequestId"
+      )
+      LEFT JOIN "ProjectUpdate" project_update ON project_update.id = attachment."projectUpdateId"
+      LEFT JOIN "UpdateComment" update_comment ON update_comment.id = attachment."updateCommentId"
+      LEFT JOIN "ProjectUpdate" comment_update ON comment_update.id = update_comment."projectUpdateId"
+      LEFT JOIN "Milestone" milestone ON milestone.id = attachment."milestoneId"
+      LEFT JOIN "MilestoneComment" milestone_comment
+        ON milestone_comment.id = attachment."milestoneCommentId"
+      LEFT JOIN "Milestone" comment_milestone
+        ON comment_milestone.id = milestone_comment."milestoneId"
+      WHERE attachment.id = target_id
+        AND (
+          (
+            request.id IS NOT NULL
+            AND (
+              app_can_access_request(request.id)
+              OR (
+                app_external_contact_id() IS NOT NULL
+                AND request."createdByExternalContactId" = app_external_contact_id()
+                AND app_external_contact_can_access_project(request."projectId")
+              )
+            )
+          )
+          OR (project_update.id IS NOT NULL AND app_can_access_project(project_update."projectId"))
+          OR (comment_update.id IS NOT NULL AND app_can_access_project(comment_update."projectId"))
+          OR (milestone.id IS NOT NULL AND app_can_access_project(milestone."projectId"))
+          OR (comment_milestone.id IS NOT NULL AND app_can_access_project(comment_milestone."projectId"))
+        )
+    )
+    ELSE FALSE
+  END;
+$$;
+
+REVOKE ALL ON FUNCTION app_can_access_content_risk_target(TEXT, TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION app_can_access_content_risk_target(TEXT, TEXT)
+  TO service_platform_app;

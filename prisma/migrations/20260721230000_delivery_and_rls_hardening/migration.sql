@@ -544,7 +544,7 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION app_project_attachment_feature_enabled(
-  text, text, text, text, boolean, text
+  text, text, text, text, boolean
 ) TO service_platform_app;
 
 DROP POLICY IF EXISTS attachment_select ON "Attachment";
@@ -566,8 +566,7 @@ CREATE POLICY attachment_select ON "Attachment"
           "projectUpdateId",
           "updateCommentId",
           "milestoneId",
-          inline,
-          "milestoneCommentId"
+          inline
         )
       )
       OR (
@@ -602,8 +601,7 @@ CREATE POLICY attachment_insert ON "Attachment"
           "projectUpdateId",
           "updateCommentId",
           "milestoneId",
-          inline,
-          "milestoneCommentId"
+          inline
         )
       )
     )
@@ -638,8 +636,7 @@ CREATE POLICY attachment_update ON "Attachment"
             "projectUpdateId",
             "updateCommentId",
             "milestoneId",
-            inline,
-            "milestoneCommentId"
+            inline
           )
         )
       )
@@ -671,8 +668,7 @@ CREATE POLICY attachment_update ON "Attachment"
             "projectUpdateId",
             "updateCommentId",
             "milestoneId",
-            inline,
-            "milestoneCommentId"
+            inline
           )
         )
       )
@@ -706,8 +702,7 @@ CREATE POLICY attachment_delete ON "Attachment"
           "projectUpdateId",
           "updateCommentId",
           "milestoneId",
-          inline,
-          "milestoneCommentId"
+          inline
         )
       )
     )
