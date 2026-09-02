@@ -12,11 +12,12 @@ import {
 } from "@/modules/notifications/notification-service";
 import {
   assertCanCommentOnProjectUpdate,
-  assertCanViewCustomerProjectFeature,
+  assertCanViewProject,
 } from "@/modules/projects/project-access";
 import {
   assertAllowed,
   assertFound,
+  DomainError,
 } from "@/modules/projects/errors";
 import { canViewContent } from "@/modules/projects/permissions";
 import {
@@ -53,12 +54,14 @@ async function assertMilestoneVisible(
   projectId: string,
   milestoneId: string,
 ) {
-  const context = await assertCanViewCustomerProjectFeature(
-    tx,
-    actor,
-    projectId,
-    "milestones",
-  );
+  const context = await assertCanViewProject(tx, actor, projectId);
+  if (
+    !actor.isStaff &&
+    !context.customerFeatures.milestones &&
+    !context.customerFeatures.progress
+  ) {
+    throw new DomainError("NOT_FOUND", "项目功能未开放", 404);
+  }
   const milestone = await tx.milestone.findFirst({
     where: { id: milestoneId, projectId },
     select: { id: true },

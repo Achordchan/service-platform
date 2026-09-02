@@ -1230,6 +1230,12 @@ async function applySnapshotToTarget(
       },
     });
   } else if (targetType === "MILESTONE_COMMENT") {
+    // MilestoneComment 的常规 UPDATE RLS 只允许作者。风控恢复安全快照
+    // 必须能以平台管理员/系统身份回写，因此只在当前事务打开专用
+    // GUC。普通业务请求不设置该标记，管理员也不能借此改写客户评论。
+    await tx.$executeRaw`
+      SELECT set_config('app.content_risk_snapshot_write', 'true', true)
+    `;
     await tx.milestoneComment.updateMany({
       where: { id: targetId },
       data: {

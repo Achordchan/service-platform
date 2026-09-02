@@ -62,11 +62,22 @@ CREATE POLICY milestone_comment_insert ON "MilestoneComment"
         )
     )
   );
--- 编辑只留给作者本人（RLS 兜底；服务层同样只放行作者，管理员也不例外）
+-- 常规编辑只留给作者本人。唯一绕行是平台管理员/系统执行的
+-- 内容风控快照恢复：它必须在同一事务显式设置专用 GUC。服务层的
+-- 用户编辑仍严格限定作者本人，不因 RLS 风控通道而放宽。
 CREATE POLICY milestone_comment_update ON "MilestoneComment"
   FOR UPDATE
   USING (
-    "MilestoneComment"."authorId" = app_user_id()
+    (
+      "MilestoneComment"."authorId" = app_user_id()
+      OR (
+        app_is_platform_admin()
+        AND COALESCE(
+          current_setting('app.content_risk_snapshot_write', true),
+          'false'
+        ) = 'true'
+      )
+    )
     AND EXISTS (
       SELECT 1
       FROM "Milestone" milestone
@@ -83,7 +94,16 @@ CREATE POLICY milestone_comment_update ON "MilestoneComment"
     )
   )
   WITH CHECK (
-    "MilestoneComment"."authorId" = app_user_id()
+    (
+      "MilestoneComment"."authorId" = app_user_id()
+      OR (
+        app_is_platform_admin()
+        AND COALESCE(
+          current_setting('app.content_risk_snapshot_write', true),
+          'false'
+        ) = 'true'
+      )
+    )
     AND EXISTS (
       SELECT 1
       FROM "Milestone" milestone

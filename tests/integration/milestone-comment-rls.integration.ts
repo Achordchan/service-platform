@@ -66,4 +66,54 @@ describe("里程碑评论数据库安全", () => {
       await client.query("ROLLBACK");
     }
   });
+
+  it("平台管理员只在风控快照事务中可回写他人评论", async () => {
+    await client.query("BEGIN");
+    try {
+      const target = await client.query<{
+        milestone_id: string;
+        author_id: string;
+      }>(`
+        SELECT
+          milestone.id AS milestone_id,
+          user_row.id AS author_id
+        FROM "Milestone" milestone
+        CROSS JOIN "User" user_row
+        ORDER BY milestone.id, user_row.id
+        LIMIT 1
+      `);
+      const row = target.rows[0];
+      expect(row).toBeTruthy();
+
+      const commentId = `rls-moderation-${Date.now()}`;
+      await client.query(
+        `INSERT INTO "MilestoneComment"
+          (id, body, visibility, "milestoneId", "authorId", "updatedAt")
+         VALUES ($1, '<p>original</p>', 'CUSTOMER_VISIBLE', $2, $3, NOW())`,
+        [commentId, row!.milestone_id, row!.author_id],
+      );
+
+      await client.query("SET LOCAL ROLE service_platform_app");
+      await client.query(`SELECT set_config('app.user_id', 'review-admin', true)`);
+      await client.query(`SELECT set_config('app.is_platform_admin', 'true', true)`);
+      await client.query(`SELECT set_config('app.is_staff', 'true', true)`);
+
+      const ordinaryAdminUpdate = await client.query(
+        `UPDATE "MilestoneComment" SET body = '<p>blocked</p>' WHERE id = $1`,
+        [commentId],
+      );
+      expect(ordinaryAdminUpdate.rowCount).toBe(0);
+
+      await client.query(
+        `SELECT set_config('app.content_risk_snapshot_write', 'true', true)`,
+      );
+      const moderationUpdate = await client.query(
+        `UPDATE "MilestoneComment" SET body = '<p>restored</p>' WHERE id = $1`,
+        [commentId],
+      );
+      expect(moderationUpdate.rowCount).toBe(1);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  });
 });

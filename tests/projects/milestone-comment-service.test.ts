@@ -12,6 +12,10 @@ const mocks = vi.hoisted(() => ({
   writeAuditLog: vi.fn(),
   publishProjectChange: vi.fn(),
   isContentRiskStateRevoked: vi.fn(() => false),
+  customerFeatures: {
+    milestones: true,
+    progress: false,
+  },
 }));
 
 vi.mock("server-only", () => ({}));
@@ -46,9 +50,10 @@ vi.mock("@/modules/notifications/notification-service", () => ({
 
 vi.mock("@/modules/projects/project-access", () => ({
   // access 按调用者身份给：员工有项目角色，客户作者走空间成员身份
-  assertCanViewCustomerProjectFeature: vi.fn(
+  assertCanViewProject: vi.fn(
     async (_tx: unknown, actor: Actor) => ({
       customerSpaceId: "space-1",
+      customerFeatures: mocks.customerFeatures,
       access: actor.isStaff
         ? { isCustomerSpaceMember: false, projectRole: "PROJECT_MANAGER" }
         : { isCustomerSpaceMember: true, projectRole: null },
@@ -111,6 +116,8 @@ describe("milestone comment service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.isContentRiskStateRevoked.mockReturnValue(false);
+    mocks.customerFeatures.milestones = true;
+    mocks.customerFeatures.progress = false;
     mockMilestoneVisible();
   });
 
@@ -247,6 +254,35 @@ describe("milestone comment service", () => {
         }),
       }),
     );
+  });
+
+  it("仅开启进度时客户仍可以发表里程碑评论", async () => {
+    mocks.customerFeatures.milestones = false;
+    mocks.customerFeatures.progress = true;
+    mocks.milestoneCommentCreate.mockResolvedValue({
+      id: "comment-1",
+      body: "<p>进度里程碑留言</p>",
+      visibility: "CUSTOMER_VISIBLE",
+      author,
+    });
+
+    await createMilestoneComment(authorActor, "project-1", "milestone-1", {
+      body: "<p>进度里程碑留言</p>",
+    });
+
+    expect(mocks.milestoneCommentCreate).toHaveBeenCalled();
+  });
+
+  it("里程碑与进度都关闭时客户看不到评论功能", async () => {
+    mocks.customerFeatures.milestones = false;
+    mocks.customerFeatures.progress = false;
+
+    await expect(
+      createMilestoneComment(authorActor, "project-1", "milestone-1", {
+        body: "<p>不应写入</p>",
+      }),
+    ).rejects.toMatchObject({ message: "项目功能未开放", status: 404 });
+    expect(mocks.milestoneCommentCreate).not.toHaveBeenCalled();
   });
 
   it("父里程碑已撤回时服务端拒绝新评论", async () => {
