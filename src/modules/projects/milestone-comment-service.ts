@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { removePrivateFile } from "@/modules/attachments/private-storage";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import {
   dispatchProjectActivity,
@@ -340,6 +341,9 @@ export function deleteMilestoneComment(
         body: true,
         authorId: true,
         visibility: true,
+        attachments: {
+          select: { storageKey: true, previewStorageKey: true },
+        },
       },
     });
     assertFound(comment, "评论不存在");
@@ -356,6 +360,12 @@ export function deleteMilestoneComment(
       "无权删除该评论",
     );
 
+    const storageKeys = comment.attachments.flatMap((attachment) =>
+      [attachment.storageKey, attachment.previewStorageKey].filter(
+        (value): value is string => Boolean(value),
+      ),
+    );
+
     await tx.milestoneComment.delete({
       where: { id: milestoneCommentId },
     });
@@ -365,9 +375,12 @@ export function deleteMilestoneComment(
       resourceId: milestoneCommentId,
       customerSpaceId: context.customerSpaceId,
       projectId,
+      // storageKeys 跟删除审计进同一事务：物理删除前进程若重启，仍能从
+      // 审计恢复待清理键，不会变成彻底失联的孤儿文件。
       metadata: {
         milestoneId,
         authorId: comment.authorId,
+        storageKeys,
       },
     });
     await publishProjectChange(tx, actor, {
@@ -380,6 +393,42 @@ export function deleteMilestoneComment(
         milestoneCommentId,
       },
     });
+    return { storageKeys };
+  }).then(async ({ storageKeys }) => {
+    const failed: Array<{ storageKey: string; error: string }> = [];
+    for (const storageKey of storageKeys) {
+      try {
+        await removePrivateFile(storageKey);
+      } catch (error) {
+        failed.push({
+          storageKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    if (failed.length > 0) {
+      console.error("MILESTONE_COMMENT_ATTACHMENT_FILE_DELETE_FAILED", {
+        milestoneCommentId,
+        failed,
+      });
+      try {
+        await withActorDb(actor, (tx) =>
+          writeAuditLog(tx, actor, {
+            action: "MILESTONE_COMMENT_ATTACHMENT_FILE_DELETE_FAILED",
+            resourceType: "MilestoneComment",
+            resourceId: milestoneCommentId,
+            result: "FAILED",
+            projectId,
+            metadata: { milestoneId, failed },
+          }),
+        );
+      } catch (auditError) {
+        console.error("MILESTONE_COMMENT_FILE_DELETE_AUDIT_FAILED", {
+          milestoneCommentId,
+          auditError,
+        });
+      }
+    }
     return { deleted: true as const };
   });
 }

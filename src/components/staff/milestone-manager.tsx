@@ -300,6 +300,7 @@ export function MilestoneManager({
         canComment={canComment}
         composerValue={commentText}
         onComposerChange={setCommentText}
+        onDetailChange={() => resetCommentComposer()}
         composerPlaceholder="回复客户或记录说明…"
         commentBusy={commentBusy}
         onSubmitComment={(milestone) => {
@@ -319,6 +320,9 @@ export function MilestoneManager({
             comment,
           })
         }
+        // 员工有 update.comment 时可删除客户评论；编辑仍由 CommentSection 默认
+        // 的「作者本人」口径裁，不能借删除权改写客户的话。
+        canDeleteComment={() => Boolean(canComment)}
         renderActions={
           canManage
             ? (milestone) => (

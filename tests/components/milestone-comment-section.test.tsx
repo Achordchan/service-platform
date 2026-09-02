@@ -90,6 +90,54 @@ describe("里程碑详情弹窗的常驻评论区", () => {
     expect(screen.queryByRole("button", { name: "编辑评论" })).toBeNull();
   });
 
+  it("无正文但有评论或可评论时仍提供详情入口", () => {
+    const noDescription = { ...milestone, description: null };
+    const { rerender } = renderWithTheme(
+      <MilestoneList milestones={[noDescription]} />,
+    );
+    expect(screen.getByRole("button", { name: "查看详情" })).toBeTruthy();
+
+    rerender(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneList
+          milestones={[{ ...noDescription, comments: [] }]}
+          canComment
+          onComposerChange={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByRole("button", { name: "查看详情" })).toBeTruthy();
+  });
+
+  it("切换或关闭详情时通知父组件清空共享草稿", () => {
+    const onDetailChange = vi.fn();
+    renderWithTheme(
+      <MilestoneList
+        milestones={[milestone]}
+        onDetailChange={onDetailChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(onDetailChange).toHaveBeenCalledWith("milestone-1");
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onDetailChange).toHaveBeenLastCalledWith(null);
+  });
+
+  it("删除权限与作者编辑权限分开：员工可删客户评论但不能编辑", () => {
+    renderWithTheme(
+      <MilestoneList
+        milestones={[milestone]}
+        currentUserId="staff-1"
+        onEditComment={vi.fn()}
+        onDeleteComment={vi.fn()}
+        canDeleteComment={() => true}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.getAllByRole("button", { name: "编辑评论" })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "删除评论" })).toHaveLength(2);
+  });
+
   it("canComment 时显示评论输入框，发送按钮带着当前里程碑回调", () => {
     const onSubmit = vi.fn();
     renderWithTheme(

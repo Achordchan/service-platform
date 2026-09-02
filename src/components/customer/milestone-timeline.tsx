@@ -111,6 +111,7 @@ export function MilestoneTimeline({
         canComment={Boolean(projectId)}
         composerValue={commentText}
         onComposerChange={setCommentText}
+        onDetailChange={() => setCommentText("")}
         composerPlaceholder="向服务人员留言…"
         commentBusy={commentBusy}
         onSubmitComment={(milestone) => {

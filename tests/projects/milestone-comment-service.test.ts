@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   milestoneCommentUpdate: vi.fn(),
   milestoneCommentDelete: vi.fn(),
   milestoneFindFirst: vi.fn(),
+  removePrivateFile: vi.fn(),
+  writeAuditLog: vi.fn(),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -26,8 +28,12 @@ vi.mock("@/lib/actor", () => ({
     }),
 }));
 
+vi.mock("@/modules/attachments/private-storage", () => ({
+  removePrivateFile: mocks.removePrivateFile,
+}));
+
 vi.mock("@/modules/audit/audit-service", () => ({
-  writeAuditLog: vi.fn(),
+  writeAuditLog: mocks.writeAuditLog,
 }));
 
 vi.mock("@/modules/notifications/notification-service", () => ({
@@ -213,6 +219,7 @@ describe("milestone comment service", () => {
       body: "<p>我的评论</p>",
       authorId: "author-1",
       visibility: "CUSTOMER_VISIBLE",
+      attachments: [],
     });
     mocks.milestoneCommentDelete.mockResolvedValue({ id: "comment-1" });
 
@@ -228,12 +235,71 @@ describe("milestone comment service", () => {
     });
   });
 
+  it("删除评论时连 storage/preview 文件一起清理", async () => {
+    mocks.milestoneCommentFindFirst.mockResolvedValue({
+      id: "comment-1",
+      body: "<p>我的评论</p>",
+      authorId: "author-1",
+      visibility: "CUSTOMER_VISIBLE",
+      attachments: [
+        { storageKey: "files/a", previewStorageKey: "files/a-preview" },
+      ],
+    });
+    mocks.milestoneCommentDelete.mockResolvedValue({ id: "comment-1" });
+
+    await deleteMilestoneComment(
+      authorActor,
+      "project-1",
+      "milestone-1",
+      "comment-1",
+    );
+    expect(mocks.removePrivateFile).toHaveBeenCalledTimes(2);
+    expect(mocks.removePrivateFile).toHaveBeenNthCalledWith(1, "files/a");
+    expect(mocks.removePrivateFile).toHaveBeenNthCalledWith(
+      2,
+      "files/a-preview",
+    );
+  });
+
+  it("物理文件删除失败时写 FAILED 审计", async () => {
+    mocks.milestoneCommentFindFirst.mockResolvedValue({
+      id: "comment-1",
+      body: "<p>我的评论</p>",
+      authorId: "author-1",
+      visibility: "CUSTOMER_VISIBLE",
+      attachments: [{ storageKey: "files/b", previewStorageKey: null }],
+    });
+    mocks.milestoneCommentDelete.mockResolvedValue({ id: "comment-1" });
+    mocks.removePrivateFile.mockRejectedValueOnce(new Error("disk busy"));
+
+    await deleteMilestoneComment(
+      authorActor,
+      "project-1",
+      "milestone-1",
+      "comment-1",
+    );
+
+    expect(mocks.writeAuditLog).toHaveBeenCalledWith(
+      expect.anything(),
+      authorActor,
+      expect.objectContaining({
+        action: "MILESTONE_COMMENT_ATTACHMENT_FILE_DELETE_FAILED",
+        result: "FAILED",
+        metadata: {
+          milestoneId: "milestone-1",
+          failed: [{ storageKey: "files/b", error: "disk busy" }],
+        },
+      }),
+    );
+  });
+
   it("持评论权限的员工可以删除客户的里程碑评论", async () => {
     mocks.milestoneCommentFindFirst.mockResolvedValue({
       id: "comment-1",
       body: "<p>客户的评论</p>",
       authorId: "author-1",
       visibility: "CUSTOMER_VISIBLE",
+      attachments: [],
     });
     mocks.milestoneCommentDelete.mockResolvedValue({ id: "comment-1" });
 

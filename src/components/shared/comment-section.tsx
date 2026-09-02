@@ -13,8 +13,9 @@ import {
  * 详情弹窗里的常驻评论区。
  *
  * 评论跟着内容走：进详情就能看全部评论、直接回复，而不是「点评论换一个弹窗」。
- * 列表与头像样式复用 UpdateCommentList，这里只负责把编辑/删除操作挂到条目上 ——
- * 只对自己的评论亮出（作者本人判定由调用方传入 currentUserId）。
+ * 列表与头像样式复用 UpdateCommentList，这里只负责把编辑/删除操作挂到条目上。
+ * 编辑与删除分别授权：编辑通常只限作者本人，但有评论管理权限的员工可以删除
+ * 客户评论，不能把两个动作绑在同一个「是作者」判断上。
  */
 export function CommentSection({
   comments,
@@ -25,6 +26,8 @@ export function CommentSection({
   busy = false,
   onEdit,
   onDelete,
+  canEditComment,
+  canDeleteComment,
   composer,
 }: {
   comments: UpdateCommentListItem[];
@@ -36,9 +39,16 @@ export function CommentSection({
   busy?: boolean;
   onEdit?: (comment: UpdateCommentListItem) => void;
   onDelete?: (comment: UpdateCommentListItem) => void;
+  /** 不传时编辑默认只限作者本人 */
+  canEditComment?: (comment: UpdateCommentListItem) => boolean;
+  /** 不传时删除默认只限作者本人 */
+  canDeleteComment?: (comment: UpdateCommentListItem) => boolean;
   /** 底部输入区，没有发表权限时传 null/undefined */
   composer?: ReactNode;
 }) {
+  const isOwn = (comment: UpdateCommentListItem) =>
+    currentUserId != null && comment.authorId === currentUserId;
+
   return (
     <Stack spacing={1.5}>
       <Stack
@@ -53,38 +63,42 @@ export function CommentSection({
       <UpdateCommentList
         items={comments.map((comment) => ({
           ...comment,
-          action:
-            !busy &&
-            currentUserId != null &&
-            comment.authorId === currentUserId &&
-            comment.contentRiskStatus !== "REVOKED" &&
-            (onEdit || onDelete) ? (
+          action: (() => {
+            if (busy || comment.contentRiskStatus === "REVOKED") return null;
+            const canEdit = Boolean(
+              onEdit && (canEditComment?.(comment) ?? isOwn(comment)),
+            );
+            const canDelete = Boolean(
+              onDelete && (canDeleteComment?.(comment) ?? isOwn(comment)),
+            );
+            if (!canEdit && !canDelete) return null;
+            return (
               <Stack
                 direction="row"
                 spacing={0.25}
                 sx={{ flexShrink: 0 }}
               >
-                {onEdit ? (
+                {canEdit ? (
                   <Tooltip title="编辑评论">
                     <span>
                       <IconButton
                         size="small"
                         aria-label="编辑评论"
-                        onClick={() => onEdit(comment)}
+                        onClick={() => onEdit?.(comment)}
                       >
                         <EditOutlinedIcon fontSize="small" />
                       </IconButton>
                     </span>
                   </Tooltip>
                 ) : null}
-                {onDelete ? (
+                {canDelete ? (
                   <Tooltip title="删除评论">
                     <span>
                       <IconButton
                         size="small"
                         color="error"
                         aria-label="删除评论"
-                        onClick={() => onDelete(comment)}
+                        onClick={() => onDelete?.(comment)}
                       >
                         <DeleteOutlineOutlinedIcon fontSize="small" />
                       </IconButton>
@@ -92,7 +106,8 @@ export function CommentSection({
                   </Tooltip>
                 ) : null}
               </Stack>
-            ) : null,
+            );
+          })(),
         }))}
         contentRiskEnabled={contentRiskEnabled}
         dateFormatter={dateFormatter}

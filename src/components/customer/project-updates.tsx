@@ -73,7 +73,14 @@ export function ProjectUpdates({
     ? updates.find((item) => item.id === detailId) ?? null
     : null;
 
+  function openDetail(updateId: string) {
+    // 评论输入是跨详情共享的状态：每次换目标先清空，避免把上一条的草稿误发。
+    setCommentText("");
+    setDetailId(updateId);
+  }
+
   function closeDetail() {
+    setCommentText("");
     setDetailId(null);
   }
 
@@ -279,7 +286,7 @@ export function ProjectUpdates({
                           size="small"
                           color="primary"
                           startIcon={<VisibilityOutlinedIcon />}
-                          onClick={() => setDetailId(update.id)}
+                          onClick={() => openDetail(update.id)}
                         >
                           查看详情
                         </Button>

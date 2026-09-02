@@ -16,8 +16,10 @@ CREATE TABLE "MilestoneComment" (
     CONSTRAINT "MilestoneComment_pkey" PRIMARY KEY ("id")
 );
 
--- RLS 迁移只对当时已存在的表发过 ALL TABLES 的 GRANT，新表要自己补
+-- RLS 迁移只对当时已存在的表发过 ALL TABLES 的 GRANT，新表要自己补；
+-- 策略只有在显式 ENABLE ROW LEVEL SECURITY 后才会生效。
 GRANT SELECT, INSERT, UPDATE, DELETE ON "MilestoneComment" TO service_platform_app;
+ALTER TABLE "MilestoneComment" ENABLE ROW LEVEL SECURITY;
 
 CREATE INDEX "MilestoneComment_milestoneId_createdAt_idx" ON "MilestoneComment"("milestoneId", "createdAt");
 
@@ -126,8 +128,7 @@ CREATE INDEX IF NOT EXISTS "Attachment_milestoneCommentId_idx" ON "Attachment"("
 -- 附件的模块开关函数补一个六参重载（多出的里程碑评论归属列）。
 -- 升级动作放在本迁移而不是回改旧迁移：旧迁移执行时本表和枚举值还不存在。
 -- 旧五参版本被既有 attachment_* 策略引用，保留原样（重载并存无害）；
--- 当前策略已不调用它（见 support_playbook 迁移重写），六参版供内容风控
--- 恢复路径的附件裁决使用。
+-- 下方再把四条策略重建为六参调用，让已部署库也切到新归属裁决。
 CREATE OR REPLACE FUNCTION app_project_attachment_feature_enabled(
   target_project_id text,
   target_project_update_id text,
@@ -150,10 +151,12 @@ AS $$
         WHEN target_project_update_id IS NOT NULL
           OR target_update_comment_id IS NOT NULL
           THEN project."customerUpdatesEnabled"
-        WHEN target_milestone_id IS NOT NULL
-          THEN project."showMilestones"
+        -- 里程碑评论附件同时带 milestoneId / milestoneCommentId：先判更具体的
+        -- 评论归属，否则 progress-only 项目会被前面的 showMilestones=false 拦掉。
         WHEN target_milestone_comment_id IS NOT NULL
           THEN (project."showMilestones" OR project."showProgress")
+        WHEN target_milestone_id IS NOT NULL
+          THEN project."showMilestones"
         WHEN target_inline = true
           THEN project."customerRequestsEnabled"
         ELSE project."customerFilesEnabled"
@@ -164,6 +167,176 @@ $$;
 GRANT EXECUTE ON FUNCTION app_project_attachment_feature_enabled(
   text, text, text, text, boolean, text
 ) TO service_platform_app;
+
+
+-- 已部署库不会重跑旧迁移：在本迁移重建四条 attachment 策略，显式传入
+-- milestoneCommentId。这样里程碑评论附件按 progress/milestones 模块开关裁决，
+-- 而不是继续停在旧五参函数的里程碑归属分支。
+DROP POLICY IF EXISTS attachment_select ON "Attachment";
+CREATE POLICY attachment_select ON "Attachment"
+  FOR SELECT USING (
+    (app_is_staff() OR visibility = 'CUSTOMER_VISIBLE')
+    AND (
+      app_is_platform_admin()
+      OR (
+        "serviceRequestId" IS NOT NULL
+        AND app_can_access_request("serviceRequestId")
+      )
+      OR (
+        "serviceRequestId" IS NULL
+        AND "projectId" IS NOT NULL
+        AND app_can_access_project("projectId")
+        AND app_project_attachment_feature_enabled(
+          "projectId",
+          "projectUpdateId",
+          "updateCommentId",
+          "milestoneId",
+          inline,
+          "milestoneCommentId"
+        )
+      )
+      OR (
+        "supportPlaybookKey" IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+          FROM "RequestMessage" message
+          WHERE message."supportPlaybookKey" = "Attachment"."supportPlaybookKey"
+            AND message.visibility = 'CUSTOMER_VISIBLE'
+            AND app_can_access_request(message."serviceRequestId")
+        )
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS attachment_insert ON "Attachment";
+CREATE POLICY attachment_insert ON "Attachment"
+  FOR INSERT WITH CHECK (
+    (app_is_staff() OR visibility = 'CUSTOMER_VISIBLE')
+    AND (
+      app_is_platform_admin()
+      OR (
+        "serviceRequestId" IS NOT NULL
+        AND app_can_access_request("serviceRequestId")
+      )
+      OR (
+        "serviceRequestId" IS NULL
+        AND "projectId" IS NOT NULL
+        AND app_can_access_project("projectId")
+        AND app_project_attachment_feature_enabled(
+          "projectId",
+          "projectUpdateId",
+          "updateCommentId",
+          "milestoneId",
+          inline,
+          "milestoneCommentId"
+        )
+      )
+    )
+    AND (
+      app_external_contact_id() IS NULL
+      OR (
+        "uploadedById" IS NULL
+        AND "uploadedByExternalContactId" = app_external_contact_id()
+        AND visibility = 'CUSTOMER_VISIBLE'
+      )
+    )
+  );
+
+DROP POLICY IF EXISTS attachment_update ON "Attachment";
+CREATE POLICY attachment_update ON "Attachment"
+  FOR UPDATE
+  USING (
+    (
+      app_external_contact_id() IS NULL
+      AND (
+        app_is_platform_admin()
+        OR (
+          "serviceRequestId" IS NOT NULL
+          AND app_can_access_request("serviceRequestId")
+        )
+        OR (
+          "serviceRequestId" IS NULL
+          AND "projectId" IS NOT NULL
+          AND app_can_access_project("projectId")
+          AND app_project_attachment_feature_enabled(
+            "projectId",
+            "projectUpdateId",
+            "updateCommentId",
+            "milestoneId",
+            inline,
+            "milestoneCommentId"
+          )
+        )
+      )
+    )
+    OR (
+      app_external_contact_id() IS NOT NULL
+      AND inline = true
+      AND "uploadedByExternalContactId" = app_external_contact_id()
+      AND "requestMessageId" IS NULL
+      AND "serviceRequestId" IS NOT NULL
+      AND app_can_access_request("serviceRequestId")
+    )
+  )
+  WITH CHECK (
+    (
+      app_external_contact_id() IS NULL
+      AND (
+        app_is_platform_admin()
+        OR (
+          "serviceRequestId" IS NOT NULL
+          AND app_can_access_request("serviceRequestId")
+        )
+        OR (
+          "serviceRequestId" IS NULL
+          AND "projectId" IS NOT NULL
+          AND app_can_access_project("projectId")
+          AND app_project_attachment_feature_enabled(
+            "projectId",
+            "projectUpdateId",
+            "updateCommentId",
+            "milestoneId",
+            inline,
+            "milestoneCommentId"
+          )
+        )
+      )
+    )
+    OR (
+      app_external_contact_id() IS NOT NULL
+      AND inline = true
+      AND "uploadedByExternalContactId" = app_external_contact_id()
+      AND "requestMessageId" IS NOT NULL
+      AND "serviceRequestId" IS NOT NULL
+      AND app_can_access_request("serviceRequestId")
+    )
+  );
+
+DROP POLICY IF EXISTS attachment_delete ON "Attachment";
+CREATE POLICY attachment_delete ON "Attachment"
+  FOR DELETE USING (
+    app_external_contact_id() IS NULL
+    AND (
+      app_is_platform_admin()
+      OR (
+        "serviceRequestId" IS NOT NULL
+        AND app_can_access_request("serviceRequestId")
+      )
+      OR (
+        "serviceRequestId" IS NULL
+        AND "projectId" IS NOT NULL
+        AND app_can_access_project("projectId")
+        AND app_project_attachment_feature_enabled(
+          "projectId",
+          "projectUpdateId",
+          "updateCommentId",
+          "milestoneId",
+          inline,
+          "milestoneCommentId"
+        )
+      )
+    )
+  );
 
 -- 内容风控的目标可见性函数补上里程碑评论分支（枚举值在文件头已 ADD）。
 -- 风控记录的插入策略按它裁决「作者是否够得着这个目标」。

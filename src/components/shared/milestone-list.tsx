@@ -94,6 +94,8 @@ export function MilestoneList({
   onSubmitComment,
   onEditComment,
   onDeleteComment,
+  canDeleteComment,
+  onDetailChange,
 }: {
   milestones: MilestoneListItem[];
   emptyText?: string;
@@ -122,6 +124,10 @@ export function MilestoneList({
     milestone: MilestoneListItem,
     comment: MilestoneCommentItem,
   ) => void;
+  /** 不传时删除默认只限作者本人；员工端可传 canComment 放行管理删除 */
+  canDeleteComment?: (comment: MilestoneCommentItem) => boolean;
+  /** 切换/关闭详情时通知父组件清空共享评论草稿 */
+  onDetailChange?: (milestoneId: string | null) => void;
 }) {
   // 详情存 id 而不是对象：router.refresh 换掉 props 后，弹窗内容才跟着
   // 新数据走（不然刚发的评论在弹窗里看不到，还停在刷新前的空列表上）
@@ -133,6 +139,11 @@ export function MilestoneList({
   const visibleMilestones = shouldCollapse
     ? milestones.slice(0, collapsedCount)
     : milestones;
+
+  function changeDetail(nextId: string | null) {
+    setDetailId(nextId);
+    onDetailChange?.(nextId);
+  }
 
   return (
     <>
@@ -255,7 +266,11 @@ export function MilestoneList({
                     {milestone.comments!.length} 条评论
                   </Typography>
                 ) : null}
-                {!revoked && (milestone.description || renderActions) ? (
+                {!revoked &&
+                (milestone.description ||
+                  (milestone.comments?.length ?? 0) > 0 ||
+                  canComment ||
+                  renderActions) ? (
                   <Stack
                     direction="row"
                     spacing={0.75}
@@ -267,12 +282,14 @@ export function MilestoneList({
                       flexWrap: "wrap",
                     }}
                   >
-                    {milestone.description ? (
+                    {milestone.description ||
+                    (milestone.comments?.length ?? 0) > 0 ||
+                    canComment ? (
                       <Button
                         size="small"
                         color="primary"
                         startIcon={<VisibilityOutlinedIcon />}
-                        onClick={() => setDetailId(milestone.id)}
+                        onClick={() => changeDetail(milestone.id)}
                       >
                         查看详情
                       </Button>
@@ -313,7 +330,7 @@ export function MilestoneList({
 
       <Dialog
         open={Boolean(detail)}
-        onClose={() => setDetailId(null)}
+        onClose={() => changeDetail(null)}
         fullWidth
         maxWidth="md"
         slotProps={{
@@ -368,6 +385,12 @@ export function MilestoneList({
                         onDeleteComment(detail, comment),
                     }
                   : {})}
+                {...(canDeleteComment
+                  ? {
+                      canDeleteComment: (comment: MilestoneCommentItem) =>
+                        canDeleteComment(comment),
+                    }
+                  : {})}
                 composer={
                   canComment && onComposerChange ? (
                     <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
@@ -400,7 +423,7 @@ export function MilestoneList({
           ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          <Button onClick={() => setDetailId(null)}>关闭</Button>
+          <Button onClick={() => changeDetail(null)}>关闭</Button>
         </DialogActions>
       </Dialog>
     </>
