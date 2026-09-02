@@ -38,6 +38,26 @@ const updates: ProjectUpdate[] = ["update-a", "update-b"].map((id, index) => ({
 }));
 
 describe("客户动态评论草稿", () => {
+  it("只有标题的动态仍能打开详情发第一条评论", () => {
+    render(
+      <ThemeProvider theme={appTheme}>
+        <ProjectUpdates
+          updates={[
+            {
+              ...updates[0]!,
+              body: "",
+              comments: [],
+            },
+          ]}
+          projectId="project-1"
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.getByPlaceholderText("向服务人员留言…")).toBeTruthy();
+  });
+
   it("关闭一条详情再打开另一条时清空共享评论草稿", async () => {
     render(
       <ThemeProvider theme={appTheme}>

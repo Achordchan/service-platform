@@ -281,7 +281,7 @@ export function ProjectUpdates({
                         flexWrap: "wrap",
                       }}
                     >
-                      {preview || hasImages || replyCount > 0 ? (
+                      {preview || hasImages || replyCount > 0 || projectId ? (
                         <Button
                           size="small"
                           color="primary"
