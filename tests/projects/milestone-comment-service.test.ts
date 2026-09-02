@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   milestoneFindFirst: vi.fn(),
   removePrivateFile: vi.fn(),
   writeAuditLog: vi.fn(),
+  isContentRiskStateRevoked: vi.fn(() => false),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -65,7 +66,7 @@ vi.mock("@/modules/plugins/content-risk-view-service", () => ({
     enabled: false,
     states: new Map(),
   })),
-  isContentRiskStateRevoked: vi.fn(() => false),
+  isContentRiskStateRevoked: mocks.isContentRiskStateRevoked,
   contentRiskStatusFor: vi.fn(() => null),
 }));
 
@@ -108,6 +109,7 @@ function mockMilestoneVisible() {
 describe("milestone comment service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.isContentRiskStateRevoked.mockReturnValue(false);
     mockMilestoneVisible();
   });
 
@@ -211,6 +213,17 @@ describe("milestone comment service", () => {
         }),
       }),
     );
+  });
+
+  it("父里程碑已撤回时服务端拒绝新评论", async () => {
+    mocks.isContentRiskStateRevoked.mockReturnValue(true);
+
+    await expect(
+      createMilestoneComment(authorActor, "project-1", "milestone-1", {
+        body: "<p>不应写入</p>",
+      }),
+    ).rejects.toMatchObject({ message: "里程碑已撤回，不能继续评论" });
+    expect(mocks.milestoneCommentCreate).not.toHaveBeenCalled();
   });
 
   it("作者本人可以删除自己的里程碑评论", async () => {

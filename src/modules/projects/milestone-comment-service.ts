@@ -67,6 +67,35 @@ async function assertMilestoneVisible(
   return context;
 }
 
+/**
+ * 评论创建要比「可查看」多一道父内容状态校验：里程碑被撤回后，
+ * 前端会隐藏评论区，服务端也必须阻止绕过 UI 的直接 API 提交。
+ */
+async function assertMilestoneCommentable(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+) {
+  const context = await assertMilestoneVisible(
+    tx,
+    actor,
+    projectId,
+    milestoneId,
+  );
+  const contentRisk = await loadContentRiskPageState(
+    [{ targetType: "MILESTONE", targetId: milestoneId }],
+    tx,
+  );
+  assertAllowed(
+    !isContentRiskStateRevoked(
+      contentRisk.states.get(`MILESTONE:${milestoneId}`),
+    ),
+    "里程碑已撤回，不能继续评论",
+  );
+  return context;
+}
+
 export function listMilestoneComments(
   actor: Actor,
   projectId: string,
@@ -120,7 +149,7 @@ export async function createMilestoneComment(
   input: CreateMilestoneCommentInput,
 ) {
   const preflightContext = await withActorDb(actor, (tx) =>
-    assertMilestoneVisible(tx, actor, projectId, milestoneId),
+    assertMilestoneCommentable(tx, actor, projectId, milestoneId),
   );
   await enforceActorPublicContentRules(actor, {
     targetType: "MILESTONE_COMMENT",
@@ -134,7 +163,12 @@ export async function createMilestoneComment(
     },
   });
   return withActorDb(actor, async (tx) => {
-    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    const context = await assertMilestoneCommentable(
+      tx,
+      actor,
+      projectId,
+      milestoneId,
+    );
     assertAllowed(
       actor.isStaff || input.visibility !== "INTERNAL",
       "客户不能创建内部评论",

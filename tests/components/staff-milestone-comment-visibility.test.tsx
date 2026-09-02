@@ -68,7 +68,10 @@ describe("员工里程碑评论可见性", () => {
     fireEvent.change(screen.getByPlaceholderText("回复客户或记录说明…"), {
       target: { value: "仅供内部跟进" },
     });
-    fireEvent.click(screen.getByRole("switch", { name: "仅内部可见" }));
+    const internalSwitch = screen.getByRole("switch", {
+      name: "仅内部可见",
+    }) as HTMLInputElement;
+    fireEvent.click(internalSwitch);
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
     await waitFor(() =>
@@ -83,6 +86,14 @@ describe("员工里程碑评论可见性", () => {
         },
       ),
     );
+    await waitFor(() => expect(internalSwitch.checked).toBe(false));
+    expect(
+      (
+        screen.getByPlaceholderText(
+          "回复客户或记录说明…",
+        ) as HTMLTextAreaElement
+      ).value,
+    ).toBe("");
   });
 
   it("内部评论显示明确标记", () => {
