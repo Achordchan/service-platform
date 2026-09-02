@@ -38,30 +38,125 @@ describe("里程碑评论数据库安全", () => {
   it("同时有 milestone/comment 归属时优先按评论门控，progress-only 仍放行", async () => {
     await client.query("BEGIN");
     try {
-      const project = await client.query<{ id: string }>(`
-        SELECT id FROM "Project" ORDER BY id LIMIT 1
+      const target = await client.query<{
+        milestone_id: string;
+        project_id: string;
+        customer_id: string;
+      }>(`
+        SELECT
+          milestone.id AS milestone_id,
+          project.id AS project_id,
+          membership."userId" AS customer_id
+        FROM "Milestone" milestone
+        JOIN "Project" project ON project.id = milestone."projectId"
+        JOIN "Membership" membership
+          ON membership."customerSpaceId" = project."customerSpaceId"
+        ORDER BY milestone.id, membership."userId"
+        LIMIT 1
       `);
-      const projectId = project.rows[0]?.id;
-      expect(projectId).toBeTruthy();
+      const row = target.rows[0];
+      expect(row).toBeTruthy();
 
       await client.query(
         `UPDATE "Project"
          SET "showMilestones" = FALSE, "showProgress" = TRUE
          WHERE id = $1`,
-        [projectId],
+        [row!.project_id],
+      );
+      const commentId = `progress-comment-${Date.now()}`;
+      await client.query(
+        `INSERT INTO "MilestoneComment"
+          (id, body, visibility, "milestoneId", "authorId", "updatedAt")
+         VALUES ($1, '<p>public</p>', 'CUSTOMER_VISIBLE', $2, $3, NOW())`,
+        [commentId, row!.milestone_id, row!.customer_id],
       );
       await client.query("SET LOCAL ROLE service_platform_app");
-      await client.query(`SELECT set_config('app.user_id', 'rls-test', true)`);
+      await client.query(`SELECT set_config('app.user_id', $1, true)`, [
+        row!.customer_id,
+      ]);
       await client.query(`SELECT set_config('app.is_platform_admin', 'false', true)`);
       await client.query(`SELECT set_config('app.is_staff', 'false', true)`);
 
       const result = await client.query<{ allowed: boolean }>(
         `SELECT app_project_attachment_feature_enabled(
-          $1, NULL, NULL, 'milestone-id', FALSE, 'milestone-comment-id'
+          $1, NULL, NULL, $2, FALSE, $3
         ) AS allowed`,
-        [projectId],
+        [row!.project_id, row!.milestone_id, commentId],
       );
       expect(result.rows).toEqual([{ allowed: true }]);
+    } finally {
+      await client.query("ROLLBACK");
+    }
+  });
+
+  it("客户不能用附件自身的公开可见性绕过内部父评论", async () => {
+    await client.query("BEGIN");
+    try {
+      const target = await client.query<{
+        milestone_id: string;
+        project_id: string;
+        customer_space_id: string;
+        customer_id: string;
+      }>(`
+        SELECT
+          milestone.id AS milestone_id,
+          project.id AS project_id,
+          project."customerSpaceId" AS customer_space_id,
+          membership."userId" AS customer_id
+        FROM "Milestone" milestone
+        JOIN "Project" project ON project.id = milestone."projectId"
+        JOIN "Membership" membership
+          ON membership."customerSpaceId" = project."customerSpaceId"
+        ORDER BY milestone.id, membership."userId"
+        LIMIT 1
+      `);
+      const row = target.rows[0];
+      expect(row).toBeTruthy();
+
+      await client.query(
+        `UPDATE "Project"
+         SET "showMilestones" = TRUE, "showProgress" = TRUE
+         WHERE id = $1`,
+        [row!.project_id],
+      );
+      const commentId = `internal-comment-${Date.now()}`;
+      const attachmentId = `internal-comment-file-${Date.now()}`;
+      await client.query(
+        `INSERT INTO "MilestoneComment"
+          (id, body, visibility, "milestoneId", "authorId", "updatedAt")
+         VALUES ($1, '<p>internal</p>', 'INTERNAL', $2, $3, NOW())`,
+        [commentId, row!.milestone_id, row!.customer_id],
+      );
+      await client.query(
+        `INSERT INTO "Attachment" (
+          id, "originalName", "storageKey", "mimeType", size, visibility,
+          "customerSpaceId", "projectId", "milestoneCommentId", "uploadedById"
+        ) VALUES (
+          $1, 'internal.txt', $2, 'text/plain', 8, 'CUSTOMER_VISIBLE',
+          $3, $4, $5, $6
+        )`,
+        [
+          attachmentId,
+          `tests/${attachmentId}`,
+          row!.customer_space_id,
+          row!.project_id,
+          commentId,
+          row!.customer_id,
+        ],
+      );
+
+      await client.query("SET LOCAL ROLE service_platform_app");
+      await client.query(`SELECT set_config('app.user_id', $1, true)`, [
+        row!.customer_id,
+      ]);
+      await client.query(`SELECT set_config('app.is_platform_admin', 'false', true)`);
+      await client.query(`SELECT set_config('app.is_staff', 'false', true)`);
+
+      const visible = await client.query<{ id: string }>(
+        `SELECT id FROM "Attachment" WHERE id = $1`,
+        [attachmentId],
+      );
+      expect(visible.rows).toEqual([]);
     } finally {
       await client.query("ROLLBACK");
     }

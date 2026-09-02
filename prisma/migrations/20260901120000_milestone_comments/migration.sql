@@ -173,8 +173,34 @@ AS $$
           THEN project."customerUpdatesEnabled"
         -- 里程碑评论附件同时带 milestoneId / milestoneCommentId：先判更具体的
         -- 评论归属，否则 progress-only 项目会被前面的 showMilestones=false 拦掉。
+        -- 客户除了要通过模块开关，父评论也必须客户可见，且评论/里程碑
+        -- 都未被撤回；附件自身是 CUSTOMER_VISIBLE 不能绕过父内容边界。
         WHEN target_milestone_comment_id IS NOT NULL
-          THEN (project."showMilestones" OR project."showProgress")
+          THEN (
+            (project."showMilestones" OR project."showProgress")
+            AND EXISTS (
+              SELECT 1
+              FROM "MilestoneComment" comment
+              JOIN "Milestone" milestone ON milestone.id = comment."milestoneId"
+              WHERE comment.id = target_milestone_comment_id
+                AND milestone."projectId" = project.id
+                AND comment.visibility = 'CUSTOMER_VISIBLE'
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM "ContentRiskState" risk
+                  WHERE risk."targetType" = 'MILESTONE_COMMENT'
+                    AND risk."targetId" = comment.id
+                    AND risk."displayState" = 'REVOKED'
+                )
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM "ContentRiskState" risk
+                  WHERE risk."targetType" = 'MILESTONE'
+                    AND risk."targetId" = milestone.id
+                    AND risk."displayState" = 'REVOKED'
+                )
+            )
+          )
         WHEN target_milestone_id IS NOT NULL
           THEN project."showMilestones"
         WHEN target_inline = true

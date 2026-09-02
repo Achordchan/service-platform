@@ -81,6 +81,7 @@ vi.mock("@/modules/plugins/content-risk-view-service", () => ({
 import {
   createMilestoneComment,
   deleteMilestoneComment,
+  listMilestoneComments,
   updateMilestoneComment,
 } from "@/modules/projects/milestone-comment-service";
 
@@ -326,6 +327,15 @@ describe("milestone comment service", () => {
       }),
     ).rejects.toMatchObject({ message: "里程碑已撤回，不能继续评论" });
     expect(mocks.milestoneCommentCreate).not.toHaveBeenCalled();
+  });
+
+  it("父里程碑已撤回时直接评论 API 也不返回历史评论", async () => {
+    mocks.isContentRiskStateRevoked.mockReturnValue(true);
+
+    await expect(
+      listMilestoneComments(authorActor, "project-1", "milestone-1"),
+    ).rejects.toMatchObject({ message: "里程碑已撤回，不能继续评论" });
+    expect(mocks.milestoneCommentFindMany).not.toHaveBeenCalled();
   });
 
   it("作者本人可以删除自己的里程碑评论", async () => {

@@ -105,7 +105,7 @@ export function listMilestoneComments(
   milestoneId: string,
 ) {
   return withActorDb(actor, async (tx) => {
-    await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    await assertMilestoneCommentable(tx, actor, projectId, milestoneId);
 
     const comments = await tx.milestoneComment.findMany({
       where: {
@@ -253,7 +253,7 @@ export async function updateMilestoneComment(
   input: UpdateMilestoneCommentInput,
 ) {
   const preflight = await withActorDb(actor, async (tx) => ({
-    context: await assertMilestoneVisible(tx, actor, projectId, milestoneId),
+    context: await assertMilestoneCommentable(tx, actor, projectId, milestoneId),
     comment: await tx.milestoneComment.findFirst({
       where: {
         id: milestoneCommentId,
@@ -278,7 +278,12 @@ export async function updateMilestoneComment(
     },
   });
   return withActorDb(actor, async (tx) => {
-    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    const context = await assertMilestoneCommentable(
+      tx,
+      actor,
+      projectId,
+      milestoneId,
+    );
     // 公开内容检查在事务外执行，避免长时间占用数据库事务。
     // 写入前锁住评论并与已审核快照对比：只要期间的正文或可见性
     // 发生过变化就拒绝本次写入，防止未审核内容被并发切换为客户可见。
@@ -395,7 +400,12 @@ export function deleteMilestoneComment(
   milestoneCommentId: string,
 ) {
   return withActorDb(actor, async (tx) => {
-    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    const context = await assertMilestoneCommentable(
+      tx,
+      actor,
+      projectId,
+      milestoneId,
+    );
     const comment = await tx.milestoneComment.findFirst({
       where: {
         id: milestoneCommentId,
