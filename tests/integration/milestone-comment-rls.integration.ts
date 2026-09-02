@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "pg";
 import type { Actor } from "@/lib/actor";
+import { withActorDb } from "@/lib/actor";
 import { prisma } from "@/lib/db";
+import { previewProjectActivityRecipients } from "@/modules/notifications/notification-service";
 import { getProject } from "@/modules/projects/project-service";
 
 const client = new Client({
@@ -39,7 +41,7 @@ describe("里程碑评论数据库安全", () => {
     ]);
   });
 
-  it("同时有 milestone/comment 归属时优先按评论门控，progress-only 仍放行", async () => {
+  it("progress-only 不暴露里程碑评论附件", async () => {
     await client.query("BEGIN");
     try {
       const target = await client.query<{
@@ -81,15 +83,105 @@ describe("里程碑评论数据库安全", () => {
       await client.query(`SELECT set_config('app.is_platform_admin', 'false', true)`);
       await client.query(`SELECT set_config('app.is_staff', 'false', true)`);
 
+      const comments = await client.query<{ id: string }>(
+        `SELECT id FROM "MilestoneComment" WHERE id = $1`,
+        [commentId],
+      );
+      expect(comments.rows).toEqual([]);
+
       const result = await client.query<{ allowed: boolean }>(
         `SELECT app_project_attachment_feature_enabled(
           $1, NULL, NULL, $2, FALSE, $3
         ) AS allowed`,
         [row!.project_id, row!.milestone_id, commentId],
       );
-      expect(result.rows).toEqual([{ allowed: true }]);
+      expect(result.rows).toEqual([{ allowed: false }]);
     } finally {
       await client.query("ROLLBACK");
+    }
+  });
+
+  it("progress-only 不向客户预览里程碑评论通知", async () => {
+    const target = await client.query<{
+      project_id: string;
+      customer_space_id: string;
+      customer_id: string;
+      admin_id: string;
+      admin_name: string;
+      admin_email: string;
+      show_milestones: boolean;
+      show_progress: boolean;
+    }>(`
+      SELECT
+        project.id AS project_id,
+        project."customerSpaceId" AS customer_space_id,
+        membership."userId" AS customer_id,
+        admin_user.id AS admin_id,
+        admin_user.name AS admin_name,
+        admin_user.email AS admin_email,
+        project."showMilestones" AS show_milestones,
+        project."showProgress" AS show_progress
+      FROM "Project" project
+      JOIN "Membership" membership
+        ON membership."customerSpaceId" = project."customerSpaceId"
+      CROSS JOIN LATERAL (
+        SELECT id, name, email
+        FROM "User"
+        WHERE "platformRole" = 'PLATFORM_ADMIN'
+        ORDER BY id
+        LIMIT 1
+      ) admin_user
+      WHERE EXISTS (
+        SELECT 1 FROM "Milestone" milestone
+        WHERE milestone."projectId" = project.id
+      )
+      ORDER BY project.id, membership."userId"
+      LIMIT 1
+    `);
+    const row = target.rows[0];
+    expect(row).toBeTruthy();
+
+    await client.query(
+      `UPDATE "Project"
+       SET "showMilestones" = FALSE, "showProgress" = TRUE
+       WHERE id = $1`,
+      [row!.project_id],
+    );
+    try {
+      const adminActor: Actor = {
+        id: row!.admin_id,
+        name: row!.admin_name,
+        email: row!.admin_email,
+        platformRole: "PLATFORM_ADMIN",
+        isPlatformAdmin: true,
+        isStaff: true,
+      };
+      const preview = await withActorDb(adminActor, (tx) =>
+        previewProjectActivityRecipients(tx, adminActor, {
+          eventType: "PROJECT_UPDATED",
+          eventPayload: {
+            change: "MILESTONE_COMMENT_CREATED",
+            projectId: row!.project_id,
+            milestoneId: "milestone-1",
+            milestoneCommentId: "comment-1",
+          },
+          notificationType: "UPDATE_COMMENT",
+          notificationTitle: "项目里程碑有新评论",
+          notificationBody: "项目里程碑收到了一条新评论。",
+          visibility: "CUSTOMER_VISIBLE",
+          customerSpaceId: row!.customer_space_id,
+          projectId: row!.project_id,
+        }),
+      );
+      expect(preview.notificationUserIds).not.toContain(row!.customer_id);
+      expect(preview.emailUserIds).not.toContain(row!.customer_id);
+    } finally {
+      await client.query(
+        `UPDATE "Project"
+         SET "showMilestones" = $2, "showProgress" = $3
+         WHERE id = $1`,
+        [row!.project_id, row!.show_milestones, row!.show_progress],
+      );
     }
   });
 

@@ -418,13 +418,15 @@ async function resolveProjectActivityPlan(
     },
   });
   const customerFeatureEnabled =
-    input.notificationType === "PROJECT_FILE"
-      ? project.customerFilesEnabled
-      : input.notificationType === "PROJECT_MILESTONE"
-        ? project.showMilestones || project.showProgress
-        : input.notificationType === "PROJECT_STAGE"
-          ? project.showProgress
-          : project.customerUpdatesEnabled;
+    isMilestoneCommentActivity(input)
+      ? project.showMilestones
+      : input.notificationType === "PROJECT_FILE"
+        ? project.customerFilesEnabled
+        : input.notificationType === "PROJECT_MILESTONE"
+          ? project.showMilestones || project.showProgress
+          : input.notificationType === "PROJECT_STAGE"
+            ? project.showProgress
+            : project.customerUpdatesEnabled;
   const visibility =
     input.visibility === "CUSTOMER_VISIBLE" && !customerFeatureEnabled
       ? "INTERNAL"
@@ -470,6 +472,24 @@ async function resolveProjectActivityPlan(
     override,
     excludedUserIds: excluded.excludedUserIds,
   };
+}
+
+function isMilestoneCommentActivity(input: ProjectActivityRequest) {
+  if (
+    input.eventType !== "PROJECT_UPDATED" ||
+    !input.eventPayload ||
+    typeof input.eventPayload !== "object" ||
+    Array.isArray(input.eventPayload)
+  ) {
+    return false;
+  }
+  const payload = input.eventPayload as Prisma.InputJsonObject;
+  const change = payload.change;
+  return (
+    change === "MILESTONE_COMMENT_CREATED" ||
+    change === "MILESTONE_COMMENT_UPDATED" ||
+    change === "MILESTONE_COMMENT_DELETED"
+  );
 }
 
 export async function dispatchProjectActivity(

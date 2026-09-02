@@ -45,8 +45,8 @@ function sanitizeMilestoneCommentBody(body: string) {
 }
 
 /**
- * 里程碑可见性裁决：客户要看里程碑，showMilestones 或 showProgress 至少开一个
- * （进度视图会把里程碑带出来，评论随之可见）。里程碑不可见则评论一并不存在。
+ * 里程碑评论跟随里程碑区域：客户只有在 showMilestones 开启时才能访问。
+ * showProgress 只展示聚合进度条，不会把里程碑列表与评论暴露给客户。
  */
 async function assertMilestoneVisible(
   tx: Prisma.TransactionClient,
@@ -57,8 +57,7 @@ async function assertMilestoneVisible(
   const context = await assertCanViewProject(tx, actor, projectId);
   if (
     !actor.isStaff &&
-    !context.customerFeatures.milestones &&
-    !context.customerFeatures.progress
+    !context.customerFeatures.milestones
   ) {
     throw new DomainError("NOT_FOUND", "项目功能未开放", 404);
   }

@@ -26,7 +26,8 @@ CREATE INDEX "MilestoneComment_milestoneId_createdAt_idx" ON "MilestoneComment"(
 ALTER TABLE "MilestoneComment" ADD CONSTRAINT "MilestoneComment_milestoneId_fkey" FOREIGN KEY ("milestoneId") REFERENCES "Milestone"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 ALTER TABLE "MilestoneComment" ADD CONSTRAINT "MilestoneComment_authorId_fkey" FOREIGN KEY ("authorId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
--- 客户可见性同动态评论：里程碑模块开着（showMilestones/showProgress）才放行 CUSTOMER_VISIBLE。
+-- 客户可见性同动态评论：只有里程碑区域 showMilestones 开启才放行。
+-- showProgress 只对客户展示聚合进度条，不暴露里程碑列表与评论。
 CREATE POLICY milestone_comment_select ON "MilestoneComment"
   FOR SELECT USING (
     EXISTS (
@@ -39,7 +40,7 @@ CREATE POLICY milestone_comment_select ON "MilestoneComment"
           app_is_staff()
           OR (
             "MilestoneComment".visibility = 'CUSTOMER_VISIBLE'
-            AND (project."showMilestones" = true OR project."showProgress" = true)
+            AND project."showMilestones" = true
           )
         )
     )
@@ -56,7 +57,7 @@ CREATE POLICY milestone_comment_insert ON "MilestoneComment"
           app_is_staff()
           OR (
             "MilestoneComment".visibility = 'CUSTOMER_VISIBLE'
-            AND (project."showMilestones" = true OR project."showProgress" = true)
+            AND project."showMilestones" = true
             AND "MilestoneComment"."authorId" = app_user_id()
           )
         )
@@ -88,7 +89,7 @@ CREATE POLICY milestone_comment_update ON "MilestoneComment"
           app_is_staff()
           OR (
             "MilestoneComment".visibility = 'CUSTOMER_VISIBLE'
-            AND (project."showMilestones" = true OR project."showProgress" = true)
+            AND project."showMilestones" = true
           )
         )
     )
@@ -114,7 +115,7 @@ CREATE POLICY milestone_comment_update ON "MilestoneComment"
           app_is_staff()
           OR (
             "MilestoneComment".visibility = 'CUSTOMER_VISIBLE'
-            AND (project."showMilestones" = true OR project."showProgress" = true)
+            AND project."showMilestones" = true
           )
         )
     )
@@ -132,7 +133,7 @@ CREATE POLICY milestone_comment_delete ON "MilestoneComment"
           app_is_staff()
           OR (
             "MilestoneComment"."authorId" = app_user_id()
-            AND (project."showMilestones" = true OR project."showProgress" = true)
+            AND project."showMilestones" = true
           )
         )
     )
@@ -140,7 +141,7 @@ CREATE POLICY milestone_comment_delete ON "MilestoneComment"
 
 -- 附件挂在里程碑评论上：归属列与外键先行，附件的可见性裁决沿用
 -- app_project_attachment_feature_enabled —— 它按「附件挂在谁身上」选模块开关，
--- 里程碑评论与里程碑同开关（showMilestones/showProgress）
+-- 里程碑评论与客户里程碑区域同用 showMilestones 开关。
 ALTER TABLE "Attachment" ADD COLUMN IF NOT EXISTS "milestoneCommentId" TEXT;
 ALTER TABLE "Attachment" ADD CONSTRAINT "Attachment_milestoneCommentId_fkey" FOREIGN KEY ("milestoneCommentId") REFERENCES "MilestoneComment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 CREATE INDEX IF NOT EXISTS "Attachment_milestoneCommentId_idx" ON "Attachment"("milestoneCommentId");
@@ -172,12 +173,12 @@ AS $$
           OR target_update_comment_id IS NOT NULL
           THEN project."customerUpdatesEnabled"
         -- 里程碑评论附件同时带 milestoneId / milestoneCommentId：先判更具体的
-        -- 评论归属，否则 progress-only 项目会被前面的 showMilestones=false 拦掉。
+        -- 评论归属，再按父评论可见性裁决。
         -- 客户除了要通过模块开关，父评论也必须客户可见，且评论/里程碑
         -- 都未被撤回；附件自身是 CUSTOMER_VISIBLE 不能绕过父内容边界。
         WHEN target_milestone_comment_id IS NOT NULL
           THEN (
-            (project."showMilestones" OR project."showProgress")
+            project."showMilestones"
             AND EXISTS (
               SELECT 1
               FROM "MilestoneComment" comment
@@ -216,7 +217,7 @@ GRANT EXECUTE ON FUNCTION app_project_attachment_feature_enabled(
 
 
 -- 已部署库不会重跑旧迁移：在本迁移重建四条 attachment 策略，显式传入
--- milestoneCommentId。这样里程碑评论附件按 progress/milestones 模块开关裁决，
+-- milestoneCommentId。这样里程碑评论附件按 showMilestones 区域开关裁决，
 -- 而不是继续停在旧五参函数的里程碑归属分支。
 DROP POLICY IF EXISTS attachment_select ON "Attachment";
 CREATE POLICY attachment_select ON "Attachment"

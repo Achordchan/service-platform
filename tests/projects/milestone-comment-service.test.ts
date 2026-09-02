@@ -289,21 +289,16 @@ describe("milestone comment service", () => {
     );
   });
 
-  it("仅开启进度时客户仍可以发表里程碑评论", async () => {
+  it("仅开启进度时客户看不到里程碑评论功能", async () => {
     mocks.customerFeatures.milestones = false;
     mocks.customerFeatures.progress = true;
-    mocks.milestoneCommentCreate.mockResolvedValue({
-      id: "comment-1",
-      body: "<p>进度里程碑留言</p>",
-      visibility: "CUSTOMER_VISIBLE",
-      author,
-    });
 
-    await createMilestoneComment(authorActor, "project-1", "milestone-1", {
-      body: "<p>进度里程碑留言</p>",
-    });
-
-    expect(mocks.milestoneCommentCreate).toHaveBeenCalled();
+    await expect(
+      createMilestoneComment(authorActor, "project-1", "milestone-1", {
+        body: "<p>不应写入</p>",
+      }),
+    ).rejects.toMatchObject({ message: "项目功能未开放", status: 404 });
+    expect(mocks.milestoneCommentCreate).not.toHaveBeenCalled();
   });
 
   it("里程碑与进度都关闭时客户看不到评论功能", async () => {

@@ -127,4 +127,34 @@ describe("实时事件模块可见性", () => {
       }),
     ).toBe(false);
   });
+
+  it("仅开进度时不向客户推送里程碑评论及其附件事件", () => {
+    const base = {
+      isStaff: false,
+      type: "PROJECT_UPDATED" as const,
+      customerUpdatesEnabled: true,
+      customerFilesEnabled: true,
+      showMilestones: false,
+      showProgress: true,
+    };
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "MILESTONE_COMMENT_UPDATED",
+          milestoneId: "milestone-1",
+          milestoneCommentId: "comment-1",
+        },
+      }),
+    ).toBe(false);
+    expect(
+      canReceiveProjectRealtimeEvent({
+        ...base,
+        payload: {
+          change: "PROJECT_ATTACHMENT_UPLOADED",
+          milestoneCommentId: "comment-1",
+        },
+      }),
+    ).toBe(false);
+  });
 });
