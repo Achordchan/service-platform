@@ -126,4 +126,46 @@ describe("员工里程碑评论可见性", () => {
     fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
     expect(screen.getByText(/内部评论/)).toBeTruthy();
   });
+
+  it("失去评论权限后不显示编辑，但仍可删除自己的评论", () => {
+    render(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneManager
+          projectId="project-1"
+          milestones={[
+            {
+              ...milestone,
+              comments: [
+                {
+                  id: "own-comment",
+                  body: "<p>自己的评论</p>",
+                  visibility: "CUSTOMER_VISIBLE",
+                  authorId: "staff-1",
+                  authorName: "员工甲",
+                  createdAt: "2026-09-01T11:00:00.000Z",
+                },
+                {
+                  id: "customer-comment",
+                  body: "<p>客户的评论</p>",
+                  visibility: "CUSTOMER_VISIBLE",
+                  authorId: "customer-1",
+                  authorName: "客户甲",
+                  createdAt: "2026-09-01T12:00:00.000Z",
+                },
+              ],
+            },
+          ]}
+          canManage={false}
+          canComment={false}
+          currentUserId="staff-1"
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.queryByRole("button", { name: "编辑评论" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "删除评论" })).toHaveLength(
+      1,
+    );
+  });
 });

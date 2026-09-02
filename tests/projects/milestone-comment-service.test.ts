@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   milestoneFindFirst: vi.fn(),
   removePrivateFile: vi.fn(),
   writeAuditLog: vi.fn(),
+  publishProjectChange: vi.fn(),
   isContentRiskStateRevoked: vi.fn(() => false),
 }));
 
@@ -39,7 +40,7 @@ vi.mock("@/modules/audit/audit-service", () => ({
 
 vi.mock("@/modules/notifications/notification-service", () => ({
   dispatchProjectActivity: vi.fn(async () => ({ feedback: { skipped: [] } })),
-  publishProjectChange: vi.fn(),
+  publishProjectChange: mocks.publishProjectChange,
   previewProjectActivityRecipients: vi.fn(),
 }));
 
@@ -176,6 +177,39 @@ describe("milestone comment service", () => {
         { body: "<p>员工改写</p>" },
       ),
     ).rejects.toMatchObject({ message: "只能修改自己发布的评论" });
+  });
+
+  it("评论收紧为内部时仍通知原客户受众刷新", async () => {
+    mocks.milestoneCommentFindFirst.mockResolvedValue({
+      id: "comment-1",
+      body: "<p>原客户可见内容</p>",
+      authorId: "staff-1",
+      visibility: "CUSTOMER_VISIBLE",
+    });
+    mocks.milestoneCommentUpdate.mockResolvedValue({
+      id: "comment-1",
+      body: "<p>改为内部</p>",
+      authorId: "staff-1",
+      visibility: "INTERNAL",
+      author: { id: "staff-1", name: "员工甲" },
+    });
+
+    await updateMilestoneComment(
+      staffActor,
+      "project-1",
+      "milestone-1",
+      "comment-1",
+      { body: "<p>改为内部</p>", visibility: "INTERNAL" },
+    );
+
+    expect(mocks.publishProjectChange).toHaveBeenCalledWith(
+      expect.anything(),
+      staffActor,
+      expect.objectContaining({
+        change: "MILESTONE_COMMENT_UPDATED",
+        visibility: "CUSTOMER_VISIBLE",
+      }),
+    );
   });
 
   it("客户不能创建内部可见的里程碑评论", async () => {

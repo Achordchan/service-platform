@@ -868,6 +868,7 @@ model Attachment {
   @@index([customerSpaceId, projectId])
   @@index([serviceRequestId])
   @@index([milestoneId])
+  @@index([milestoneCommentId])
   @@index([supportPlaybookKey])
   @@index([inline, createdAt])
   @@index([projectId, pinnedToProjectAt])

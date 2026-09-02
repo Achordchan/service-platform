@@ -343,11 +343,19 @@ export async function updateMilestoneComment(
       projectId,
       metadata: auditMetadata(data),
     });
+    // 从客户可见收紧为内部时，客户仍要收到这条实时刷新，
+    // 才能立即把已渲染的旧评论移除。事件覆盖「旧/新」两个受众的并集，
+    // 但重新查询仍受 RLS 和 visibility 限制，不会把内部内容发给客户。
+    const realtimeVisibility =
+      comment.visibility === "CUSTOMER_VISIBLE" ||
+      updated.visibility === "CUSTOMER_VISIBLE"
+        ? "CUSTOMER_VISIBLE"
+        : "INTERNAL";
     await publishProjectChange(tx, actor, {
       change: "MILESTONE_COMMENT_UPDATED",
       customerSpaceId: context.customerSpaceId,
       projectId,
-      visibility: updated.visibility,
+      visibility: realtimeVisibility,
       payload: {
         milestoneId,
         milestoneCommentId: updated.id,

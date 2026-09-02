@@ -24,7 +24,11 @@ import {
 import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import { DateStringPicker } from "@/components/shared/date-string-picker";
-import { MilestoneList, type MilestoneCommentItem } from "@/components/shared/milestone-list";
+import {
+  MilestoneList,
+  type MilestoneCommentItem,
+  type MilestoneListItem,
+} from "@/components/shared/milestone-list";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { DeliveryNotice } from "@/components/shared/delivery-notice";
 import { useToast } from "@/components/shared/toast-provider";
@@ -326,23 +330,31 @@ export function MilestoneManager({
         onSubmitComment={(milestone) => {
           void submitComment(milestone as ProjectMilestone);
         }}
-        onEditComment={(milestone, comment) =>
-          setEditComment({
-            milestone: milestone as ProjectMilestone,
-            comment,
-            // 评论各端都只产出纯文本（转义后包一层 <p>），编辑框里要还原成纯文本
-            text: htmlToPlainText(comment.body),
-          })
-        }
+        {...(canComment
+          ? {
+              onEditComment: (
+                milestone: MilestoneListItem,
+                comment: MilestoneCommentItem,
+              ) =>
+                setEditComment({
+                  milestone: milestone as ProjectMilestone,
+                  comment,
+                  // 评论各端都只产出纯文本（转义后包一层 <p>），编辑框里要还原成纯文本
+                  text: htmlToPlainText(comment.body),
+                }),
+            }
+          : {})}
         onDeleteComment={(milestone, comment) =>
           setDeleteCommentTarget({
             milestone: milestone as ProjectMilestone,
             comment,
           })
         }
-        // 员工有 update.comment 时可删除客户评论；编辑仍由 CommentSection 默认
-        // 的「作者本人」口径裁，不能借删除权改写客户的话。
-        canDeleteComment={() => Boolean(canComment)}
+        // 删除与服务端对齐：作者始终能删自己的；持 update.comment
+        // 的员工还能删其他人的。编辑则必须同时是作者且仍有评论权限。
+        canDeleteComment={(comment) =>
+          comment.authorId === currentUserId || Boolean(canComment)
+        }
         renderActions={
           canManage
             ? (milestone) => (
