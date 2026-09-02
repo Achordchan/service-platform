@@ -11,10 +11,12 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   IconButton,
   LinearProgress,
   MenuItem,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -102,6 +104,7 @@ export function MilestoneManager({
   const [actionId, setActionId] = useState("");
   // 详情弹窗评论区的输入由这里持有：切换里程碑/提交后统一清空
   const [commentText, setCommentText] = useState("");
+  const [commentInternal, setCommentInternal] = useState(false);
   const [commentBusy, setCommentBusy] = useState(false);
   const [editComment, setEditComment] = useState<{
     milestone: ProjectMilestone;
@@ -115,6 +118,7 @@ export function MilestoneManager({
 
   function resetCommentComposer() {
     setCommentText("");
+    setCommentInternal(false);
   }
 
   async function submitComment(milestone: ProjectMilestone) {
@@ -127,7 +131,10 @@ export function MilestoneManager({
     try {
       await staffApi(
         `/api/v1/projects/${projectId}/milestones/${milestone.id}/comments`,
-        jsonRequest("POST", { body }),
+        jsonRequest("POST", {
+          body,
+          visibility: commentInternal ? "INTERNAL" : "CUSTOMER_VISIBLE",
+        }),
       );
       resetCommentComposer();
       toast.success("评论已发送");
@@ -302,6 +309,19 @@ export function MilestoneManager({
         onComposerChange={setCommentText}
         onDetailChange={() => resetCommentComposer()}
         composerPlaceholder="回复客户或记录说明…"
+        composerExtra={
+          <FormControlLabel
+            control={
+              <Switch
+                size="small"
+                checked={commentInternal}
+                onChange={(event) => setCommentInternal(event.target.checked)}
+                disabled={commentBusy}
+              />
+            }
+            label="仅内部可见"
+          />
+        }
         commentBusy={commentBusy}
         onSubmitComment={(milestone) => {
           void submitComment(milestone as ProjectMilestone);

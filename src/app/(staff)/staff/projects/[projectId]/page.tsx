@@ -101,6 +101,7 @@ export default async function StaffProjectDetailPage({
       comments: milestone.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
+        visibility: comment.visibility,
         authorId: comment.author.id,
         authorName: comment.author.name,
         authorImage: comment.author.image,

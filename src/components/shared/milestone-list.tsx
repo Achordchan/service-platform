@@ -43,6 +43,7 @@ export type MilestoneListItem = {
 export type MilestoneCommentItem = {
   id: string;
   body: string;
+  visibility?: "CUSTOMER_VISIBLE" | "INTERNAL";
   authorId?: string | null;
   authorName: string;
   authorImage?: string | null;
@@ -90,6 +91,7 @@ export function MilestoneList({
   composerValue = "",
   onComposerChange,
   composerPlaceholder,
+  composerExtra,
   commentBusy = false,
   onSubmitComment,
   onEditComment,
@@ -112,6 +114,8 @@ export function MilestoneList({
   composerValue?: string;
   onComposerChange?: (value: string) => void;
   composerPlaceholder?: string;
+  /** 员工端的「仅内部可见」等附加控制 */
+  composerExtra?: ReactNode;
   /** 发送/编辑/删除进行中：期间禁用输入与按钮 */
   commentBusy?: boolean;
   /** 发送评论：参数是当前打开详情的里程碑 */
@@ -363,10 +367,15 @@ export function MilestoneList({
                   collapsible={false}
                 />
               ) : null}
-              {/* 评论区常驻详情弹窗：评论属于这条里程碑，进来就能看能回，
-                  不做「点评论再换弹窗」的二级跳 */}
+              {/* 评论区常驻详情弹窗；父里程碑被撤回后，评论与输入同时隐藏，
+                  不能继续对已撤回内容发言。 */}
+              {detail.contentRiskStatus !== "REVOKED" ? (
               <CommentSection
-                comments={detail.comments ?? []}
+                comments={(detail.comments ?? []).map((comment) => ({
+                  ...comment,
+                  badge:
+                    comment.visibility === "INTERNAL" ? " · 内部评论" : null,
+                }))}
                 currentUserId={currentUserId}
                 contentRiskEnabled={contentRiskEnabled}
                 dateFormatter={timestampFormatter}
@@ -393,32 +402,42 @@ export function MilestoneList({
                   : {})}
                 composer={
                   canComment && onComposerChange ? (
-                    <Stack direction="row" spacing={1} sx={{ alignItems: "flex-start" }}>
-                      <TextField
-                        value={composerValue}
-                        onChange={(event) => onComposerChange(event.target.value)}
-                        fullWidth
-                        multiline
-                        minRows={2}
-                        maxRows={6}
-                        size="small"
-                        placeholder={composerPlaceholder ?? "写下你的评论…"}
-                        disabled={commentBusy}
-                      />
-                      <Button
-                        size="small"
-                        variant="contained"
-                        onClick={() => {
-                          if (detail) onSubmitComment?.(detail);
-                        }}
-                        disabled={commentBusy || composerValue.trim().length === 0}
+                    <Stack spacing={1}>
+                      <Stack
+                        direction="row"
+                        spacing={1}
+                        sx={{ alignItems: "flex-start" }}
                       >
-                        发送
-                      </Button>
+                        <TextField
+                          value={composerValue}
+                          onChange={(event) => onComposerChange(event.target.value)}
+                          fullWidth
+                          multiline
+                          minRows={2}
+                          maxRows={6}
+                          size="small"
+                          placeholder={composerPlaceholder ?? "写下你的评论…"}
+                          disabled={commentBusy}
+                        />
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => {
+                            if (detail) onSubmitComment?.(detail);
+                          }}
+                          disabled={
+                            commentBusy || composerValue.trim().length === 0
+                          }
+                        >
+                          发送
+                        </Button>
+                      </Stack>
+                      {composerExtra}
                     </Stack>
                   ) : null
                 }
               />
+              ) : null}
             </Stack>
           ) : null}
         </DialogContent>

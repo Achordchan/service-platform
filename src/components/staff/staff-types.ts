@@ -91,6 +91,7 @@ export type ProjectMilestone = {
   comments?: Array<{
     id: string;
     body: string;
+    visibility: ContentVisibility;
     authorId?: string | null;
     authorName: string;
     authorImage?: string | null;

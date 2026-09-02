@@ -138,6 +138,33 @@ describe("里程碑详情弹窗的常驻评论区", () => {
     expect(screen.getAllByRole("button", { name: "删除评论" })).toHaveLength(2);
   });
 
+  it("详情打开期间父里程碑被撤回后隐藏评论与输入框", () => {
+    const { rerender } = renderWithTheme(
+      <MilestoneList
+        milestones={[milestone]}
+        canComment
+        composerValue="不能再发"
+        onComposerChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.getByText("客户留言")).toBeTruthy();
+
+    rerender(
+      <ThemeProvider theme={appTheme}>
+        <MilestoneList
+          milestones={[{ ...milestone, contentRiskStatus: "REVOKED" }]}
+          canComment
+          composerValue="不能再发"
+          onComposerChange={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.queryByText("客户留言")).toBeNull();
+    expect(screen.queryByPlaceholderText("写下你的评论…")).toBeNull();
+    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
+  });
+
   it("canComment 时显示评论输入框，发送按钮带着当前里程碑回调", () => {
     const onSubmit = vi.fn();
     renderWithTheme(

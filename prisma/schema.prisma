@@ -862,7 +862,7 @@ model Attachment {
   requestMessage            RequestMessage?   @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
   uploadedBy                User?             @relation(fields: [uploadedById], references: [id])
   uploadedByExternalContact ExternalContact?  @relation(fields: [uploadedByExternalContactId], references: [id])
-  milestoneComment          MilestoneComment? @relation(fields: [milestoneCommentId], references: [id])
+  milestoneComment          MilestoneComment? @relation(fields: [milestoneCommentId], references: [id], onDelete: Cascade)
   milestoneCommentId        String?
 
   @@index([customerSpaceId, projectId])
