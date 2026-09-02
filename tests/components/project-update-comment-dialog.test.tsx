@@ -170,6 +170,21 @@ describe("项目动态评论", () => {
     expect(within(dialog).getByText("客户的留言")).toBeDefined();
   });
 
+  it("详情里的评论保留发布时分", () => {
+    renderWorkspace();
+    const dialog = openDetail();
+    const expected = new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(new Date("2026-08-01T02:00:00.000Z"));
+
+    expect(within(dialog).getAllByText(expected)).toHaveLength(2);
+  });
+
   it("详情弹窗开着时动态被撤回：评论和输入框跟着消失", async () => {
     const { rerender } = render(
       <ProjectDetailWorkspace {...workspaceProps(project)} />,

@@ -836,7 +836,7 @@ export function ProjectDetailWorkspace({
                         }))}
                         currentUserId={currentUserId}
                         contentRiskEnabled={Boolean(project.contentRiskUiEnabled)}
-                        dateFormatter={dateFormatter}
+                        dateFormatter={dateTimeFormatter}
                         emptyText="还没有评论"
                         onEdit={(comment) => {
                           const target = detailUpdate.comments.find(

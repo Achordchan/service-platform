@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   milestoneCommentUpdate: vi.fn(),
   milestoneCommentDelete: vi.fn(),
   milestoneFindFirst: vi.fn(),
+  queryRaw: vi.fn(),
   removePrivateFile: vi.fn(),
   writeAuditLog: vi.fn(),
   publishProjectChange: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/actor", () => ({
   withActorDb: (_actor: Actor, callback: (tx: unknown) => unknown) =>
     callback({
+      $queryRaw: mocks.queryRaw,
       milestoneComment: {
         findFirst: mocks.milestoneCommentFindFirst,
         findMany: mocks.milestoneCommentFindMany,
@@ -118,6 +120,7 @@ describe("milestone comment service", () => {
     mocks.isContentRiskStateRevoked.mockReturnValue(false);
     mocks.customerFeatures.milestones = true;
     mocks.customerFeatures.progress = false;
+    mocks.queryRaw.mockResolvedValue([{ id: "comment-1" }]);
     mockMilestoneVisible();
   });
 
@@ -217,6 +220,35 @@ describe("milestone comment service", () => {
         visibility: "CUSTOMER_VISIBLE",
       }),
     );
+  });
+
+  it("公开内容预检后评论被并发修改时拒绝写入", async () => {
+    mocks.milestoneCommentFindFirst
+      .mockResolvedValueOnce({
+        body: "<p>已审核的内部正文</p>",
+        visibility: "INTERNAL",
+      })
+      .mockResolvedValueOnce({
+        id: "comment-1",
+        body: "<p>并发写入的未审核正文</p>",
+        authorId: "staff-1",
+        visibility: "INTERNAL",
+      });
+
+    await expect(
+      updateMilestoneComment(
+        staffActor,
+        "project-1",
+        "milestone-1",
+        "comment-1",
+        { visibility: "CUSTOMER_VISIBLE" },
+      ),
+    ).rejects.toMatchObject({
+      code: "MILESTONE_COMMENT_CONFLICT",
+      status: 409,
+      message: "评论已更新，请刷新后重试",
+    });
+    expect(mocks.milestoneCommentUpdate).not.toHaveBeenCalled();
   });
 
   it("客户不能创建内部可见的里程碑评论", async () => {

@@ -262,23 +262,33 @@ export async function updateMilestoneComment(
       select: { body: true, visibility: true },
     }),
   }));
-  if (preflight.comment) {
-    await enforceActorPublicContentRules(actor, {
-      targetType: "MILESTONE_COMMENT",
-      customerSpaceId: preflight.context.customerSpaceId,
-      projectId,
-      serviceRequestId: null,
-      snapshot: {
-        body: input.body ?? preflight.comment.body,
-        visibility:
-          actor.isStaff
-            ? input.visibility ?? preflight.comment.visibility
-            : "CUSTOMER_VISIBLE",
-      },
-    });
-  }
+  assertFound(preflight.comment, "评论不存在");
+  const reviewedComment = preflight.comment;
+  await enforceActorPublicContentRules(actor, {
+    targetType: "MILESTONE_COMMENT",
+    customerSpaceId: preflight.context.customerSpaceId,
+    projectId,
+    serviceRequestId: null,
+    snapshot: {
+      body: input.body ?? reviewedComment.body,
+      visibility:
+        actor.isStaff
+          ? input.visibility ?? reviewedComment.visibility
+          : "CUSTOMER_VISIBLE",
+    },
+  });
   return withActorDb(actor, async (tx) => {
     const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    // 公开内容检查在事务外执行，避免长时间占用数据库事务。
+    // 写入前锁住评论并与已审核快照对比：只要期间的正文或可见性
+    // 发生过变化就拒绝本次写入，防止未审核内容被并发切换为客户可见。
+    await tx.$queryRaw`
+      SELECT id
+      FROM "MilestoneComment"
+      WHERE id = ${milestoneCommentId}
+        AND "milestoneId" = ${milestoneId}
+      FOR UPDATE
+    `;
     const comment = await tx.milestoneComment.findFirst({
       where: {
         id: milestoneCommentId,
@@ -292,6 +302,16 @@ export async function updateMilestoneComment(
       },
     });
     assertFound(comment, "评论不存在");
+    if (
+      comment.body !== reviewedComment.body ||
+      comment.visibility !== reviewedComment.visibility
+    ) {
+      throw new DomainError(
+        "MILESTONE_COMMENT_CONFLICT",
+        "评论已更新，请刷新后重试",
+        409,
+      );
+    }
     // 作者本人才行，管理员也不例外：改客户说过的话不该是后台的能力，
     // 违规内容走内容风控的撤回，而不是替对方改写（与动态评论同口径）
     assertAllowed(comment.authorId === actor.id, "只能修改自己发布的评论");
