@@ -1229,6 +1229,14 @@ async function applySnapshotToTarget(
         ...(snapshot.visibility ? { visibility: snapshot.visibility } : {}),
       },
     });
+  } else if (targetType === "MILESTONE_COMMENT") {
+    await tx.milestoneComment.updateMany({
+      where: { id: targetId },
+      data: {
+        ...(snapshot.body === undefined ? {} : { body: snapshot.body ?? "" }),
+        ...(snapshot.visibility ? { visibility: snapshot.visibility } : {}),
+      },
+    });
   } else if (targetType === "MILESTONE") {
     await tx.milestone.updateMany({
       where: { id: targetId },
@@ -1346,9 +1354,11 @@ async function deleteObsoleteSnapshotAttachments(
       ? { projectUpdateId: targetId }
       : targetType === "UPDATE_COMMENT"
         ? { updateCommentId: targetId }
-        : targetType === "MILESTONE"
-          ? { milestoneId: targetId }
-          : null;
+        : targetType === "MILESTONE_COMMENT"
+          ? { milestoneCommentId: targetId }
+          : targetType === "MILESTONE"
+            ? { milestoneId: targetId }
+            : null;
   if (!relationWhere) return [];
   const obsolete = await tx.attachment.findMany({
     where: {

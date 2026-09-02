@@ -98,6 +98,15 @@ export default async function StaffProjectDetailPage({
       endDate: milestone.endDate?.toISOString() ?? null,
       createdAt: milestone.createdAt.toISOString(),
       contentRiskStatus: milestone.contentRiskStatus,
+      comments: milestone.comments.map((comment) => ({
+        id: comment.id,
+        body: comment.body,
+        authorId: comment.author.id,
+        authorName: comment.author.name,
+        authorImage: comment.author.image,
+        createdAt: comment.createdAt.toISOString(),
+        contentRiskStatus: comment.contentRiskStatus,
+      })),
     })),
     updates: project.updates.map((update) => ({
       id: update.id,

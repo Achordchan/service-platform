@@ -189,6 +189,9 @@ export const updateUpdateCommentSchema = createUpdateCommentSchema
     message: "至少提交一个修改字段",
   });
 
+export const createMilestoneCommentSchema = createUpdateCommentSchema;
+export const updateMilestoneCommentSchema = updateUpdateCommentSchema;
+
 export type CreateServiceTypeInput = z.infer<
   typeof createServiceTypeSchema
 >;
@@ -221,4 +224,10 @@ export type CreateUpdateCommentInput = z.infer<
 >;
 export type UpdateUpdateCommentInput = z.infer<
   typeof updateUpdateCommentSchema
+>;
+export type CreateMilestoneCommentInput = z.infer<
+  typeof createMilestoneCommentSchema
+>;
+export type UpdateMilestoneCommentInput = z.infer<
+  typeof updateMilestoneCommentSchema
 >;

@@ -1,0 +1,385 @@
+import "server-only";
+
+import type { Prisma } from "@/generated/prisma/client";
+import type { Actor } from "@/lib/actor";
+import { withActorDb } from "@/lib/actor";
+import { sanitizeMessageHtml } from "@/lib/sanitize-html";
+import { writeAuditLog } from "@/modules/audit/audit-service";
+import {
+  dispatchProjectActivity,
+  publishProjectChange,
+} from "@/modules/notifications/notification-service";
+import {
+  assertCanCommentOnProjectUpdate,
+  assertCanViewCustomerProjectFeature,
+} from "@/modules/projects/project-access";
+import {
+  assertAllowed,
+  assertFound,
+} from "@/modules/projects/errors";
+import { canViewContent } from "@/modules/projects/permissions";
+import {
+  createContentRiskReview,
+  enforceActorPublicContentRules,
+} from "@/modules/plugins/content-risk-service";
+import {
+  contentRiskStatusFor,
+  isContentRiskStateRevoked,
+  loadContentRiskPageState,
+} from "@/modules/plugins/content-risk-view-service";
+import type {
+  CreateMilestoneCommentInput,
+  UpdateMilestoneCommentInput,
+} from "@/modules/projects/schemas";
+
+function auditMetadata(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function sanitizeMilestoneCommentBody(body: string) {
+  // 与动态评论同一套消毒规则：干净 HTML 进库，读取侧不再二次消毒
+  const sanitized = sanitizeMessageHtml(body);
+  return sanitized;
+}
+
+/**
+ * 里程碑可见性裁决：客户要看里程碑，showMilestones 或 showProgress 至少开一个
+ * （进度视图会把里程碑带出来，评论随之可见）。里程碑不可见则评论一并不存在。
+ */
+async function assertMilestoneVisible(
+  tx: Prisma.TransactionClient,
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+) {
+  const context = await assertCanViewCustomerProjectFeature(
+    tx,
+    actor,
+    projectId,
+    "milestones",
+  );
+  const milestone = await tx.milestone.findFirst({
+    where: { id: milestoneId, projectId },
+    select: { id: true },
+  });
+  assertFound(milestone, "里程碑不存在");
+  return context;
+}
+
+export function listMilestoneComments(
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+
+    const comments = await tx.milestoneComment.findMany({
+      where: {
+        milestoneId,
+        visibility: actor.isStaff ? undefined : "CUSTOMER_VISIBLE",
+      },
+      include: {
+        author: {
+          select: { id: true, name: true },
+        },
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const contentRisk = await loadContentRiskPageState(
+      comments.map((comment) => ({
+        targetType: "MILESTONE_COMMENT" as const,
+        targetId: comment.id,
+      })),
+      tx,
+    );
+    return comments.map((comment) => {
+      const state = contentRisk.states.get(`MILESTONE_COMMENT:${comment.id}`);
+      return {
+        ...comment,
+        body:
+          !actor.isPlatformAdmin && isContentRiskStateRevoked(state)
+            ? ""
+            : sanitizeMessageHtml(comment.body),
+        contentRiskStatus: actor.isPlatformAdmin
+          ? null
+          : contentRiskStatusFor(state, {
+              pluginEnabled: contentRisk.enabled,
+              showPending: comment.authorId === actor.id,
+            }),
+      };
+    });
+  });
+}
+
+export async function createMilestoneComment(
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+  input: CreateMilestoneCommentInput,
+) {
+  const preflightContext = await withActorDb(actor, (tx) =>
+    assertMilestoneVisible(tx, actor, projectId, milestoneId),
+  );
+  await enforceActorPublicContentRules(actor, {
+    targetType: "MILESTONE_COMMENT",
+    customerSpaceId: preflightContext.customerSpaceId,
+    projectId,
+    serviceRequestId: null,
+    snapshot: {
+      body: input.body,
+      visibility:
+        actor.isStaff ? input.visibility ?? "CUSTOMER_VISIBLE" : "CUSTOMER_VISIBLE",
+    },
+  });
+  return withActorDb(actor, async (tx) => {
+    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    assertAllowed(
+      actor.isStaff || input.visibility !== "INTERNAL",
+      "客户不能创建内部评论",
+    );
+    if (actor.isStaff) {
+      // 员工端与动态评论同一把权限钥匙：update.comment
+      await assertCanCommentOnProjectUpdate(tx, actor, projectId);
+    }
+
+    const visibility = actor.isStaff
+      ? (input.visibility ?? "CUSTOMER_VISIBLE")
+      : "CUSTOMER_VISIBLE";
+    const body = sanitizeMilestoneCommentBody(input.body);
+    const comment = await tx.milestoneComment.create({
+      data: {
+        body,
+        visibility,
+        milestoneId,
+        authorId: actor.id,
+      },
+      include: {
+        author: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+    const contentRiskReview = await createContentRiskReview(tx, {
+      targetType: "MILESTONE_COMMENT",
+      targetId: comment.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        body: comment.body,
+        visibility: comment.visibility,
+      },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "MILESTONE_COMMENT_CREATED",
+      resourceType: "MilestoneComment",
+      resourceId: comment.id,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      metadata: {
+        milestoneId,
+        visibility: comment.visibility,
+      },
+    });
+    const delivery = await dispatchProjectActivity(tx, actor, {
+      eventType: "PROJECT_UPDATED",
+      eventPayload: {
+        change: "MILESTONE_COMMENT_CREATED",
+        projectId,
+        milestoneId,
+        milestoneCommentId: comment.id,
+        actorId: actor.id,
+      },
+      notificationType: "UPDATE_COMMENT",
+      notificationTitle: "项目里程碑有新评论",
+      notificationBody: "项目里程碑收到了一条新评论。",
+      visibility: comment.visibility,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      contentRiskReviewId: contentRiskReview?.id,
+    });
+    return { ...comment, deliveryFeedback: delivery.feedback };
+  });
+}
+
+export async function updateMilestoneComment(
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+  milestoneCommentId: string,
+  input: UpdateMilestoneCommentInput,
+) {
+  const preflight = await withActorDb(actor, async (tx) => ({
+    context: await assertMilestoneVisible(tx, actor, projectId, milestoneId),
+    comment: await tx.milestoneComment.findFirst({
+      where: {
+        id: milestoneCommentId,
+        milestoneId,
+      },
+      select: { body: true, visibility: true },
+    }),
+  }));
+  if (preflight.comment) {
+    await enforceActorPublicContentRules(actor, {
+      targetType: "MILESTONE_COMMENT",
+      customerSpaceId: preflight.context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        body: input.body ?? preflight.comment.body,
+        visibility:
+          actor.isStaff
+            ? input.visibility ?? preflight.comment.visibility
+            : "CUSTOMER_VISIBLE",
+      },
+    });
+  }
+  return withActorDb(actor, async (tx) => {
+    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    const comment = await tx.milestoneComment.findFirst({
+      where: {
+        id: milestoneCommentId,
+        milestoneId,
+      },
+      select: {
+        id: true,
+        body: true,
+        authorId: true,
+        visibility: true,
+      },
+    });
+    assertFound(comment, "评论不存在");
+    // 作者本人才行，管理员也不例外：改客户说过的话不该是后台的能力，
+    // 违规内容走内容风控的撤回，而不是替对方改写（与动态评论同口径）
+    assertAllowed(comment.authorId === actor.id, "只能修改自己发布的评论");
+    assertAllowed(
+      canViewContent(actor, context.access, comment.visibility),
+      "无权修改该评论",
+    );
+    assertAllowed(
+      actor.isStaff || input.visibility !== "INTERNAL",
+      "客户不能将评论改为内部可见",
+    );
+    if (actor.isStaff) {
+      await assertCanCommentOnProjectUpdate(tx, actor, projectId);
+    }
+
+    const data = {
+      ...input,
+      ...(input.body === undefined
+        ? {}
+        : { body: sanitizeMilestoneCommentBody(input.body) }),
+      visibility: actor.isStaff ? input.visibility : undefined,
+    };
+    const updated = await tx.milestoneComment.update({
+      where: { id: milestoneCommentId },
+      data,
+      include: {
+        author: {
+          select: { id: true, name: true },
+        },
+      },
+    });
+    await createContentRiskReview(tx, {
+      targetType: "MILESTONE_COMMENT",
+      targetId: updated.id,
+      actorId: actor.id,
+      actorName: actor.name,
+      actorKind: actor.platformRole === "CUSTOMER" ? "CUSTOMER" : "STAFF",
+      isPlatformAdmin: actor.isPlatformAdmin,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      serviceRequestId: null,
+      snapshot: {
+        body: updated.body,
+        visibility: updated.visibility,
+      },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "MILESTONE_COMMENT_UPDATED",
+      resourceType: "MilestoneComment",
+      resourceId: updated.id,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      metadata: auditMetadata(data),
+    });
+    await publishProjectChange(tx, actor, {
+      change: "MILESTONE_COMMENT_UPDATED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      visibility: updated.visibility,
+      payload: {
+        milestoneId,
+        milestoneCommentId: updated.id,
+      },
+    });
+    return updated;
+  });
+}
+
+export function deleteMilestoneComment(
+  actor: Actor,
+  projectId: string,
+  milestoneId: string,
+  milestoneCommentId: string,
+) {
+  return withActorDb(actor, async (tx) => {
+    const context = await assertMilestoneVisible(tx, actor, projectId, milestoneId);
+    const comment = await tx.milestoneComment.findFirst({
+      where: {
+        id: milestoneCommentId,
+        milestoneId,
+      },
+      select: {
+        id: true,
+        body: true,
+        authorId: true,
+        visibility: true,
+      },
+    });
+    assertFound(comment, "评论不存在");
+    // 与动态评论的删除同口径：作者本人，或持有评论权限的员工
+    assertAllowed(
+      comment.authorId === actor.id || actor.isStaff,
+      "只能删除自己发布的评论",
+    );
+    if (actor.isStaff && comment.authorId !== actor.id) {
+      await assertCanCommentOnProjectUpdate(tx, actor, projectId);
+    }
+    assertAllowed(
+      canViewContent(actor, context.access, comment.visibility),
+      "无权删除该评论",
+    );
+
+    await tx.milestoneComment.delete({
+      where: { id: milestoneCommentId },
+    });
+    await writeAuditLog(tx, actor, {
+      action: "MILESTONE_COMMENT_DELETED",
+      resourceType: "MilestoneComment",
+      resourceId: milestoneCommentId,
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      metadata: {
+        milestoneId,
+        authorId: comment.authorId,
+      },
+    });
+    await publishProjectChange(tx, actor, {
+      change: "MILESTONE_COMMENT_DELETED",
+      customerSpaceId: context.customerSpaceId,
+      projectId,
+      visibility: comment.visibility,
+      payload: {
+        milestoneId,
+        milestoneCommentId,
+      },
+    });
+    return { deleted: true as const };
+  });
+}

@@ -84,6 +84,7 @@ const targetLabels: Record<string, string> = {
   REQUEST_MESSAGE: "服务请求回复",
   PROJECT_UPDATE: "项目进度",
   UPDATE_COMMENT: "进度评论",
+  MILESTONE_COMMENT: "里程碑评论",
   MILESTONE: "项目里程碑",
   ATTACHMENT: "公开附件",
 };

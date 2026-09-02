@@ -113,6 +113,9 @@ const actionLabels: Record<string, string> = {
   MILESTONE_CREATED: "创建里程碑",
   MILESTONE_UPDATED: "更新里程碑",
   MILESTONE_DELETED: "删除里程碑",
+  MILESTONE_COMMENT_CREATED: "发表里程碑评论",
+  MILESTONE_COMMENT_UPDATED: "编辑里程碑评论",
+  MILESTONE_COMMENT_DELETED: "删除里程碑评论",
 
   // 工单
   REQUEST_CREATED: "创建工单",

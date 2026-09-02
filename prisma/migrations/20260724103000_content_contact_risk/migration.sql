@@ -189,6 +189,12 @@ AS $$
       JOIN "ProjectUpdate" item ON item.id = comment."projectUpdateId"
       WHERE comment.id = target_id AND app_can_access_project(item."projectId")
     )
+    WHEN 'MILESTONE_COMMENT' THEN EXISTS (
+      SELECT 1
+      FROM "MilestoneComment" comment
+      JOIN "Milestone" item ON item.id = comment."milestoneId"
+      WHERE comment.id = target_id AND app_can_access_project(item."projectId")
+    )
     WHEN 'MILESTONE' THEN EXISTS (
       SELECT 1 FROM "Milestone" item
       WHERE item.id = target_id AND app_can_access_project(item."projectId")

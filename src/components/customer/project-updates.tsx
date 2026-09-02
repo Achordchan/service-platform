@@ -15,14 +15,13 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import ChatBubbleOutlineOutlinedIcon from "@mui/icons-material/ChatBubbleOutlineOutlined";
 import ImageOutlinedIcon from "@mui/icons-material/ImageOutlined";
 import VisibilityOutlinedIcon from "@mui/icons-material/VisibilityOutlined";
 import type { ProjectUpdate } from "@/components/customer/customer-types";
 import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { EmptyState } from "@/components/shared/content-state";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
-import { UpdateCommentDialog } from "@/components/shared/update-comment-dialog";
+import { CommentSection } from "@/components/shared/comment-section";
 import { useToast } from "@/components/shared/toast-provider";
 import { apiRequest, jsonRequest } from "@/lib/api-client";
 import {
@@ -67,29 +66,15 @@ export function ProjectUpdates({
   const router = useRouter();
   const toast = useToast();
   const [detailId, setDetailId] = useState<string | null>(null);
-  // 评论走独立弹窗：一条动态的评论可能很多，展开在行里会把列表撑爆
-  const [commentOpenId, setCommentOpenId] = useState<string | null>(null);
+  // 评论输入由组件持有：切换动态/提交后统一清空
   const [commentText, setCommentText] = useState("");
   const [postingComment, setPostingComment] = useState(false);
   const detail = detailId
     ? updates.find((item) => item.id === detailId) ?? null
     : null;
-  // 选中项要连风控状态一起判：动态在弹窗开着时被撤回（实时刷新/router.refresh
-  // 会把它变成 REVOKED），列表行早就换成了「已撤回」，弹窗不能还挂着评论和输入框
-  const commentUpdate = commentOpenId
-    ? updates.find(
-        (item) =>
-          item.id === commentOpenId && item.contentRiskStatus !== "REVOKED",
-      ) ?? null
-    : null;
 
   function closeDetail() {
     setDetailId(null);
-  }
-
-  function openComments(updateId: string) {
-    setCommentOpenId(updateId);
-    setCommentText("");
   }
 
   async function submitComment(updateId: string) {
@@ -299,15 +284,12 @@ export function ProjectUpdates({
                           查看详情
                         </Button>
                       ) : null}
-                      <Button
-                        size="small"
-                        color="inherit"
-                        startIcon={<ChatBubbleOutlineOutlinedIcon />}
-                        onClick={() => openComments(update.id)}
-                        aria-haspopup="dialog"
-                      >
-                        评论{replyCount > 0 ? ` ${replyCount}` : ""}
-                      </Button>
+                      {/* 评论在详情弹窗里常驻：回复数只做提示，不再单独开弹窗 */}
+                      {replyCount > 0 ? (
+                        <Typography variant="body2" color="text.secondary">
+                          {replyCount} 条评论
+                        </Typography>
+                      ) : null}
                     </Stack>
                   ) : null}
                 </Stack>
@@ -316,53 +298,6 @@ export function ProjectUpdates({
           );
         })}
       </Paper>
-
-      <UpdateCommentDialog
-        open={Boolean(commentUpdate)}
-        onClose={() => setCommentOpenId(null)}
-        title={commentUpdate?.title}
-        items={(commentUpdate?.comments ?? []).map((comment) => ({
-          id: comment.id,
-          body: comment.body,
-          authorId: comment.authorId,
-          authorName: comment.authorName,
-          authorImage: comment.authorImage,
-          createdAt: comment.createdAt,
-          contentRiskStatus: comment.contentRiskStatus,
-          meta: editedSuffix(comment.createdAt, comment.updatedAt),
-        }))}
-        contentRiskEnabled={contentRiskEnabled}
-        dateFormatter={dateFormatter}
-        busy={postingComment}
-        composer={
-          projectId && commentUpdate ? (
-            <Box>
-              {postingComment ? <LinearProgress sx={{ mb: 1 }} /> : null}
-              <TextField
-                value={commentText}
-                onChange={(event) => setCommentText(event.target.value)}
-                fullWidth
-                multiline
-                minRows={2}
-                maxRows={6}
-                size="small"
-                placeholder="向服务人员留言…"
-                disabled={postingComment}
-              />
-              <Stack direction="row" sx={{ mt: 1, justifyContent: "flex-end" }}>
-                <Button
-                  size="small"
-                  variant="contained"
-                  onClick={() => void submitComment(commentUpdate.id)}
-                  disabled={postingComment || commentText.trim().length === 0}
-                >
-                  发送
-                </Button>
-              </Stack>
-            </Box>
-          ) : null
-        }
-      />
 
       <Dialog
         open={Boolean(detail)}
@@ -398,23 +333,61 @@ export function ProjectUpdates({
                 />
               ) : null}
               <CollapsibleText text={detail.body} collapsible={false} />
+              {/* 评论区常驻详情弹窗：评论跟着内容走，进来就能看能回 */}
+              {detail.contentRiskStatus !== "REVOKED" ? (
+                <CommentSection
+                  comments={detail.comments.map((comment) => ({
+                    id: comment.id,
+                    body: comment.body,
+                    authorId: comment.authorId,
+                    authorName: comment.authorName,
+                    authorImage: comment.authorImage,
+                    createdAt: comment.createdAt,
+                    contentRiskStatus: comment.contentRiskStatus,
+                    meta: editedSuffix(comment.createdAt, comment.updatedAt),
+                  }))}
+                  contentRiskEnabled={contentRiskEnabled}
+                  dateFormatter={dateFormatter}
+                  emptyText="还没有评论"
+                  composer={
+                    projectId ? (
+                      <Box>
+                        {postingComment ? (
+                          <LinearProgress sx={{ mb: 1 }} />
+                        ) : null}
+                        <TextField
+                          value={commentText}
+                          onChange={(event) => setCommentText(event.target.value)}
+                          fullWidth
+                          multiline
+                          minRows={2}
+                          maxRows={6}
+                          size="small"
+                          placeholder="向服务人员留言…"
+                          disabled={postingComment}
+                        />
+                        <Stack
+                          direction="row"
+                          sx={{ mt: 1, justifyContent: "flex-end" }}
+                        >
+                          <Button
+                            size="small"
+                            variant="contained"
+                            onClick={() => void submitComment(detail.id)}
+                            disabled={postingComment || commentText.trim().length === 0}
+                          >
+                            发送
+                          </Button>
+                        </Stack>
+                      </Box>
+                    ) : null
+                  }
+                />
+              ) : null}
             </Stack>
           ) : null}
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2.5 }}>
-          {detail && detail.contentRiskStatus !== "REVOKED" ? (
-            <Button
-              startIcon={<ChatBubbleOutlineOutlinedIcon />}
-              onClick={() => {
-                // 详情与评论是两个弹窗，同屏叠着看不清：关掉详情再开评论
-                openComments(detail.id);
-                setDetailId(null);
-              }}
-              sx={{ mr: "auto" }}
-            >
-              评论{detail.comments.length > 0 ? ` ${detail.comments.length}` : ""}
-            </Button>
-          ) : null}
           <Button onClick={closeDetail}>关闭</Button>
         </DialogActions>
       </Dialog>

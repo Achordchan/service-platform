@@ -74,6 +74,15 @@ export type ProjectMilestone = {
   endDate?: string | null;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  comments: Array<{
+    id: string;
+    body: string;
+    authorId?: string;
+    authorName: string;
+    authorImage?: string | null;
+    createdAt: string;
+    contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  }>;
 };
 
 export type ProjectUpdate = {

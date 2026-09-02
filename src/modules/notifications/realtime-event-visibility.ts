@@ -62,6 +62,9 @@ function attachmentEventOwner(type: EventType, payload: Prisma.JsonValue) {
   }
   if (eventPayloadString(payload, "projectUpdateId")) return "UPDATE" as const;
   if (eventPayloadString(payload, "updateCommentId")) return "UPDATE" as const;
+  // 里程碑评论的附件与里程碑同模块（showMilestones/showProgress 门控）；
+  // 要放在 milestoneId 之前 —— 评论事件的 payload 同时携带两者
+  if (eventPayloadString(payload, "milestoneCommentId")) return "MILESTONE" as const;
   if (eventPayloadString(payload, "milestoneId")) return "MILESTONE" as const;
   return "PROJECT_FILE" as const;
 }
@@ -93,7 +96,11 @@ function isProjectMilestoneEvent(type: EventType, payload: Prisma.JsonValue) {
   return (
     change === "MILESTONE_CREATED" ||
     change === "MILESTONE_UPDATED" ||
-    change === "MILESTONE_DELETED"
+    change === "MILESTONE_DELETED" ||
+    // 里程碑评论跟随里程碑模块的门控：客户开着里程碑或进度就能实时收到
+    change === "MILESTONE_COMMENT_CREATED" ||
+    change === "MILESTONE_COMMENT_UPDATED" ||
+    change === "MILESTONE_COMMENT_DELETED"
   );
 }
 

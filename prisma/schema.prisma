@@ -132,6 +132,7 @@ enum ContentRiskTargetType {
   PROJECT_UPDATE
   UPDATE_COMMENT
   MILESTONE
+  MILESTONE_COMMENT
   ATTACHMENT
 }
 
@@ -258,6 +259,7 @@ model User {
   projectsCreated            Project[]                    @relation("ProjectCreator")
   projectAssignments         ProjectStaff[]
   milestonesCreated          Milestone[]                  @relation("MilestoneCreator")
+  milestoneComments          MilestoneComment[]
   projectUpdates             ProjectUpdate[]
   updateComments             UpdateComment[]
   projectUpdateRevisions     ProjectUpdateRevision[]      @relation("ProjectUpdateRevisionEditor")
@@ -635,11 +637,28 @@ model Milestone {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  project     Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  createdBy   User         @relation("MilestoneCreator", fields: [createdById], references: [id])
+  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  createdBy   User               @relation("MilestoneCreator", fields: [createdById], references: [id])
   attachments Attachment[]
+  comments    MilestoneComment[]
 
   @@index([projectId, sortOrder])
+}
+
+model MilestoneComment {
+  id          String            @id @default(cuid())
+  body        String
+  visibility  ContentVisibility @default(CUSTOMER_VISIBLE)
+  milestoneId String
+  authorId    String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  milestone   Milestone    @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  author      User         @relation(fields: [authorId], references: [id])
+  attachments Attachment[]
+
+  @@index([milestoneId, createdAt])
 }
 
 model ProjectUpdate {
@@ -814,8 +833,8 @@ model Attachment {
   previewStatus               AttachmentPreviewStatus?
   mimeType                    String
   size                        Int
-  visibility                  ContentVisibility @default(CUSTOMER_VISIBLE)
-  inline                      Boolean           @default(false)
+  visibility                  ContentVisibility        @default(CUSTOMER_VISIBLE)
+  inline                      Boolean                  @default(false)
   customerSpaceId             String?
   projectId                   String?
   projectUpdateId             String?
@@ -826,23 +845,25 @@ model Attachment {
   requestMessageId            String?
   uploadedById                String?
   uploadedByExternalContactId String?
-  createdAt                   DateTime          @default(now())
+  createdAt                   DateTime                 @default(now())
   /// 显式「添加到项目文件」：非空表示已收录进项目文件列表。
   /// 不改动 serviceRequestId 等归属字段 —— RLS 仍按原归属裁决可见性，
   /// 看不到源工单的人即使文件被收录也读不到。
   pinnedToProjectAt           DateTime?
   pinnedById                  String?
 
-  customerSpace             CustomerSpace?   @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
-  project                   Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  projectUpdate             ProjectUpdate?   @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
-  updateComment             UpdateComment?   @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
-  milestone                 Milestone?       @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
-  supportPlaybook           SupportPlaybook? @relation(fields: [supportPlaybookKey], references: [key], onDelete: SetNull)
-  serviceRequest            ServiceRequest?  @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
-  requestMessage            RequestMessage?  @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
-  uploadedBy                User?            @relation(fields: [uploadedById], references: [id])
-  uploadedByExternalContact ExternalContact? @relation(fields: [uploadedByExternalContactId], references: [id])
+  customerSpace             CustomerSpace?    @relation(fields: [customerSpaceId], references: [id], onDelete: Cascade)
+  project                   Project?          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectUpdate             ProjectUpdate?    @relation(fields: [projectUpdateId], references: [id], onDelete: Cascade)
+  updateComment             UpdateComment?    @relation(fields: [updateCommentId], references: [id], onDelete: Cascade)
+  milestone                 Milestone?        @relation(fields: [milestoneId], references: [id], onDelete: Cascade)
+  supportPlaybook           SupportPlaybook?  @relation(fields: [supportPlaybookKey], references: [key], onDelete: SetNull)
+  serviceRequest            ServiceRequest?   @relation(fields: [serviceRequestId], references: [id], onDelete: Cascade)
+  requestMessage            RequestMessage?   @relation(fields: [requestMessageId], references: [id], onDelete: Cascade)
+  uploadedBy                User?             @relation(fields: [uploadedById], references: [id])
+  uploadedByExternalContact ExternalContact?  @relation(fields: [uploadedByExternalContactId], references: [id])
+  milestoneComment          MilestoneComment? @relation(fields: [milestoneCommentId], references: [id])
+  milestoneCommentId        String?
 
   @@index([customerSpaceId, projectId])
   @@index([serviceRequestId])
@@ -948,13 +969,13 @@ enum PresenceClient {
 }
 
 model RequestPresence {
-  id               String   @id @default(cuid())
+  id               String         @id @default(cuid())
   serviceRequestId String
   userId           String
   sessionId        String
   expiresAt        DateTime
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
   /// 在线来自哪个端；仅用于在线标识旁的图标区分
   client           PresenceClient @default(WEB)
   /// 后台人员排查用：设备、时区、来源 IP。UA 与 IP 由服务端从请求头取，

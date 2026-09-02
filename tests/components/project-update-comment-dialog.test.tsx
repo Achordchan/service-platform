@@ -151,27 +151,32 @@ function renderWorkspace() {
   fireEvent.click(screen.getByRole("tab", { name: /进度动态/ }));
 }
 
+function openDetail() {
+  fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+  return screen.getByRole("dialog");
+}
+
 afterEach(() => cleanup());
 
 describe("项目动态评论", () => {
-  it("评论开在弹窗里，不在列表行内展开", () => {
+  it("评论区常驻详情弹窗：打开详情就能看到评论，列表行没有单独的评论按钮", () => {
     renderWorkspace();
-    expect(screen.queryByRole("dialog")).toBeNull();
+    // 列表行不再有「评论 N」按钮，评论数只做文字提示
+    expect(screen.queryByRole("button", { name: /评论/ })).toBeNull();
+    expect(screen.getByText("2 条评论")).toBeDefined();
 
-    fireEvent.click(screen.getByRole("button", { name: /评论 2/ }));
-
-    const dialog = screen.getByRole("dialog");
+    const dialog = openDetail();
     expect(within(dialog).getByText("我的回复")).toBeDefined();
     expect(within(dialog).getByText("客户的留言")).toBeDefined();
   });
 
-  it("动态被撤回后评论弹窗跟着关掉，不留评论和输入框", async () => {
+  it("详情弹窗开着时动态被撤回：评论和输入框跟着消失", async () => {
     const { rerender } = render(
       <ProjectDetailWorkspace {...workspaceProps(project)} />,
     );
     fireEvent.click(screen.getByRole("tab", { name: /进度动态/ }));
-    fireEvent.click(screen.getByRole("button", { name: /评论 2/ }));
-    expect(screen.getByRole("dialog")).toBeDefined();
+    const dialog = openDetail();
+    expect(within(dialog).getByText("客户的留言")).toBeDefined();
 
     rerender(
       <ProjectDetailWorkspace
@@ -185,19 +190,32 @@ describe("项目动态评论", () => {
       />,
     );
 
-    // 撤回后弹窗立刻不再有评论与输入框，随即卸载
+    // 撤回后弹窗里的评论与输入框立刻消失（弹窗本身留着，正文换成已撤回提示，
+    // 用户自己点关闭）；不能再让人对着已撤回的内容继续发言
     expect(screen.queryByText("客户的留言")).toBeNull();
     expect(screen.queryByPlaceholderText("回复客户或记录说明…")).toBeNull();
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(within(dialog).queryByRole("button", { name: "发送" })).toBeNull();
+    await waitFor(() =>
+      expect(within(dialog).queryByText(/评论/)).toBeNull(),
+    );
   });
 
   it("只有自己发的评论给编辑入口，客户的不给", () => {
     renderWorkspace();
-    fireEvent.click(screen.getByRole("button", { name: /评论 2/ }));
+    const dialog = openDetail();
 
-    const dialog = screen.getByRole("dialog");
     expect(
       within(dialog).getAllByRole("button", { name: "编辑评论" }),
     ).toHaveLength(1);
+  });
+
+  it("有评论权限时详情弹窗里直接给评论输入框", () => {
+    renderWorkspace();
+    const dialog = openDetail();
+
+    expect(
+      within(dialog).getByPlaceholderText("回复客户或记录说明…"),
+    ).toBeDefined();
+    expect(within(dialog).getByRole("button", { name: "发送" })).toBeDefined();
   });
 });
