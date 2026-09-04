@@ -1,0 +1,27 @@
+.page {
+  padding: 20rpx 0 60rpx;
+}
+
+.placeholder {
+  color: var(--text-secondary);
+}
+
+/* 多行：撤掉 .input 的单行固定高度与行高 */
+.textarea {
+  height: auto;
+  min-height: 280rpx;
+  line-height: 1.6;
+  padding: 20rpx 24rpx;
+  width: auto;
+}
+
+.submit-btn {
+  margin-top: 36rpx;
+}
+
+.submit-hint {
+  text-align: center;
+  margin-top: 14rpx;
+  font-size: 22rpx;
+  color: var(--text-secondary);
+}

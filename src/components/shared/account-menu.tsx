@@ -18,10 +18,12 @@ import {
   Typography,
 } from "@mui/material";
 import KeyboardArrowDownOutlinedIcon from "@mui/icons-material/KeyboardArrowDownOutlined";
+import FeedbackOutlinedIcon from "@mui/icons-material/FeedbackOutlined";
 import LogoutOutlinedIcon from "@mui/icons-material/LogoutOutlined";
 import ManageAccountsOutlinedIcon from "@mui/icons-material/ManageAccountsOutlined";
 import { resolveAvatarSrc } from "@/lib/default-avatar";
 import { authClient } from "@/lib/auth-client";
+import { useFeedbackDialog } from "@/components/shared/feedback-dialog-provider";
 
 type AccountMenuUser = {
   id: string;
@@ -43,6 +45,7 @@ export function AccountMenu({
 }) {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const feedbackDialog = useFeedbackDialog();
   const [anchor, setAnchor] = useState<null | HTMLElement>(null);
 
   return (
@@ -125,6 +128,17 @@ export function AccountMenu({
             <ManageAccountsOutlinedIcon fontSize="small" />
           </ListItemIcon>
           个人设置
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAnchor(null);
+            feedbackDialog.open();
+          }}
+        >
+          <ListItemIcon>
+            <FeedbackOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          意见反馈
         </MenuItem>
         <Divider />
         <MenuItem

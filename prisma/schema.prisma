@@ -285,6 +285,7 @@ model User {
   wechatBindingCodesCreated  WechatBindingCode[]          @relation("WechatBindingCodeCreator")
   miniappSessions            MiniappSession[]
   wechatSubscribeGrants      WechatSubscribeGrant[]
+  feedbackSubmitted          Feedback[]
 
   @@index([roleGroupId])
   @@index([deletedAt, platformRole])
@@ -1556,4 +1557,46 @@ model MailProviderEvent {
 
   @@index([providerMessageId, occurredAt])
   @@index([mailMessageId, occurredAt])
+}
+
+// 用户反馈：客户/员工从 Web 与小程序提交。落库是唯一事实源（员工端后台
+// 据此查看全部反馈与提交人），GitHub issue 只是附带同步通道——token 未
+// 配置或调用失败都不影响反馈保存。提交人身份只存在库里，绝不写进
+// 公开仓库的 issue 正文。
+enum FeedbackSource {
+  WEB
+  MINIAPP
+}
+
+// PENDING：刚落库尚未尝试建 issue（仅同步调用中途崩溃时可见）
+// CREATED：issue 已建，issueUrl/issueNumber 可用
+// FAILED：已尝试但 GitHub 调用失败（issueError 记录原因）
+// SKIPPED：未配置 GITHUB_FEEDBACK_TOKEN，跳过建 issue
+enum FeedbackIssueStatus {
+  PENDING
+  CREATED
+  FAILED
+  SKIPPED
+}
+
+model Feedback {
+  id           String              @id @default(cuid())
+  title        String
+  content      String
+  source       FeedbackSource
+  appVersion   String?
+  platformInfo Json?
+  submitterId  String
+  issueStatus  FeedbackIssueStatus @default(PENDING)
+  issueNumber  Int?
+  issueUrl     String?
+  issueError   String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  submitter User @relation(fields: [submitterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([createdAt(sort: Desc)])
+  @@index([issueStatus])
+  @@index([submitterId, createdAt(sort: Desc)])
 }

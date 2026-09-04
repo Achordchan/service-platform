@@ -1,0 +1,35 @@
+<view class="page">
+  <view wx:if="{{error}}" class="error-banner">{{error}}</view>
+
+  <view class="card">
+    <view class="form-label">标题</view>
+    <input
+      class="input"
+      value="{{title}}"
+      maxlength="120"
+      placeholder="一句话概括你的反馈"
+      bindinput="onTitleInput"
+    />
+
+    <view class="form-label">内容</view>
+    <textarea
+      class="input textarea"
+      value="{{content}}"
+      maxlength="5000"
+      placeholder="遇到的问题或改进建议，描述得越具体我们越容易跟进"
+      bindinput="onContentInput"
+    ></textarea>
+
+    <button
+      class="primary-btn submit-btn"
+      hover-class="hover-btn"
+      loading="{{submitting}}"
+      disabled="{{submitting}}"
+      bindtap="onSubmit"
+    >
+      提交反馈
+    </button>
+
+    <view class="submit-hint">我们会尽快跟进你的反馈</view>
+  </view>
+</view>

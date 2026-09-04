@@ -51,6 +51,13 @@ const envSchema = z.object({
   // 只配其一会导致前端不渲染验证件而服务端强制拒绝 → 全站无法登录，启动即报错。
   CF_TURNSTILE_SITE_KEY: z.string().min(1).optional(),
   CF_TURNSTILE_SECRET_KEY: z.string().min(1).optional(),
+  // 用户反馈 → GitHub issue 同步（可选）。不配置 token 时反馈仅落库
+  // （员工端后台仍可查看），不建 issue；repo 格式 OWNER/REPO，默认平台仓库。
+  GITHUB_FEEDBACK_TOKEN: z.string().min(1).optional(),
+  GITHUB_FEEDBACK_REPO: z
+    .string()
+    .regex(/^[\w.-]+\/[\w.-]+$/, "GITHUB_FEEDBACK_REPO 必须是 OWNER/REPO 形式")
+    .optional(),
 });
 
 const pairedEnvSchema = envSchema.superRefine((env, ctx) => {
@@ -122,6 +129,8 @@ function readEnvSource() {
       WECHAT_TEMPLATE_PROJECT_UPDATE_ID: process.env.WECHAT_TEMPLATE_PROJECT_UPDATE_ID,
       CF_TURNSTILE_SITE_KEY: process.env.CF_TURNSTILE_SITE_KEY,
       CF_TURNSTILE_SECRET_KEY: process.env.CF_TURNSTILE_SECRET_KEY,
+      GITHUB_FEEDBACK_TOKEN: process.env.GITHUB_FEEDBACK_TOKEN,
+      GITHUB_FEEDBACK_REPO: process.env.GITHUB_FEEDBACK_REPO,
     };
   }
 
@@ -155,6 +164,8 @@ function readEnvSource() {
     WECHAT_TEMPLATE_PROJECT_UPDATE_ID: process.env.WECHAT_TEMPLATE_PROJECT_UPDATE_ID,
     CF_TURNSTILE_SITE_KEY: process.env.CF_TURNSTILE_SITE_KEY,
     CF_TURNSTILE_SECRET_KEY: process.env.CF_TURNSTILE_SECRET_KEY,
+    GITHUB_FEEDBACK_TOKEN: process.env.GITHUB_FEEDBACK_TOKEN,
+    GITHUB_FEEDBACK_REPO: process.env.GITHUB_FEEDBACK_REPO,
   };
 }
 
