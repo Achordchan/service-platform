@@ -57,6 +57,13 @@
         </view>
         <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
       </view>
+      <view class="row" hover-class="hover-card" bindtap="onOpenFeedbackNew">
+        <view class="row-left">
+          <t-icon name="chat" size="38rpx" color="#1677ff" />
+          <text>意见反馈</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
     </view>
 
     <!-- 后台工具（员工可见）-->
@@ -65,6 +72,13 @@
         <view class="row-left">
           <t-icon name="chart" size="38rpx" color="#1677ff" />
           <text>工作台</text>
+        </view>
+        <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
+      </view>
+      <view class="row" hover-class="hover-card" bindtap="onOpenFeedbackAdmin">
+        <view class="row-left">
+          <t-icon name="file-1" size="38rpx" color="#1677ff" />
+          <text>用户反馈</text>
         </view>
         <t-icon name="chevron-right" size="36rpx" color="#98a2b3" />
       </view>

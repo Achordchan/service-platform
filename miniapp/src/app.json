@@ -21,6 +21,8 @@
     "pages/audit-logs/page",
     "pages/attachment-text/page",
     "pages/profile-edit/page",
+    "pages/feedback-new/page",
+    "pages/feedback-admin/page",
     "pages/web-login/page"
   ],
   "window": {

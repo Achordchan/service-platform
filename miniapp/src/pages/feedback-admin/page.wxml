@@ -1,0 +1,111 @@
+<import src="/components/states.wxml" />
+
+<view class="feedback-page">
+  <view class="filter-bar">
+    <input
+      class="search-input"
+      placeholder="搜索标题 / 内容 / 提交人"
+      placeholder-class="search-placeholder"
+      value="{{keyword}}"
+      confirm-type="search"
+      bindinput="onKeywordInput"
+      bindconfirm="onSearchConfirm"
+      bindblur="onSearchConfirm"
+    />
+  </view>
+
+  <scroll-view scroll-x class="status-bar" enhanced show-scrollbar="{{false}}">
+    <view
+      wx:for="{{sourceOptions}}"
+      wx:key="value"
+      class="status-chip {{source === item.value ? 'status-chip-active' : ''}}"
+      data-value="{{item.value}}"
+      bindtap="onSourceTap"
+    >
+      {{item.label}}
+    </view>
+  </scroll-view>
+
+  <scroll-view scroll-x class="status-bar" enhanced show-scrollbar="{{false}}">
+    <view
+      wx:for="{{statusOptions}}"
+      wx:key="value"
+      class="status-chip {{issueStatus === item.value ? 'status-chip-active' : ''}}"
+      data-value="{{item.value}}"
+      bindtap="onStatusTap"
+    >
+      {{item.label}}
+    </view>
+  </scroll-view>
+
+  <template wx:if="{{loading}}" is="skeleton-list" data="{{count: 6}}" />
+
+  <template
+    wx:elif="{{loadError}}"
+    is="state-error"
+    data="{{title: '无法查看', desc: loadError, retry: true}}"
+  />
+
+  <template
+    wx:elif="{{rows.length === 0}}"
+    is="state-empty"
+    data="{{icon: 'chat', title: '暂无反馈', desc: filtersActive ? '当前筛选下没有反馈，换个条件试试' : '用户提交的反馈会出现在这里'}}"
+  />
+
+  <block wx:else>
+    <view class="feedback-total text-secondary">共 {{total}} 条反馈</view>
+    <view class="feedback-list">
+      <view
+        wx:for="{{rows}}"
+        wx:key="id"
+        class="feedback-row"
+        hover-class="hover-row"
+        hover-stay-time="80"
+        data-index="{{index}}"
+        bindtap="onOpenDetail"
+      >
+        <view class="feedback-line">
+          <text class="feedback-title">{{item.title}}</text>
+          <text
+            class="feedback-tag {{item.issueStatus === 'CREATED' ? 'tag-success' : item.issueStatus === 'FAILED' ? 'tag-error' : item.issueStatus === 'PENDING' ? 'tag-warning' : 'tag-plain'}}"
+          >{{item.issueStatusLabel}}</text>
+        </view>
+        <view class="feedback-line feedback-sub text-secondary">
+          {{item.submitter ? item.submitter.name : '未知用户'}} · {{item.timeText}} · {{item.sourceLabel}}
+        </view>
+        <view class="feedback-line feedback-sub text-secondary">
+          {{item.content}}
+        </view>
+      </view>
+    </view>
+
+    <view wx:if="{{loadingMore}}" class="load-more">加载中…</view>
+    <view wx:elif="{{!hasMore}}" class="load-more">没有更多了</view>
+  </block>
+
+  <!-- 单条详情：字段与 Web 端弹窗一致，等宽字段轻触复制 -->
+  <view wx:if="{{detailVisible}}" class="sheet-mask" bindtap="onCloseDetail" catchtouchmove="noop">
+    <view class="sheet-panel" catchtap="noop">
+      <view class="sheet-head">
+        <text class="sheet-title">{{detailTitle}}</text>
+        <t-icon name="close" size="40rpx" color="#98a2b3" bindtap="onCloseDetail" />
+      </view>
+
+      <scroll-view scroll-y class="detail-scroll" enhanced show-scrollbar="{{false}}">
+        <view
+          wx:for="{{detailItems}}"
+          wx:key="label"
+          class="detail-item"
+          data-copy="{{item.copy}}"
+          data-value="{{item.value}}"
+          bindtap="onCopyValue"
+        >
+          <view class="detail-label text-secondary">{{item.label}}</view>
+          <view class="detail-value {{item.mono ? 'detail-mono' : ''}} {{item.prewrap ? 'detail-prewrap' : ''}}">{{item.value}}</view>
+        </view>
+
+        <view class="detail-hint text-secondary">轻触等宽字段可复制</view>
+      </scroll-view>
+    </view>
+  </view>
+</view>

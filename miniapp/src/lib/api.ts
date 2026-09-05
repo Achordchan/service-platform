@@ -1240,3 +1240,83 @@ function presenceTimezone(): string | undefined {
     return undefined;
   }
 }
+
+// —— 用户反馈（提交全端可用；列表仅员工）——
+
+export type FeedbackSource = "WEB" | "MINIAPP";
+export type FeedbackIssueStatus = "PENDING" | "CREATED" | "FAILED" | "SKIPPED";
+
+export type FeedbackRuntimeInfo = {
+  appVersion?: string;
+  model?: string;
+  system?: string;
+  platform?: string;
+  sdkVersion?: string;
+};
+
+export function submitFeedback(input: {
+  title: string;
+  content: string;
+  miniappRuntime?: FeedbackRuntimeInfo;
+  /** 弱网重试防重：同一反馈在拿到明确结果前复用同一 key */
+  clientMutationKey?: string;
+}): Promise<{ id: string; issueUrl: string | null }> {
+  return request("/api/v1/feedback", {
+    method: "POST",
+    data: input,
+    // 建 GitHub issue 在服务端同步等待，留足余量
+    timeoutMs: 30000,
+  });
+}
+
+export type FeedbackAdminRow = {
+  id: string;
+  title: string;
+  content: string;
+  source: FeedbackSource;
+  sourceLabel: string;
+  appVersion: string | null;
+  platformInfo: Record<string, unknown> | null;
+  issueStatus: FeedbackIssueStatus;
+  issueStatusLabel: string;
+  issueNumber: number | null;
+  issueUrl: string | null;
+  issueError: string | null;
+  createdAt: string;
+  submitter: {
+    id: string;
+    name: string;
+    email: string;
+    platformRole: string;
+  } | null;
+};
+
+export type FeedbackAdminPage = {
+  total: number;
+  page: number;
+  pageSize: number;
+  rows: FeedbackAdminRow[];
+};
+
+export function listFeedback(
+  params: {
+    search?: string;
+    source?: string;
+    issueStatus?: string;
+    page?: number;
+    pageSize?: number;
+  },
+): Promise<FeedbackAdminPage> {
+  const query = new Array<string>();
+  if (params.search) query.push(`search=${encodeURIComponent(params.search)}`);
+  if (params.source) query.push(`source=${encodeURIComponent(params.source)}`);
+  if (params.issueStatus) {
+    query.push(`issueStatus=${encodeURIComponent(params.issueStatus)}`);
+  }
+  if (params.page !== undefined) query.push(`page=${params.page}`);
+  if (params.pageSize !== undefined) query.push(`pageSize=${params.pageSize}`);
+  const suffix = query.length ? `?${query.join("&")}` : "";
+  return request<FeedbackAdminPage>(`/api/v1/admin/feedback${suffix}`, {
+    timeoutMs: 20000,
+  });
+}

@@ -14,6 +14,9 @@ export const queryKeys = {
   dashboard: {
     analytics: ["dashboard", "analytics"] as const,
   },
+  feedback: {
+    list: (query: string) => ["feedback", "list", query] as const,
+  },
   notifications: {
     list: ["notifications", "list"] as const,
     summary: ["notifications", "summary"] as const,

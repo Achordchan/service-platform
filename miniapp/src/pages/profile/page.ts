@@ -59,6 +59,12 @@ Page({
   onOpenAuditLogs() {
     wx.navigateTo({ url: "/pages/audit-logs/page" });
   },
+  onOpenFeedbackNew() {
+    wx.navigateTo({ url: "/pages/feedback-new/page" });
+  },
+  onOpenFeedbackAdmin() {
+    wx.navigateTo({ url: "/pages/feedback-admin/page" });
+  },
   onOpenMembers() {
     const spaces = (this.data.me?.customerSpaces ?? []).filter(
       (space) => space.role === "OWNER",

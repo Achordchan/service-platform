@@ -23,6 +23,7 @@ import BusinessCenterOutlinedIcon from "@mui/icons-material/BusinessCenterOutlin
 import ChevronLeftOutlinedIcon from "@mui/icons-material/ChevronLeftOutlined";
 import DashboardOutlinedIcon from "@mui/icons-material/DashboardOutlined";
 import ExtensionOutlinedIcon from "@mui/icons-material/ExtensionOutlined";
+import FeedbackOutlinedIcon from "@mui/icons-material/FeedbackOutlined";
 import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
@@ -57,6 +58,11 @@ const primaryNavigation = [
     href: "/staff/requests",
     label: "服务请求",
     icon: <SupportAgentOutlinedIcon fontSize="small" />,
+  },
+  {
+    href: "/staff/feedback",
+    label: "用户反馈",
+    icon: <FeedbackOutlinedIcon fontSize="small" />,
   },
 ];
 

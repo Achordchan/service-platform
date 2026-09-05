@@ -1,0 +1,209 @@
+.feedback-page {
+  min-height: 100vh;
+  padding-bottom: 40rpx;
+  box-sizing: border-box;
+}
+
+/* ———— 搜索与筛选 ———— */
+.filter-bar {
+  display: flex;
+  gap: 16rpx;
+  padding: 20rpx 24rpx 12rpx;
+  background: var(--page-bg);
+}
+
+.search-input {
+  box-sizing: border-box;
+  flex: 1;
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 14rpx;
+  height: 72rpx;
+  line-height: 70rpx;
+  padding: 0 20rpx;
+  font-size: 26rpx;
+}
+
+.search-placeholder {
+  color: var(--text-tertiary);
+  font-size: 26rpx;
+  line-height: 70rpx;
+}
+
+.status-bar {
+  /* 项目无全局 border-box 重置：content-box 下横向 padding 会把 scroll-view
+     自身撑到 100%+32rpx，整页因此能左右拖动 */
+  box-sizing: border-box;
+  width: 100%;
+  white-space: nowrap;
+  padding: 4rpx 16rpx 12rpx;
+}
+
+.status-chip {
+  display: inline-block;
+  font-size: 24rpx;
+  color: var(--text-secondary);
+  background: var(--card-bg);
+  border: var(--card-border);
+  border-radius: 999rpx;
+  padding: 8rpx 24rpx;
+  margin: 0 8rpx;
+  transition: all 0.15s ease;
+}
+
+.status-chip-active {
+  color: #ffffff;
+  background: var(--brand);
+  border-color: var(--brand);
+  font-weight: 500;
+}
+
+/* ———— 列表 ———— */
+.feedback-total {
+  font-size: 24rpx;
+  padding: 4rpx 28rpx 12rpx;
+}
+
+.feedback-list {
+  background: var(--card-bg);
+  border-top: var(--card-border);
+  border-bottom: var(--card-border);
+}
+
+.feedback-row {
+  padding: 18rpx 28rpx;
+  border-bottom: 1rpx solid var(--divider);
+}
+
+.feedback-row:last-child {
+  border-bottom: none;
+}
+
+.hover-row {
+  background: var(--page-bg);
+}
+
+.feedback-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12rpx;
+}
+
+.feedback-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 28rpx;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-tag {
+  flex-shrink: 0;
+  font-size: 20rpx;
+  line-height: 1.6;
+  padding: 0 10rpx;
+  border-radius: 6rpx;
+}
+
+.tag-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.tag-error {
+  background: var(--error-soft);
+  color: var(--error);
+}
+
+.tag-warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.tag-plain {
+  background: var(--page-bg);
+  color: var(--text-secondary);
+}
+
+.feedback-sub {
+  margin-top: 4rpx;
+  font-size: 23rpx;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ———— 底部详情面板 ———— */
+.sheet-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: rgba(16, 24, 40, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.sheet-panel {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 82vh;
+  background: var(--card-bg);
+  border-radius: 28rpx 28rpx 0 0;
+  padding: 28rpx 28rpx calc(28rpx + env(safe-area-inset-bottom));
+}
+
+.sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-bottom: 8rpx;
+}
+
+.sheet-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 32rpx;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-scroll {
+  max-height: 62vh;
+  margin-top: 12rpx;
+}
+
+.detail-item {
+  padding: 14rpx 0;
+  border-bottom: 1rpx solid var(--divider);
+}
+
+.detail-label {
+  font-size: 23rpx;
+}
+
+.detail-value {
+  margin-top: 4rpx;
+  font-size: 26rpx;
+  word-break: break-all;
+}
+
+.detail-mono {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 24rpx;
+}
+
+.detail-prewrap {
+  white-space: pre-wrap;
+}
+
+.detail-hint {
+  padding: 20rpx 0 4rpx;
+  text-align: center;
+  font-size: 22rpx;
+}

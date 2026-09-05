@@ -7,6 +7,7 @@ import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { zhCN as datePickerZhCN } from "@mui/x-date-pickers/locales";
 import { zhCN as dateFnsZhCN } from "date-fns/locale/zh-CN";
 import { AppConfirmProvider } from "@/components/shared/confirm-provider";
+import { FeedbackDialogProvider } from "@/components/shared/feedback-dialog-provider";
 import { ToastProvider } from "@/components/shared/toast-provider";
 import { QueryProvider } from "@/theme/query-provider";
 import { appTheme } from "@/theme/theme";
@@ -32,7 +33,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         >
           <QueryProvider>
             <AppConfirmProvider>
-              <ToastProvider>{children}</ToastProvider>
+              <ToastProvider>
+                <FeedbackDialogProvider>
+                  {children}
+                </FeedbackDialogProvider>
+              </ToastProvider>
             </AppConfirmProvider>
           </QueryProvider>
         </LocalizationProvider>
