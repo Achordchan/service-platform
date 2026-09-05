@@ -19,6 +19,8 @@ export const submitFeedbackSchema = z.object({
   title: z.string().trim().min(1).max(FEEDBACK_TITLE_MAX),
   content: z.string().trim().min(1).max(FEEDBACK_CONTENT_MAX),
   miniappRuntime: miniappRuntimeSchema.optional(),
+  // 弱网重试防重：与 ServiceRequest 的 clientMutationKeySchema 同一套约定
+  clientMutationKey: z.string().trim().min(8).max(128).optional(),
 });
 
 export type SubmitFeedbackInput = z.infer<typeof submitFeedbackSchema>;

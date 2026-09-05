@@ -1258,6 +1258,8 @@ export function submitFeedback(input: {
   title: string;
   content: string;
   miniappRuntime?: FeedbackRuntimeInfo;
+  /** 弱网重试防重：同一反馈在拿到明确结果前复用同一 key */
+  clientMutationKey?: string;
 }): Promise<{ id: string; issueUrl: string | null }> {
   return request("/api/v1/feedback", {
     method: "POST",

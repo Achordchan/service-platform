@@ -17,6 +17,7 @@ CREATE TABLE "Feedback" (
     "appVersion" TEXT,
     "platformInfo" JSONB,
     "submitterId" TEXT NOT NULL,
+    "clientMutationKey" TEXT,
     "issueStatus" "FeedbackIssueStatus" NOT NULL DEFAULT 'PENDING',
     "issueNumber" INTEGER,
     "issueUrl" TEXT,
@@ -54,6 +55,11 @@ CREATE POLICY feedback_update ON "Feedback"
   WITH CHECK (app_is_platform_admin());
 CREATE POLICY feedback_delete ON "Feedback"
   FOR DELETE USING (app_is_platform_admin());
+
+-- 弱网重试防重：同一提交人在拿到明确结果前复用同一 key，重试返回已建的反馈
+-- 而不是再建一条（再建一个公开 GitHub issue）。
+CREATE UNIQUE INDEX "Feedback_submitterId_clientMutationKey_key"
+  ON "Feedback"("submitterId", "clientMutationKey");
 
 -- CreateIndex
 CREATE INDEX "Feedback_createdAt_idx" ON "Feedback"("createdAt" DESC);

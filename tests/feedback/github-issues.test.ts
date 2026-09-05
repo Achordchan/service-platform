@@ -148,15 +148,40 @@ describe("createFeedbackIssue", () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("网络错误返回 failed 而不抛异常", async () => {
+  it("网络错误返回 unknown 而不抛异常（issue 可能已建）", async () => {
     mocks.fetch.mockRejectedValueOnce(new Error("ECONNRESET"));
 
     const result = await createFeedbackIssue({ title: "t", body: "b" });
 
     expect(result).toEqual({
-      status: "failed",
-      reason: "无法连接 GitHub",
+      status: "unknown",
+      reason: "无法连接 GitHub，创建结果未知",
     });
+  });
+
+  it("超时返回 unknown（请求可能已到达 GitHub）", async () => {
+    const timeoutError = new Error("The operation was aborted due to timeout");
+    timeoutError.name = "TimeoutError";
+    mocks.fetch.mockRejectedValueOnce(timeoutError);
+
+    const result = await createFeedbackIssue({ title: "t", body: "b" });
+
+    expect(result).toEqual({
+      status: "unknown",
+      reason: "GitHub 请求超时，创建结果未知",
+    });
+  });
+
+  it("5xx 返回 unknown 且不重试（内部出错不代表 issue 没建成）", async () => {
+    mocks.fetch.mockResolvedValueOnce(jsonResponse({ message: "oops" }, 502));
+
+    const result = await createFeedbackIssue({ title: "t", body: "b" });
+
+    expect(result).toEqual({
+      status: "unknown",
+      reason: "GitHub 服务暂不可用",
+    });
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("响应缺 html_url 视为失败", async () => {

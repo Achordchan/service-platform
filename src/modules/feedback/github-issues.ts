@@ -10,11 +10,21 @@ const GITHUB_ISSUES_TIMEOUT_MS = 10_000;
 export type FeedbackIssueResult =
   | { status: "created"; number: number; url: string }
   | { status: "skipped"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+  /** 结果未知：GitHub 可能已创建 issue（超时/网络中断/5xx），需要人工核对。 */
+  | { status: "unknown"; reason: string };
+
+type PostIssueFailure = {
+  ok: false;
+  httpStatus: number;
+  reason: string;
+  /** 结果不可知（超时/断网/5xx）：issue 可能已创建，调用方不得按失败重试。 */
+  unknown?: true;
+};
 
 type PostIssueOutcome =
   | { ok: true; number: number; url: string }
-  | { ok: false; httpStatus: number; reason: string };
+  | PostIssueFailure;
 
 export function feedbackIssueChannelConfigured(): boolean {
   return Boolean(env.GITHUB_FEEDBACK_TOKEN);
@@ -65,6 +75,16 @@ async function postIssue(
     );
 
     if (!response.ok) {
+      // 5xx 不代表 issue 没创建——GitHub 收到请求后内部出错时结果不可知，
+      // 标成 unknown 留给人工核对，避免误标 FAILED 后再重试建出重复 issue。
+      if (response.status >= 500) {
+        return {
+          ok: false,
+          httpStatus: response.status,
+          reason: reasonForStatus(response.status),
+          unknown: true,
+        };
+      }
       return {
         ok: false,
         httpStatus: response.status,
@@ -85,13 +105,15 @@ async function postIssue(
     }
     return { ok: true, number: payload.number, url: payload.html_url };
   } catch (error) {
+    // 超时/网络中断：请求可能已到达 GitHub 并建了 issue，只是响应丢了
     return {
       ok: false,
       httpStatus: 0,
       reason:
         error instanceof Error && error.name === "TimeoutError"
-          ? "GitHub 请求超时"
-          : "无法连接 GitHub",
+          ? "GitHub 请求超时，创建结果未知"
+          : "无法连接 GitHub，创建结果未知",
+      unknown: true,
     };
   }
 }
@@ -99,6 +121,8 @@ async function postIssue(
 /**
  * 创建反馈 issue。失败不抛异常：反馈落库是事实源，issue 通道挂了
  * 只降级（无链接、行上记 FAILED/SKIPPED），绝不影响用户提交结果。
+ * 结果未知（超时/5xx/网络中断）返回 unknown：可能已建 issue，调用方
+ * 应记 PENDING 留给人工核对，而不是 FAILED。
  */
 export async function createFeedbackIssue(params: {
   title: string;
@@ -132,16 +156,31 @@ export async function createFeedbackIssue(params: {
         url: withoutLabel.url,
       };
     }
-    return { status: "failed", reason: withoutLabel.reason };
+    return concludeFailure(withoutLabel);
   }
 
+  return concludeFailure(withLabel);
+}
+
+function concludeFailure(outcome: PostIssueFailure) {
+  if (outcome.unknown) {
+    console.warn(
+      JSON.stringify({
+        tag: "FEEDBACK_GITHUB_ISSUE_UNKNOWN",
+        repo: feedbackRepo(),
+        httpStatus: outcome.httpStatus,
+        reason: outcome.reason,
+      }),
+    );
+    return { status: "unknown", reason: outcome.reason } as const;
+  }
   console.warn(
     JSON.stringify({
       tag: "FEEDBACK_GITHUB_ISSUE_FAILED",
       repo: feedbackRepo(),
-      httpStatus: withLabel.httpStatus,
-      reason: withLabel.reason,
+      httpStatus: outcome.httpStatus,
+      reason: outcome.reason,
     }),
   );
-  return { status: "failed", reason: withLabel.reason };
+  return { status: "failed", reason: outcome.reason } as const;
 }

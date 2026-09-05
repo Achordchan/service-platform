@@ -1580,22 +1580,25 @@ enum FeedbackIssueStatus {
 }
 
 model Feedback {
-  id           String              @id @default(cuid())
-  title        String
-  content      String
-  source       FeedbackSource
-  appVersion   String?
-  platformInfo Json?
-  submitterId  String
-  issueStatus  FeedbackIssueStatus @default(PENDING)
-  issueNumber  Int?
-  issueUrl     String?
-  issueError   String?
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id                 String              @id @default(cuid())
+  title              String
+  content            String
+  source             FeedbackSource
+  appVersion         String?
+  platformInfo       Json?
+  submitterId        String
+  /// 弱网重试防重：客户端在拿到明确结果前复用同一 key（与 ServiceRequest 同一套约定）
+  clientMutationKey  String?
+  issueStatus        FeedbackIssueStatus @default(PENDING)
+  issueNumber        Int?
+  issueUrl           String?
+  issueError         String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
 
   submitter User @relation(fields: [submitterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  @@unique([submitterId, clientMutationKey])
   @@index([createdAt(sort: Desc)])
   @@index([issueStatus])
   @@index([submitterId, createdAt(sort: Desc)])

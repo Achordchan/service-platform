@@ -1,4 +1,5 @@
 import { submitFeedback, type FeedbackRuntimeInfo } from "../../lib/api";
+import { genMutationKey } from "../../lib/format";
 
 // 与后端 FEEDBACK_TITLE_MAX / FEEDBACK_CONTENT_MAX 保持一致
 const TITLE_MAX = 120;
@@ -39,6 +40,11 @@ Page({
     submitting: false,
     error: "",
   },
+  // 幂等：进入页面生成 key，提交成功前保持不变；失败重试复用同一 key
+  mutationKey: "",
+  onLoad() {
+    this.mutationKey = genMutationKey();
+  },
   onTitleInput(event: WechatMiniprogram.Input) {
     this.setData({ title: event.detail.value });
   },
@@ -63,6 +69,8 @@ Page({
         title,
         content,
         miniappRuntime: collectRuntime(),
+        // 弱网防重复：同一反馈重试不会建出第二个 GitHub issue
+        clientMutationKey: this.mutationKey,
       });
       if (result.issueUrl) {
         // 链接没法在小程序里直接打开，复制到剪贴板由用户自行在浏览器查看

@@ -121,6 +121,17 @@ export async function submitFeedback(
   input: SubmitFeedbackInput,
   source: FeedbackSource,
 ): Promise<SubmitFeedbackResult> {
+  // 弱网重试防重（与 ServiceRequest 同一套约定）：同 key 命中直接返回
+  // 已建反馈（含它当时的 issue 链接），不再建第二条——否则重试一次就
+  // 多同步出一个公开 GitHub issue。
+  if (input.clientMutationKey) {
+    const existing = await findFeedbackByMutationKey(
+      actor,
+      input.clientMutationKey,
+    );
+    if (existing) return existing;
+  }
+
   const platformInfo =
     source === "MINIAPP"
       ? miniappPlatformInfo(input.miniappRuntime)
@@ -130,24 +141,43 @@ export async function submitFeedback(
 
   // 先落库（提交人身份随行保存），再同步 issue：通道失败也不丢用户反馈。
   // RLS：insert 策略要求 submitterId = 当前用户，客户/员工均可提交。
-  const created = await withActorDb(actor, async (tx) =>
-    tx.feedback.create({
-      data: {
-        title: input.title,
-        content: input.content,
-        source,
-        appVersion,
-        platformInfo: platformInfo ?? undefined,
-        submitterId: actor.id,
-      },
-      select: {
-        id: true,
-        content: true,
-        appVersion: true,
-        platformInfo: true,
-      },
-    }),
-  );
+  let created: {
+    id: string;
+    content: string;
+    appVersion: string | null;
+    platformInfo: Prisma.JsonValue | null;
+  };
+  try {
+    created = await withActorDb(actor, async (tx) =>
+      tx.feedback.create({
+        data: {
+          title: input.title,
+          content: input.content,
+          source,
+          appVersion,
+          platformInfo: platformInfo ?? undefined,
+          submitterId: actor.id,
+          clientMutationKey: input.clientMutationKey ?? null,
+        },
+        select: {
+          id: true,
+          content: true,
+          appVersion: true,
+          platformInfo: true,
+        },
+      }),
+    );
+  } catch (error) {
+    // 并发同 key：另一请求已写入，唯一约束兜底后返回已有反馈
+    if (input.clientMutationKey && isPrismaUniqueViolationError(error)) {
+      const existing = await findFeedbackByMutationKey(
+        actor,
+        input.clientMutationKey,
+      );
+      if (existing) return existing;
+    }
+    throw error;
+  }
 
   const issue = await createFeedbackIssue({
     title: `[反馈] ${input.title}`,
@@ -161,30 +191,73 @@ export async function submitFeedback(
   });
 
   if (issue.status === "created") {
-    await withSystemDb(async (tx) =>
-      tx.feedback.update({
-        where: { id: created.id },
-        data: {
-          issueStatus: "CREATED",
-          issueNumber: issue.number,
-          issueUrl: issue.url,
-        },
-      }),
-    );
+    await writeIssueStatus(created.id, {
+      issueStatus: "CREATED",
+      issueNumber: issue.number,
+      issueUrl: issue.url,
+    });
     return { id: created.id, issueUrl: issue.url };
   }
 
-  // 系统身份回写同步结果（RLS：update 仅平台管理员/系统）。
-  await withSystemDb(async (tx) =>
-    tx.feedback.update({
-      where: { id: created.id },
-      data: {
-        issueStatus: issue.status === "skipped" ? "SKIPPED" : "FAILED",
-        issueError: issue.reason,
-      },
+  if (issue.status === "unknown") {
+    // 结果未知（超时/断网/5xx）：issue 可能已建。停在 PENDING 只记原因，
+    // 绝不标 FAILED——标了容易有人按「失败」重试，在公开仓库建出重复 issue。
+    await writeIssueStatus(created.id, { issueError: issue.reason });
+    return { id: created.id, issueUrl: null };
+  }
+
+  await writeIssueStatus(created.id, {
+    issueStatus: issue.status === "skipped" ? "SKIPPED" : "FAILED",
+    issueError: issue.reason,
+  });
+  return { id: created.id, issueUrl: null };
+}
+
+/** 查询作用域对齐唯一约束 (submitterId, clientMutationKey)。 */
+async function findFeedbackByMutationKey(
+  actor: Actor,
+  clientMutationKey: string,
+): Promise<SubmitFeedbackResult | null> {
+  return withActorDb(actor, async (tx) =>
+    tx.feedback.findFirst({
+      where: { submitterId: actor.id, clientMutationKey },
+      orderBy: { createdAt: "desc" },
+      select: { id: true, issueUrl: true },
     }),
   );
-  return { id: created.id, issueUrl: null };
+}
+
+/**
+ * issue 状态回写失败不致命：反馈落库才是事实源，回写丢一次只是行上
+ * 少了同步结果（停在 PENDING），还有结构化日志 + 反馈编号可人工核对；
+ * 为它把用户提交打成 500 不值当。
+ */
+async function writeIssueStatus(
+  feedbackId: string,
+  data: Prisma.FeedbackUpdateInput,
+): Promise<void> {
+  try {
+    await withSystemDb(async (tx) =>
+      tx.feedback.update({ where: { id: feedbackId }, data }),
+    );
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        tag: "FEEDBACK_STATUS_WRITE_FAILED",
+        feedbackId,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }
+}
+
+function isPrismaUniqueViolationError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2002"
+  );
 }
 
 function buildWhere(

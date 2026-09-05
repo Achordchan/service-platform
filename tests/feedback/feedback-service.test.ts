@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   feedbackUpdate: vi.fn(),
   feedbackCount: vi.fn(),
   feedbackFindMany: vi.fn(),
+  feedbackFindFirst: vi.fn(),
   createFeedbackIssue: vi.fn(),
 }));
 
@@ -19,6 +20,7 @@ vi.mock("@/lib/actor", () => ({
         update: mocks.feedbackUpdate,
         count: mocks.feedbackCount,
         findMany: mocks.feedbackFindMany,
+        findFirst: mocks.feedbackFindFirst,
       },
     }),
   withSystemDb: (callback: (tx: unknown) => unknown) =>
@@ -64,6 +66,8 @@ const customerActor = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.spyOn(console, "warn").mockImplementation(() => {});
+  mocks.feedbackFindFirst.mockResolvedValue(null);
   mocks.feedbackCreate.mockImplementation(
     async ({ data }: { data: Record<string, unknown> }) => ({
       id: "fb-1",
@@ -191,6 +195,109 @@ describe("submitFeedback", () => {
           issueError: "未配置 GITHUB_FEEDBACK_TOKEN",
         },
       }),
+    );
+  });
+
+  it("幂等：同 key 命中已有反馈，直接返回不再建 issue", async () => {
+    mocks.feedbackFindFirst.mockResolvedValue({
+      id: "fb-existing",
+      issueUrl: "https://github.com/o/r/issues/7",
+    });
+
+    const result = await submitFeedback(
+      customerActor,
+      { title: "t", content: "c", clientMutationKey: "ma-key-1" },
+      "WEB",
+    );
+
+    expect(result).toEqual({
+      id: "fb-existing",
+      issueUrl: "https://github.com/o/r/issues/7",
+    });
+    expect(mocks.feedbackFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { submitterId: "customer-1", clientMutationKey: "ma-key-1" },
+      }),
+    );
+    expect(mocks.feedbackCreate).not.toHaveBeenCalled();
+    expect(mocks.createFeedbackIssue).not.toHaveBeenCalled();
+  });
+
+  it("幂等：并发撞唯一约束时兜底返回已有反馈", async () => {
+    mocks.feedbackFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "fb-race", issueUrl: null });
+    mocks.feedbackCreate.mockRejectedValueOnce(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    const result = await submitFeedback(
+      customerActor,
+      { title: "t", content: "c", clientMutationKey: "ma-key-2" },
+      "WEB",
+    );
+
+    expect(result).toEqual({ id: "fb-race", issueUrl: null });
+    expect(mocks.createFeedbackIssue).not.toHaveBeenCalled();
+  });
+
+  it("带 key 提交：create 数据带上 clientMutationKey", async () => {
+    mocks.createFeedbackIssue.mockResolvedValue({ status: "skipped", reason: "r" });
+
+    await submitFeedback(
+      customerActor,
+      { title: "t", content: "c", clientMutationKey: "ma-key-3" },
+      "WEB",
+    );
+
+    const createData = mocks.feedbackCreate.mock.calls[0][0].data;
+    expect(createData.clientMutationKey).toBe("ma-key-3");
+  });
+
+  it("issue 结果未知：停在 PENDING 只记原因，不标 FAILED", async () => {
+    mocks.createFeedbackIssue.mockResolvedValue({
+      status: "unknown",
+      reason: "GitHub 请求超时，创建结果未知",
+    });
+
+    const result = await submitFeedback(
+      customerActor,
+      { title: "t", content: "c" },
+      "WEB",
+    );
+
+    expect(result).toEqual({ id: "fb-1", issueUrl: null });
+    expect(mocks.feedbackUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { issueError: "GitHub 请求超时，创建结果未知" },
+      }),
+    );
+    // 绝不写 issueStatus：行停在 PENDING，避免有人按「失败」重试建出重复 issue
+    for (const call of mocks.feedbackUpdate.mock.calls) {
+      expect(call[0].data).not.toHaveProperty("issueStatus");
+    }
+  });
+
+  it("状态回写失败不致命：提交结果照常返回", async () => {
+    mocks.createFeedbackIssue.mockResolvedValue({
+      status: "created",
+      number: 9,
+      url: "https://github.com/o/r/issues/9",
+    });
+    mocks.feedbackUpdate.mockRejectedValue(new Error("db down"));
+
+    const result = await submitFeedback(
+      customerActor,
+      { title: "t", content: "c" },
+      "WEB",
+    );
+
+    expect(result).toEqual({
+      id: "fb-1",
+      issueUrl: "https://github.com/o/r/issues/9",
+    });
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("FEEDBACK_STATUS_WRITE_FAILED"),
     );
   });
 });

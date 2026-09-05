@@ -69,9 +69,14 @@ export function FeedbackDialogProvider({
     defaultValues: { title: "", content: "" },
   });
 
+  // 弱网重试防重：打开弹窗时生成一次，提交失败重试沿用；成功后弹窗
+  // 切到结果视图，再次打开时重新生成，不会误伤下一条反馈。
+  const [mutationKey, setMutationKey] = useState<string | null>(null);
+
   const openDialog = useCallback(() => {
     setResult(null);
     reset();
+    setMutationKey(crypto.randomUUID());
     setOpen(true);
   }, [reset]);
 
@@ -90,7 +95,10 @@ export function FeedbackDialogProvider({
     try {
       const submitted = await apiRequest<SubmitFeedbackResult>(
         "/api/v1/feedback",
-        jsonRequest("POST", values),
+        jsonRequest("POST", {
+          ...values,
+          clientMutationKey: mutationKey ?? undefined,
+        }),
       );
       setResult(submitted);
     } catch (submitError) {

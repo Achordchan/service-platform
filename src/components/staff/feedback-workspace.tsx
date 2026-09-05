@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
@@ -104,18 +104,29 @@ function submitterDisplay(row: FeedbackRow) {
 
 export function FeedbackWorkspace() {
   const [filters, setFilters] = useState(emptyFilters);
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [pagination, setPagination] = useState({ page: 0, pageSize: 25 });
   const [detail, setDetail] = useState<FeedbackRow | null>(null);
 
+  // 搜索框输入先防抖再进查询，避免每敲一个字符就打一次列表接口
+  useEffect(() => {
+    const timer = window.setTimeout(
+      () => setDebouncedSearch(filters.search.trim()),
+      250,
+    );
+    return () => window.clearTimeout(timer);
+  }, [filters.search]);
+
   const search = useMemo(() => {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(filters)) {
+    const queryFilters = { ...filters, search: debouncedSearch };
+    for (const [key, value] of Object.entries(queryFilters)) {
       if (value) params.set(key, value);
     }
     params.set("page", String(pagination.page));
     params.set("pageSize", String(pagination.pageSize));
     return params.toString();
-  }, [filters, pagination]);
+  }, [filters, debouncedSearch, pagination]);
 
   const query = useQuery({
     queryKey: queryKeys.feedback.list(search),
