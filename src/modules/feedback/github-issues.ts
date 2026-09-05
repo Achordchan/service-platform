@@ -97,10 +97,13 @@ async function postIssue(
       html_url?: string;
     };
     if (typeof payload.number !== "number" || !payload.html_url) {
+      // HTTP 已成功，GitHub 受理了请求——issue 很可能已创建，只是响应体
+      // 畸形/不完整。与超时同理归 unknown，绝不诱导按失败重试。
       return {
         ok: false,
         httpStatus: 0,
         reason: "GitHub 响应缺少 issue 编号或链接",
+        unknown: true,
       };
     }
     return { ok: true, number: payload.number, url: payload.html_url };

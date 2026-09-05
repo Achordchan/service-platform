@@ -184,11 +184,14 @@ describe("createFeedbackIssue", () => {
     expect(mocks.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("响应缺 html_url 视为失败", async () => {
+  it("HTTP 成功但响应缺 html_url：归 unknown（GitHub 已受理，issue 可能已建）", async () => {
     mocks.fetch.mockResolvedValueOnce(jsonResponse({ number: 9 }));
 
     const result = await createFeedbackIssue({ title: "t", body: "b" });
 
-    expect(result.status).toBe("failed");
+    expect(result).toEqual({
+      status: "unknown",
+      reason: "GitHub 响应缺少 issue 编号或链接",
+    });
   });
 });

@@ -5,7 +5,10 @@ import {
   apiErrorResponse,
   requireApiActor,
 } from "@/modules/requests/api";
-import { submitFeedback } from "@/modules/feedback/feedback-service";
+import {
+  findFeedbackByMutationKey,
+  submitFeedback,
+} from "@/modules/feedback/feedback-service";
 import { submitFeedbackSchema } from "@/modules/feedback/schemas";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +19,23 @@ export async function POST(request: Request) {
   try {
     const actor = await requireApiActor();
 
+    const input = submitFeedbackSchema.parse(
+      await readJson(request, { maxBytes: 64 * 1024 }),
+    );
+
+    // 幂等重试先于限流：响应丢失后拿同一 key 重试的请求命中已有反馈
+    // 直接返回，不消耗限流额度——否则额度耗尽时重试只会收到 429，
+    // 弱网幂等就被限流打败了。预检未命中再走限流 + 正常提交。
+    if (input.clientMutationKey) {
+      const existing = await findFeedbackByMutationKey(
+        actor,
+        input.clientMutationKey,
+      );
+      if (existing) {
+        return Response.json({ data: existing });
+      }
+    }
+
     // 按用户限流防刷：写库 + 建 issue 都是真实副作用。
     if (!checkRateLimit(`feedback:submit:${actor.id}`, 5, 3_600_000)) {
       throw new DomainError(
@@ -24,10 +44,6 @@ export async function POST(request: Request) {
         429,
       );
     }
-
-    const input = submitFeedbackSchema.parse(
-      await readJson(request, { maxBytes: 64 * 1024 }),
-    );
 
     // 来源由服务端判定，不信任客户端自报：resolveApiActor 的规则是
     // 带 Authorization 头的一律是小程序 Bearer 会话，否则是 Web cookie 会话。

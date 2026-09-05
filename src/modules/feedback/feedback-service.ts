@@ -213,8 +213,11 @@ export async function submitFeedback(
   return { id: created.id, issueUrl: null };
 }
 
-/** 查询作用域对齐唯一约束 (submitterId, clientMutationKey)。 */
-async function findFeedbackByMutationKey(
+/**
+ * 查询作用域对齐唯一约束 (submitterId, clientMutationKey)。
+ * 路由层限流前也会调它预检：同 key 重试命中就不耗限流额度。
+ */
+export async function findFeedbackByMutationKey(
   actor: Actor,
   clientMutationKey: string,
 ): Promise<SubmitFeedbackResult | null> {

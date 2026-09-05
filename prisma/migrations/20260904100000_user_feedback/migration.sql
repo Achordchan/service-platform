@@ -41,9 +41,13 @@ ALTER TABLE "Feedback" ENABLE ROW LEVEL SECURITY;
 -- 在 PG 里会对返回行再评估 SELECT 策略，只允许员工时客户提交会被
 -- 「new row violates row-level security policy」拒绝。服务层 listFeedback
 -- 的 assertAllowed(isStaff) 仍把列表 API 限员工，客户拿不到列表。
+-- 员工判断这里直读 GUC 而不调 app_is_staff()：该函数定义在
+-- 20260713171000_visibility_rls（migrate deploy 按时间戳先于本迁移执行，
+-- 全新库重放已验证），但直读让策略不依赖跨迁移的函数定义、自包含；
+-- 表达式即该函数体本身，语义完全一致。
 CREATE POLICY feedback_select ON "Feedback"
   FOR SELECT USING (
-    app_is_staff()
+    COALESCE(current_setting('app.is_staff', true), 'false') = 'true'
     OR (app_user_id() IS NOT NULL AND "submitterId" = app_user_id())
   );
 CREATE POLICY feedback_insert ON "Feedback"
