@@ -20,6 +20,8 @@
       bindinput="onContentInput"
     ></textarea>
 
+    <view class="disclosure">反馈内容会同步到 GitHub issue 跟踪进度，请勿包含密码、密钥、账号、客户资料等敏感信息。</view>
+
     <button
       class="primary-btn submit-btn"
       hover-class="hover-btn"

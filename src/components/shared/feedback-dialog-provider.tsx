@@ -192,6 +192,13 @@ export function FeedbackDialogProvider({
                     />
                   )}
                 />
+                <Alert severity="info" icon={false}>
+                  <Typography variant="caption">
+                    反馈内容会同步到 GitHub issue
+                    跟踪进度，请勿包含密码、密钥、账号、客户资料等敏感信息（issue
+                    对外可见且删除后仍可能留存于历史记录）。
+                  </Typography>
+                </Alert>
                 <Typography variant="caption" color="text.secondary">
                   提交后会自动附带版本号与平台信息，便于我们定位问题。
                 </Typography>
