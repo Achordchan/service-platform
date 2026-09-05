@@ -202,6 +202,8 @@ describe("submitFeedback", () => {
     mocks.feedbackFindFirst.mockResolvedValue({
       id: "fb-existing",
       issueUrl: "https://github.com/o/r/issues/7",
+      title: "t",
+      content: "c",
     });
 
     const result = await submitFeedback(
@@ -223,10 +225,37 @@ describe("submitFeedback", () => {
     expect(mocks.createFeedbackIssue).not.toHaveBeenCalled();
   });
 
+  it("幂等：同 key 但内容已改（失败后编辑却没换 key）→ 409 拒绝", async () => {
+    mocks.feedbackFindFirst.mockResolvedValue({
+      id: "fb-existing",
+      issueUrl: "https://github.com/o/r/issues/7",
+      title: "旧标题",
+      content: "旧内容",
+    });
+
+    await expect(
+      submitFeedback(
+        customerActor,
+        { title: "新标题", content: "新内容", clientMutationKey: "ma-key-1" },
+        "WEB",
+      ),
+    ).rejects.toMatchObject({
+      code: "FEEDBACK_MUTATION_PAYLOAD_MISMATCH",
+      status: 409,
+    });
+    expect(mocks.feedbackCreate).not.toHaveBeenCalled();
+    expect(mocks.createFeedbackIssue).not.toHaveBeenCalled();
+  });
+
   it("幂等：并发撞唯一约束时兜底返回已有反馈", async () => {
     mocks.feedbackFindFirst
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ id: "fb-race", issueUrl: null });
+      .mockResolvedValueOnce({
+        id: "fb-race",
+        issueUrl: null,
+        title: "t",
+        content: "c",
+      });
     mocks.feedbackCreate.mockRejectedValueOnce(
       Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
     );

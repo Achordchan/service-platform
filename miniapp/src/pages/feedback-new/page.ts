@@ -40,8 +40,11 @@ Page({
     submitting: false,
     error: "",
   },
-  // 幂等：进入页面生成 key，提交成功前保持不变；失败重试复用同一 key
+  // 幂等：进入页面生成 key，提交成功前保持不变；失败重试复用同一 key。
+  // 失败后编辑过内容再提交时换新 key：沿用旧 key 会命中服务端可能已
+  // 保存的旧反馈（409 或拿回旧内容），编辑白改。
   mutationKey: "",
+  attempted: false,
   // 成功 toast 后延时返回的句柄；手动返回后必须清掉，否则会把新页面顶掉
   backTimer: 0,
   onLoad() {
@@ -53,10 +56,19 @@ Page({
       this.backTimer = 0;
     }
   },
+  /** 失败后的首次编辑：换 key，把接下来的提交当新反馈 */
+  rotateKeyIfAttempted() {
+    if (this.attempted) {
+      this.mutationKey = genMutationKey();
+      this.attempted = false;
+    }
+  },
   onTitleInput(event: WechatMiniprogram.Input) {
+    this.rotateKeyIfAttempted();
     this.setData({ title: event.detail.value });
   },
   onContentInput(event: WechatMiniprogram.TextareaInput) {
+    this.rotateKeyIfAttempted();
     this.setData({ content: event.detail.value });
   },
   async onSubmit() {
@@ -113,6 +125,7 @@ Page({
         }, 1500);
       }
     } catch (error) {
+      this.attempted = true;
       this.setData({
         submitting: false,
         error: error instanceof Error ? error.message : "提交失败，请重试",

@@ -93,6 +93,25 @@ describe("反馈提交路由的幂等与限流顺序", () => {
     expect(mocks.submitFeedback).not.toHaveBeenCalled();
   });
 
+  it("同 key 但内容已改：409 拒绝，不静默返回旧反馈", async () => {
+    mocks.findFeedbackByMutationKey.mockRejectedValue({
+      code: "FEEDBACK_MUTATION_PAYLOAD_MISMATCH",
+      message: "本次提交与之前的重试内容不一致，请重新提交",
+      status: 409,
+    });
+
+    const response = await post({
+      title: "改过的标题",
+      content: "c",
+      clientMutationKey: "ma-key-1",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.error.code).toBe("FEEDBACK_MUTATION_PAYLOAD_MISMATCH");
+    expect(mocks.submitFeedback).not.toHaveBeenCalled();
+  });
+
   it("预检未命中：走限流 + 正常提交，key 透传给服务层", async () => {
     const response = await post({
       title: "t",

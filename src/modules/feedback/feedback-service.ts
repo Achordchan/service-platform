@@ -4,7 +4,7 @@ import type { FeedbackSource, Prisma } from "@/generated/prisma/client";
 import { APP_VERSION } from "@/lib/app-version";
 import type { Actor } from "@/lib/actor";
 import { withActorDb, withSystemDb } from "@/lib/actor";
-import { assertAllowed } from "@/modules/projects/errors";
+import { assertAllowed, DomainError } from "@/modules/projects/errors";
 import { createFeedbackIssue } from "@/modules/feedback/github-issues";
 import {
   FEEDBACK_PAGE_SIZE_MAX,
@@ -128,6 +128,7 @@ export async function submitFeedback(
     const existing = await findFeedbackByMutationKey(
       actor,
       input.clientMutationKey,
+      { title: input.title, content: input.content },
     );
     if (existing) return existing;
   }
@@ -173,6 +174,7 @@ export async function submitFeedback(
       const existing = await findFeedbackByMutationKey(
         actor,
         input.clientMutationKey,
+        { title: input.title, content: input.content },
       );
       if (existing) return existing;
     }
@@ -215,19 +217,35 @@ export async function submitFeedback(
 
 /**
  * 查询作用域对齐唯一约束 (submitterId, clientMutationKey)。
- * 路由层限流前也会调它预检：同 key 重试命中就不耗限流额度。
+ * 路由层限流前与服务层预检都会调它：同 key 重试命中就不耗限流额度。
+ * 带 expected 时校验内容一致：命中行是「上次的提交」而不是「这次的」，
+ * 不一致说明客户端拿旧 key 提交了新内容（失败后编辑却没换 key），
+ * 直接返回旧反馈会静默丢弃编辑——宁可 409 让客户端换 key 重来。
  */
 export async function findFeedbackByMutationKey(
   actor: Actor,
   clientMutationKey: string,
+  expected?: { title: string; content: string },
 ): Promise<SubmitFeedbackResult | null> {
-  return withActorDb(actor, async (tx) =>
+  const existing = await withActorDb(actor, async (tx) =>
     tx.feedback.findFirst({
       where: { submitterId: actor.id, clientMutationKey },
       orderBy: { createdAt: "desc" },
-      select: { id: true, issueUrl: true },
+      select: { id: true, issueUrl: true, title: true, content: true },
     }),
   );
+  if (!existing) return null;
+  if (
+    expected &&
+    (existing.title !== expected.title || existing.content !== expected.content)
+  ) {
+    throw new DomainError(
+      "FEEDBACK_MUTATION_PAYLOAD_MISMATCH",
+      "本次提交与之前的重试内容不一致，请重新提交",
+      409,
+    );
+  }
+  return { id: existing.id, issueUrl: existing.issueUrl };
 }
 
 /**
@@ -304,7 +322,8 @@ export async function listFeedback(
       tx.feedback.count({ where }),
       tx.feedback.findMany({
         where,
-        orderBy: { createdAt: "desc" },
+        // createdAt 相同的行用 id 定序，翻页时顺序稳定不闪跳
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip: page * pageSize,
         take: pageSize,
         select: {

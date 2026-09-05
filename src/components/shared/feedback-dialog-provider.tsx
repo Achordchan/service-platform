@@ -72,10 +72,14 @@ export function FeedbackDialogProvider({
   // 弱网重试防重：打开弹窗时生成一次，提交失败重试沿用；成功后弹窗
   // 切到结果视图，再次打开时重新生成，不会误伤下一条反馈。
   const [mutationKey, setMutationKey] = useState<string | null>(null);
+  // 上次尝试发出的内容：失败后再提交时若内容已编辑，换新 key——
+  // 沿用旧 key 会命中服务端可能已保存的旧反馈（409 或拿回旧内容），编辑白改。
+  const [attemptedPayload, setAttemptedPayload] = useState<string | null>(null);
 
   const openDialog = useCallback(() => {
     setResult(null);
     reset();
+    setAttemptedPayload(null);
     setMutationKey(crypto.randomUUID());
     setOpen(true);
   }, [reset]);
@@ -92,12 +96,20 @@ export function FeedbackDialogProvider({
 
   async function submit(values: FeedbackFormValues) {
     clearErrors("root");
+    const payload = `${values.title}\n${values.content}`;
+    // 上次尝试失败后用户编辑过内容：换新 key，把这次当新反馈提交
+    let key = mutationKey;
+    if (attemptedPayload !== null && attemptedPayload !== payload) {
+      key = crypto.randomUUID();
+      setMutationKey(key);
+    }
+    setAttemptedPayload(payload);
     try {
       const submitted = await apiRequest<SubmitFeedbackResult>(
         "/api/v1/feedback",
         jsonRequest("POST", {
           ...values,
-          clientMutationKey: mutationKey ?? undefined,
+          clientMutationKey: key ?? undefined,
         }),
       );
       setResult(submitted);

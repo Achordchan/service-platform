@@ -25,11 +25,13 @@ export async function POST(request: Request) {
 
     // 幂等重试先于限流：响应丢失后拿同一 key 重试的请求命中已有反馈
     // 直接返回，不消耗限流额度——否则额度耗尽时重试只会收到 429，
-    // 弱网幂等就被限流打败了。预检未命中再走限流 + 正常提交。
+    // 弱网幂等就被限流打败了。预检会校验内容一致：客户端失败后编辑
+    // 却沿用旧 key 时返回 409，不静默丢弃编辑。预检未命中再走限流。
     if (input.clientMutationKey) {
       const existing = await findFeedbackByMutationKey(
         actor,
         input.clientMutationKey,
+        { title: input.title, content: input.content },
       );
       if (existing) {
         return Response.json({ data: existing });
