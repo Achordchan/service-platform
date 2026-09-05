@@ -141,6 +141,8 @@ export function FeedbackWorkspace() {
         headerName: "时间",
         minWidth: 165,
         flex: 0.7,
+        // 服务端分页：客户端排序只会排当前页、误导跨页顺序，禁掉
+        sortable: false,
         renderCell: ({ row }) => (
           <Typography variant="body2" sx={{ fontVariantNumeric: "tabular-nums" }}>
             {formatTime(row.createdAt)}
@@ -152,6 +154,7 @@ export function FeedbackWorkspace() {
         headerName: "标题",
         minWidth: 220,
         flex: 1.4,
+        sortable: false,
         renderCell: ({ row }) => (
           <Stack sx={{ minWidth: 0 }}>
             <Typography sx={{ fontWeight: 650 }} noWrap>
@@ -167,6 +170,7 @@ export function FeedbackWorkspace() {
         field: "source",
         headerName: "来源",
         width: 100,
+        sortable: false,
         renderCell: ({ row }) => (
           <Chip size="small" label={row.sourceLabel} variant="outlined" />
         ),
@@ -176,6 +180,7 @@ export function FeedbackWorkspace() {
         headerName: "提交人",
         minWidth: 200,
         flex: 1,
+        sortable: false,
         renderCell: ({ row }) => {
           const { name, secondary } = submitterDisplay(row);
           return (
@@ -194,6 +199,7 @@ export function FeedbackWorkspace() {
         field: "issueStatus",
         headerName: "issue 状态",
         width: 150,
+        sortable: false,
         renderCell: ({ row }) => (
           <Chip
             size="small"
