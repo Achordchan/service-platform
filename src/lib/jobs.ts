@@ -58,6 +58,7 @@ import {
 } from "@/modules/integrations/universal/webhook-service";
 import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
 import { closeResolvedRequestsDue } from "@/modules/requests/request-auto-close-service";
+import { describeErrorForLog } from "@/lib/error-log";
 import {
   describeMailQueueFailure,
   formatMailFailureMessage,
@@ -438,6 +439,19 @@ export async function dispatchQueuedMailMessage(
   }
 }
 
+
+// 后台失败不能静默吞掉：定时扫描会兜底重试，但日志里必须留下原因
+function logWorkerError(
+  event: string,
+  error: unknown,
+  context?: Record<string, string>,
+) {
+  console.error(
+    event,
+    JSON.stringify({ event, ...context, error: describeErrorForLog(error) }),
+  );
+}
+
 export async function recordMailQueueFailure(
   mailMessageId: string,
   error: unknown,
@@ -761,28 +775,31 @@ async function startDatabaseListener() {
       if (message.channel === "service_platform_webhook_deliveries") {
         const deliveryId = message.payload?.trim();
         if (!deliveryId) return;
-        void queueUniversalWebhookDelivery(deliveryId).catch(() => undefined);
+        void queueUniversalWebhookDelivery(deliveryId).catch((error) =>
+          logWorkerError("ACHORD_WEBHOOK_ENQUEUE_FAILED", error, { deliveryId }),
+        );
         return;
       }
       if (message.channel === "service_platform_mail_outbox") {
-        void wakeMailOutbox().catch((error) => {
-          console.error(
-            "ACHORD_MAIL_OUTBOX_WAKE_FAILED",
-            error instanceof Error ? error.message : String(error),
-          );
-        });
+        void wakeMailOutbox().catch((error) =>
+          logWorkerError("ACHORD_MAIL_OUTBOX_WAKE_FAILED", error),
+        );
         return;
       }
       if (message.channel === "service_platform_dingtalk_deliveries") {
         const deliveryId = message.payload?.trim();
         if (!deliveryId) return;
-        void queueDingTalkRobotDelivery(deliveryId).catch(() => undefined);
+        void queueDingTalkRobotDelivery(deliveryId).catch((error) =>
+          logWorkerError("ACHORD_DINGTALK_ENQUEUE_FAILED", error, { deliveryId }),
+        );
         return;
       }
       if (message.channel === "service_platform_content_risk") {
         const reviewId = message.payload?.trim();
         if (!reviewId) return;
-        void queueContentRiskReview(reviewId).catch(() => undefined);
+        void queueContentRiskReview(reviewId).catch((error) =>
+          logWorkerError("ACHORD_CONTENT_RISK_ENQUEUE_FAILED", error, { reviewId }),
+        );
         return;
       }
       if (message.channel === "service_platform_wechat_deliveries") {
@@ -822,7 +839,9 @@ export async function startMailWorker() {
   globalForBoss.bossWorkerPromise = (async () => {
     await ensurePluginInstallations();
     const boss = await getBoss();
-    await startDatabaseListener().catch(() => undefined);
+    await startDatabaseListener().catch((error) =>
+      logWorkerError("ACHORD_DB_LISTENER_START_FAILED", error),
+    );
     await boss.schedule(UNIVERSAL_WEBHOOK_SWEEP_JOB, "* * * * *");
     await boss.schedule(UNIVERSAL_MAINTENANCE_JOB, "17 3 * * *");
     await boss.schedule(INLINE_ATTACHMENT_MAINTENANCE_JOB, "43 3 * * *");
@@ -1028,12 +1047,9 @@ export async function startMailWorker() {
     await queueDueDingTalkRobotDeliveries();
     await queueDueContentRiskReviews();
     await wakeMailOutbox();
-    await closeResolvedRequestsDue().catch((error) => {
-      console.error(
-        "ACHORD_REQUEST_AUTO_CLOSE_STARTUP_FAILED",
-        error instanceof Error ? error.message : String(error),
-      );
-    });
+    await closeResolvedRequestsDue().catch((error) =>
+      logWorkerError("ACHORD_REQUEST_AUTO_CLOSE_STARTUP_FAILED", error),
+    );
   })().catch((error) => {
     globalForBoss.bossWorkerStarted = false;
     globalForBoss.bossWorkerPromise = undefined;
