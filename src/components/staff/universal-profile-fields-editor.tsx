@@ -56,61 +56,152 @@ function isKey(value: string | undefined): value is string {
   return value !== undefined && KEY_PATTERN.test(value) && value.length <= 40;
 }
 
-/** 表格行：key、名称两列一组，名称后可选一列类型；一行可放多组 */
-function parseCells(cells: string[]): ProfileField[] {
-  const fields: ProfileField[] = [];
-  let index = 0;
-  while (index < cells.length) {
-    const key = cells[index];
-    if (!isKey(key)) {
-      index += 1;
-      continue;
-    }
-    const field: ProfileField = { key, label: cells[index + 1] ?? "", type: "text" };
-    index += 2;
-    // 名称后的类型别名可能正好也是下一组的 key（如 date）：只有它后面没有名称列时才当类型
-    const typeAlias = typeAliases[cells[index] ?? ""];
-    if (typeAlias && (index + 1 >= cells.length || isKey(cells[index + 1]))) {
-      field.type = typeAlias;
-      index += 1;
-    }
-    fields.push(field);
-  }
-  return fields;
+type ColumnRole = "key" | "label" | "type";
+
+const headerRoles: Record<string, ColumnRole> = {
+  key: "key",
+  field: "key",
+  字段: "key",
+  字段名: "key",
+  字段key: "key",
+  label: "label",
+  name: "label",
+  名称: "label",
+  标签: "label",
+  显示名称: "label",
+  type: "type",
+  类型: "type",
+  字段类型: "type",
+};
+
+// 纯文本行只认中文类型词，免得 “Release date” 这类英文名称被截掉最后一个词
+const wordTypeAliases: Record<string, ProfileField["type"]> = {
+  文本: "text",
+  数字: "number",
+  布尔: "boolean",
+  布尔值: "boolean",
+  日期: "date",
+};
+
+function headerRoleOf(cell: string) {
+  return headerRoles[cell.toLowerCase().replace(/\s+/g, "")];
 }
 
-/** 空白分隔的行：一行一个字段，「key 名称 [类型]」，名称可含空格 */
+/** 整行都是表头词（且含 key 列）才算表头，返回每列的角色 */
+function parseHeader(cells: string[]): ColumnRole[] | null {
+  const roles = cells.map(headerRoleOf);
+  return roles.every(Boolean) && roles.includes("key")
+    ? (roles as ColumnRole[])
+    : null;
+}
+
+/** 按列角色切组解析一行；某组不合规则整行作废（返回 null），整组为空的直接跳过 */
+function parseRowWithRoles(cells: string[], roles: ColumnRole[]) {
+  if (cells.length !== roles.length) return null;
+  const fields: ProfileField[] = [];
+  let group: { key?: string; label?: string; type?: string; filled: boolean } | null = null;
+  const flush = () => {
+    if (!group?.filled) return true;
+    if (!isKey(group.key)) return false;
+    const type = group.type ? typeAliases[group.type] : "text";
+    if (!type) return false;
+    fields.push({ key: group.key, label: group.label ?? "", type });
+    return true;
+  };
+  for (const [index, role] of roles.entries()) {
+    if (role === "key") {
+      if (!flush()) return null;
+      group = { filled: false };
+    }
+    if (!group) return null;
+    group[role] = cells[index];
+    if (cells[index]) group.filled = true;
+  }
+  return flush() ? fields : null;
+}
+
+function rolesForWidth(width: 2 | 3, length: number): ColumnRole[] {
+  const unit: ColumnRole[] = width === 3 ? ["key", "label", "type"] : ["key", "label"];
+  return Array.from({ length }, (_, index) => unit[index % width]);
+}
+
+/**
+ * 无表头的表格行：每组固定 2 列（key、名称）或 3 列（key、名称、类型），
+ * 整行只能按其中一种宽度完整合法地切开才采用；两种都行（有歧义）或都不行时不猜。
+ */
+function parseRowWithoutHeader(cells: string[]) {
+  if (cells.length === 1) {
+    return isKey(cells[0]) ? [{ key: cells[0], label: "", type: "text" as const }] : null;
+  }
+  const candidates = ([2, 3] as const)
+    .filter((width) => cells.length % width === 0)
+    .map((width) => parseRowWithRoles(cells, rolesForWidth(width, cells.length)))
+    .filter((fields): fields is ProfileField[] => fields !== null && fields.length > 0);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+/** 纯文本行：一行一个字段，「key 名称 [类型]」，名称可含空格 */
 function parseWords(line: string): ProfileField | null {
   const words = line.trim().split(/\s+/).map(cleanCell).filter(Boolean);
   const key = words.shift()?.replace(/[:：]$/, "");
   if (!isKey(key)) return null;
-  const typeAlias = words.length >= 2 ? typeAliases[words[words.length - 1]] : undefined;
+  const typeAlias =
+    words.length >= 2 ? wordTypeAliases[words[words.length - 1]] : undefined;
   if (typeAlias) words.pop();
   return { key, label: words.join(" "), type: typeAlias ?? "text" };
 }
 
+function splitTableRow(line: string) {
+  const cells = line.split(/[\t|]/).map(cleanCell);
+  if (line.trim().startsWith("|")) cells.shift();
+  if (line.trim().endsWith("|")) cells.pop();
+  return cells;
+}
+
 /**
  * 把粘贴的清单解析成字段，逐行处理：
- * - 含 Tab 或竖线的行按列解析（直接粘贴表格），表头和分隔线自动跳过；
- * - 其余行按「key 名称 [类型]」解析。
+ * - 含 Tab 或竖线的行是表格：遇到表头（key/label/type 或 字段名/标签/类型）就按它定列，
+ *   没有表头时按每组 2 列或 3 列切分；分隔线跳过；
+ * - 其余行按「key 名称 [类型]」一行一个；
+ * - 识别不了或有歧义的行不猜，行号放进 skippedLines 交给界面提示。
  */
-export function parseProfileFieldText(text: string): ProfileField[] {
+export function parseProfileFieldText(text: string) {
   const fields: ProfileField[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    if (/[\t|]/.test(line)) {
-      const cells = line.split(/[\t|]/).map(cleanCell);
-      if (line.trim().startsWith("|")) cells.shift();
-      if (line.trim().endsWith("|")) cells.pop();
-      fields.push(...parseCells(cells));
-    } else {
-      const field = parseWords(line);
-      if (field) fields.push(field);
+  const skippedLines: number[] = [];
+  let roles: ColumnRole[] | null = null;
+  for (const [index, line] of text.split(/\r?\n/).entries()) {
+    if (!line.trim()) {
+      roles = null;
+      continue;
     }
+    let parsed: ProfileField[] | null;
+    if (/[\t|]/.test(line)) {
+      const cells = splitTableRow(line);
+      if (cells.every((cell) => /^:?-*:?$/.test(cell))) continue;
+      const header = parseHeader(cells);
+      if (header) {
+        roles = header;
+        continue;
+      }
+      parsed = roles ? parseRowWithRoles(cells, roles) : parseRowWithoutHeader(cells);
+    } else {
+      const words = line.trim().split(/\s+/).map(cleanCell).filter(Boolean);
+      if (parseHeader(words)) continue;
+      const field = parseWords(line);
+      parsed = field ? [field] : null;
+    }
+    if (parsed) fields.push(...parsed);
+    else skippedLines.push(index + 1);
   }
-  return fields.map((field) => ({
-    ...field,
-    label: (field.label || field.key).slice(0, 60),
-  }));
+  // 同一 key 出现多次时以最后一次为准，位置保留第一次出现处
+  const byKey = new Map<string, ProfileField>();
+  for (const field of fields) {
+    byKey.set(field.key, {
+      ...field,
+      label: (field.label || field.key).slice(0, 60),
+    });
+  }
+  return { fields: [...byKey.values()], skippedLines };
 }
 
 /** 同 key 覆盖名称和类型，新 key 追加到末尾；空白行一并清掉 */
@@ -166,7 +257,7 @@ export function UniversalProfileFieldsEditor({
 }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
-  const parsed = parseProfileFieldText(pasteText);
+  const { fields: parsed, skippedLines } = parseProfileFieldText(pasteText);
   const preview = mergeProfileFields(fields, parsed);
   const overLimit = preview.fields.length > MAX_PROFILE_FIELDS;
 
@@ -307,7 +398,7 @@ export function UniversalProfileFieldsEditor({
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              每行一个字段，写成「字段 key 显示名称」，可在名称后加类型（文本 / 数字 / 布尔值 / 日期，默认文本）。也可以直接粘贴 Tab 分隔或 Markdown 表格，一行可放多组。已有的同名 key 会被覆盖。
+              每行一个字段，写成「字段 key 显示名称」，可在名称后加类型（文本 / 数字 / 布尔值 / 日期，默认文本）。也可以直接粘贴 Tab 分隔或 Markdown 表格，一行可放多组，带表头时按表头认列。已有的同名 key 会被覆盖。
             </Typography>
             <TextField
               label="字段清单"
@@ -333,8 +424,11 @@ export function UniversalProfileFieldsEditor({
                   ))}
                 </Stack>
               </Stack>
-            ) : pasteText.trim() ? (
-              <Alert severity="warning">没有识别到字段，字段 key 需要小写字母开头。</Alert>
+            ) : null}
+            {skippedLines.length ? (
+              <Alert severity="warning">
+                第 {skippedLines.join("、")} 行无法识别，已跳过。字段 key 需要小写字母开头；表格每组按「key、名称」或「key、名称、类型」排列，列数对不上时请加上表头。
+              </Alert>
             ) : null}
             {overLimit ? (
               <Alert severity="error">
