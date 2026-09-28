@@ -1,5 +1,6 @@
 import "server-only";
 
+import { LoggableError } from "@/lib/error-log";
 import { randomUUID } from "node:crypto";
 import { recordWechatSubscribeDelivery } from "@/modules/miniapp/wechat-subscribe-message-service";
 import {
@@ -264,7 +265,7 @@ export async function createNotification(
       )
     `;
     if (!aggregated) {
-      throw new Error("请求通知聚合失败");
+      throw new LoggableError("请求通知聚合失败");
     }
     notification = {
       id: aggregated.id,
@@ -1694,7 +1695,7 @@ async function persistActivityDelivery(
           ${emailDueAtForUser ?? null}
         ) AS held
       `;
-      if (!held?.held) throw new Error("风控通知暂缓失败");
+      if (!held?.held) throw new LoggableError("风控通知暂缓失败");
     }
     notifications.push(persistedNotification);
     if (emailDueAtForUser) emailCount += 1;

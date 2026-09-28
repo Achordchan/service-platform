@@ -26,7 +26,7 @@ const ID = String.raw`[A-Za-z_][A-Za-z0-9_.]{0,127}`;
 /**
  * 数据库报错原文只在完整匹配这些 PostgreSQL 模板时才记录：模板里出现的只有
  * 标识符（表、列、约束名），用户数据只会出现在 DETAIL 或引号值里，而这些都不匹配。
- * 最后一条是我们自己 SQL 函数里 RAISE EXCEPTION 的固定英文短语（只含小写字母和空格）。
+ * 我们自己 SQL 函数里 RAISE EXCEPTION 的固定短语另见 OWN_DATABASE_MESSAGES。
  */
 const DATABASE_MESSAGE_TEMPLATES = [
   `new row violates row-level security policy (?:"${ID}" )?for table "${ID}"`,
@@ -42,10 +42,33 @@ const DATABASE_MESSAGE_TEMPLATES = [
   `deadlock detected`,
   `could not serialize access due to [a-z ]+`,
   `canceling statement due to [a-z ]+`,
-  `[a-z][a-z ]{2,80}`,
 ].map((template) => new RegExp(`^${template}$`));
-// 应用自己写的报错：只含中文、标点和空格，没有任何可能来自外部输入的字母数字
-const APP_MESSAGE = /^[\p{Script=Han}\p{P}\p{Zs}]{1,200}$/u;
+// 迁移里 RAISE EXCEPTION 的字面量短语逐条列出（带 % 参数的动态消息不在此列）；
+// 新增固定短语时同步加到这里，否则只会记 SQLSTATE
+const OWN_DATABASE_MESSAGES = new Set([
+  "authenticated user context is required",
+  "customers cannot archive or restore service requests",
+  "customers cannot change milestone attachment ownership",
+  "customers cannot modify project configuration",
+  "external contact cannot modify protected contact fields",
+  "external contact cannot modify protected embed session fields",
+  "external contact cannot modify protected service request fields",
+  "external contact cannot modify this attachment",
+  "milestone attachment must belong to the same project",
+  "project progress scope denied",
+  "request notification scope denied",
+]);
+
+/**
+ * 明确声明「消息是代码里写死的固定文字」的错误。只有它的 message 会进日志；
+ * 普通 Error 的 message 可能来自第三方或拼接了外部输入，一律不记。
+ */
+export class LoggableError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "LoggableError";
+  }
+}
 
 function asRecord(value: unknown): ErrorRecord | null {
   return typeof value === "object" && value !== null
@@ -102,18 +125,17 @@ export function redactPath(pathname: string) {
 
 /**
  * 错误消息默认不记：第三方和驱动返回的原文可能夹带凭据或用户数据，
- * 靠规则脱敏永远补不全。只放行应用自己写的中文报错。
+ * 按字符特征判断也证明不了安全。只有显式抛出的 LoggableError 才记原文。
  */
 function appMessage(error: unknown) {
-  if (!(error instanceof Error)) return undefined;
-  const message = error.message.trim();
-  return APP_MESSAGE.test(message) ? message : undefined;
+  return error instanceof LoggableError ? error.message.slice(0, 200) : undefined;
 }
 
 function databaseMessage(value: unknown) {
   if (typeof value !== "string") return undefined;
   const message = value.trim();
-  return DATABASE_MESSAGE_TEMPLATES.some((template) => template.test(message))
+  return OWN_DATABASE_MESSAGES.has(message) ||
+    DATABASE_MESSAGE_TEMPLATES.some((template) => template.test(message))
     ? message
     : undefined;
 }

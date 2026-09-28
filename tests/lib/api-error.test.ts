@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { unexpectedApiErrorResponse } from "@/lib/api-error";
+import { LoggableError } from "@/lib/error-log";
 
 function logFor(error: unknown, request?: Request) {
   const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -147,6 +148,19 @@ describe("API 意外错误响应", () => {
     expect(record.error.database.message).toBe(message);
   });
 
+  it("数据库函数抛出的小写短语不在固定清单里就不记（可能是外部传入的口令）", () => {
+    const { logged, record } = logFor(
+      driverAdapterError({
+        kind: "postgres",
+        originalCode: "P0001",
+        originalMessage: "correct horse battery staple",
+        message: "correct horse battery staple",
+      }),
+    );
+    expect(record.error.database).toEqual({ kind: "postgres", sqlState: "P0001" });
+    expect(logged).not.toContain("horse");
+  });
+
   it("不在模板里的数据库报错只记 SQLSTATE 和类别，不记原文", () => {
     const { logged, record } = logFor(
       driverAdapterError({
@@ -163,11 +177,11 @@ describe("API 意外错误响应", () => {
     expect(logged).not.toContain("zhangsan");
   });
 
-  it("应用自己写的中文报错照常记录，cause 里的第三方原文不记", () => {
+  it("显式的 LoggableError 记录原文，cause 里的第三方原文不记", () => {
     const root = new Error(
       "provider rejected token=abc123 for bob@example.com at https://api.example.test/v1/send?key=zzz",
     );
-    const error = new Error("请求通知写入失败", { cause: root });
+    const error = new LoggableError("请求通知写入失败", { cause: root });
     const { logged, record } = logFor(error);
     expect(record.error.message).toBe("请求通知写入失败");
     expect(record.error.causes).toEqual([{ name: "Error" }]);
@@ -177,7 +191,7 @@ describe("API 意外错误响应", () => {
   });
 
   it("cause 里的数据库错误同样记下诊断", () => {
-    const error = new Error("风控通知暂缓失败", {
+    const error = new LoggableError("风控通知暂缓失败", {
       cause: driverAdapterError({
         kind: "postgres",
         originalCode: "42501",
@@ -210,6 +224,8 @@ describe("API 意外错误响应", () => {
     ["夹带字母数字的中文", "密码： hunter2 错误", "hunter2"],
     ["拼接了外部值的中文", "资料字段 plan_secret 为系统保留字段", "plan_secret"],
     ["普通英文", "upstream said no for customer Alice", "Alice"],
+    ["纯中文的凭据", "密码：春风十里", "春风十里"],
+    ["纯中文的普通 Error", "请求通知写入失败", "请求通知写入失败"],
   ])("第三方或拼接了外部值的错误原文一律不记：%s", (_label, message, secret) => {
     const { logged, record } = logFor(new Error(message));
     expect(record.error.message).toBeUndefined();
