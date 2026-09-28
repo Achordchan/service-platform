@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GET } from "@/app/api/v1/admin/audit-logs/route";
 
 const mocks = vi.hoisted(() => ({
   requireApiActor: vi.fn(),
@@ -22,7 +23,6 @@ vi.mock("@/modules/audit/audit-query", () => ({
 }));
 
 async function get(query: string) {
-  const { GET } = await import("@/app/api/v1/admin/audit-logs/route");
   const response = await GET(
     new Request(`http://localhost/api/v1/admin/audit-logs?${query}`),
   );

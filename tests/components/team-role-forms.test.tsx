@@ -1,8 +1,15 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RoleGroupManager } from "@/components/staff/role-group-manager";
 import {
   TeamManager,
@@ -49,24 +56,42 @@ const activeRoleGroup = {
   active: true,
 };
 
+// 文件内第一次渲染 MUI 组件时，emotion 要把各组件样式首次注入 <head>、jsdom 逐条解析，
+// 外加 React/DataGrid 冷启动 JIT，这笔一次性成本（单跑约 300ms）原本全算进首个用例的
+// 5 秒 testTimeout；全量并发时 CPU 被多个 worker 抢，会被放大十倍撞线。这里先把两个
+// 管理器及其表单弹窗各渲染一次，让一次性成本落在 beforeAll（独立 hookTimeout）里。
+beforeAll(() => {
+  renderWithProviders(<RoleGroupManager roleGroups={[]} />);
+  fireEvent.click(screen.getByRole("button", { name: "新增角色组" }));
+  cleanup();
+  renderWithProviders(
+    <TeamManager members={[]} invitations={[]} roleGroups={[activeRoleGroup]} />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "邀请成员" }));
+  cleanup();
+});
+
+// 查询尽量收窄到弹窗/表格内：按名称的 getByRole 要对全文档同角色元素逐个计算可访问名称
+// （每个后代都走一次 jsdom getComputedStyle），表单字段改用 getByLabelText 直接按 label 关联。
 describe("员工与角色组表单", () => {
   it("角色组创建先执行客户端校验，再提交清洗后的数据", async () => {
     staffApiMock.mockResolvedValue({ id: "role-new" });
     renderWithProviders(<RoleGroupManager roleGroups={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "新增角色组" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "保存" }));
 
-    expect(await screen.findByText("名称至少需要 2 个字符")).toBeTruthy();
+    expect(await dialog.findByText("名称至少需要 2 个字符")).toBeTruthy();
     expect(staffApiMock).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByRole("textbox", { name: /名称/ }), {
+    fireEvent.change(dialog.getByLabelText(/名称/), {
       target: { value: "  技术支持  " },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: /标识/ }), {
+    fireEvent.change(dialog.getByLabelText(/标识/), {
       target: { value: "support_team" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(dialog.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(jsonRequestMock).toHaveBeenCalledWith("POST", {
@@ -104,15 +129,16 @@ describe("员工与角色组表单", () => {
       />,
     );
 
-    expect(screen.getByRole("grid", { name: "角色组" })).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
-    const nameInput = screen.getByRole("textbox", { name: /名称/ });
-    const keyInput = screen.getByRole("textbox", { name: /标识/ });
+    const grid = within(screen.getByRole("grid", { name: "角色组" }));
+    fireEvent.click(grid.getAllByRole("button", { name: "编辑" })[0]);
+    const dialog = within(screen.getByRole("dialog"));
+    const nameInput = dialog.getByLabelText(/名称/);
+    const keyInput = dialog.getByLabelText(/标识/);
     expect((nameInput as HTMLInputElement).value).toBe("系统技术人员");
     expect((keyInput as HTMLInputElement).disabled).toBe(true);
 
     fireEvent.change(nameInput, { target: { value: "系统技术支持" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(dialog.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(staffApiMock).toHaveBeenCalledWith(
@@ -153,11 +179,13 @@ describe("员工与角色组表单", () => {
       />,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "编辑" })[0]);
-    fireEvent.change(screen.getByRole("textbox", { name: /名称/ }), {
+    const grid = within(screen.getByRole("grid", { name: "角色组" }));
+    fireEvent.click(grid.getAllByRole("button", { name: "编辑" })[0]);
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText(/名称/), {
       target: { value: "系统技术支持" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    fireEvent.click(dialog.getByRole("button", { name: "保存" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
   });
@@ -189,19 +217,20 @@ describe("员工与角色组表单", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "邀请成员" }));
-    fireEvent.click(screen.getByRole("button", { name: "发送邀请" }));
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.click(dialog.getByRole("button", { name: "发送邀请" }));
 
-    expect(await screen.findByText("姓名至少需要 2 个字符")).toBeTruthy();
-    expect(screen.getByText("请输入有效邮箱")).toBeTruthy();
+    expect(await dialog.findByText("姓名至少需要 2 个字符")).toBeTruthy();
+    expect(dialog.getByText("请输入有效邮箱")).toBeTruthy();
     expect(staffApiMock).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByRole("textbox", { name: /姓名/ }), {
+    fireEvent.change(dialog.getByLabelText(/姓名/), {
       target: { value: "  测试成员  " },
     });
-    fireEvent.change(screen.getByRole("textbox", { name: /邮箱/ }), {
+    fireEvent.change(dialog.getByLabelText(/邮箱/), {
       target: { value: "  member@example.test  " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "发送邀请" }));
+    fireEvent.click(dialog.getByRole("button", { name: "发送邀请" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(jsonRequestMock).toHaveBeenCalledWith("POST", {
@@ -247,11 +276,13 @@ describe("员工与角色组表单", () => {
       />,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "编辑资料" })[0]);
-    const nameInput = screen.getByRole("textbox", { name: /姓名/ });
+    const grid = within(screen.getByRole("grid", { name: "团队成员" }));
+    fireEvent.click(grid.getAllByRole("button", { name: "编辑资料" })[0]);
+    const dialog = within(screen.getByRole("dialog"));
+    const nameInput = dialog.getByLabelText(/姓名/);
     expect((nameInput as HTMLInputElement).value).toBe("原成员");
     fireEvent.change(nameInput, { target: { value: "更新成员" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存资料" }));
+    fireEvent.click(dialog.getByRole("button", { name: "保存资料" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(staffApiMock).toHaveBeenCalledWith(
@@ -300,11 +331,13 @@ describe("员工与角色组表单", () => {
       />,
     );
 
-    fireEvent.click(screen.getAllByRole("button", { name: "编辑资料" })[0]);
-    fireEvent.change(screen.getByRole("textbox", { name: /手机/ }), {
+    const grid = within(screen.getByRole("grid", { name: "团队成员" }));
+    fireEvent.click(grid.getAllByRole("button", { name: "编辑资料" })[0]);
+    const dialog = within(screen.getByRole("dialog"));
+    fireEvent.change(dialog.getByLabelText(/手机/), {
       target: { value: "13800138000" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存资料" }));
+    fireEvent.click(dialog.getByRole("button", { name: "保存资料" }));
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
   });
@@ -336,8 +369,10 @@ describe("员工与角色组表单", () => {
     );
 
     expect(screen.getByRole("grid", { name: "团队成员" })).toBeTruthy();
-    expect(screen.getByRole("grid", { name: "待处理邀请" })).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: "撤销" })[0]);
+    const invitationGrid = within(
+      screen.getByRole("grid", { name: "待处理邀请" }),
+    );
+    fireEvent.click(invitationGrid.getAllByRole("button", { name: "撤销" })[0]);
 
     await waitFor(() => expect(staffApiMock).toHaveBeenCalledOnce());
     expect(staffApiMock).toHaveBeenCalledWith(
