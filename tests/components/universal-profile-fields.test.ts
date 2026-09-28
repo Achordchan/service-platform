@@ -5,13 +5,44 @@ import {
 } from "@/components/staff/universal-profile-fields-editor";
 
 describe("资料字段批量粘贴解析", () => {
-  it("一行一个字段，可带类型", () => {
+  it("一行一个字段，可带类型，名称可含空格", () => {
     expect(
-      parseProfileFieldText("app_version 客户端版本\nos\t系统\nretry_count: 重试次数 数字"),
+      parseProfileFieldText(
+        "app_version 客户端版本\nretry_count: 重试次数 数字\nlocale System Language\nos 系统，版本",
+      ),
     ).toEqual([
       { key: "app_version", label: "客户端版本", type: "text" },
-      { key: "os", label: "系统", type: "text" },
       { key: "retry_count", label: "重试次数", type: "number" },
+      { key: "locale", label: "System Language", type: "text" },
+      { key: "os", label: "系统，版本", type: "text" },
+    ]);
+  });
+
+  it("逐行解析：下一行的 date 字段不会被当成上一行的类型", () => {
+    expect(parseProfileFieldText("os 系统\ndate 日期\ntext 备注")).toEqual([
+      { key: "os", label: "系统", type: "text" },
+      { key: "date", label: "日期", type: "text" },
+      { key: "text", label: "备注", type: "text" },
+    ]);
+  });
+
+  it("Tab 分隔的行按列解析，英文名称不会被拆成字段", () => {
+    expect(
+      parseProfileFieldText("os\toperating system\ttext\nplan\tplan name"),
+    ).toEqual([
+      { key: "os", label: "operating system", type: "text" },
+      { key: "plan", label: "plan name", type: "text" },
+    ]);
+  });
+
+  it("多组表格里名为类型词的 key 仍按位置当 key", () => {
+    expect(
+      parseProfileFieldText("os\t系统\tdate\t日期\nlevel\t等级\t数字\tsince\t注册时间\t日期"),
+    ).toEqual([
+      { key: "os", label: "系统", type: "text" },
+      { key: "date", label: "日期", type: "text" },
+      { key: "level", label: "等级", type: "number" },
+      { key: "since", label: "注册时间", type: "date" },
     ]);
   });
 
@@ -30,10 +61,9 @@ describe("资料字段批量粘贴解析", () => {
     ]);
   });
 
-  it("缺名称时用 key 兜底，大写开头的词不当作 key", () => {
-    expect(parseProfileFieldText("plan\nlocale System Language")).toEqual([
+  it("缺名称时用 key 兜底，不以合法 key 开头的行忽略", () => {
+    expect(parseProfileFieldText("plan\nApp_Version 版本\n字段名 标签")).toEqual([
       { key: "plan", label: "plan", type: "text" },
-      { key: "locale", label: "System Language", type: "text" },
     ]);
   });
 

@@ -48,25 +48,63 @@ const typeAliases: Record<string, ProfileField["type"]> = {
   date: "date",
 };
 
+function cleanCell(value: string) {
+  return value.trim().replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, "").trim();
+}
+
+function isKey(value: string | undefined): value is string {
+  return value !== undefined && KEY_PATTERN.test(value) && value.length <= 40;
+}
+
+/** 表格行：key、名称两列一组，名称后可选一列类型；一行可放多组 */
+function parseCells(cells: string[]): ProfileField[] {
+  const fields: ProfileField[] = [];
+  let index = 0;
+  while (index < cells.length) {
+    const key = cells[index];
+    if (!isKey(key)) {
+      index += 1;
+      continue;
+    }
+    const field: ProfileField = { key, label: cells[index + 1] ?? "", type: "text" };
+    index += 2;
+    // 名称后的类型别名可能正好也是下一组的 key（如 date）：只有它后面没有名称列时才当类型
+    const typeAlias = typeAliases[cells[index] ?? ""];
+    if (typeAlias && (index + 1 >= cells.length || isKey(cells[index + 1]))) {
+      field.type = typeAlias;
+      index += 1;
+    }
+    fields.push(field);
+  }
+  return fields;
+}
+
+/** 空白分隔的行：一行一个字段，「key 名称 [类型]」，名称可含空格 */
+function parseWords(line: string): ProfileField | null {
+  const words = line.trim().split(/\s+/).map(cleanCell).filter(Boolean);
+  const key = words.shift()?.replace(/[:：]$/, "");
+  if (!isKey(key)) return null;
+  const typeAlias = words.length >= 2 ? typeAliases[words[words.length - 1]] : undefined;
+  if (typeAlias) words.pop();
+  return { key, label: words.join(" "), type: typeAlias ?? "text" };
+}
+
 /**
- * 把粘贴的清单解析成字段：任何分隔符（空白、Tab、竖线、逗号、冒号）都行，
- * 符合 key 规则的词开始一个新字段，后面的词是它的显示名称，名称后可跟类型。
- * 一行放多组（如 Markdown 表格的四列）也能拆开；表头、分隔线等无主词会被忽略。
+ * 把粘贴的清单解析成字段，逐行处理：
+ * - 含 Tab 或竖线的行按列解析（直接粘贴表格），表头和分隔线自动跳过；
+ * - 其余行按「key 名称 [类型]」解析。
  */
 export function parseProfileFieldText(text: string): ProfileField[] {
   const fields: ProfileField[] = [];
-  let current: ProfileField | null = null;
-  for (const raw of text.split(/[\s|,，;；:：]+/)) {
-    const token = raw.replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, "");
-    if (!token || /^-+$/.test(token)) continue;
-    const typeAlias = typeAliases[token];
-    if (current?.label && typeAlias) {
-      current.type = typeAlias;
-    } else if (KEY_PATTERN.test(token) && token.length <= 40) {
-      current = { key: token, label: "", type: "text" };
-      fields.push(current);
-    } else if (current) {
-      current.label = current.label ? `${current.label} ${token}` : token;
+  for (const line of text.split(/\r?\n/)) {
+    if (/[\t|]/.test(line)) {
+      const cells = line.split(/[\t|]/).map(cleanCell);
+      if (line.trim().startsWith("|")) cells.shift();
+      if (line.trim().endsWith("|")) cells.pop();
+      fields.push(...parseCells(cells));
+    } else {
+      const field = parseWords(line);
+      if (field) fields.push(field);
     }
   }
   return fields.map((field) => ({
@@ -269,7 +307,7 @@ export function UniversalProfileFieldsEditor({
         <DialogContent>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              每个字段写成「字段 key 显示名称」，可在名称后加类型（文本 / 数字 / 布尔值 / 日期，默认文本）。直接粘贴表格也行。已有的同名 key 会被覆盖。
+              每行一个字段，写成「字段 key 显示名称」，可在名称后加类型（文本 / 数字 / 布尔值 / 日期，默认文本）。也可以直接粘贴 Tab 分隔或 Markdown 表格，一行可放多组。已有的同名 key 会被覆盖。
             </Typography>
             <TextField
               label="字段清单"
