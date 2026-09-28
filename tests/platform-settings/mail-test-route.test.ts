@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { POST } from "@/app/api/v1/admin/mail/test/route";
 
 const mocks = vi.hoisted(() => ({
   requireApiActor: vi.fn(),
@@ -49,8 +50,6 @@ describe("管理员测试邮件接口", () => {
         isPlatformAdmin: false,
       },
     });
-    const { POST } = await import("@/app/api/v1/admin/mail/test/route");
-
     const response = await POST(
       new Request("http://localhost/api/v1/admin/mail/test", {
         method: "POST",
@@ -79,8 +78,6 @@ describe("管理员测试邮件接口", () => {
       deliveryMode: "SMTP",
     });
     mocks.processMailMessage.mockResolvedValue({ id: "mail_1", skipped: true });
-    const { POST } = await import("@/app/api/v1/admin/mail/test/route");
-
     const response = await POST(
       new Request("http://localhost/api/v1/admin/mail/test", {
         method: "POST",

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readOptionalJson, requireApiActor } from "@/modules/projects/api-utils";
 
 const actorMocks = vi.hoisted(() => ({
   resolveActor: vi.fn(),
@@ -34,8 +35,6 @@ describe("API 登录用户解析", () => {
       new Error("The column `User.missing` does not exist"),
     );
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
-    const { requireApiActor } = await import("@/modules/projects/api-utils");
-
     const result = await requireApiActor();
 
     expect(result.response?.status).toBe(500);
@@ -57,16 +56,12 @@ describe("API 登录用户解析", () => {
 
 describe("可选 JSON 请求体", () => {
   it("空体按不带载荷处理，DELETE 才能既支持带覆盖也支持不带", async () => {
-    const { readOptionalJson } = await import("@/modules/projects/api-utils");
-
     await expect(
       readOptionalJson(new Request("https://test.local", { method: "DELETE" })),
     ).resolves.toEqual({});
   });
 
   it("带载荷时照常解析", async () => {
-    const { readOptionalJson } = await import("@/modules/projects/api-utils");
-
     await expect(
       readOptionalJson(
         new Request("https://test.local", {
@@ -78,8 +73,6 @@ describe("可选 JSON 请求体", () => {
   });
 
   it("载荷是坏 JSON 时报错，而不是当成没传静默放过", async () => {
-    const { readOptionalJson } = await import("@/modules/projects/api-utils");
-
     await expect(
       readOptionalJson(
         new Request("https://test.local", { method: "DELETE", body: "{oops" }),
@@ -88,8 +81,6 @@ describe("可选 JSON 请求体", () => {
   });
 
   it("载荷超限时按 413 拒绝", async () => {
-    const { readOptionalJson } = await import("@/modules/projects/api-utils");
-
     await expect(
       readOptionalJson(
         new Request("https://test.local", {
