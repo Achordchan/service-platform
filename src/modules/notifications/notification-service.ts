@@ -270,6 +270,41 @@ export async function createNotification(
       id: aggregated.id,
       occurrenceCount: aggregated.occurrence_count,
     };
+  } else if (
+    input.customerSpaceId &&
+    input.projectId &&
+    input.serviceRequestId
+  ) {
+    // 请求内不聚合的通知（风控暂缓、带 sourceId）同样走 SECURITY DEFINER：
+    // 外部联系人会话没有 app.user_id，直插会被 notification_access 拒绝
+    const [inserted] = await tx.$queryRaw<
+      Array<{ id: string; occurrence_count: number }>
+    >`
+      SELECT *
+      FROM app_insert_request_notification(
+        ${notificationId},
+        ${input.type},
+        ${input.title},
+        ${input.body},
+        ${input.userId},
+        ${input.customerSpaceId},
+        ${input.projectId},
+        ${input.serviceRequestId},
+        ${input.sourceType ?? null},
+        ${input.sourceId ?? null},
+        (
+          ${input.emailDueAt?.toISOString() ?? null}::timestamptz
+          AT TIME ZONE 'UTC'
+        )
+      )
+    `;
+    if (!inserted) {
+      throw new Error("请求通知写入失败");
+    }
+    notification = {
+      id: inserted.id,
+      occurrenceCount: inserted.occurrence_count,
+    };
   } else {
     await tx.notification.createMany({
       data: [
