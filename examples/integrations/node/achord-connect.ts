@@ -17,7 +17,10 @@ export async function createLaunchTicket(input: {
   context?: {
     theme?: "light" | "dark" | "system";
     locale?: string;
+    /** iframe 模式专用；launchMode 为 native 时不能传 */
     returnOrigin?: string;
+    /** 默认 iframe；桌面 / 移动 App 顶层打开用 native（连接需开启 Native Launch） */
+    launchMode?: "iframe" | "native";
   };
 }) {
   if (typeof input.user.id !== "string" || input.user.id.trim() === "") {
@@ -28,7 +31,7 @@ export async function createLaunchTicket(input: {
     {
       method: "POST",
       headers: {
-        Authorization: `Basic ${Buffer.from(`${input.clientId}:${input.clientSecret}`).toString("base64")}`,
+        Authorization: basicAuthorization(input.clientId, input.clientSecret),
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ user: input.user, context: input.context ?? {} }),
@@ -43,6 +46,76 @@ export async function createLaunchTicket(input: {
   }
   return payload.data;
 }
+
+function basicAuthorization(clientId: string, clientSecret: string) {
+  return `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`;
+}
+
+/**
+ * Native Launch：为已登录的 App 用户创建票据。返回的 launchUrl 需要原样交给 App 的
+ * 独立窗口 / 系统浏览器 / WebView 顶层打开（不要放进 iframe，也不要去掉片段里的 mode=native）。
+ */
+export function createNativeLaunchTicket(input: {
+  baseUrl: string;
+  clientId: string;
+  clientSecret: string;
+  user: AchordConnectUser;
+  context?: { theme?: "light" | "dark" | "system"; locale?: string };
+}) {
+  return createLaunchTicket({
+    ...input,
+    context: { ...input.context, launchMode: "native" },
+  });
+}
+
+export type AchordConnectContactUnread = {
+  externalUserId: string;
+  unreadCount: number;
+  requests: Array<{
+    id: string;
+    number: string;
+    title: string;
+    status: string;
+    unreadCount: number;
+    updatedAt: string;
+  }>;
+};
+
+/** 服务端查询某个外部用户的未读数（启动时或 Webhook 丢失后重建未读红点） */
+export async function getContactUnread(input: {
+  baseUrl: string;
+  clientId: string;
+  clientSecret: string;
+  externalUserId: string;
+}): Promise<AchordConnectContactUnread> {
+  const response = await fetch(
+    new URL(
+      `/api/v1/integrations/universal/contacts/${encodeURIComponent(input.externalUserId)}/unread`,
+      input.baseUrl,
+    ),
+    { headers: { Authorization: basicAuthorization(input.clientId, input.clientSecret) } },
+  );
+  const payload = (await response.json()) as {
+    data?: AchordConnectContactUnread;
+    error?: { message?: string };
+  };
+  if (!response.ok || !payload.data) {
+    throw new Error(payload.error?.message ?? `Achord Connect HTTP ${response.status}`);
+  }
+  return payload.data;
+}
+
+/**
+ * App 端（WebView 页面加载前注入）接收门户事件的桥接对象示例。
+ * 门户以 JSON 字符串调用 postMessage：ready / unread-changed / session-expired / close-requested。
+ */
+export const nativeBridgeInitScript = `window.AchordConnectNative = {
+  postMessage(message) {
+    const event = JSON.parse(message);
+    if (event.source !== "achord-connect-v1") return;
+    // 交给宿主处理，例如 Tauri: window.__TAURI__.event.emit("achord-connect", event)
+  },
+};`;
 
 export function iframeHtml(launchUrl: string, title = "服务请求") {
   const parsed = new URL(launchUrl);

@@ -35,6 +35,17 @@ import type { z } from "zod";
 
 type ConnectionInput = z.infer<typeof universalConnectionSchema>;
 type ProfileField = z.infer<typeof universalProfileFieldSchema>;
+type RecentSessionRow = {
+  session_id: string;
+  contact_id: string;
+  contact_name: string;
+  external_user_id: string;
+  launch_mode: string;
+  created_at: Date;
+  last_seen_at: Date;
+  expires_at: Date;
+  revoked_at: Date | null;
+};
 
 const connectionInclude = {
   binding: {
@@ -78,6 +89,7 @@ function serializeConnection(
   options: {
     includeCredentials?: boolean;
     activeCredentialCount?: number;
+    recentSessions?: RecentSessionRow[];
   } = {},
 ) {
   const activeCredentialCount =
@@ -89,6 +101,7 @@ function serializeConnection(
     bindingStatus: connection.binding.status,
     name: connection.name,
     allowedOrigins: parseJsonArray<string>(connection.allowedOrigins),
+    allowNativeLaunch: connection.allowNativeLaunch,
     profileFields: parseJsonArray<ProfileField>(connection.profileFields),
     emailNotificationsEnabled: connection.emailNotificationsEnabled,
     customerMemberNotificationsEnabled:
@@ -110,9 +123,32 @@ function serializeConnection(
           createdAt: credential.createdAt.toISOString(),
         }))
       : [],
+    // 保存 / 检测接口不查会话，省略该字段，前端保留缓存里的现值
+    recentSessions: options.recentSessions?.map((session) => ({
+      id: session.session_id,
+      contactId: session.contact_id,
+      contactName: session.contact_name,
+      externalUserId: session.external_user_id,
+      launchMode: session.launch_mode === "native" ? "native" : "iframe",
+      createdAt: session.created_at.toISOString(),
+      lastSeenAt: session.last_seen_at.toISOString(),
+      expiresAt: session.expires_at.toISOString(),
+      revokedAt: session.revoked_at?.toISOString() ?? null,
+      status: session.revoked_at
+        ? "REVOKED"
+        : session.expires_at <= new Date()
+          ? "EXPIRED"
+          : "ACTIVE",
+    })),
     project: connection.binding.project,
     updatedAt: connection.updatedAt.toISOString(),
   };
+}
+
+function loadRecentSessions(tx: Prisma.TransactionClient, bindingId: string) {
+  return tx.$queryRaw<RecentSessionRow[]>`
+    SELECT * FROM app_universal_recent_embed_sessions(${bindingId})
+  `;
 }
 
 async function assertPluginReady(tx: Prisma.TransactionClient) {
@@ -175,6 +211,9 @@ export async function getUniversalIntegration(actor: Actor, projectId: string) {
             `
           )[0]?.count ?? 0
         : undefined;
+    const recentSessions = connection
+      ? await loadRecentSessions(tx, connection.bindingId)
+      : [];
     return {
       plugin,
       project,
@@ -182,6 +221,7 @@ export async function getUniversalIntegration(actor: Actor, projectId: string) {
         ? serializeConnection(connection, {
             includeCredentials: actor.isPlatformAdmin,
             activeCredentialCount,
+            recentSessions,
           })
         : null,
     };
@@ -225,6 +265,15 @@ export async function saveUniversalIntegration(
         409,
       );
     }
+    const allowNativeLaunch =
+      input.allowNativeLaunch ?? current?.allowNativeLaunch ?? false;
+    if (allowedOrigins.length === 0 && !allowNativeLaunch) {
+      throw new DomainError(
+        "UNIVERSAL_LAUNCH_TARGET_REQUIRED",
+        "请至少填写一个允许嵌入的 Origin，或开启原生应用启动（Native Launch）",
+        422,
+      );
+    }
     await lockExternalConnectorSlot(tx, projectId, UNIVERSAL_PLUGIN_KEY);
     const binding = await tx.projectPluginBinding.upsert({
       where: {
@@ -241,6 +290,7 @@ export async function saveUniversalIntegration(
     const connectionCriticalChanged = Boolean(
       !current ||
         JSON.stringify(current.allowedOrigins) !== JSON.stringify(allowedOrigins) ||
+        current.allowNativeLaunch !== allowNativeLaunch ||
         JSON.stringify(current.profileFields) !== JSON.stringify(profileFields),
     );
     const webhookChanged = Boolean(
@@ -285,6 +335,7 @@ export async function saveUniversalIntegration(
         bindingId: binding.id,
         name: input.name,
         allowedOrigins,
+        allowNativeLaunch,
         profileFields,
         emailNotificationsEnabled: input.emailNotificationsEnabled,
         customerMemberNotificationsEnabled:
@@ -299,6 +350,7 @@ export async function saveUniversalIntegration(
       update: {
         name: input.name,
         allowedOrigins,
+        allowNativeLaunch,
         profileFields,
         emailNotificationsEnabled: input.emailNotificationsEnabled,
         customerMemberNotificationsEnabled:
@@ -348,6 +400,7 @@ export async function saveUniversalIntegration(
       projectId,
       metadata: {
         allowedOriginCount: allowedOrigins.length,
+        allowNativeLaunch,
         profileFieldCount: profileFields.length,
         webhookConfigured: Boolean(webhookUrl),
         webhookEventCount: webhookEvents.length,
@@ -377,8 +430,11 @@ export async function checkUniversalIntegration(
       (credential) => !credential.revokedAt,
     );
     const errors: string[] = [];
-    if (parseJsonArray<string>(connection.allowedOrigins).length === 0) {
-      errors.push("至少需要一个允许嵌入的 Origin");
+    if (
+      parseJsonArray<string>(connection.allowedOrigins).length === 0 &&
+      !connection.allowNativeLaunch
+    ) {
+      errors.push("至少需要一个允许嵌入的 Origin，或开启原生应用启动（Native Launch）");
     }
     if (activeCredentials.length === 0) {
       errors.push("至少需要一个有效凭据");
@@ -405,6 +461,7 @@ export async function checkUniversalIntegration(
       metadata: {
         allowedOriginCount: parseJsonArray<string>(connection.allowedOrigins)
           .length,
+        allowNativeLaunch: connection.allowNativeLaunch,
         activeCredentialCount: activeCredentials.length,
         webhookConfigured: Boolean(connection.webhookUrl),
       },

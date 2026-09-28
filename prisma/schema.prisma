@@ -1263,6 +1263,8 @@ model UniversalConnectorConnection {
   profileFields                      Json      @default("[]")
   emailNotificationsEnabled          Boolean   @default(true)
   customerMemberNotificationsEnabled Boolean   @default(false)
+  /// 允许原生 App 以 launchMode=native 顶层打开门户（不做 iframe 来源校验）
+  allowNativeLaunch                  Boolean   @default(false)
   webhookUrl                         String?
   webhookSecretEncrypted             String?
   webhookEvents                      Json      @default("[]")
@@ -1301,6 +1303,8 @@ model UniversalLaunchTicket {
   externalUserId String
   profile        Json
   context        Json      @default("{}")
+  /// iframe | native；兑换时只按这里决定是否校验父页面 Origin
+  launchMode     String    @default("iframe")
   expiresAt      DateTime
   consumedAt     DateTime?
   createdAt      DateTime  @default(now())
@@ -1374,6 +1378,8 @@ model ExternalEmbedSession {
   lastSeenAt        DateTime  @default(now())
   ipAddress         String?
   userAgent         String?
+  /// iframe | native，由兑换的票据决定
+  launchMode        String    @default("iframe")
   createdAt         DateTime  @default(now())
 
   externalContact ExternalContact      @relation(fields: [externalContactId], references: [id], onDelete: Cascade)

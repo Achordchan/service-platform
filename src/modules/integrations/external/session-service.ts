@@ -32,6 +32,7 @@ export async function issueExternalEmbedSession(
     externalContactId: string;
     expiresAt: Date;
     fingerprint: ExternalClientFingerprint;
+    launchMode?: "iframe" | "native";
   },
 ) {
   const rawToken = randomBytes(32).toString("base64url");
@@ -41,6 +42,7 @@ export async function issueExternalEmbedSession(
       bindingId: input.bindingId,
       externalContactId: input.externalContactId,
       expiresAt: input.expiresAt,
+      launchMode: input.launchMode ?? "iframe",
       ...input.fingerprint,
     },
     select: { id: true },
@@ -48,12 +50,27 @@ export async function issueExternalEmbedSession(
   return { rawToken, sessionId: session.id };
 }
 
-export async function requireExternalSession(request: Request) {
-  const rawToken = embedBearerToken(request);
+export function requireExternalSession(request: Request) {
+  return loadActiveExternalSession({
+    tokenHash: hashExternalToken(embedBearerToken(request)),
+  });
+}
+
+/**
+ * 按会话 id 取会话，只给已验签的短期附件下载链接用（native 门户在系统浏览器里
+ * 打开附件时带不了 Authorization 头）。失效判定与 Embed 令牌完全一致。
+ */
+export function requireExternalSessionById(sessionId: string) {
+  return loadActiveExternalSession({ id: sessionId });
+}
+
+async function loadActiveExternalSession(
+  where: { tokenHash: string } | { id: string },
+) {
   const now = new Date();
   const session = await withSystemDb((tx) =>
     tx.externalEmbedSession.findUnique({
-      where: { tokenHash: hashExternalToken(rawToken) },
+      where,
       include: {
         externalContact: true,
         binding: {
@@ -119,6 +136,7 @@ export async function requireExternalSession(request: Request) {
     actor,
     sessionId: session.id,
     expiresAt: session.expiresAt,
+    launchMode: session.launchMode === "native" ? "native" : "iframe",
     project: session.binding.project,
     connection: {
       emailNotificationsEnabled: connection.emailNotificationsEnabled,

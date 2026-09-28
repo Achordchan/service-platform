@@ -109,6 +109,8 @@ export type EnqueueMailInput = {
   templateKey: MailTemplateKey;
   variables?: Record<string, string>;
   actionUrl?: string;
+  /** 没有 actionUrl 时替代按钮追加到正文末尾的一句提示 */
+  actionNotice?: string;
   deliveryMode?: MailDeliveryMode;
   sendAfter?: Date;
   idempotencyKey?: string;
@@ -258,6 +260,7 @@ export async function createMailMessageInTx(
     key: input.templateKey,
     variables: input.variables ?? {},
     actionUrl: input.actionUrl,
+    actionNotice: input.actionNotice,
   });
   return createPreparedMailMessageInTx(tx, input, template, initialStatus);
 }
@@ -268,6 +271,7 @@ export function prepareMailMessageTemplate(input: EnqueueMailInput) {
       key: input.templateKey,
       variables: input.variables ?? {},
       actionUrl: input.actionUrl,
+      actionNotice: input.actionNotice,
     }),
   );
 }

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { UniversalIntegrationPanel } from "@/components/staff/universal-integration-panel";
 import { ToastProvider } from "@/components/shared/toast-provider";
 import { queryKeys } from "@/lib/query-keys";
+import { jsonRequest } from "@/components/staff/staff-api";
 
 const staffApiMock = vi.hoisted(() => vi.fn());
 
@@ -24,6 +25,7 @@ function integrationView(name: string) {
       bindingStatus: "ACTIVE",
       name,
       allowedOrigins: ["https://app.example.com"],
+      allowNativeLaunch: false,
       profileFields: [],
       emailNotificationsEnabled: true,
       customerMemberNotificationsEnabled: false,
@@ -112,5 +114,78 @@ describe("Universal 集成查询缓存", () => {
       expect(screen.getAllByText("client-new").length).toBeGreaterThan(0),
     );
     expect(screen.queryByText("尚未生成有效接入凭据。")).toBeNull();
+  });
+
+  it("Native Launch 开关随配置保存，最近会话标出 iframe / Native", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const base = integrationView("原生应用连接");
+    staffApiMock.mockImplementation((url: string, options?: unknown) => {
+      if (options === undefined || (options as { signal?: unknown }).signal) {
+        return Promise.resolve({
+          ...base,
+          connection: {
+            ...base.connection,
+            recentSessions: [
+              {
+                id: "session-native",
+                contactId: "contact-1",
+                contactName: "桌面用户",
+                externalUserId: "desktop-1",
+                launchMode: "native",
+                createdAt: "2026-09-28T02:00:00.000Z",
+                lastSeenAt: "2026-09-28T02:00:00.000Z",
+                expiresAt: "2026-09-28T04:00:00.000Z",
+                revokedAt: null,
+                status: "ACTIVE",
+              },
+              {
+                id: "session-iframe",
+                contactId: "contact-2",
+                contactName: "网页用户",
+                externalUserId: "web-1",
+                launchMode: "iframe",
+                createdAt: "2026-09-28T01:00:00.000Z",
+                lastSeenAt: "2026-09-28T01:00:00.000Z",
+                expiresAt: "2026-09-28T03:00:00.000Z",
+                revokedAt: null,
+                status: "EXPIRED",
+              },
+            ],
+          },
+        });
+      }
+      return Promise.resolve({ connection: base.connection, webhookSecret: null });
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <UniversalIntegrationPanel projectId="project-1" canEdit />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    const nativeSwitch = await screen.findByRole("switch", {
+      name: "允许原生应用启动（Native Launch）",
+    });
+    expect(
+      screen.getByText(
+        "用于桌面或移动 App：由 App 后端创建票据，App 在自己的窗口、系统浏览器或 WebView 中顶层打开，不做 iframe 来源校验。",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Native")).toBeTruthy();
+    expect(screen.getByText("iframe")).toBeTruthy();
+    expect(screen.getByText("桌面用户 · desktop-1")).toBeTruthy();
+
+    fireEvent.click(nativeSwitch);
+    fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    await waitFor(() =>
+      expect(vi.mocked(jsonRequest)).toHaveBeenCalledWith(
+        "PUT",
+        expect.objectContaining({ allowNativeLaunch: true }),
+      ),
+    );
   });
 });

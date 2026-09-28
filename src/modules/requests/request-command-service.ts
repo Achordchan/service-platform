@@ -20,7 +20,7 @@ import {
 import { claimUserInlineAttachments } from "@/modules/attachments/inline-attachment-service";
 import { getAttachmentPolicy } from "@/modules/attachments/attachment-validation";
 import { writeAuditLog } from "@/modules/audit/audit-service";
-import { resolveUniversalActionUrl } from "@/modules/integrations/external/action-url";
+import { resolveUniversalMailAction } from "@/modules/integrations/external/action-url";
 import { enqueueExternalRequestStatusMail } from "@/modules/integrations/external/mail-service";
 import {
   dispatchRequestActivity,
@@ -67,7 +67,8 @@ type ExternalRequestMail = {
   to: string;
   templateKey: MailTemplateKey;
   variables: Record<string, string>;
-  actionUrl: string;
+  actionUrl?: string;
+  actionNotice?: string;
   sourceType?: string;
   sourceId?: string;
   contentRiskReviewId?: string;
@@ -120,7 +121,8 @@ function canSendExternalContactMail(
       binding?.status === "ACTIVE" &&
       binding.plugin.enabled &&
       binding.plugin.healthStatus === "READY" &&
-      connection?.emailNotificationsEnabled && connection.actionUrl,
+      connection?.emailNotificationsEnabled &&
+      (connection.actionUrl || connection.actionNotice),
   );
 }
 
@@ -130,7 +132,8 @@ function externalConnection(
   const binding = request.createdByExternalContact?.binding;
   if (binding?.sub2ApiConnection) {
     return {
-      actionUrl: binding.sub2ApiConnection.baseUrl,
+      actionUrl: binding.sub2ApiConnection.baseUrl as string | null,
+      actionNotice: null as string | null,
       emailNotificationsEnabled:
         binding.sub2ApiConnection.emailNotificationsEnabled,
       customerMemberNotificationsEnabled:
@@ -138,12 +141,16 @@ function externalConnection(
     };
   }
   const universal = binding?.universalConnection;
+  const mailAction = universal
+    ? resolveUniversalMailAction(
+        request.createdByExternalContact?.lastParentOrigin,
+        universal.allowedOrigins,
+      )
+    : null;
   return universal
     ? {
-        actionUrl: resolveUniversalActionUrl(
-          request.createdByExternalContact?.lastParentOrigin,
-          universal.allowedOrigins,
-        ),
+        actionUrl: mailAction?.actionUrl ?? null,
+        actionNotice: mailAction?.actionNotice ?? null,
         emailNotificationsEnabled: universal.emailNotificationsEnabled,
         customerMemberNotificationsEnabled:
           universal.customerMemberNotificationsEnabled,
@@ -178,7 +185,8 @@ function statusMail(
   return {
     to: contact.email,
     templateKey,
-    actionUrl: connection.actionUrl!,
+    actionUrl: connection.actionUrl ?? undefined,
+    actionNotice: connection.actionNotice ?? undefined,
     variables: {
       recipientName: contact.displayName,
       requestNumber: request.number,
@@ -1032,7 +1040,8 @@ export async function addRequestMessage(
         ? {
             to: contact.email!,
             templateKey: "EXTERNAL_REQUEST_PUBLIC_REPLY" as const,
-            actionUrl: connection.actionUrl!,
+            actionUrl: connection.actionUrl ?? undefined,
+            actionNotice: connection.actionNotice ?? undefined,
             variables: {
               recipientName: contact.displayName,
               requestNumber: request.number,

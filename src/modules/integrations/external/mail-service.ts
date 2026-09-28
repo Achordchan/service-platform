@@ -3,7 +3,7 @@ import "server-only";
 import type { RequestStatus } from "@/generated/prisma/client";
 import { enqueueMail } from "@/lib/jobs";
 import { withSystemDb } from "@/lib/system-db";
-import { resolveUniversalActionUrl } from "@/modules/integrations/external/action-url";
+import { resolveUniversalMailAction } from "@/modules/integrations/external/action-url";
 import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";
 
 const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
@@ -62,19 +62,20 @@ export async function enqueueExternalRequestStatusMail(
     ) {
       return null;
     }
-    const actionUrl = binding.sub2ApiConnection?.emailNotificationsEnabled
-      ? binding.sub2ApiConnection.baseUrl
+    const action = binding.sub2ApiConnection?.emailNotificationsEnabled
+      ? { actionUrl: binding.sub2ApiConnection.baseUrl, actionNotice: null }
       : binding.universalConnection?.emailNotificationsEnabled
-        ? resolveUniversalActionUrl(
+        ? resolveUniversalMailAction(
             contact.lastParentOrigin,
             binding.universalConnection.allowedOrigins,
           )
         : null;
-    if (!actionUrl) return null;
+    if (!action) return null;
     return {
       to: contact.email,
       templateKey,
-      actionUrl,
+      actionUrl: action.actionUrl ?? undefined,
+      actionNotice: action.actionNotice ?? undefined,
       variables: {
         recipientName: contact.displayName,
         requestNumber: request.number,

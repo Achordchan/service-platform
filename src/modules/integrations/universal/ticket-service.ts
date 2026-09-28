@@ -10,6 +10,7 @@ import { issueExternalEmbedSession } from "@/modules/integrations/external/sessi
 import { validateUniversalProfileAttributes } from "@/modules/integrations/universal/profile";
 import {
   UNIVERSAL_CONNECTION_RATE_LIMIT,
+  type UniversalLaunchMode,
   UNIVERSAL_PLUGIN_KEY,
   UNIVERSAL_RATE_WINDOW_MS,
   UNIVERSAL_SESSION_MAX_AGE_MS,
@@ -33,7 +34,10 @@ import type { z } from "zod";
 type LaunchInput = z.infer<typeof universalLaunchTicketSchema>;
 type ExchangeInput = z.infer<typeof universalExchangeSchema>;
 type ProfileField = z.infer<typeof universalProfileFieldSchema>;
-export type UniversalLaunchAuthentication = { credentialId: string };
+export type UniversalLaunchAuthentication = {
+  credentialId: string;
+  bindingId: string;
+};
 const DUMMY_SECRET_HASH = hashUniversalSecret(
   "acs_invalid_credential_timing_equalizer",
 );
@@ -59,9 +63,18 @@ function normalizeAvatarUrl(value: string | null | undefined) {
   return url.toString();
 }
 
-function launchUrl(publicId: string, ticket: string) {
+function launchUrl(
+  publicId: string,
+  ticket: string,
+  launchMode: UniversalLaunchMode,
+) {
   const url = new URL(`/embed/connect/${publicId}`, env.APP_URL);
-  return `${url.toString()}#ticket=${encodeURIComponent(ticket)}`;
+  // 票据只放片段，不进查询参数（不会出现在服务端日志和 Referer 里）。
+  // mode 只是给门户前端的提示，服务端兑换时只认票据上存的 launchMode。
+  const fragment = `ticket=${encodeURIComponent(ticket)}${
+    launchMode === "native" ? "&mode=native" : ""
+  }`;
+  return `${url.toString()}#${fragment}`;
 }
 
 function parseAllowedOrigins(value: Prisma.JsonValue) {
@@ -76,6 +89,13 @@ function resolveTicketReturnOrigin(
 ) {
   if (!requestedOrigin) {
     if (allowedOrigins.length === 1) return allowedOrigins[0];
+    if (allowedOrigins.length === 0) {
+      throw new DomainError(
+        "UNIVERSAL_IFRAME_NOT_CONFIGURED",
+        "连接未配置允许嵌入的 Origin，只能以 context.launchMode = \"native\" 创建票据",
+        409,
+      );
+    }
     throw new DomainError(
       "UNIVERSAL_RETURN_ORIGIN_REQUIRED",
       "连接配置了多个 Origin，创建票据时必须指定 context.returnOrigin",
@@ -91,6 +111,51 @@ function resolveTicketReturnOrigin(
     );
   }
   return normalized;
+}
+
+function resolveExchangeParentOrigin(
+  context: Prisma.JsonValue,
+  allowedOrigins: string[],
+  parentOrigin: string | undefined,
+) {
+  const ticketContext = (context ?? {}) as { returnOrigin?: string };
+  const trustedReturnOrigin = ticketContext.returnOrigin
+    ? normalizeEmbedOrigin(ticketContext.returnOrigin)
+    : allowedOrigins.length === 1
+      ? allowedOrigins[0]
+      : null;
+  if (!trustedReturnOrigin || !allowedOrigins.includes(trustedReturnOrigin)) {
+    throw new DomainError(
+      "UNIVERSAL_TICKET_RETURN_ORIGIN_INVALID",
+      "接入票据缺少可信返回 Origin，请返回原系统重新进入",
+      401,
+    );
+  }
+  if (!parentOrigin) {
+    // 字段整个缺失时沿用 parentOrigin 还是必填字段时的 422：
+    // 对 iframe 票据而言这仍然是请求结构不完整。
+    throw new DomainError(
+      "UNIVERSAL_PARENT_ORIGIN_REQUIRED",
+      "无法确认 iframe 宿主来源，请返回原系统重新进入",
+      parentOrigin === undefined ? 422 : 403,
+    );
+  }
+  const requestedParentOrigin = normalizeEmbedOrigin(parentOrigin);
+  if (!allowedOrigins.includes(requestedParentOrigin)) {
+    throw new DomainError(
+      "UNIVERSAL_PARENT_ORIGIN_INVALID",
+      "当前宿主不在允许嵌入范围内",
+      403,
+    );
+  }
+  if (requestedParentOrigin !== trustedReturnOrigin) {
+    throw new DomainError(
+      "UNIVERSAL_PARENT_ORIGIN_MISMATCH",
+      "当前宿主与票据指定的返回 Origin 不一致",
+      403,
+    );
+  }
+  return trustedReturnOrigin;
 }
 
 export async function authenticateUniversalLaunchRequest(request: Request) {
@@ -132,7 +197,7 @@ export async function authenticateUniversalLaunchRequest(request: Request) {
         401,
       );
     }
-    return { credentialId: credential.id };
+    return { credentialId: credential.id, bindingId: credential.bindingId };
   });
 }
 
@@ -177,13 +242,33 @@ export async function issueUniversalLaunchTicket(
         401,
       );
     }
-    const allowedOrigins = parseAllowedOrigins(
-      credential.connection.allowedOrigins,
-    );
-    const returnOrigin = resolveTicketReturnOrigin(
-      input.context.returnOrigin,
-      allowedOrigins,
-    );
+    const { launchMode: requestedLaunchMode, ...requestedContext } =
+      input.context;
+    const launchMode: UniversalLaunchMode = requestedLaunchMode ?? "iframe";
+    let ticketContext: Prisma.InputJsonObject;
+    if (launchMode === "native") {
+      if (!credential.connection.allowNativeLaunch) {
+        throw new DomainError(
+          "UNIVERSAL_NATIVE_LAUNCH_DISABLED",
+          "当前连接未开启原生应用启动（Native Launch）",
+          403,
+        );
+      }
+      if (requestedContext.returnOrigin !== undefined) {
+        throw new DomainError(
+          "UNIVERSAL_RETURN_ORIGIN_NOT_ALLOWED_FOR_NATIVE",
+          "Native Launch 票据不使用 context.returnOrigin，请去掉该字段",
+          422,
+        );
+      }
+      ticketContext = requestedContext;
+    } else {
+      const returnOrigin = resolveTicketReturnOrigin(
+        requestedContext.returnOrigin,
+        parseAllowedOrigins(credential.connection.allowedOrigins),
+      );
+      ticketContext = { ...requestedContext, returnOrigin };
+    }
     await tx.$executeRaw`
       SELECT pg_advisory_xact_lock(
         hashtextextended(${`achord-connect:${credential.bindingId}`}, 0)
@@ -239,7 +324,8 @@ export async function issueUniversalLaunchTicket(
         ticketHash: generated.ticketHash,
         externalUserId: profile.id,
         profile,
-        context: { ...input.context, returnOrigin },
+        context: ticketContext,
+        launchMode,
         expiresAt,
       },
     });
@@ -251,6 +337,7 @@ export async function issueUniversalLaunchTicket(
       launchUrl: launchUrl(
         credential.connection.binding.publicId,
         generated.ticket,
+        launchMode,
       ),
       expiresAt: expiresAt.toISOString(),
     };
@@ -322,44 +409,25 @@ export async function exchangeUniversalTicket(
         401,
       );
     }
+    // 只按票据上存的 launchMode 决定是否跳过父页面来源校验：
+    // 前端片段里的 mode 可以随便改，不能把 iframe 票据降级成 native。
+    const launchMode: UniversalLaunchMode =
+      ticket.launchMode === "native" ? "native" : "iframe";
     const allowedOrigins = parseAllowedOrigins(ticket.connection.allowedOrigins);
-    const ticketContext = ticket.context as {
-      theme?: "light" | "dark" | "system";
-      locale?: string;
-      returnOrigin?: string;
-    };
-    const trustedReturnOrigin = ticketContext.returnOrigin
-      ? normalizeEmbedOrigin(ticketContext.returnOrigin)
-      : allowedOrigins.length === 1
-        ? allowedOrigins[0]
-        : null;
-    if (!trustedReturnOrigin || !allowedOrigins.includes(trustedReturnOrigin)) {
-      throw new DomainError(
-        "UNIVERSAL_TICKET_RETURN_ORIGIN_INVALID",
-        "接入票据缺少可信返回 Origin，请返回原系统重新进入",
-        401,
-      );
-    }
-    if (!input.parentOrigin) {
-      throw new DomainError(
-        "UNIVERSAL_PARENT_ORIGIN_REQUIRED",
-        "无法确认 iframe 宿主来源，请返回原系统重新进入",
-        403,
-      );
-    }
-    const requestedParentOrigin = normalizeEmbedOrigin(input.parentOrigin);
-    if (!allowedOrigins.includes(requestedParentOrigin)) {
-      throw new DomainError(
-        "UNIVERSAL_PARENT_ORIGIN_INVALID",
-        "当前宿主不在允许嵌入范围内",
-        403,
-      );
-    }
-    if (requestedParentOrigin !== trustedReturnOrigin) {
-      throw new DomainError(
-        "UNIVERSAL_PARENT_ORIGIN_MISMATCH",
-        "当前宿主与票据指定的返回 Origin 不一致",
-        403,
+    let trustedReturnOrigin: string | null = null;
+    if (launchMode === "native") {
+      if (!ticket.connection.allowNativeLaunch) {
+        throw new DomainError(
+          "UNIVERSAL_NATIVE_LAUNCH_DISABLED",
+          "当前连接未开启原生应用启动（Native Launch）",
+          403,
+        );
+      }
+    } else {
+      trustedReturnOrigin = resolveExchangeParentOrigin(
+        ticket.context,
+        allowedOrigins,
+        input.parentOrigin,
       );
     }
     const consumed = await tx.universalLaunchTicket.updateMany({
@@ -407,7 +475,8 @@ export async function exchangeUniversalTicket(
         username: profile.username,
         avatarUrl: profile.avatarUrl,
         profileAttributes: profile.attributes,
-        lastParentOrigin: trustedReturnOrigin,
+        // native 会话不碰 iframe 的来源信任记录（邮件返回入口靠它）
+        ...(trustedReturnOrigin ? { lastParentOrigin: trustedReturnOrigin } : {}),
         lastSeenAt: now,
       },
     });
@@ -424,6 +493,7 @@ export async function exchangeUniversalTicket(
       externalContactId: contact.id,
       expiresAt,
       fingerprint,
+      launchMode,
     });
     await tx.auditLog.createMany({
       data: [
@@ -438,6 +508,7 @@ export async function exchangeUniversalTicket(
           metadata: {
             actorType: "EXTERNAL_CONTACT",
             source: UNIVERSAL_PLUGIN_KEY,
+            launchMode,
             expiresAt: expiresAt.toISOString(),
           },
         },
@@ -456,7 +527,9 @@ export async function exchangeUniversalTicket(
         attributes: contact.profileAttributes,
       },
       context: ticket.context,
-      parentOrigins: allowedOrigins,
+      launchMode,
+      // native 会话没有父页面，门户不向任何 Origin postMessage
+      parentOrigins: launchMode === "native" ? [] : allowedOrigins,
       project: {
         id: ticket.connection.binding.project.id,
         title: ticket.connection.binding.project.title,

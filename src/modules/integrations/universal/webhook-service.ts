@@ -216,6 +216,11 @@ export async function recordUniversalUnreadWebhook(
     select: { id: true, number: true, title: true, status: true },
   });
   if (!request) return null;
+  // 同一事务里刚写完的未读数也算在内；联系人其他请求可能不在当前操作者的 RLS 可见范围，
+  // 走 SECURITY DEFINER 函数只取总数
+  const [total] = await tx.$queryRaw<Array<{ count: number }>>`
+    SELECT app_external_contact_unread_total(${request.id}) AS count
+  `;
   const eventType = "request.unread.changed" as const;
   const eventId = randomUUID();
   return enqueueDelivery(tx, {
@@ -228,6 +233,7 @@ export async function recordUniversalUnreadWebhook(
       data: {
         externalUserId: input.externalUserId,
         unreadCount: input.unreadCount,
+        contactUnreadCount: total?.count ?? input.unreadCount,
         request: {
           id: request.id,
           number: request.number,

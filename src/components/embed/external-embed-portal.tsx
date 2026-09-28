@@ -19,6 +19,7 @@ import {
   LinearProgress,
   MenuItem,
   Paper,
+  Snackbar,
   Stack,
   TextField,
   Toolbar,
@@ -59,6 +60,13 @@ import { hasMeaningfulHtml } from "@/lib/message-content";
 import { createEmbedTheme } from "@/theme/theme";
 
 type ProjectStatus = "DRAFT" | "ACTIVE" | "PAUSED" | "COMPLETED" | "EXPIRED";
+type LaunchMode = "iframe" | "native";
+type HostMessageType =
+  | "ready"
+  | "height"
+  | "unread-changed"
+  | "session-expired"
+  | "close-requested";
 type RequestStatus = "PENDING" | "IN_PROGRESS" | "WAITING_CUSTOMER" | "RESOLVED" | "CLOSED";
 
 type SessionView = {
@@ -73,8 +81,35 @@ type SessionView = {
   };
   project: { id: string; title: string; status: ProjectStatus };
   context?: { theme?: "light" | "dark" | "system"; locale?: string };
+  /** 服务端按票据判定；旧会话缓存里没有该字段，按 iframe 处理 */
+  launchMode?: LaunchMode;
   parentOrigins: string[];
 };
+
+const NATIVE_SESSION_EXPIRED_MESSAGE =
+  "会话已过期，请关闭此窗口后从应用中重新打开工单。";
+
+/**
+ * 宿主 App 注入的原生桥接（通用设计，不绑定任何一家 App）：
+ * window.AchordConnectNative.postMessage(jsonString)
+ */
+function postNativeBridgeMessage(
+  type: HostMessageType,
+  data: Record<string, unknown>,
+) {
+  const bridge = (window as unknown as {
+    AchordConnectNative?: { postMessage?: (message: string) => void };
+  }).AchordConnectNative;
+  if (typeof bridge?.postMessage !== "function") return false;
+  try {
+    bridge.postMessage(
+      JSON.stringify({ source: "achord-connect-v1", type, ...data }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 type RequestSummary = {
   id: string;
@@ -197,6 +232,8 @@ function ExternalEmbedPortal({
   const connectorLabel =
     connector === "UNIVERSAL" ? "Achord Connect" : "Sub2API";
   const storageKey = `achord-${connector.toLowerCase()}-session:${publicId}`;
+  // 会话过期会删掉 storageKey，mode 单独记：过期后刷新仍按 native 提示并提供关闭按钮
+  const launchModeKey = `${storageKey}:launch-mode`;
   const [session, setSession] = useState<SessionView | null>(null);
   const [streamReady, setStreamReady] = useState(false);
   const [list, setList] = useState<RequestListView | null>(null);
@@ -212,6 +249,15 @@ function ExternalEmbedPortal({
   } | null>(null);
   const [counterpartTyping, setCounterpartTyping] = useState(false);
   const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
+  // 片段里的 mode 只决定兑换时带不带 parentOrigin；拿到会话后以服务端返回的为准
+  const [launchMode, setLaunchMode] = useState<LaunchMode>("iframe");
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const [hostNotice, setHostNotice] = useState<{
+    message: string;
+    href?: string;
+  } | null>(null);
+  const nativeMode = connector === "UNIVERSAL" && launchMode === "native";
+  const nativeModeRef = useRef(false);
   const tokenRef = useRef("");
   const detailIdRef = useRef<string | null>(null);
   const sessionIdRef = useRef(createSessionId());
@@ -239,7 +285,12 @@ function ExternalEmbedPortal({
   }, [locale]);
 
   const postParentMessage = useCallback(
-    (type: "ready" | "height" | "unread-changed" | "session-expired", data: Record<string, unknown> = {}) => {
+    (type: HostMessageType, data: Record<string, unknown> = {}) => {
+      if (nativeModeRef.current) {
+        // 顶层窗口没有父页面；高度只对 iframe 有意义
+        if (type !== "height") postNativeBridgeMessage(type, data);
+        return;
+      }
       const targetOrigin = parentOriginRef.current;
       if (!targetOrigin || window.parent === window) return;
       window.parent.postMessage(
@@ -249,6 +300,20 @@ function ExternalEmbedPortal({
     },
     [],
   );
+
+  const markSessionExpired = useCallback(() => {
+    postParentMessage("session-expired");
+    if (nativeModeRef.current) setSessionExpired(true);
+  }, [postParentMessage]);
+
+  const requestClose = useCallback(() => {
+    if (postNativeBridgeMessage("close-requested", {})) return;
+    window.close();
+    // 不是脚本打开的窗口（多数 WebView / 系统浏览器标签页）关不掉
+    window.setTimeout(() => {
+      if (!window.closed) setHostNotice({ message: "请直接关闭此窗口" });
+    }, 300);
+  }, []);
 
   const api = useCallback(async <T,>(path: string, init?: RequestInit) => {
     const response = await fetch(path, {
@@ -267,12 +332,12 @@ function ExternalEmbedPortal({
     if (!response.ok || payload.data === undefined) {
       if (response.status === 401 || response.status === 403) {
         sessionStorage.removeItem(storageKey);
-        postParentMessage("session-expired");
+        markSessionExpired();
       }
       throw new Error(payload.error?.message || "请求失败");
     }
     return payload.data;
-  }, [postParentMessage, storageKey]);
+  }, [markSessionExpired, storageKey]);
 
   const loadList = useCallback(async () => {
     const next = await api<RequestListView>("/api/v1/embed/requests");
@@ -307,7 +372,17 @@ function ExternalEmbedPortal({
         const userId = params.get("user_id");
         const srcHost = params.get("src_host") ?? undefined;
         const launchTicket = fragment.get("ticket");
+        const requestedNative =
+          connector === "UNIVERSAL" && fragment.get("mode") === "native";
         window.history.replaceState({}, "", window.location.pathname);
+        const rememberedNative =
+          connector === "UNIVERSAL" &&
+          !launchTicket &&
+          sessionStorage.getItem(launchModeKey) === "native";
+        if (requestedNative || rememberedNative) {
+          nativeModeRef.current = true;
+          setLaunchMode("native");
+        }
         const parentOrigin = [
           document.referrer,
           window.location.ancestorOrigins?.[0] ?? "",
@@ -321,7 +396,12 @@ function ExternalEmbedPortal({
             }
           })
           .find(Boolean);
-        if (connector === "UNIVERSAL" && launchTicket && !parentOrigin) {
+        if (
+          connector === "UNIVERSAL" &&
+          launchTicket &&
+          !requestedNative &&
+          !parentOrigin
+        ) {
           throw new Error("无法确认 iframe 宿主来源，请返回原系统重新进入");
         }
         let nextSession: SessionView;
@@ -338,7 +418,9 @@ function ExternalEmbedPortal({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(
               connector === "UNIVERSAL"
-                ? { publicId, ticket: launchTicket, parentOrigin }
+                ? requestedNative
+                  ? { publicId, ticket: launchTicket }
+                  : { publicId, ticket: launchTicket, parentOrigin }
                 : { publicId, userId, token: sourceToken, srcHost },
             ),
             cache: "no-store",
@@ -355,10 +437,26 @@ function ExternalEmbedPortal({
           sessionStorage.setItem(storageKey, JSON.stringify(nextSession));
         } else {
           const stored = sessionStorage.getItem(storageKey);
+          if (!stored && rememberedNative) {
+            if (!cancelled) {
+              setSessionExpired(true);
+              setLoading(false);
+            }
+            return;
+          }
           if (!stored) throw new Error("请返回原系统后重新进入");
           nextSession = JSON.parse(stored) as SessionView;
         }
         if (cancelled) return;
+        const sessionMode: LaunchMode =
+          connector === "UNIVERSAL" && nextSession.launchMode === "native"
+            ? "native"
+            : "iframe";
+        nativeModeRef.current = sessionMode === "native";
+        setLaunchMode(sessionMode);
+        if (connector === "UNIVERSAL") {
+          sessionStorage.setItem(launchModeKey, sessionMode);
+        }
         tokenRef.current = nextSession.token;
         const candidates = [
           document.referrer,
@@ -387,10 +485,10 @@ function ExternalEmbedPortal({
     }
     void bootstrap();
     return () => { cancelled = true; };
-  }, [connector, publicId, storageKey]);
+  }, [connector, launchModeKey, publicId, storageKey]);
 
   useEffect(() => {
-    if (!session) return;
+    if (!session || sessionExpired) return;
     const abort = new AbortController();
     const cursorKey = `${storageKey}:sse-cursor`;
     // New browser sessions start from the latest stream position (not 0) to avoid
@@ -425,7 +523,7 @@ function ExternalEmbedPortal({
             setSession(null);
             setLoading(false);
             setError("会话已失效，请返回原系统后重新进入");
-            postParentMessage("session-expired");
+            markSessionExpired();
             return;
           }
           if (!response.ok || !response.body) throw new Error("实时连接失败");
@@ -507,7 +605,19 @@ function ExternalEmbedPortal({
       // Defer so unmount cleanup does not trip set-state-in-effect lint.
       queueMicrotask(() => setStreamReady(false));
     };
-  }, [loadDetail, loadList, postParentMessage, session, storageKey]);
+  }, [loadDetail, loadList, markSessionExpired, session, sessionExpired, storageKey]);
+
+  useEffect(() => {
+    // native 窗口可能长时间开着且没有操作：到期主动提示，而不是等下一次请求 401
+    if (!session || !nativeMode) return;
+    const remaining = Date.parse(session.expiresAt) - Date.now();
+    if (!Number.isFinite(remaining)) return;
+    const timer = window.setTimeout(() => {
+      sessionStorage.removeItem(storageKey);
+      markSessionExpired();
+    }, Math.max(0, remaining));
+    return () => window.clearTimeout(timer);
+  }, [markSessionExpired, nativeMode, session, storageKey]);
 
   useEffect(() => {
     if (!session) return;
@@ -659,6 +769,29 @@ function ExternalEmbedPortal({
   }, [detailRequestId]);
 
   async function downloadAttachment(file: ChatAttachment) {
+    if (nativeMode) {
+      // 宿主 App 会把新窗口交给系统浏览器；那边带不了 Embed 头，用短期签名链接
+      try {
+        const link = await api<{ url: string }>(
+          `/api/v1/embed/attachments/${file.id}/download-link`,
+          { method: "POST" },
+        );
+        const href = new URL(link.url, window.location.origin).toString();
+        const opened = window.open(href, "_blank");
+        if (opened) opened.opener = null;
+        // 宿主拦截新窗口时 window.open 也可能返回 null，这里不当作失败，只给一个兜底入口
+        setHostNotice({
+          message: `正在打开 ${file.originalName}，没有反应时可点击右侧按钮`,
+          href,
+        });
+      } catch (downloadError) {
+        setHostNotice({
+          message:
+            downloadError instanceof Error ? downloadError.message : "附件下载失败",
+        });
+      }
+      return;
+    }
     const response = await fetch(`/api/v1/embed/attachments/${file.id}`, {
       headers: { Authorization: `Embed ${tokenRef.current}` },
     });
@@ -705,6 +838,57 @@ function ExternalEmbedPortal({
     reeditExpiresAt: message.reeditExpiresAt,
   })) ?? [], [detail]);
 
+  const nativeCloseButton = nativeMode ? (
+    <Button
+      color="inherit"
+      startIcon={<CloseOutlinedIcon />}
+      onClick={requestClose}
+      sx={{ flexShrink: 0 }}
+    >
+      关闭
+    </Button>
+  ) : null;
+  const hostSnackbar = (
+    <Snackbar
+      open={Boolean(hostNotice)}
+      autoHideDuration={hostNotice?.href ? 8000 : 4000}
+      onClose={(_event, reason) => {
+        if (reason !== "clickaway") setHostNotice(null);
+      }}
+      message={hostNotice?.message}
+      action={
+        hostNotice?.href ? (
+          <Button
+            color="inherit"
+            size="small"
+            component="a"
+            href={hostNotice.href}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={() => setHostNotice(null)}
+          >
+            打开
+          </Button>
+        ) : null
+      }
+    />
+  );
+
+  if (nativeMode && sessionExpired) {
+    return (
+      <ThemeProvider theme={embedTheme}>
+        <Container maxWidth="sm" sx={{ py: 6 }}>
+          <Stack spacing={2} sx={{ alignItems: "flex-start" }}>
+            <Alert severity="warning" sx={{ alignSelf: "stretch" }}>
+              {NATIVE_SESSION_EXPIRED_MESSAGE}
+            </Alert>
+            {nativeCloseButton}
+          </Stack>
+        </Container>
+        {hostSnackbar}
+      </ThemeProvider>
+    );
+  }
   if (loading) {
     return (
       <ThemeProvider theme={embedTheme}>
@@ -716,8 +900,14 @@ function ExternalEmbedPortal({
     return (
       <ThemeProvider theme={embedTheme}>
         <Container maxWidth="sm" sx={{ py: 6 }}>
-          <Alert severity="error">{error || "请返回原系统后重新进入"}</Alert>
+          <Stack spacing={2} sx={{ alignItems: "flex-start" }}>
+            <Alert severity="error" sx={{ alignSelf: "stretch" }}>
+              {error || "请返回原系统后重新进入"}
+            </Alert>
+            {nativeCloseButton}
+          </Stack>
         </Container>
+        {hostSnackbar}
       </ThemeProvider>
     );
   }
@@ -743,6 +933,7 @@ function ExternalEmbedPortal({
               {session.contact.name} · {connectorLabel}
             </Typography>
           </Box>
+          {nativeCloseButton}
         </Toolbar>
       </AppBar>
 
@@ -924,6 +1115,7 @@ function ExternalEmbedPortal({
           if (!options?.keepOpen) setCreateOpen(false);
         }}
       />
+      {hostSnackbar}
     </Box>
     </ThemeProvider>
   );

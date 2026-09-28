@@ -176,11 +176,20 @@ describe("Achord Connect v1", () => {
     ).toThrow();
   });
 
-  it("Universal 票据兑换必须提交父页面 Origin", () => {
+  it("兑换请求的父页面 Origin 可省略（native 票据），但不能是空串", () => {
+    // 是否必须带 parentOrigin 由服务端按票据上存的 launchMode 决定，
+    // iframe 票据缺失时的拒绝见 universal-connector.integration.ts
+    expect(
+      universalExchangeSchema.parse({
+        publicId: "public-id",
+        ticket: "act_1234567890123456",
+      }).parentOrigin,
+    ).toBeUndefined();
     expect(() =>
       universalExchangeSchema.parse({
         publicId: "public-id",
         ticket: "act_1234567890123456",
+        parentOrigin: "",
       }),
     ).toThrow();
     expect(
@@ -190,6 +199,34 @@ describe("Achord Connect v1", () => {
         parentOrigin: "https://app.example.test",
       }).parentOrigin,
     ).toBe("https://app.example.test");
+  });
+
+  it("票据 context.launchMode 只接受 iframe / native", () => {
+    const parsed = universalLaunchTicketSchema.parse({
+      user: { id: "u", name: "外部用户" },
+      context: { launchMode: "native" },
+    });
+    expect(parsed.context.launchMode).toBe("native");
+    expect(
+      universalLaunchTicketSchema.parse({ user: { id: "u", name: "外部用户" } })
+        .context.launchMode,
+    ).toBeUndefined();
+    expect(() =>
+      universalLaunchTicketSchema.parse({
+        user: { id: "u", name: "外部用户" },
+        context: { launchMode: "popup" },
+      }),
+    ).toThrow();
+  });
+
+  it("只开 Native Launch 的连接可以不填 Origin", () => {
+    expect(
+      universalConnectionSchema.parse({
+        name: "原生 App",
+        allowedOrigins: [],
+        allowNativeLaunch: true,
+      }).allowedOrigins,
+    ).toEqual([]);
   });
 
   it("限制外部用户资料值", () => {

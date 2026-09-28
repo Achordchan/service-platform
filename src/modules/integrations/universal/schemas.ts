@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  UNIVERSAL_LAUNCH_MODES,
   UNIVERSAL_MAX_PROFILE_FIELDS,
   UNIVERSAL_WEBHOOK_EVENTS,
 } from "@/modules/integrations/universal/constants";
@@ -20,7 +21,10 @@ export type UniversalProfileField = z.infer<
 
 export const universalConnectionSchema = z.object({
   name: z.string().trim().min(1).max(100),
-  allowedOrigins: z.array(z.string().trim().min(1).max(2048)).min(1).max(5),
+  // 只开 Native Launch 的连接可以不配 Origin；「至少一项」在服务层结合现值校验
+  allowedOrigins: z.array(z.string().trim().min(1).max(2048)).max(5),
+  // 省略时保留现值，旧页面保存配置不会把已开启的 Native Launch 关掉
+  allowNativeLaunch: z.boolean().optional(),
   profileFields: z
     .array(universalProfileFieldSchema)
     .max(UNIVERSAL_MAX_PROFILE_FIELDS)
@@ -56,6 +60,7 @@ export const universalLaunchTicketSchema = z.object({
       theme: z.enum(["light", "dark", "system"]).optional(),
       locale: z.string().trim().min(2).max(20).optional(),
       returnOrigin: z.string().trim().min(1).max(2048).optional(),
+      launchMode: z.enum(UNIVERSAL_LAUNCH_MODES).optional(),
     })
     .default({}),
 });
@@ -63,5 +68,10 @@ export const universalLaunchTicketSchema = z.object({
 export const universalExchangeSchema = z.object({
   publicId: z.string().trim().min(1).max(128),
   ticket: z.string().trim().min(16).max(512),
-  parentOrigin: z.string().trim().min(1).max(2048),
+  // native 票据不需要；iframe 票据缺失时由服务层拒绝
+  parentOrigin: z.string().trim().min(1).max(2048).optional(),
+});
+
+export const universalContactUnreadParamsSchema = z.object({
+  externalUserId: z.string().trim().min(1).max(191),
 });
