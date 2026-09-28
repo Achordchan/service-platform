@@ -162,7 +162,7 @@ describe("API 意外错误响应", () => {
       {
         name: "Error",
         message:
-          "provider rejected [REDACTED] for [EMAIL] at [REDACTED] phone [NUMBER] value '[REDACTED]'",
+          "provider rejected token=[REDACTED] [REDACTED] [EMAIL] [REDACTED] [REDACTED] [REDACTED] [NUMBER] [REDACTED] '[REDACTED]'",
       },
     ]);
     for (const secret of ["abc123", "bob@example.com", "key=zzz", "13800138000", "secret input"]) {
@@ -228,6 +228,10 @@ describe("API 意外错误响应", () => {
     ["值在下一行", "config invalid, password:\nhunter22 expired", "hunter22"],
     ["中文键名", "登录失败，密码： hunter2 错误", "hunter2"],
     ["缩写键名", "pwd = s3cr3t rejected", "s3cr3t"],
+    ["键值连写的多词口令", "login failed: password=correct horse battery staple", "horse"],
+    ["中文键值连写", "密码：正确的马 电池 订书钉", "电池"],
+    ["纯符号口令", "authentication failed: pwd -> !@#$%^&*", "!@#$%^&*"],
+    ["全是标点的口令", "authentication failed: pwd = !!!?", "!!!"],
   ])("键名和值之间隔着单独的分隔符也会打码：%s", (_label, message, secret) => {
     const { logged } = logFor(new Error(message));
     expect(logged).not.toContain(secret);

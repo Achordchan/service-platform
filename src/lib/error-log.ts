@@ -29,11 +29,15 @@ const QUOTED_SPAN =
 const SENSITIVE_WORD =
   /^[A-Za-z0-9_-]*(?:password|passwd|pwd|passphrase|passcode|otp|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*$|(?:密码|口令|令牌|密钥|秘钥|私钥|验证码|凭据|凭证)$/i;
 const AUTH_SCHEME_WORD = /^(?:bearer|basic|embed|digest)$/i;
+// 打码状态下唯一放行的纯符号词：键和值之间的分隔符
+const VALUE_SEPARATOR = /^(?:=|:|->|=>|\||-|—|：)$/;
 // 普通单词：字母（含中文）、数字、下划线、横杠、点，可带英文撇号（can't）
 const PLAIN_WORD = /^[\p{L}\p{M}\p{N}_.-]+(?:['’][\p{L}]+)?$/u;
 const LEADING_PUNCTUATION = /^[(（【]+/;
 const TRAILING_PUNCTUATION = /[,.;:!?，。；：！？)）】]+$/;
 const CLAUSE_END = /[,.;!?，。；！？]/;
+const INLINE_SENSITIVE_KEY =
+  /^([A-Za-z0-9_-]*(?:password|passwd|pwd|passphrase|passcode|otp|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*|[\p{L}]*(?:密码|口令|令牌|密钥|秘钥|私钥|验证码|凭据|凭证))(["']?\s*[:=：]\s*)\S/iu;
 const PLACEHOLDERS = new Set([
   "[REDACTED]",
   '"[REDACTED]"',
@@ -152,10 +156,22 @@ function redactWords(value: string) {
       const trailing = part.slice(leading.length).match(TRAILING_PUNCTUATION)?.[0] ?? "";
       const core = part.slice(leading.length, part.length - trailing.length);
       const endsClause = CLAUSE_END.test(trailing);
-      if (!/[\p{L}\p{N}]/u.test(core)) {
-        // 纯符号（含空）不可能藏凭据，原样保留
-        if (endsClause) redacting = false;
+      // 整个词都是标点（pwd = !!!）：打码状态下还没打过值，就把它当作值
+      if (!core && redacting && !consumed && !/^[,;.。，；:：]+$/.test(part)) {
+        consumed = true;
+        return "[REDACTED]";
+      }
+      if (!core || (!/[\p{L}\p{N}]/u.test(core) && (!redacting || VALUE_SEPARATOR.test(core)))) {
+        // 分隔符、以及不在打码状态下的纯符号原样保留；打码状态下的其余纯符号当作值
+        if (endsClause && consumed) redacting = false;
         return part;
+      }
+      // 键值连写（password=correct horse …）：键名本身开启打码，值从这里开始
+      const inlineKey = core.match(INLINE_SENSITIVE_KEY);
+      if (inlineKey && !redacting) {
+        redacting = !endsClause;
+        consumed = true;
+        return `${leading}${inlineKey[1]}${inlineKey[2]}[REDACTED]${trailing}`;
       }
       let safe: string;
       if (PLACEHOLDERS.has(core)) {
