@@ -300,7 +300,7 @@ export async function createNotification(
       )
     `;
     if (!inserted) {
-      throw new Error("请求通知写入失败");
+      throw new LoggableError("请求通知写入失败");
     }
     notification = {
       id: inserted.id,
