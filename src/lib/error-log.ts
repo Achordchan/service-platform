@@ -2,7 +2,6 @@
 type ErrorRecord = Record<string, unknown>;
 
 const MAX_STACK_FRAMES = 4;
-const MAX_MESSAGE_LENGTH = 300;
 const MAX_CAUSE_DEPTH = 2;
 // scheme://user:password@host —— 覆盖 postgres / redis / amqp / http 等所有连接串
 // userinfo 取到最后一个 @：密码里可以有未转义的 @（p@ss@host），PostgreSQL 按最后一个分隔
@@ -22,32 +21,31 @@ const PREFIXED_KEY_VALUE =
   /\b(?:sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abpr]|AKIA)[-_]?[A-Za-z0-9_-]{16,}/g;
 // 7 位以上数字，含带空格或横杠分组的手机号（138-0013-8000）
 const LONG_NUMBER = /(?<![\w.])\+?\d(?:[\s-]?\d){6,}(?![\w.])/g;
-// 引号串识别转义（\" 不算结束），嵌套序列化的 JSON 整段算一个串；可跨行。
-// 单引号两侧不能是字母数字，免得把 can't / isn't 当引号
-const QUOTED_SPAN =
-  /"((?:[^"\\]|\\[\s\S])*)"|(?<![A-Za-z0-9])'((?:[^'\\]|\\[\s\S])*)'(?![A-Za-z0-9])/g;
-const SENSITIVE_WORD =
-  /^[A-Za-z0-9_-]*(?:password|passwd|pwd|passphrase|passcode|otp|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*$|(?:密码|口令|令牌|密钥|秘钥|私钥|验证码|凭据|凭证)$/i;
-const AUTH_SCHEME_WORD = /^(?:bearer|basic|embed|digest)$/i;
-// 打码状态下唯一放行的纯符号词：键和值之间的分隔符
-const VALUE_SEPARATOR = /^(?:=|:|->|=>|\||-|—|：)$/;
-// 普通单词：字母（含中文）、数字、下划线、横杠、点，可带英文撇号（can't）
-const PLAIN_WORD = /^[\p{L}\p{M}\p{N}_.-]+(?:['’][\p{L}]+)?$/u;
-const LEADING_PUNCTUATION = /^[(（【]+/;
-const TRAILING_PUNCTUATION = /[,.;:!?，。；：！？)）】]+$/;
-const CLAUSE_END = /[,.;!?，。；！？]/;
-const INLINE_SENSITIVE_KEY =
-  /^([A-Za-z0-9_-]*(?:password|passwd|pwd|passphrase|passcode|otp|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*|[\p{L}]*(?:密码|口令|令牌|密钥|秘钥|私钥|验证码|凭据|凭证))(["']?\s*[:=：]\s*)\S/iu;
-const PLACEHOLDERS = new Set([
-  "[REDACTED]",
-  '"[REDACTED]"',
-  "'[REDACTED]'",
-  "[NUMBER]",
-  "[EMAIL]",
-]);
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
-const SQL_OBJECT_KEYWORD =
-  /\b(table|relation|column|constraint|index|type|function|policy|schema|sequence|view|trigger|role|database|model|field)\s*$/i;
+const ID = String.raw`[A-Za-z_][A-Za-z0-9_.]{0,127}`;
+/**
+ * 数据库报错原文只在完整匹配这些 PostgreSQL 模板时才记录：模板里出现的只有
+ * 标识符（表、列、约束名），用户数据只会出现在 DETAIL 或引号值里，而这些都不匹配。
+ * 最后一条是我们自己 SQL 函数里 RAISE EXCEPTION 的固定英文短语（只含小写字母和空格）。
+ */
+const DATABASE_MESSAGE_TEMPLATES = [
+  `new row violates row-level security policy (?:"${ID}" )?for table "${ID}"`,
+  `permission denied for (?:table|relation|function|schema|sequence|view) ${ID}`,
+  `duplicate key value violates unique constraint "${ID}"`,
+  `insert or update on table "${ID}" violates foreign key constraint "${ID}"`,
+  `update or delete on table "${ID}" violates foreign key constraint "${ID}" on table "${ID}"`,
+  `null value in column "${ID}"(?: of relation "${ID}")? violates not-null constraint`,
+  `new row for relation "${ID}" violates check constraint "${ID}"`,
+  `relation "${ID}" does not exist`,
+  `column "?${ID}"?(?: of relation "${ID}")? does not exist`,
+  `function ${ID}\\([A-Za-z0-9_ ,."[\\]]*\\) does not exist`,
+  `deadlock detected`,
+  `could not serialize access due to [a-z ]+`,
+  `canceling statement due to [a-z ]+`,
+  `[a-z][a-z ]{2,80}`,
+].map((template) => new RegExp(`^${template}$`));
+// 应用自己写的报错：只含中文、标点和空格，没有任何可能来自外部输入的字母数字
+const APP_MESSAGE = /^[\p{Script=Han}\p{P}\p{Zs}]{1,200}$/u;
 
 function asRecord(value: unknown): ErrorRecord | null {
   return typeof value === "object" && value !== null
@@ -103,121 +101,21 @@ export function redactPath(pathname: string) {
 }
 
 /**
- * 引号串一律视为可能的用户输入，只保留紧跟 SQL 关键词的标识符（table "Notification"）。
- * 没有配对的双引号从它开始到结尾整段打码（截断或残缺的消息）。
+ * 错误消息默认不记：第三方和驱动返回的原文可能夹带凭据或用户数据，
+ * 靠规则脱敏永远补不全。只放行应用自己写的中文报错。
  */
-function redactQuotedSpans(value: string) {
-  const spans: string[] = [];
-  // 先把每个引号串换成占位符，剩下的双引号就是没有配对的
-  const masked = value.replace(
-    QUOTED_SPAN,
-    (match, double: string | undefined, _single: string | undefined, offset: number, whole: string) => {
-      const kept =
-        double !== undefined &&
-        SQL_IDENTIFIER.test(double) &&
-        SQL_OBJECT_KEYWORD.test(whole.slice(0, offset));
-      spans.push(kept ? match : double !== undefined ? '"[REDACTED]"' : "'[REDACTED]'");
-      return `\u0000${spans.length - 1}\u0000`;
-    },
-  );
-  const dangling = masked.indexOf('"');
-  const truncated =
-    dangling === -1 ? masked : `${masked.slice(0, dangling)}[REDACTED]`;
-  return truncated.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => spans[Number(index)]);
+function appMessage(error: unknown) {
+  if (!(error instanceof Error)) return undefined;
+  const message = error.message.trim();
+  return APP_MESSAGE.test(message) ? message : undefined;
 }
 
-function looksLikeSecret(word: string) {
-  if (!/^[\x00-\x7F]+$/.test(word)) return false;
-  const hasLetter = /[A-Za-z]/.test(word);
-  const hasDigit = /\d/.test(word);
-  return word.length > 32 || (hasLetter && hasDigit && word.length >= 8);
-}
-
-/**
- * 逐词白名单：只有普通单词、已审过的 SQL 标识符和打码占位能留下；
- * 带 @ :// = / \\ {} % 等符号的词（URL、连接串、JSON 片段、键值对）整个打码。
- * 敏感键名、认证 scheme 之后的词打码；7 位以上纯数字记成 [NUMBER]。
- */
-function redactWords(value: string) {
-  // 敏感键名 / 认证 scheme 之后一直打码到本小句结束（逗号、分号、句号或换行），
-  // 中间单独的 = : -> 之类符号不算值，不能把打码状态"用掉"
-  let redacting = false;
-  // 键名后至少要打掉一个词，换行才能结束打码（password:\nhunter2）
-  let consumed = false;
-  return value
-    .split(/(\s+)/)
-    .map((part) => {
-      if (!part) return part;
-      if (/^\s+$/.test(part)) {
-        if (/[\r\n]/.test(part) && consumed) redacting = false;
-        return part;
-      }
-      const leading = part.match(LEADING_PUNCTUATION)?.[0] ?? "";
-      const trailing = part.slice(leading.length).match(TRAILING_PUNCTUATION)?.[0] ?? "";
-      const core = part.slice(leading.length, part.length - trailing.length);
-      const endsClause = CLAUSE_END.test(trailing);
-      // 整个词都是标点（pwd = !!!）：打码状态下还没打过值，就把它当作值
-      if (!core && redacting && !consumed && !/^[,;.。，；:：]+$/.test(part)) {
-        consumed = true;
-        return "[REDACTED]";
-      }
-      if (!core || (!/[\p{L}\p{N}]/u.test(core) && (!redacting || VALUE_SEPARATOR.test(core)))) {
-        // 分隔符、以及不在打码状态下的纯符号原样保留；打码状态下的其余纯符号当作值
-        if (endsClause && consumed) redacting = false;
-        return part;
-      }
-      // 键值连写（password=correct horse …）：键名本身开启打码，值从这里开始
-      const inlineKey = core.match(INLINE_SENSITIVE_KEY);
-      if (inlineKey && !redacting) {
-        redacting = !endsClause;
-        consumed = true;
-        return `${leading}${inlineKey[1]}${inlineKey[2]}[REDACTED]${trailing}`;
-      }
-      let safe: string;
-      if (PLACEHOLDERS.has(core)) {
-        safe = core;
-      } else if (redacting) {
-        safe = "[REDACTED]";
-        consumed = true;
-      } else if (/^"[A-Za-z_][A-Za-z0-9_.]{0,127}"$/.test(core)) {
-        // 能留到这一步的双引号标识符都已经在 redactQuotedSpans 里过了关键词检查
-        safe = core;
-      } else if (/^\+?\d[\d-]{6,}$/.test(core) && (core.match(/\d/g)?.length ?? 0) >= 7) {
-        safe = "[NUMBER]";
-      } else if (PLAIN_WORD.test(core) && !looksLikeSecret(core)) {
-        safe = core;
-      } else {
-        safe = "[REDACTED]";
-      }
-      if (PLACEHOLDERS.has(core) && redacting) consumed = true;
-      if (endsClause) {
-        redacting = false;
-      } else if (!redacting && (SENSITIVE_WORD.test(core) || AUTH_SCHEME_WORD.test(core))) {
-        redacting = true;
-        consumed = false;
-      }
-      return `${leading}${safe}${trailing}`;
-    })
-    .join("");
-}
-
-/**
- * 错误消息是排查的关键线索（例如 RLS 拒绝时的表名），但可能夹带用户输入和凭据。
- * 默认拒绝：Cookie 头整行、引号串、非普通单词一律打码，只留下可读的句子骨架。
- */
-function safeMessage(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return undefined;
-  const withoutCookies = redactSensitiveText(
-    value.replace(COOKIE_HEADER, "$1$2[REDACTED]"),
-  )
-    // 按空格拆词前先把跨空格/横杠分组的号码（+86 138 0013 8000）整体替换
-    .replace(LONG_NUMBER, "[NUMBER]");
-  const redacted = redactWords(redactQuotedSpans(withoutCookies))
-    .replace(/\s+/g, " ")
-    .trim();
-  return redacted.length > MAX_MESSAGE_LENGTH
-    ? `${redacted.slice(0, MAX_MESSAGE_LENGTH)}…`
-    : redacted;
+function databaseMessage(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const message = value.trim();
+  return DATABASE_MESSAGE_TEMPLATES.some((template) => template.test(message))
+    ? message
+    : undefined;
 }
 
 function safeSqlState(value: unknown) {
@@ -235,7 +133,7 @@ function safeSqlIdentifier(value: unknown) {
 /**
  * Prisma driver adapter 把 PostgreSQL 原始错误放在 DriverAdapterError.cause；
  * 经模型方法抛出时再包一层 PrismaClientKnownRequestError.meta.driverAdapterError。
- * 只取 SQLSTATE、错误类别、标识符和脱敏后的消息，不记 DETAIL（可能带整行数据）。
+ * 只取 SQLSTATE、错误类别、标识符和命中模板的消息；DETAIL、HINT 一律不记。
  */
 function databaseDiagnostic(error: unknown) {
   const record = asRecord(error);
@@ -252,30 +150,27 @@ function databaseDiagnostic(error: unknown) {
   const diagnostic = {
     kind: safeIdentifier(payload.kind),
     sqlState: safeSqlState(payload.originalCode) ?? safeSqlState(payload.code),
-    message: safeMessage(payload.originalMessage ?? payload.message),
+    message: databaseMessage(payload.originalMessage ?? payload.message),
     table: safeSqlIdentifier(payload.table),
     column: safeSqlIdentifier(payload.column),
     constraint: safeSqlIdentifier(constraint?.index),
     constraintFields: constraintFields.length ? constraintFields : undefined,
-    hint: safeMessage(payload.hint),
   };
   return Object.fromEntries(
     Object.entries(diagnostic).filter(([, value]) => value !== undefined),
   );
 }
 
-// Prisma 自身的错误消息会回显查询参数（可能含用户数据），只用上面的结构化字段
-function isPrismaClientError(error: unknown) {
-  return error instanceof Error && error.name.startsWith("PrismaClient");
-}
-
 function causeChain(error: unknown) {
-  const chain: Array<{ name: string; message?: string }> = [];
+  const chain: Array<{ name: string; message?: string; database?: Record<string, unknown> }> = [];
   let current = error instanceof Error ? error.cause : undefined;
   while (current instanceof Error && chain.length < MAX_CAUSE_DEPTH) {
+    const message = appMessage(current);
+    const database = databaseDiagnostic(current);
     chain.push({
       name: safeIdentifier(current.name) ?? "Error",
-      ...(isPrismaClientError(current) ? {} : { message: safeMessage(current.message) }),
+      ...(message ? { message } : {}),
+      ...(database && Object.keys(database).length ? { database } : {}),
     });
     current = current.cause;
   }
@@ -345,8 +240,9 @@ function errorCategory(
 }
 
 /**
- * 任意错误的可记录描述：错误消息与数据库诊断经脱敏后保留，请求体、凭据和
- * 请求头从不进入。API、后台任务和启动流程共用，保证只凭日志就能定位原因。
+ * 任意错误的可记录描述：错误类型、分类、Prisma 错误码、数据库诊断（SQLSTATE、
+ * 标识符、命中模板的报错原文）、应用自己的中文报错和代码位置。第三方返回的错误
+ * 原文、请求体、凭据和请求头从不进入。API、后台任务和启动流程共用。
  */
 export function describeErrorForLog(error: unknown) {
   const name =
@@ -355,11 +251,7 @@ export function describeErrorForLog(error: unknown) {
       : "NonErrorThrown";
   const diagnostic = safePrismaDiagnostic(error);
   const database = databaseDiagnostic(error);
-  const message = isPrismaClientError(error)
-    ? undefined
-    : error instanceof Error
-      ? safeMessage(error.message)
-      : safeMessage(String(error));
+  const message = appMessage(error);
   const causes = causeChain(error);
   return {
     name,
