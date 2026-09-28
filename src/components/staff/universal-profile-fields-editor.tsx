@@ -92,37 +92,56 @@ function headerRoleOf(cell: string) {
   return ownValue(headerRoles, cell.toLowerCase().replace(/\s+/g, ""));
 }
 
-/** 整行都是表头词（且含 key 列）才算表头，返回每列的角色 */
-function parseHeader(cells: string[]): ColumnRole[] | null {
-  const roles = cells.map(headerRoleOf);
-  return roles.every(Boolean) && roles.includes("key")
-    ? (roles as ColumnRole[])
+/**
+ * 把列按角色切成组：同一角色再次出现就开始新的一组，所以列顺序不限
+ * （key|名称、名称|key|类型、key|名称|key|名称 都行）。每组必须恰好有一个 key 列。
+ */
+function groupColumns(roles: ColumnRole[]): number[][] | null {
+  const groups: number[][] = [];
+  let current: number[] = [];
+  for (const [index, role] of roles.entries()) {
+    if (current.some((column) => roles[column] === role)) {
+      groups.push(current);
+      current = [];
+    }
+    current.push(index);
+  }
+  if (current.length) groups.push(current);
+  return groups.every((group) => group.some((column) => roles[column] === "key"))
+    ? groups
     : null;
 }
 
+/** 整行都是表头词且能切成合法列组才算表头，返回每列的角色 */
+function parseHeader(cells: string[]): ColumnRole[] | null {
+  const roles = cells.map(headerRoleOf);
+  if (!roles.every(Boolean)) return null;
+  return groupColumns(roles as ColumnRole[]) ? (roles as ColumnRole[]) : null;
+}
+
+/** 行尾的空单元格可多可少（表格软件复制常带多余 Tab），按列数补齐或截掉 */
+function fitCells(cells: string[], length: number) {
+  if (cells.length > length && cells.slice(length).some(Boolean)) return null;
+  return Array.from({ length }, (_, index) => cells[index] ?? "");
+}
+
 /** 按列角色切组解析一行；某组不合规则整行作废（返回 null），整组为空的直接跳过 */
-function parseRowWithRoles(cells: string[], roles: ColumnRole[]) {
-  if (cells.length !== roles.length) return null;
+function parseRowWithRoles(rawCells: string[], roles: ColumnRole[]) {
+  const cells = fitCells(rawCells, roles.length);
+  const groups = groupColumns(roles);
+  if (!cells || !groups) return null;
   const fields: ProfileField[] = [];
-  let group: { key?: string; label?: string; type?: string; filled: boolean } | null = null;
-  const flush = () => {
-    if (!group?.filled) return true;
-    if (!isKey(group.key)) return false;
-    const type = group.type ? ownValue(typeAliases, group.type) : "text";
-    if (!type) return false;
-    fields.push({ key: group.key, label: group.label ?? "", type });
-    return true;
-  };
-  for (const [index, role] of roles.entries()) {
-    if (role === "key") {
-      if (!flush()) return null;
-      group = { filled: false };
-    }
-    if (!group) return null;
-    group[role] = cells[index];
-    if (cells[index]) group.filled = true;
+  for (const group of groups) {
+    if (group.every((column) => !cells[column])) continue;
+    const value = (role: ColumnRole) =>
+      cells[group.find((column) => roles[column] === role) ?? -1] ?? "";
+    const key = value("key");
+    const typeCell = value("type");
+    const type = typeCell ? ownValue(typeAliases, typeCell) : "text";
+    if (!isKey(key) || !type) return null;
+    fields.push({ key, label: value("label"), type });
   }
-  return flush() ? fields : null;
+  return fields;
 }
 
 function rolesForWidth(width: 2 | 3, length: number): ColumnRole[] {
@@ -131,18 +150,29 @@ function rolesForWidth(width: 2 | 3, length: number): ColumnRole[] {
 }
 
 /**
- * 无表头的表格行：每组固定 2 列（key、名称）或 3 列（key、名称、类型），
- * 整行只能按其中一种宽度完整合法地切开才采用；两种都行（有歧义）或都不行时不猜。
+ * 无表头的表格行：每组固定 2 列（key、名称）或 3 列（key、名称、类型，最后一组可省类型），行尾空单元格不计。
+ * 只有一种宽度能完整合法地切开、或两种切法结果相同时才采用；有歧义或都不行时不猜。
  */
-function parseRowWithoutHeader(cells: string[]) {
+function parseRowWithoutHeader(rawCells: string[]) {
+  const cells = [...rawCells];
+  while (cells.length && !cells[cells.length - 1]) cells.pop();
   if (cells.length === 1) {
     return isKey(cells[0]) ? [{ key: cells[0], label: "", type: "text" as const }] : null;
   }
+  // 2 列一组必须整除；3 列一组时最后一组可以省掉类型列
   const candidates = ([2, 3] as const)
-    .filter((width) => cells.length % width === 0)
-    .map((width) => parseRowWithRoles(cells, rolesForWidth(width, cells.length)))
+    .filter((width) =>
+      width === 2 ? cells.length % 2 === 0 : cells.length % 3 !== 1,
+    )
+    .map((width) =>
+      parseRowWithRoles(
+        cells,
+        rolesForWidth(width, Math.ceil(cells.length / width) * width),
+      ),
+    )
     .filter((fields): fields is ProfileField[] => fields !== null && fields.length > 0);
-  return candidates.length === 1 ? candidates[0] : null;
+  const distinct = new Set(candidates.map((fields) => JSON.stringify(fields)));
+  return distinct.size === 1 ? candidates[0] : null;
 }
 
 /** 纯文本行：一行一个字段，「key 名称 [类型]」，名称可含空格 */

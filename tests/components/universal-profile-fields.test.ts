@@ -168,6 +168,55 @@ describe("资料字段批量粘贴解析", () => {
     });
   });
 
+  it("表头里 key 列不在第一列时按角色分组", () => {
+    const table = [
+      "| 显示名称 | 字段名 | 类型 |",
+      "| --- | --- | --- |",
+      "| 客户端版本 | app_version | 文本 |",
+      "| 注册时间 | since | date |",
+      "",
+      "名称\tkey\t名称\tkey",
+      "系统\tos\t套餐\tplan",
+    ].join("\n");
+    expect(parseProfileFieldText(table)).toEqual({
+      fields: [
+        text("app_version", "客户端版本"),
+        { key: "since", label: "注册时间", type: "date" },
+        text("os", "系统"),
+        text("plan", "套餐"),
+      ],
+      skippedLines: [],
+      headerLines: [1, 6],
+    });
+  });
+
+  it("行尾多余或缺少的空单元格按表头补齐，多出非空单元格的行跳过", () => {
+    expect(
+      parseProfileFieldText(
+        [
+          "key\tlabel\ttype",
+          "os\t系统\t\t",
+          "plan\t套餐",
+          "level\t等级\tnumber\textra",
+          "",
+          "locale\t系统语言\t",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      fields: [text("os", "系统"), text("plan", "套餐"), text("locale", "系统语言")],
+      skippedLines: [4],
+      headerLines: [1],
+    });
+  });
+
+  it("每组必须恰好一个 key 列，否则不当表头", () => {
+    expect(parseProfileFieldText("label\tkey\tlabel\nos\t系统\tx")).toEqual({
+      fields: [],
+      skippedLines: [1, 2],
+      headerLines: [],
+    });
+  });
+
   it("合并时覆盖同名 key、追加新 key 并清掉空行", () => {
     const result = mergeProfileFields(
       [
