@@ -4,14 +4,21 @@ type ErrorRecord = Record<string, unknown>;
 const MAX_STACK_FRAMES = 4;
 const MAX_MESSAGE_LENGTH = 300;
 const MAX_CAUSE_DEPTH = 2;
-const SENSITIVE_LOG_VALUE = /\b(password|passphrase|token|secret|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi;
-const BEARER_VALUE = /\b(bearer|basic|embed)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
+// 顺序有讲究：先整段抹掉认证头和 URL 里的账号密码，再做通用键值替换；
+// 反过来的话 `Authorization: Bearer xxx` 只会吃掉 `Bearer`，令牌本身漏进日志
+const AUTH_HEADER_VALUE =
+  /\b((?:proxy-)?authorization)["']?\s*[:=]\s*(?:(?:bearer|basic|embed|digest|token)\s+)?("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const AUTH_SCHEME_VALUE = /\b(bearer|basic|embed|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
+// scheme://user:password@host —— 覆盖 postgres / redis / amqp / http 等所有连接串
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi;
+const SENSITIVE_KEY_VALUE =
+  /\b([A-Za-z0-9_-]*(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|cookie|session)[A-Za-z0-9_-]*)["']?\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;&]+)/gi;
 const EMAIL_VALUE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const URL_QUERY = /(https?:\/\/[^\s?#"']+)[?#][^\s"']*/gi;
 const LONG_NUMBER = /\d{7,}/g;
 // 只有紧跟在 table / column / constraint 等关键词后的双引号标识符才保留；
 // 其余引号内容（如 invalid input syntax 回显的值）可能是用户输入，一律打码
-const QUOTED_VALUE = /(["'])((?:(?!\1).)*)\1/g;
+const QUOTED_VALUE = /(["'])((?:(?!\1)[\s\S])*)\1/g;
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
 const SQL_OBJECT_KEYWORD =
   /\b(table|relation|column|constraint|index|type|function|policy|schema|sequence|view|trigger|role|database|model|field)\s*$/i;
@@ -31,7 +38,19 @@ export function safeIdentifier(value: unknown) {
 }
 
 export function redactSensitiveText(value: string) {
-  return value.replace(SENSITIVE_LOG_VALUE, "$1=[REDACTED]");
+  return value
+    .replace(AUTH_HEADER_VALUE, "$1=[REDACTED]")
+    .replace(AUTH_SCHEME_VALUE, "$1 [REDACTED]")
+    .replace(URL_USERINFO, "$1[REDACTED]@")
+    .replace(SENSITIVE_KEY_VALUE, "$1=[REDACTED]");
+}
+
+// 截断或残缺的消息里落单的双引号后面同样可能是用户输入
+function redactDanglingQuote(value: string) {
+  const count = value.split('"').length - 1;
+  if (count % 2 === 0) return value;
+  const last = value.lastIndexOf('"');
+  return `${value.slice(0, last)}"[REDACTED]`;
 }
 
 /**
@@ -40,8 +59,7 @@ export function redactSensitiveText(value: string) {
  */
 function safeMessage(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  const redacted = redactSensitiveText(value)
-    .replace(BEARER_VALUE, "$1 [REDACTED]")
+  const scrubbed = redactSensitiveText(value)
     .replace(URL_QUERY, "$1?[REDACTED]")
     .replace(EMAIL_VALUE, "[EMAIL]")
     .replace(LONG_NUMBER, "[NUMBER]")
@@ -53,9 +71,8 @@ function safeMessage(value: unknown) {
         SQL_OBJECT_KEYWORD.test(whole.slice(0, offset))
           ? match
           : `${quote}[REDACTED]${quote}`,
-    )
-    .replace(/\s+/g, " ")
-    .trim();
+    );
+  const redacted = redactDanglingQuote(scrubbed).replace(/\s+/g, " ").trim();
   return redacted.length > MAX_MESSAGE_LENGTH
     ? `${redacted.slice(0, MAX_MESSAGE_LENGTH)}…`
     : redacted;

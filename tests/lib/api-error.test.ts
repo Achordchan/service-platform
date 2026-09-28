@@ -169,4 +169,47 @@ describe("API 意外错误响应", () => {
       expect(logged).not.toContain(secret);
     }
   });
+
+  it.each([
+    ["Bearer 认证头", "Request rejected: Authorization: Bearer abcdefghijklmnop", "abcdefghijklmnop"],
+    ["Basic 认证头", "Request rejected: Authorization: Basic dXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="],
+    ["带引号的认证头", 'headers {"authorization":"Embed sess-123456789"}', "sess-123456789"],
+    ["裸的 Bearer 令牌", "upstream said Bearer zzzyyyxxx rejected", "zzzyyyxxx"],
+    ["PostgreSQL 连接串", "Connection failed: postgres://app:s3cr3t@localhost:5432/app", "s3cr3t"],
+    ["Redis 连接串", "redis://default:hunter2@cache.internal:6379/0 refused", "hunter2"],
+    ["HTTP URL 账号密码", "fetch https://svc:pa55word@api.example.test/v1?x=1 failed", "pa55word"],
+    ["带前缀的密钥键", "config client_secret=cs_live_9f8e7d invalid", "cs_live_9f8e7d"],
+    ["JSON 里的密码", 'payload {"password":"p@ss w0rd","user":"x"}', "p@ss w0rd"],
+    ["Cookie", "cookie: sid=abc123def; path=/", "abc123def"],
+  ])("消息里的凭据会被整段打码：%s", (_label, message, secret) => {
+    const { logged } = logFor(new Error(message));
+    expect(logged).not.toContain(secret);
+    expect(logged).toContain("[REDACTED]");
+  });
+
+  it("跨行和落单的引号里的回显值也会打码", () => {
+    const multiline = logFor(
+      driverAdapterError({
+        kind: "InvalidInputValue",
+        originalCode: "22P02",
+        originalMessage: 'invalid input syntax for type uuid: "alice\nsmith"',
+      }),
+    );
+    expect(multiline.record.error.database.message).toBe(
+      'invalid input syntax for type uuid: "[REDACTED]"',
+    );
+    expect(multiline.logged).not.toContain("alice");
+
+    const dangling = logFor(new Error('value too long: "partial user inp'));
+    expect(dangling.record.error.message).toBe('value too long: "[REDACTED]');
+  });
+
+  it("URL 去掉账号密码后仍保留主机和路径便于排查", () => {
+    const { record } = logFor(
+      new Error("Connection failed: postgres://app:s3cr3t@db.internal:5432/app"),
+    );
+    expect(record.error.message).toBe(
+      "Connection failed: postgres://[REDACTED]@db.internal:5432/app",
+    );
+  });
 });
