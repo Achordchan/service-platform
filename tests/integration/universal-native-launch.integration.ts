@@ -472,6 +472,42 @@ describe("Achord Connect Native Launch", () => {
     ).rejects.toMatchObject({ code: "UNIVERSAL_CONNECTION_NOT_VERIFIED" });
   });
 
+  it("声明了资料字段的连接检测后能激活，原样重存不会停用连接", async () => {
+    const profileFields = [
+      { key: "app_version", label: "客户端版本", type: "text" as const },
+      { key: "os", label: "系统", type: "text" as const },
+    ];
+    const input = {
+      allowedOrigins: ["https://app.example.test"],
+      allowNativeLaunch: true,
+      profileFields,
+    };
+    await saveUniversalIntegration(adminActor, setupProject, connectionInput(input));
+    await createUniversalCredentialForProject(adminActor, setupProject);
+    const checked = await checkUniversalIntegration(adminActor, setupProject);
+    expect(checked.healthStatus).toBe("READY");
+    const activated = await saveUniversalIntegration(
+      adminActor,
+      setupProject,
+      connectionInput({ ...input, activate: true }),
+    );
+    expect(activated.connection).toMatchObject({
+      bindingStatus: "ACTIVE",
+      healthStatus: "READY",
+      profileFields,
+    });
+    // 页面「保存配置」会带着原样的字段重存，不能被当成关键配置变更
+    const resaved = await saveUniversalIntegration(
+      adminActor,
+      setupProject,
+      connectionInput(input),
+    );
+    expect(resaved.connection).toMatchObject({
+      bindingStatus: "ACTIVE",
+      healthStatus: "READY",
+    });
+  });
+
   it("员工端最近会话能区分 iframe 与 native", async () => {
     await exchangeFor(web, `recent-web-${randomUUID()}`, {
       parentOrigin: "https://app.example.test",
@@ -790,6 +826,7 @@ function externalActorFor(
 function connectionInput(input: {
   allowedOrigins: string[];
   allowNativeLaunch?: boolean;
+  profileFields?: { key: string; label: string; type: "text" | "number" | "boolean" | "date" }[];
   activate?: boolean;
 }) {
   return {
