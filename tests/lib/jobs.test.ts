@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { getBoss } from "@/lib/jobs";
 
 const bossMocks = vi.hoisted(() => ({
   createQueue: vi.fn(),
@@ -27,8 +28,6 @@ describe("任务队列连接", () => {
     bossMocks.start.mockRejectedValueOnce(new Error("queue unavailable"));
     bossMocks.start.mockResolvedValueOnce(undefined);
     bossMocks.createQueue.mockResolvedValue(undefined);
-
-    const { getBoss } = await import("@/lib/jobs");
 
     await expect(getBoss()).rejects.toThrow("queue unavailable");
     await expect(getBoss()).resolves.toBeDefined();
