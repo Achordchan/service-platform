@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import {
   describeErrorForLog,
-  redactSensitiveText,
+  redactPath,
   safeIdentifier,
 } from "@/lib/error-log";
 
@@ -20,7 +20,7 @@ function requestContext(request?: Request) {
     const url = new URL(request.url);
     return {
       method: request.method,
-      path: redactSensitiveText(url.pathname).slice(0, MAX_PATH_LENGTH),
+      path: redactPath(url.pathname).slice(0, MAX_PATH_LENGTH),
     };
   } catch {
     return { method: request.method };

@@ -4,21 +4,26 @@ type ErrorRecord = Record<string, unknown>;
 const MAX_STACK_FRAMES = 4;
 const MAX_MESSAGE_LENGTH = 300;
 const MAX_CAUSE_DEPTH = 2;
-// 顺序有讲究：先整段抹掉认证头和 URL 里的账号密码，再做通用键值替换；
-// 反过来的话 `Authorization: Bearer xxx` 只会吃掉 `Bearer`，令牌本身漏进日志
-const AUTH_HEADER_VALUE =
-  /\b((?:proxy-)?authorization)["']?\s*[:=]\s*(?:(?:bearer|basic|embed|digest|token)\s+)?("[^"]*"|'[^']*'|[^\s,;]+)/gi;
-const AUTH_SCHEME_VALUE = /\b(bearer|basic|embed|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
 // scheme://user:password@host —— 覆盖 postgres / redis / amqp / http 等所有连接串
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@]+@/gi;
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@"']+@/gi;
+// Cookie 头里多个键值用分号分隔，按键值匹配只能抹掉第一个：整行抹掉
+const COOKIE_HEADER = /\b((?:set-)?cookie)(\s*[:=]\s*)[^\r\n]*/gi;
+// 认证头的值可能带 scheme 前缀（Bearer xxx），要连同前缀后的令牌一起抹掉
+const AUTH_HEADER_VALUE =
+  /\b((?:proxy-)?authorization)(["']?\s*[:=]\s*)((?:(?:bearer|basic|embed|digest|token)\s+)?)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const AUTH_SCHEME_VALUE = /\b(bearer|basic|embed|digest)\s+[A-Za-z0-9._~+/=-]{6,}/gi;
 const SENSITIVE_KEY_VALUE =
-  /\b([A-Za-z0-9_-]*(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|cookie|session)[A-Za-z0-9_-]*)["']?\s*[:=]\s*("[^"]*"|'[^']*'|[^\s,;&]+)/gi;
+  /\b([A-Za-z0-9_-]*(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session)[A-Za-z0-9_-]*)(["']?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&"']+)/gi;
 const EMAIL_VALUE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+// 没有键名也能认出来的令牌：JWT、常见服务商密钥前缀
+const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
+const PREFIXED_KEY_VALUE =
+  /\b(?:sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abpr]|AKIA)[-_]?[A-Za-z0-9_-]{16,}/g;
 const URL_QUERY = /(https?:\/\/[^\s?#"']+)[?#][^\s"']*/gi;
-const LONG_NUMBER = /\d{7,}/g;
-// 只有紧跟在 table / column / constraint 等关键词后的双引号标识符才保留；
-// 其余引号内容（如 invalid input syntax 回显的值）可能是用户输入，一律打码
-const QUOTED_VALUE = /(["'])((?:(?!\1)[\s\S])*)\1/g;
+// 7 位以上数字，含带空格或横杠分组的手机号（138-0013-8000）
+const LONG_NUMBER = /(?<![\w.])\+?\d(?:[\s-]?\d){6,}(?![\w.])/g;
+// 双引号成对匹配（可跨行）；单引号两侧不能是字母数字，免得把 can't / isn't 当引号
+const QUOTED_VALUE = /"([^"]*)"|(?<![A-Za-z0-9])'([^']*)'(?![A-Za-z0-9])/g;
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
 const SQL_OBJECT_KEYWORD =
   /\b(table|relation|column|constraint|index|type|function|policy|schema|sequence|view|trigger|role|database|model|field)\s*$/i;
@@ -37,12 +42,65 @@ export function safeIdentifier(value: unknown) {
     : undefined;
 }
 
+// 替换值时保留原来的引号和分隔符：吃掉引号会让后面的引号错位配对，
+// 把本该打码的字段漏到引号外面
+function keepQuotes(value: string) {
+  const quote = value[0] === '"' || value[0] === "'" ? value[0] : "";
+  return `${quote}[REDACTED]${quote}`;
+}
+
+/** 凭据类脱敏：URL 账号密码、Cookie、认证头、敏感键值。堆栈、路径、消息共用。 */
 export function redactSensitiveText(value: string) {
   return value
-    .replace(AUTH_HEADER_VALUE, "$1=[REDACTED]")
-    .replace(AUTH_SCHEME_VALUE, "$1 [REDACTED]")
     .replace(URL_USERINFO, "$1[REDACTED]@")
-    .replace(SENSITIVE_KEY_VALUE, "$1=[REDACTED]");
+    .replace(COOKIE_HEADER, "$1$2[REDACTED]")
+    .replace(
+      AUTH_HEADER_VALUE,
+      (_match, key: string, separator: string, scheme: string, raw: string) =>
+        `${key}${separator}${scheme}${keepQuotes(raw)}`,
+    )
+    .replace(AUTH_SCHEME_VALUE, "$1 [REDACTED]")
+    .replace(
+      SENSITIVE_KEY_VALUE,
+      (_match, key: string, separator: string, raw: string) =>
+        `${key}${separator}${keepQuotes(raw)}`,
+    )
+    .replace(JWT_VALUE, "[REDACTED]")
+    .replace(PREFIXED_KEY_VALUE, "[REDACTED]")
+    .replace(EMAIL_VALUE, "[EMAIL]");
+}
+
+/** 请求路径可能带外部用户 ID（常是邮箱），先解码 %40 之类再脱敏 */
+export function redactPath(pathname: string) {
+  let decoded = pathname;
+  try {
+    decoded = decodeURIComponent(pathname);
+  } catch {
+    // 非法转义就按原样脱敏
+  }
+  return redactSensitiveText(decoded).replace(LONG_NUMBER, "[NUMBER]");
+}
+
+/**
+ * 引号里的内容一律视为可能的用户输入，只保留两类结构信息：
+ * SQL 关键词后的标识符（table "Notification"）和 JSON 键名（{"token": …}）。
+ */
+function redactQuotedValues(value: string) {
+  return value.replace(
+    QUOTED_VALUE,
+    (match, double: string | undefined, single: string | undefined, offset: number, whole: string) => {
+      const inner = double ?? single ?? "";
+      const quote = double !== undefined ? '"' : "'";
+      const before = whole.slice(0, offset);
+      const after = whole.slice(offset + match.length);
+      const keep =
+        quote === '"' &&
+        SQL_IDENTIFIER.test(inner) &&
+        (SQL_OBJECT_KEYWORD.test(before) ||
+          (/[{,]\s*$/.test(before) && /^\s*:/.test(after)));
+      return keep ? match : `${quote}[REDACTED]${quote}`;
+    },
+  );
 }
 
 // 截断或残缺的消息里落单的双引号后面同样可能是用户输入
@@ -59,19 +117,14 @@ function redactDanglingQuote(value: string) {
  */
 function safeMessage(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  const scrubbed = redactSensitiveText(value)
+  // 引号先于键值规则处理：JSON 里敏感字段后面的普通字段也可能是私人数据
+  const scrubbed = redactSensitiveText(
+    redactQuotedValues(
+      value.replace(URL_USERINFO, "$1[REDACTED]@").replace(COOKIE_HEADER, "$1$2[REDACTED]"),
+    ),
+  )
     .replace(URL_QUERY, "$1?[REDACTED]")
-    .replace(EMAIL_VALUE, "[EMAIL]")
-    .replace(LONG_NUMBER, "[NUMBER]")
-    .replace(
-      QUOTED_VALUE,
-      (match, quote: string, inner: string, offset: number, whole: string) =>
-        quote === '"' &&
-        SQL_IDENTIFIER.test(inner) &&
-        SQL_OBJECT_KEYWORD.test(whole.slice(0, offset))
-          ? match
-          : `${quote}[REDACTED]${quote}`,
-    );
+    .replace(LONG_NUMBER, "[NUMBER]");
   const redacted = redactDanglingQuote(scrubbed).replace(/\s+/g, " ").trim();
   return redacted.length > MAX_MESSAGE_LENGTH
     ? `${redacted.slice(0, MAX_MESSAGE_LENGTH)}…`

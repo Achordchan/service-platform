@@ -212,4 +212,51 @@ describe("API 意外错误响应", () => {
       "Connection failed: postgres://[REDACTED]@db.internal:5432/app",
     );
   });
+
+  it.each([
+    ["多个 Cookie", "upstream 401 Cookie: sid=firstCredential; auth=secondCredential", ["firstCredential", "secondCredential"]],
+    ["Set-Cookie", "set-cookie: sess=aaa111; HttpOnly, remember=bbb222", ["aaa111", "bbb222"]],
+    ["JSON 敏感字段后的普通字段", 'payload {"token":"abc123","value":"private note"}', ["abc123", "private note"]],
+    ["JSON 认证头后的普通字段", '{"authorization":"Bearer tok999999","memo":"call me later"}', ["tok999999", "call me later"]],
+    ["单引号 JSON", "{'password': 'p1', 'note': 'secret diary'}", ["p1'", "secret diary"]],
+  ])("凭据替换不会打乱引号，其后的私人字段同样打码：%s", (_label, message, secrets) => {
+    const { logged } = logFor(new Error(message));
+    for (const secret of secrets) expect(logged).not.toContain(secret);
+  });
+
+  it("保留 JSON 键名和撇号前后的表名，便于定位", () => {
+    const json = logFor(new Error('payload {"token":"abc123","value":"private note"}'));
+    expect(json.record.error.message).toBe(
+      'payload {"token":"[REDACTED]","value":"[REDACTED]"}',
+    );
+    const apostrophe = logFor(
+      new Error(`can't insert: new row violates row-level security policy for table "Notification", isn't allowed`),
+    );
+    expect(apostrophe.record.error.message).toContain('table "Notification"');
+  });
+
+  it.each([
+    ["JWT", "invalid jwt eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJlLXZhbHVl rejected", "eyJhbGciOiJIUzI1NiJ9"],
+    ["服务商密钥", "provider refused sk-proj-abcdefghijklmnop1234", "abcdefghijklmnop1234"],
+    ["GitHub 令牌", "push failed with ghp_1234567890abcdefghijklmn", "ghp_1234567890abcdefghijklmn"],
+    ["分组手机号", "contact 138-0013-8000 or +86 138 0013 8000", "0013"],
+  ])("没有键名的令牌和号码也会打码：%s", (_label, message, secret) => {
+    const { logged } = logFor(new Error(message));
+    expect(logged).not.toContain(secret);
+  });
+
+  it("请求路径里 URL 编码的邮箱会解码后打码", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    unexpectedApiErrorResponse(new Error("boom"), {
+      source: "universal-api",
+      request: new Request(
+        "https://support.achord.cn/api/v1/integrations/universal/contacts/alice%40example.com/unread",
+      ),
+    });
+    const record = JSON.parse(String(consoleError.mock.calls[0]?.[1]));
+    consoleError.mockRestore();
+    expect(record.request.path).toBe(
+      "/api/v1/integrations/universal/contacts/[EMAIL]/unread",
+    );
+  });
 });
