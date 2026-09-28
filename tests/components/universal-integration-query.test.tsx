@@ -188,4 +188,114 @@ describe("Universal 集成查询缓存", () => {
       ),
     );
   });
+
+  it("有未保存修改时禁用检测和激活，放弃修改后恢复", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const base = integrationView("待激活连接");
+    staffApiMock.mockResolvedValue({
+      ...base,
+      connection: {
+        ...base.connection,
+        bindingStatus: "DISABLED",
+        activeCredentialCount: 1,
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <UniversalIntegrationPanel projectId="project-1" canEdit />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    const activate = await screen.findByRole("button", { name: "激活连接" });
+    expect((activate as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "保存配置" })).toBeNull();
+
+    fireEvent.change(screen.getByLabelText("连接名称"), {
+      target: { value: "改过的名称" },
+    });
+    expect(screen.getAllByText("有未保存的修改").length).toBeGreaterThan(0);
+    expect((activate as HTMLButtonElement).disabled).toBe(true);
+    expect(
+      (screen.getByRole("button", { name: "执行连接检测" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+    expect((screen.getByLabelText("连接名称") as HTMLInputElement).value).toBe(
+      "待激活连接",
+    );
+    expect((activate as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "保存配置" })).toBeNull();
+  });
+
+  it("已激活连接改动关键配置时提示保存会停用连接", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    staffApiMock.mockResolvedValue(integrationView("运行中连接"));
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <UniversalIntegrationPanel projectId="project-1" canEdit />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(await screen.findByLabelText("连接名称"), {
+      target: { value: "只改名称" },
+    });
+    expect(screen.queryByText(/保存后连接会立即停用/)).toBeNull();
+
+    fireEvent.click(
+      screen.getByRole("switch", { name: "允许原生应用启动（Native Launch）" }),
+    );
+    expect(screen.getByText(/保存后连接会立即停用/)).toBeTruthy();
+  });
+
+  it("批量粘贴资料字段后随配置保存", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    const base = integrationView("资料字段连接");
+    staffApiMock.mockImplementation((_url: string, options?: unknown) =>
+      options === undefined || (options as { signal?: unknown }).signal
+        ? Promise.resolve(base)
+        : Promise.resolve({ connection: base.connection, webhookSecret: null }),
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <UniversalIntegrationPanel projectId="project-1" canEdit />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "批量粘贴" }));
+    fireEvent.change(screen.getByLabelText("字段清单"), {
+      target: { value: "app_version 客户端版本\nos 系统" },
+    });
+    expect(screen.getByText("识别到 2 个字段：新增 2 个，更新 0 个")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "填入" }));
+    expect(screen.getAllByLabelText("字段 key")).toHaveLength(2);
+
+    fireEvent.click(await screen.findByRole("button", { name: "保存配置" }));
+    await waitFor(() =>
+      expect(vi.mocked(jsonRequest)).toHaveBeenCalledWith(
+        "PUT",
+        expect.objectContaining({
+          profileFields: [
+            { key: "app_version", label: "客户端版本", type: "text" },
+            { key: "os", label: "系统", type: "text" },
+          ],
+        }),
+      ),
+    );
+  });
 });

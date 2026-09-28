@@ -15,7 +15,7 @@ import {
   FormControlLabel,
   IconButton,
   LinearProgress,
-  MenuItem,
+  Paper,
   Stack,
   Step,
   StepLabel,
@@ -24,10 +24,8 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import ArchiveOutlinedIcon from "@mui/icons-material/ArchiveOutlined";
 import ContentCopyOutlinedIcon from "@mui/icons-material/ContentCopyOutlined";
-import DeleteOutlineOutlinedIcon from "@mui/icons-material/DeleteOutlineOutlined";
 import KeyOutlinedIcon from "@mui/icons-material/KeyOutlined";
 import MenuBookOutlinedIcon from "@mui/icons-material/MenuBookOutlined";
 import { jsonRequest, staffApi } from "@/components/staff/staff-api";
@@ -37,12 +35,11 @@ import {
   UniversalIntegrationGuideDialog,
   type UniversalGuideStage,
 } from "@/components/staff/universal-integration-guide-dialog";
-
-type ProfileField = {
-  key: string;
-  label: string;
-  type: "text" | "number" | "boolean" | "date";
-};
+import {
+  profileFieldsValid,
+  UniversalProfileFieldsEditor,
+  type ProfileField,
+} from "@/components/staff/universal-profile-fields-editor";
 
 type CredentialView = {
   id: string;
@@ -157,6 +154,39 @@ type ConnectionDraft = {
 };
 
 const steps = ["连接配置", "接入凭据", "Webhook", "检测并激活"];
+
+const sectionSx = { p: { xs: 2, md: 2.5 } } as const;
+
+function splitOrigins(origins: string) {
+  return origins
+    .split("\n")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+// 与服务端 connectionCriticalChanged 对应：这几项变了，保存后连接会停用、要重新检测
+function criticalSignature(draft: ConnectionDraft) {
+  return JSON.stringify([
+    [...splitOrigins(draft.origins)].sort(),
+    draft.allowNativeLaunch,
+    draft.profileFields.map((field) => [
+      field.key.trim(),
+      field.label.trim(),
+      field.type,
+    ]),
+  ]);
+}
+
+function draftSignature(draft: ConnectionDraft) {
+  return JSON.stringify([
+    criticalSignature(draft),
+    draft.name.trim(),
+    draft.webhookUrl.trim(),
+    [...draft.webhookEvents].sort(),
+    draft.emailNotifications,
+    draft.customerNotifications,
+  ]);
+}
 
 function connectionDraftFrom(
   connection: ConnectionView | null | undefined,
@@ -304,6 +334,12 @@ export function UniversalIntegrationPanel({
       : activeStep === 4
         ? "ACTIVE"
         : "ACTIVATE";
+  const savedDraft = connectionDraftFrom(view?.connection, view?.project.title);
+  const dirty =
+    draft !== null && draftSignature(draft) !== draftSignature(savedDraft);
+  const criticalDirty =
+    dirty && criticalSignature(draftValues) !== criticalSignature(savedDraft);
+  const fieldsValid = profileFieldsValid(profileFields);
   const platformOrigin = view?.connection?.embedUrl
     ? new URL(view.connection.embedUrl).origin
     : typeof window === "undefined"
@@ -316,10 +352,7 @@ export function UniversalIntegrationPanel({
   }) {
     return {
       name: name.trim(),
-      allowedOrigins: origins
-        .split("\n")
-        .map((item) => item.trim())
-        .filter(Boolean),
+      allowedOrigins: splitOrigins(origins),
       allowNativeLaunch,
       profileFields,
       emailNotificationsEnabled: emailNotifications,
@@ -515,6 +548,74 @@ export function UniversalIntegrationPanel({
     );
   }
 
+  const connection = view.connection;
+  const status: {
+    tone: "success" | "warning" | "info" | "error";
+    chip: string;
+    title: string;
+    detail?: string;
+  } = connectionArchived
+    ? {
+        tone: "info",
+        chip: "已归档",
+        title: "连接已归档",
+        detail: "历史服务请求和联系人仍保留，配置、凭据和嵌入入口不可再使用。",
+      }
+    : !connection
+      ? {
+          tone: "info",
+          chip: "未创建",
+          title: "第一步：填写连接配置",
+          detail: "填好下方的连接配置后，点底部的「保存配置」创建连接。",
+        }
+      : dirty
+        ? {
+            tone: "warning",
+            chip: "未保存",
+            title: "有未保存的修改",
+            detail:
+              criticalDirty && connection.bindingStatus === "ACTIVE"
+                ? "改动涉及嵌入来源、Native Launch 或资料字段：保存后连接会立即停用并断开所有会话，需要重新检测并激活，期间外部用户无法打开服务请求。"
+                : "保存后才能执行连接检测或激活。",
+          }
+        : activeCredentialCount === 0
+          ? {
+              tone: "info",
+              chip: "待配置",
+              title: "下一步：生成接入凭据",
+              detail: "在下方「接入凭据」生成 Client ID 和 Secret，配置到对方产品的服务端。",
+            }
+          : connection.healthStatus !== "READY"
+            ? {
+                tone: connection.bindingStatus === "DISABLED" ? "error" : "warning",
+                chip: connection.bindingStatus === "DISABLED" ? "已停用" : "待检测",
+                title:
+                  connection.bindingStatus === "DISABLED"
+                    ? "连接已停用：需要重新检测并激活"
+                    : "下一步：执行连接检测",
+                detail: "检测通过后即可激活连接。",
+              }
+            : connection.bindingStatus !== "ACTIVE"
+              ? {
+                  tone: "warning",
+                  chip: "待激活",
+                  title: "检测已通过，可以激活连接",
+                  detail: "激活后外部用户才能打开服务请求。",
+                }
+              : {
+                  tone: "success",
+                  chip: "已激活",
+                  title: "连接运行中",
+                  detail: `允许 ${connection.allowedOrigins.length} 个嵌入来源${
+                    connection.allowNativeLaunch ? "并允许原生应用启动" : ""
+                  }，当前有 ${activeCredentialCount} 个有效凭据。`,
+                };
+  const canActivate =
+    canModify &&
+    connection?.healthStatus === "READY" &&
+    connection.bindingStatus !== "ACTIVE" &&
+    activeCredentialCount > 0;
+
   return (
     <Stack spacing={2.5}>
       <Stack
@@ -533,365 +634,384 @@ export function UniversalIntegrationPanel({
           接入指南
         </Button>
       </Stack>
-      {busy ? <LinearProgress /> : null}
       {integrationQuery.isError ? (
         <Alert severity="warning">
           连接状态刷新失败，当前显示最近一次已确认的数据。
         </Alert>
       ) : null}
-      {connectionArchived ? (
-        <Alert severity="info">
-          连接已归档。历史服务请求和联系人仍保留，配置、凭据和嵌入入口不可再使用。
-        </Alert>
-      ) : activeStep === 4 ? (
-        <Alert severity="success">
-          Achord Connect 已激活，允许 {view.connection?.allowedOrigins.length ?? 0} 个嵌入来源
-          {view.connection?.allowNativeLaunch ? "并允许原生应用启动" : ""}
-          ，当前有 {activeCredentialCount} 个有效凭据。
-        </Alert>
-      ) : (
-        <Stepper activeStep={activeStep} alternativeLabel>
-          {steps.map((label) => (
-            <Step key={label}><StepLabel>{label}</StepLabel></Step>
-          ))}
-        </Stepper>
-      )}
 
-      <Stack spacing={2}>
-        <Typography variant="h3">连接配置</Typography>
-        <TextField
-          label="连接名称"
-          value={name}
-          onChange={(event) =>
-            updateDraft((current) => ({
-              ...current,
-              name: event.target.value,
-            }))
-          }
-          disabled={!canModify || busy}
-        />
-        <TextField
-          label="允许嵌入的 Origin"
-          value={origins}
-          onChange={(event) =>
-            updateDraft((current) => ({
-              ...current,
-              origins: event.target.value,
-            }))
-          }
-          multiline
-          minRows={2}
-          helperText="每行一个完整 Origin，例如 https://app.example.com。只做原生 App 接入时可留空"
-          disabled={!canModify || busy}
-        />
-        <Box>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={allowNativeLaunch}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    allowNativeLaunch: event.target.checked,
-                  }))
-                }
-                disabled={!canModify || busy}
-              />
-            }
-            label="允许原生应用启动（Native Launch）"
-          />
-          <Typography variant="caption" color="text.secondary" sx={{ display: "block", pl: { xs: 0, sm: 6 } }}>
-            用于桌面或移动 App：由 App 后端创建票据，App 在自己的窗口、系统浏览器或 WebView 中顶层打开，不做 iframe 来源校验。
-          </Typography>
-        </Box>
-        <Stack spacing={1.25}>
-          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
-            <Typography variant="subtitle2">用户自定义资料</Typography>
-            {canModify && profileFields.length < 10 ? (
-              <Button
-                size="small"
-                startIcon={<AddOutlinedIcon />}
-                onClick={() =>
-                  updateDraft((current) => ({
-                    ...current,
-                    profileFields: [
-                      ...current.profileFields,
-                      { key: "", label: "", type: "text" },
-                    ],
-                  }))
-                }
-              >
-                添加字段
-              </Button>
-            ) : null}
-          </Stack>
-          {profileFields.map((field, index) => (
-            <Box
-              key={`${field.key}-${index}`}
-              sx={{
-                display: "grid",
-                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr 150px 40px" },
-                gap: 1,
-                alignItems: "center",
-              }}
-            >
-              <TextField
-                label="字段 key"
-                value={field.key}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    profileFields: current.profileFields.map(
-                      (item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, key: event.target.value }
-                          : item,
-                    ),
-                  }))
-                }
-                disabled={!canModify || busy}
-              />
-              <TextField
-                label="显示名称"
-                value={field.label}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    profileFields: current.profileFields.map(
-                      (item, itemIndex) =>
-                        itemIndex === index
-                          ? { ...item, label: event.target.value }
-                          : item,
-                    ),
-                  }))
-                }
-                disabled={!canModify || busy}
-              />
-              <TextField
-                select
-                label="类型"
-                value={field.type}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    profileFields: current.profileFields.map(
-                      (item, itemIndex) =>
-                        itemIndex === index
-                          ? {
-                              ...item,
-                              type: event.target.value as ProfileField["type"],
-                            }
-                          : item,
-                    ),
-                  }))
-                }
-                disabled={!canModify || busy}
-              >
-                <MenuItem value="text">文本</MenuItem>
-                <MenuItem value="number">数字</MenuItem>
-                <MenuItem value="boolean">布尔值</MenuItem>
-                <MenuItem value="date">日期</MenuItem>
-              </TextField>
-              <IconButton
-                aria-label="删除资料字段"
-                onClick={() =>
-                  updateDraft((current) => ({
-                    ...current,
-                    profileFields: current.profileFields.filter(
-                      (_, itemIndex) => itemIndex !== index,
-                    ),
-                  }))
-                }
-                disabled={!canModify || busy}
-              >
-                <DeleteOutlineOutlinedIcon />
-              </IconButton>
-            </Box>
-          ))}
-        </Stack>
-        <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-          <FormControlLabel
-            control={
-              <Switch
-                checked={emailNotifications}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    emailNotifications: event.target.checked,
-                  }))
-                }
-              />
-            }
-            label="外部用户邮件通知"
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={customerNotifications}
-                onChange={(event) =>
-                  updateDraft((current) => ({
-                    ...current,
-                    customerNotifications: event.target.checked,
-                  }))
-                }
-              />
-            }
-            label="通知客户空间成员"
-          />
-        </Stack>
-        {canModify ? <Button variant="contained" onClick={() => void saveConfiguration()} disabled={busy} sx={{ alignSelf: "flex-start" }}>保存配置</Button> : null}
-      </Stack>
-
-      {view.connection ? (
+      <Paper variant="outlined" sx={sectionSx}>
         <Stack spacing={1.5}>
-          <Stack direction={{ xs: "column", sm: "row" }} sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}>
-            <Typography variant="h3">接入凭据</Typography>
-            {canModify && activeCredentialCount < 2 ? (
-              <Button startIcon={<KeyOutlinedIcon />} onClick={() => void createCredential()} disabled={busy}>生成凭据</Button>
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={1.5}
+            sx={{ alignItems: { md: "center" }, justifyContent: "space-between" }}
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                <Chip size="small" color={status.tone} label={status.chip} />
+                <Typography variant="subtitle1" sx={{ fontWeight: 650 }}>
+                  {status.title}
+                </Typography>
+              </Stack>
+              {status.detail ? (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75 }}>
+                  {status.detail}
+                </Typography>
+              ) : null}
+            </Box>
+            {connection && canModify ? (
+              <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+                <Button
+                  variant={canActivate || connection.bindingStatus === "ACTIVE" ? "outlined" : "contained"}
+                  onClick={() => void checkConnection()}
+                  disabled={busy || dirty || activeCredentialCount === 0}
+                >
+                  执行连接检测
+                </Button>
+                {canActivate ? (
+                  <Button
+                    variant="contained"
+                    onClick={() => void saveConfiguration({ activate: true })}
+                    disabled={busy || dirty}
+                  >
+                    激活连接
+                  </Button>
+                ) : null}
+              </Stack>
             ) : null}
           </Stack>
-          {view.connection.credentials.map((credential) => (
-            <Stack key={credential.id} direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" sx={{ wordBreak: "break-all" }}>{credential.clientId}</Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {credential.revokedAt ? "已撤销" : `Secret ${credential.secretPrefix}…`}
-                </Typography>
-              </Box>
-              {canModify && !credential.revokedAt ? (
-                <Button color="inherit" onClick={() => void revokeCredential(credential.id)} disabled={busy}>撤销</Button>
-              ) : null}
+          {busy ? <LinearProgress /> : null}
+          {connection?.lastError ? (
+            <Alert severity="error">{connection.lastError}</Alert>
+          ) : null}
+          {!connectionArchived && activeStep < 4 ? (
+            <Stepper activeStep={activeStep} alternativeLabel>
+              {steps.map((label) => (
+                <Step key={label}><StepLabel>{label}</StepLabel></Step>
+              ))}
+            </Stepper>
+          ) : null}
+          {connection ? (
+            <Stack direction="row" spacing={0.5} sx={{ alignItems: "center", minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ wordBreak: "break-all" }}>
+                嵌入地址：{connection.embedUrl}
+              </Typography>
+              <IconButton
+                size="small"
+                aria-label="复制嵌入地址"
+                onClick={() => {
+                  void navigator.clipboard.writeText(connection.embedUrl);
+                  toast.success("嵌入地址已复制");
+                }}
+              >
+                <ContentCopyOutlinedIcon fontSize="inherit" />
+              </IconButton>
             </Stack>
-          ))}
-          {activeCredentialCount === 0 ? (
-            <Alert severity="info">尚未生成有效接入凭据。</Alert>
-          ) : !canEdit && view.connection.credentials.length === 0 ? (
-            <Alert severity="success">
-              已配置 {activeCredentialCount} 个有效接入凭据，详细信息仅平台管理员可见。
-            </Alert>
           ) : null}
         </Stack>
-      ) : null}
+      </Paper>
 
-      {view.connection ? (
-        <Stack spacing={1.5}>
-          <Typography variant="h3">Webhook</Typography>
+      <Paper variant="outlined" sx={sectionSx}>
+        <Stack spacing={2}>
+          <Typography variant="h3">连接配置</Typography>
           <TextField
-            label="Webhook 地址（可选）"
-            value={webhookUrl}
+            label="连接名称"
+            value={name}
             onChange={(event) =>
               updateDraft((current) => ({
                 ...current,
-                webhookUrl: event.target.value,
+                name: event.target.value,
               }))
             }
             disabled={!canModify || busy}
           />
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={0.5}>
-            {webhookEventOptions.map((option) => (
-              <FormControlLabel
-                key={option.value}
-                control={
-                  <Checkbox
-                    checked={webhookEvents.includes(option.value)}
-                    onChange={(event) =>
-                      updateDraft((current) => ({
-                        ...current,
-                        webhookEvents: event.target.checked
-                          ? [...current.webhookEvents, option.value]
-                          : current.webhookEvents.filter(
-                              (item) => item !== option.value,
-                            ),
-                      }))
-                    }
-                    disabled={!canModify || busy || !webhookUrl.trim()}
-                  />
-                }
-                label={option.label}
-              />
-            ))}
-          </Stack>
-          <Stack
-            direction={{ xs: "column", sm: "row" }}
-            spacing={1}
-            sx={{ alignItems: { xs: "stretch", sm: "center" } }}
-          >
-            {canModify ? (
-              <>
-              <Button onClick={() => void saveConfiguration()} disabled={busy}>保存 Webhook</Button>
-              {webhookUrl.trim() ? (
-                <Button onClick={() => void saveConfiguration({ rotateWebhookSecret: true })} disabled={busy}>生成或轮换签名密钥</Button>
-              ) : null}
-              {webhookUrl.trim() && view.connection.hasWebhookSecret ? (
-                <Button onClick={() => void testWebhook()} disabled={busy}>发送测试</Button>
-              ) : null}
-              </>
-            ) : null}
-            <Button
-              onClick={() => setDeliveryOpen(true)}
-              disabled={busy}
-            >
-              投递历史
-            </Button>
-          </Stack>
-        </Stack>
-      ) : null}
-
-      {view.connection ? (
-        <Stack spacing={1.5}>
-          <Typography variant="h3">检测与激活</Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ wordBreak: "break-all" }}>
-            嵌入地址：{view.connection.embedUrl}
-          </Typography>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            {canModify ? <Button variant="outlined" onClick={() => void checkConnection()} disabled={busy}>执行连接检测</Button> : null}
-            {canModify && view.connection.healthStatus === "READY" && view.connection.bindingStatus !== "ACTIVE" ? (
-              <Button variant="contained" onClick={() => void saveConfiguration({ activate: true })} disabled={busy}>激活连接</Button>
-            ) : null}
-            {canEdit && !connectionArchived ? (
-              <Button
-                color="error"
-                variant="outlined"
-                startIcon={<ArchiveOutlinedIcon />}
-                onClick={() => setArchiveOpen(true)}
-                disabled={busy}
-              >
-                归档连接
-              </Button>
-            ) : null}
-          </Stack>
-          {view.connection.lastError ? <Alert severity="error">{view.connection.lastError}</Alert> : null}
-        </Stack>
-      ) : null}
-
-      {view.connection?.recentSessions?.length ? (
-        <Stack spacing={1}>
-          <Typography variant="h3">最近会话</Typography>
-          {view.connection.recentSessions.map((session) => (
-            <Stack
-              key={session.id}
-              direction={{ xs: "column", sm: "row" }}
-              spacing={1}
-              sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
-            >
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
-                <Chip
-                  size="small"
-                  variant="outlined"
-                  color={session.launchMode === "native" ? "secondary" : "default"}
-                  label={launchModeLabels[session.launchMode]}
+          <TextField
+            label="允许嵌入的 Origin"
+            value={origins}
+            onChange={(event) =>
+              updateDraft((current) => ({
+                ...current,
+                origins: event.target.value,
+              }))
+            }
+            multiline
+            minRows={2}
+            helperText="每行一个完整 Origin，例如 https://app.example.com。只做原生 App 接入时可留空"
+            disabled={!canModify || busy}
+          />
+          <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={allowNativeLaunch}
+                  onChange={(event) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      allowNativeLaunch: event.target.checked,
+                    }))
+                  }
+                  disabled={!canModify || busy}
                 />
-                <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
-                  {session.contactName} · {session.externalUserId}
+              }
+              label="允许原生应用启动（Native Launch）"
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", pl: { xs: 0, sm: 6 } }}>
+              用于桌面或移动 App：由 App 后端创建票据，App 在自己的窗口、系统浏览器或 WebView 中顶层打开，不做 iframe 来源校验。
+            </Typography>
+          </Box>
+          <Stack direction={{ xs: "column", md: "row" }} spacing={{ xs: 0, md: 2 }}>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={emailNotifications}
+                  onChange={(event) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      emailNotifications: event.target.checked,
+                    }))
+                  }
+                  disabled={!canModify || busy}
+                />
+              }
+              label="外部用户邮件通知"
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={customerNotifications}
+                  onChange={(event) =>
+                    updateDraft((current) => ({
+                      ...current,
+                      customerNotifications: event.target.checked,
+                    }))
+                  }
+                  disabled={!canModify || busy}
+                />
+              }
+              label="通知客户空间成员"
+            />
+          </Stack>
+        </Stack>
+      </Paper>
+
+      <Paper variant="outlined" sx={sectionSx}>
+        <UniversalProfileFieldsEditor
+          fields={profileFields}
+          onChange={(fields) =>
+            updateDraft((current) => ({ ...current, profileFields: fields }))
+          }
+          disabled={busy}
+          readOnly={!canModify}
+        />
+      </Paper>
+
+      {connection ? (
+        <Paper variant="outlined" sx={sectionSx}>
+          <Stack spacing={1.5}>
+            <Stack direction={{ xs: "column", sm: "row" }} sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}>
+              <Typography variant="h3">接入凭据</Typography>
+              {canModify && activeCredentialCount < 2 ? (
+                <Button startIcon={<KeyOutlinedIcon />} onClick={() => void createCredential()} disabled={busy}>生成凭据</Button>
+              ) : null}
+            </Stack>
+            {connection.credentials.map((credential) => (
+              <Stack key={credential.id} direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" sx={{ wordBreak: "break-all" }}>{credential.clientId}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {credential.revokedAt ? "已撤销" : `Secret ${credential.secretPrefix}…`}
+                  </Typography>
+                </Box>
+                {canModify && !credential.revokedAt ? (
+                  <Button color="inherit" onClick={() => void revokeCredential(credential.id)} disabled={busy}>撤销</Button>
+                ) : null}
+              </Stack>
+            ))}
+            {activeCredentialCount === 0 ? (
+              <Alert severity="info">尚未生成有效接入凭据。</Alert>
+            ) : !canEdit && connection.credentials.length === 0 ? (
+              <Alert severity="success">
+                已配置 {activeCredentialCount} 个有效接入凭据，详细信息仅平台管理员可见。
+              </Alert>
+            ) : null}
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {connection ? (
+        <Paper variant="outlined" sx={sectionSx}>
+          <Stack spacing={1.5}>
+            <Stack direction={{ xs: "column", sm: "row" }} sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}>
+              <Typography variant="h3">Webhook</Typography>
+              <Button onClick={() => setDeliveryOpen(true)} disabled={busy}>
+                投递历史
+              </Button>
+            </Stack>
+            <TextField
+              label="Webhook 地址（可选）"
+              value={webhookUrl}
+              onChange={(event) =>
+                updateDraft((current) => ({
+                  ...current,
+                  webhookUrl: event.target.value,
+                }))
+              }
+              helperText="地址和订阅事件随底部的「保存配置」一起保存"
+              disabled={!canModify || busy}
+            />
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={0.5} sx={{ flexWrap: "wrap" }}>
+              {webhookEventOptions.map((option) => (
+                <FormControlLabel
+                  key={option.value}
+                  control={
+                    <Checkbox
+                      checked={webhookEvents.includes(option.value)}
+                      onChange={(event) =>
+                        updateDraft((current) => ({
+                          ...current,
+                          webhookEvents: event.target.checked
+                            ? [...current.webhookEvents, option.value]
+                            : current.webhookEvents.filter(
+                                (item) => item !== option.value,
+                              ),
+                        }))
+                      }
+                      disabled={!canModify || busy || !webhookUrl.trim()}
+                    />
+                  }
+                  label={option.label}
+                />
+              ))}
+            </Stack>
+            {canModify && connection.webhookUrl ? (
+              <Stack
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1}
+                sx={{ alignItems: { xs: "stretch", sm: "center" } }}
+              >
+                <Button
+                  variant="outlined"
+                  onClick={() => void saveConfiguration({ rotateWebhookSecret: true })}
+                  disabled={busy || dirty}
+                >
+                  生成或轮换签名密钥
+                </Button>
+                {connection.hasWebhookSecret ? (
+                  <Button variant="outlined" onClick={() => void testWebhook()} disabled={busy || dirty}>
+                    发送测试
+                  </Button>
+                ) : null}
+                {dirty ? (
+                  <Typography variant="caption" color="text.secondary">
+                    先保存修改
+                  </Typography>
+                ) : null}
+              </Stack>
+            ) : null}
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {connection?.recentSessions?.length ? (
+        <Paper variant="outlined" sx={sectionSx}>
+          <Stack spacing={1}>
+            <Typography variant="h3">最近会话</Typography>
+            {connection.recentSessions.map((session) => (
+              <Stack
+                key={session.id}
+                direction={{ xs: "column", sm: "row" }}
+                spacing={1}
+                sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+              >
+                <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+                  <Chip
+                    size="small"
+                    variant="outlined"
+                    color={session.launchMode === "native" ? "secondary" : "default"}
+                    label={launchModeLabels[session.launchMode]}
+                  />
+                  <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
+                    {session.contactName} · {session.externalUserId}
+                  </Typography>
+                </Stack>
+                <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                  {formatSessionTime(session.createdAt)} 进入
+                  {sessionStatusLabels[session.status]}
                 </Typography>
               </Stack>
-              <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
-                {formatSessionTime(session.createdAt)} 进入
-                {sessionStatusLabels[session.status]}
+            ))}
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {connection && canEdit && !connectionArchived ? (
+        <Paper variant="outlined" sx={{ ...sectionSx, borderColor: "error.light" }}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1.5}
+            sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+          >
+            <Box>
+              <Typography variant="h3">归档连接</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                所有凭据、票据和嵌入会话立即失效，不能在后台恢复。
               </Typography>
-            </Stack>
-          ))}
-        </Stack>
+            </Box>
+            <Button
+              color="error"
+              variant="outlined"
+              startIcon={<ArchiveOutlinedIcon />}
+              onClick={() => setArchiveOpen(true)}
+              disabled={busy}
+              sx={{ flexShrink: 0 }}
+            >
+              归档连接
+            </Button>
+          </Stack>
+        </Paper>
+      ) : null}
+
+      {canModify && (dirty || !connection) ? (
+        <Paper
+          elevation={8}
+          sx={{
+            position: "sticky",
+            bottom: 16,
+            zIndex: 5,
+            px: 2,
+            py: 1.5,
+            display: "flex",
+            flexDirection: { xs: "column", sm: "row" },
+            gap: 1.5,
+            alignItems: { sm: "center" },
+            justifyContent: "space-between",
+          }}
+        >
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            {!fieldsValid
+              ? "资料字段有未填或不合规的项，改好后才能保存"
+              : !connection
+              ? "填写完成后保存配置以创建连接"
+              : criticalDirty && connection.bindingStatus === "ACTIVE"
+                ? "有未保存的修改 · 保存后连接会停用，需要重新检测并激活"
+                : "有未保存的修改"}
+          </Typography>
+          <Stack direction="row" spacing={1} sx={{ flexShrink: 0 }}>
+            {dirty ? (
+              <Button onClick={() => setDraft(null)} disabled={busy}>
+                放弃修改
+              </Button>
+            ) : null}
+            <Button
+              variant="contained"
+              onClick={() => void saveConfiguration()}
+              disabled={busy || !fieldsValid}
+            >
+              保存配置
+            </Button>
+          </Stack>
+        </Paper>
       ) : null}
 
       <Dialog open={Boolean(secret)} onClose={() => setSecret(null)} fullWidth maxWidth="sm">
