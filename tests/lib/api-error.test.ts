@@ -162,7 +162,7 @@ describe("API 意外错误响应", () => {
       {
         name: "Error",
         message:
-          "provider rejected [REDACTED] for [REDACTED] at [REDACTED] phone [NUMBER] value '[REDACTED]'",
+          "provider rejected [REDACTED] for [EMAIL] at [REDACTED] phone [NUMBER] value '[REDACTED]'",
       },
     ]);
     for (const secret of ["abc123", "bob@example.com", "key=zzz", "13800138000", "secret input"]) {
@@ -220,6 +220,26 @@ describe("API 意外错误响应", () => {
     expect(record.error.message).toBe("payload [REDACTED] rejected");
   });
 
+  it.each([
+    ["空格隔开的等号", "authentication failed: password = hunterTwo", "hunterTwo"],
+    ["空格隔开的冒号", "rejected token : abcdef", "abcdef"],
+    ["箭头分隔", "api_key -> sk_abc then retry", "sk_abc"],
+    ["多词口令", "passphrase: correct horse battery staple, retry later", "horse"],
+    ["值在下一行", "config invalid, password:\nhunter22 expired", "hunter22"],
+    ["中文键名", "登录失败，密码： hunter2 错误", "hunter2"],
+    ["缩写键名", "pwd = s3cr3t rejected", "s3cr3t"],
+  ])("键名和值之间隔着单独的分隔符也会打码：%s", (_label, message, secret) => {
+    const { logged } = logFor(new Error(message));
+    expect(logged).not.toContain(secret);
+  });
+
+  it("敏感键名的打码到小句结束为止，后面的内容照常保留", () => {
+    const { record } = logFor(new Error("password = hunterTwo, then request notification scope denied"));
+    expect(record.error.message).toBe(
+      "password = [REDACTED], then request notification scope denied",
+    );
+  });
+
   it("纯文本里敏感键名和认证 scheme 之后的词打码", () => {
     const { logged, record } = logFor(
       new Error("login failed: password hunter2 and token abcdef, auth Bearer qwerty"),
@@ -228,7 +248,7 @@ describe("API 意外错误响应", () => {
       expect(logged).not.toContain(secret);
     }
     expect(record.error.message).toBe(
-      "login failed: password [REDACTED] and token [REDACTED], auth Bearer [REDACTED]",
+      "login failed: password [REDACTED] [REDACTED] [REDACTED] [REDACTED], auth Bearer [REDACTED]",
     );
   });
 
@@ -275,5 +295,13 @@ describe("API 意外错误响应", () => {
     expect(record.request.path).toBe(
       "/api/v1/integrations/universal/contacts/[EMAIL]/unread",
     );
+  });
+
+  it("多行消息不会经由 stack 里重复的消息行漏进堆栈帧", () => {
+    const error = new Error("first line\nsecond line has tok_9f8e7d6c5b4a");
+    const { logged, record } = logFor(error);
+    expect(logged).not.toContain("tok_9f8e7d6c5b4a");
+    expect(record.error.stackFrames.length).toBeGreaterThan(0);
+    for (const frame of record.error.stackFrames) expect(frame).toMatch(/^at\s/);
   });
 });

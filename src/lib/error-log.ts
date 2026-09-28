@@ -27,12 +27,20 @@ const LONG_NUMBER = /(?<![\w.])\+?\d(?:[\s-]?\d){6,}(?![\w.])/g;
 const QUOTED_SPAN =
   /"((?:[^"\\]|\\[\s\S])*)"|(?<![A-Za-z0-9])'((?:[^'\\]|\\[\s\S])*)'(?![A-Za-z0-9])/g;
 const SENSITIVE_WORD =
-  /^[A-Za-z0-9_-]*(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*$/i;
+  /^[A-Za-z0-9_-]*(?:password|passwd|pwd|passphrase|passcode|otp|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*$|(?:密码|口令|令牌|密钥|秘钥|私钥|验证码|凭据|凭证)$/i;
 const AUTH_SCHEME_WORD = /^(?:bearer|basic|embed|digest)$/i;
 // 普通单词：字母（含中文）、数字、下划线、横杠、点，可带英文撇号（can't）
 const PLAIN_WORD = /^[\p{L}\p{M}\p{N}_.-]+(?:['’][\p{L}]+)?$/u;
-const LEADING_PUNCTUATION = /^[(（[【]+/;
-const TRAILING_PUNCTUATION = /[,.;:!?，。；：！？)）\]】]+$/;
+const LEADING_PUNCTUATION = /^[(（【]+/;
+const TRAILING_PUNCTUATION = /[,.;:!?，。；：！？)）】]+$/;
+const CLAUSE_END = /[,.;!?，。；！？]/;
+const PLACEHOLDERS = new Set([
+  "[REDACTED]",
+  '"[REDACTED]"',
+  "'[REDACTED]'",
+  "[NUMBER]",
+  "[EMAIL]",
+]);
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
 const SQL_OBJECT_KEYWORD =
   /\b(table|relation|column|constraint|index|type|function|policy|schema|sequence|view|trigger|role|database|model|field)\s*$/i;
@@ -127,32 +135,50 @@ function looksLikeSecret(word: string) {
  * 敏感键名、认证 scheme 之后的词打码；7 位以上纯数字记成 [NUMBER]。
  */
 function redactWords(value: string) {
-  let redactNext = false;
+  // 敏感键名 / 认证 scheme 之后一直打码到本小句结束（逗号、分号、句号或换行），
+  // 中间单独的 = : -> 之类符号不算值，不能把打码状态"用掉"
+  let redacting = false;
+  // 键名后至少要打掉一个词，换行才能结束打码（password:\nhunter2）
+  let consumed = false;
   return value
     .split(/(\s+)/)
     .map((part) => {
-      if (!part || /^\s+$/.test(part)) return part;
+      if (!part) return part;
+      if (/^\s+$/.test(part)) {
+        if (/[\r\n]/.test(part) && consumed) redacting = false;
+        return part;
+      }
       const leading = part.match(LEADING_PUNCTUATION)?.[0] ?? "";
       const trailing = part.slice(leading.length).match(TRAILING_PUNCTUATION)?.[0] ?? "";
       const core = part.slice(leading.length, part.length - trailing.length);
-      const previousWasKey = redactNext;
-      redactNext = SENSITIVE_WORD.test(core) || AUTH_SCHEME_WORD.test(core);
+      const endsClause = CLAUSE_END.test(trailing);
+      if (!/[\p{L}\p{N}]/u.test(core)) {
+        // 纯符号（含空）不可能藏凭据，原样保留
+        if (endsClause) redacting = false;
+        return part;
+      }
       let safe: string;
-      if (!core) {
-        safe = "";
-      } else if (core === '"[REDACTED]"' || core === "'[REDACTED]'" || core === "[REDACTED]") {
+      if (PLACEHOLDERS.has(core)) {
         safe = core;
+      } else if (redacting) {
+        safe = "[REDACTED]";
+        consumed = true;
       } else if (/^"[A-Za-z_][A-Za-z0-9_.]{0,127}"$/.test(core)) {
         // 能留到这一步的双引号标识符都已经在 redactQuotedSpans 里过了关键词检查
         safe = core;
-      } else if (previousWasKey) {
-        safe = "[REDACTED]";
       } else if (/^\+?\d[\d-]{6,}$/.test(core) && (core.match(/\d/g)?.length ?? 0) >= 7) {
         safe = "[NUMBER]";
       } else if (PLAIN_WORD.test(core) && !looksLikeSecret(core)) {
         safe = core;
       } else {
         safe = "[REDACTED]";
+      }
+      if (PLACEHOLDERS.has(core) && redacting) consumed = true;
+      if (endsClause) {
+        redacting = false;
+      } else if (!redacting && (SENSITIVE_WORD.test(core) || AUTH_SCHEME_WORD.test(core))) {
+        redacting = true;
+        consumed = false;
       }
       return `${leading}${safe}${trailing}`;
     })
@@ -165,8 +191,9 @@ function redactWords(value: string) {
  */
 function safeMessage(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  const withoutCookies = value
-    .replace(COOKIE_HEADER, "$1$2[REDACTED]")
+  const withoutCookies = redactSensitiveText(
+    value.replace(COOKIE_HEADER, "$1$2[REDACTED]"),
+  )
     // 按空格拆词前先把跨空格/横杠分组的号码（+86 138 0013 8000）整体替换
     .replace(LONG_NUMBER, "[NUMBER]");
   const redacted = redactWords(redactQuotedSpans(withoutCookies))
@@ -260,11 +287,12 @@ function safePrismaDiagnostic(error: unknown) {
 
 function safeStackFrames(error: unknown) {
   if (!(error instanceof Error) || !error.stack) return [];
+  // stack 开头会原样重复错误消息，多行消息的后几行不能当成堆栈帧记下来
   return error.stack
     .split("\n")
-    .slice(1, MAX_STACK_FRAMES + 1)
     .map((line) => line.trim())
-    .filter(Boolean)
+    .filter((line) => /^at\s/.test(line))
+    .slice(0, MAX_STACK_FRAMES)
     .map((line) => redactSensitiveText(line).slice(0, 320));
 }
 
