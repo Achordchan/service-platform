@@ -472,13 +472,28 @@ test("给 iframe 票据追加 mode=native 片段也不能绕过父页面来源�
       [credentialId],
     );
   }
-  // 顶层打开 + 篡改片段：门户按 native 处理、不带 parentOrigin 去兑换，由服务端按票据拒绝
+  const ticket = new URLSearchParams(
+    iframeLaunchPath.slice(iframeLaunchPath.indexOf("#") + 1),
+  ).get("ticket")!;
+  // 顶层打开 + 篡改片段：门户按 native 处理、不带 parentOrigin 去兑换，由服务端按票据拒绝。
+  // 具体拒绝原因随环境不同（生产模式下 127.0.0.1 这个夹具 Origin 本身就不合法），
+  // 这里只断言与环境无关的安全性质：没进门户、票据没被消耗。
+  const exchangeResponse = page.waitForResponse("**/api/v1/embed/universal/exchange");
   await page.goto(`${iframeLaunchPath}&mode=native`);
+  const exchange = await exchangeResponse;
+  expect(exchange.request().postDataJSON()).toEqual({ publicId, ticket });
+  expect(exchange.status()).toBeGreaterThanOrEqual(400);
+  expect(exchange.status()).toBeLessThan(500);
   await expect(page).toHaveURL(`/embed/connect/${publicId}`);
-  await expect(
-    page.getByText("无法确认 iframe 宿主来源，请返回原系统重新进入"),
-  ).toBeVisible();
+  // Next 的路由播报器也是 role=alert，这里只认门户自己的错误提示框
+  await expect(page.locator(".MuiAlert-colorError")).toBeVisible();
   await expect(page.getByTestId("external-embed-shell")).toHaveCount(0);
+  const stored = await ownerPool.query<{ consumedAt: Date | null }>(
+    `SELECT "consumedAt" FROM "UniversalLaunchTicket" WHERE "ticketHash" = $1`,
+    [createHash("sha256").update(ticket).digest("base64url")],
+  );
+  expect(stored.rows).toHaveLength(1);
+  expect(stored.rows[0].consumedAt).toBeNull();
 });
 
 test("iframe 模式不显示原生关闭按钮", async ({ page }) => {
