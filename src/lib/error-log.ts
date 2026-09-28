@@ -218,15 +218,26 @@ function safePrismaDiagnostic(error: unknown) {
   };
 }
 
+// 只认 V8 标准帧格式：`at 函数名 (位置:行:列)` 或 `at 位置:行:列`
+const STACK_FRAME =
+  /^at (?:(?:async |new )?[^\s()]+(?: \[as [^\]\s]+\])? \()?[^\s()]+:\d+:\d+\)?$/;
+
 function safeStackFrames(error: unknown) {
   if (!(error instanceof Error) || !error.stack) return [];
-  // stack 开头会原样重复错误消息，多行消息的后几行不能当成堆栈帧记下来
+  // stack 开头会原样重复错误消息，必须先整段去掉，否则多行消息里以 at 开头的行会被当成帧；
+  // 消息在 stack 里找不到（事后改过 message 或手写的 stack）就不记帧
+  const messageEnd = error.stack.indexOf(error.message);
+  if (messageEnd < 0) return [];
   return error.stack
+    .slice(messageEnd + error.message.length)
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => /^at\s/.test(line))
+    .filter((line) => STACK_FRAME.test(line))
     .slice(0, MAX_STACK_FRAMES)
-    .map((line) => redactSensitiveText(line).slice(0, 320));
+    // 位置里的查询串可能带参数，一律去掉（一直删到末尾的 :行:列）
+    .map((line) =>
+      redactSensitiveText(line.replace(/[?#][^\s()]*?(?=:\d+:\d+\)?$)/, "")).slice(0, 320),
+    );
 }
 
 function errorCategory(

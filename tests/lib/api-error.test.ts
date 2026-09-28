@@ -53,19 +53,26 @@ describe("API 意外错误响应", () => {
     consoleError.mockRestore();
   });
 
-  it("会脱敏堆栈和路径中的敏感片段", () => {
+  it("堆栈帧只保留标准格式，并去掉位置里的查询串", () => {
     const error = new Error("failure");
     error.stack = [
       "Error: failure",
-      "at handler (authorization=Bearer-secret)",
+      "    at handler (authorization=Bearer-secret)",
+      "    at async POST (/app/.next/server/chunk.js?token=hidden:a:10:5)",
+      "    at new Foo (/app/src/foo.ts:3:7)",
+      "    at node:internal/process/task_queues:95:5",
     ].join("\n");
 
-    const { logged } = logFor(
+    const { logged, record } = logFor(
       error,
       new Request("https://support.achord.cn/api/v1/requests/token=hidden"),
     );
 
-    expect(logged).toContain("[REDACTED]");
+    expect(record.error.stackFrames).toEqual([
+      "at async POST (/app/.next/server/chunk.js:10:5)",
+      "at new Foo (/app/src/foo.ts:3:7)",
+      "at node:internal/process/task_queues:95:5",
+    ]);
     expect(logged).not.toContain("Bearer-secret");
     expect(logged).not.toContain("token=hidden");
   });
@@ -239,6 +246,29 @@ describe("API 意外错误响应", () => {
     expect(logged).not.toContain("tok_9f8e7d6c5b4a");
     expect(record.error.stackFrames.length).toBeGreaterThan(0);
     for (const frame of record.error.stackFrames) expect(frame).toMatch(/^at\s/);
+  });
+
+  it("多行消息里像堆栈帧的行（在第四行之后）也不会被记下", () => {
+    const message = [
+      "provider failed",
+      "line two",
+      "line three",
+      "line four",
+      "at https://provider.example/request?key=plainSecret",
+      "at leak (https://provider.example/r?key=plainSecret:1:2)",
+    ].join("\n");
+    const { logged, record } = logFor(new Error(message));
+    expect(logged).not.toContain("plainSecret");
+    expect(logged).not.toContain("provider.example");
+    expect(record.error.stackFrames.length).toBeGreaterThan(0);
+  });
+
+  it("消息在 stack 里找不到时不记堆栈帧", () => {
+    const error = new Error("original");
+    error.message = "changed later";
+    error.stack = "Error: something else\n    at leak (/app/secret-path.ts:1:2)";
+    const { record } = logFor(error);
+    expect(record.error.stackFrames).toEqual([]);
   });
 
   it("请求路径里 URL 编码的邮箱会解码后打码", () => {
