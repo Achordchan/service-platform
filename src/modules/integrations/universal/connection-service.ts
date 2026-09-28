@@ -82,6 +82,13 @@ function parseJsonArray<T>(value: Prisma.JsonValue): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
 
+// JSONB 会重排对象键（读回是 key/type/label），不能直接 JSON.stringify 比较
+function sameProfileFields(left: ProfileField[], right: ProfileField[]) {
+  const canonical = (fields: ProfileField[]) =>
+    JSON.stringify(fields.map((field) => [field.key, field.label, field.type]));
+  return canonical(left) === canonical(right);
+}
+
 function serializeConnection(
   connection: Prisma.UniversalConnectorConnectionGetPayload<{
     include: typeof connectionInclude;
@@ -291,7 +298,10 @@ export async function saveUniversalIntegration(
       !current ||
         JSON.stringify(current.allowedOrigins) !== JSON.stringify(allowedOrigins) ||
         current.allowNativeLaunch !== allowNativeLaunch ||
-        JSON.stringify(current.profileFields) !== JSON.stringify(profileFields),
+        !sameProfileFields(
+          parseJsonArray<ProfileField>(current.profileFields),
+          profileFields,
+        ),
     );
     const webhookChanged = Boolean(
       current &&
