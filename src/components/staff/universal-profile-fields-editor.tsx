@@ -48,6 +48,11 @@ const typeAliases: Record<string, ProfileField["type"]> = {
   date: "date",
 };
 
+// 字典是普通对象，粘贴内容里的 constructor、toString 等词不能命中原型链上的属性
+function ownValue<T>(record: Record<string, T>, key: string): T | undefined {
+  return Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+}
+
 function cleanCell(value: string) {
   return value.trim().replace(/^[`"'“”‘’]+|[`"'“”‘’]+$/g, "").trim();
 }
@@ -84,7 +89,7 @@ const wordTypeAliases: Record<string, ProfileField["type"]> = {
 };
 
 function headerRoleOf(cell: string) {
-  return headerRoles[cell.toLowerCase().replace(/\s+/g, "")];
+  return ownValue(headerRoles, cell.toLowerCase().replace(/\s+/g, ""));
 }
 
 /** 整行都是表头词（且含 key 列）才算表头，返回每列的角色 */
@@ -103,7 +108,7 @@ function parseRowWithRoles(cells: string[], roles: ColumnRole[]) {
   const flush = () => {
     if (!group?.filled) return true;
     if (!isKey(group.key)) return false;
-    const type = group.type ? typeAliases[group.type] : "text";
+    const type = group.type ? ownValue(typeAliases, group.type) : "text";
     if (!type) return false;
     fields.push({ key: group.key, label: group.label ?? "", type });
     return true;
@@ -146,7 +151,7 @@ function parseWords(line: string): ProfileField | null {
   const key = words.shift()?.replace(/[:：]$/, "");
   if (!isKey(key)) return null;
   const typeAlias =
-    words.length >= 2 ? wordTypeAliases[words[words.length - 1]] : undefined;
+    words.length >= 2 ? ownValue(wordTypeAliases, words[words.length - 1]) : undefined;
   if (typeAlias) words.pop();
   return { key, label: words.join(" "), type: typeAlias ?? "text" };
 }

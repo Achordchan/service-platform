@@ -113,6 +113,28 @@ describe("资料字段批量粘贴解析", () => {
     });
   });
 
+  it("原型链上的属性名不会被当成类型或表头", () => {
+    expect(
+      parseProfileFieldText(
+        [
+          "object_name Object constructor",
+          "hint 提示 toString",
+          "flag\t开关\tconstructor",
+          "constructor\ttoString",
+          "a\tb",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      fields: [
+        text("object_name", "Object constructor"),
+        text("hint", "提示 toString"),
+        text("constructor", "toString"),
+        text("a", "b"),
+      ],
+      skippedLines: [3],
+    });
+  });
+
   it("合并时覆盖同名 key、追加新 key 并清掉空行", () => {
     const result = mergeProfileFields(
       [
