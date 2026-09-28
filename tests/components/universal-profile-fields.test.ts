@@ -27,6 +27,7 @@ describe("资料字段批量粘贴解析", () => {
         text("os", "系统，版本"),
       ],
       skippedLines: [],
+      headerLines: [],
     });
   });
 
@@ -56,13 +57,14 @@ describe("资料字段批量粘贴解析", () => {
         text("plan", "套餐"),
       ],
       skippedLines: [],
+      headerLines: [],
     });
   });
 
   it("两种列宽都能切开（有歧义）或都切不开的行跳过并报告行号", () => {
     expect(
       parseProfileFieldText("a\tA\tdate\tb\tc\ttext\nOS\t系统\nos\t系统\tx"),
-    ).toEqual({ fields: [], skippedLines: [1, 2, 3] });
+    ).toEqual({ fields: [], skippedLines: [1, 2, 3], headerLines: [] });
   });
 
   it("英文表头被跳过并按表头认列", () => {
@@ -80,6 +82,7 @@ describe("资料字段批量粘贴解析", () => {
         text("birthday", "生日"),
       ],
       skippedLines: [],
+      headerLines: [1],
     });
   });
 
@@ -103,6 +106,7 @@ describe("资料字段批量粘贴解析", () => {
         text("plan", "套餐"),
       ],
       skippedLines: [8],
+      headerLines: [1, 7],
     });
   });
 
@@ -110,6 +114,7 @@ describe("资料字段批量粘贴解析", () => {
     expect(parseProfileFieldText("字段名 标签\nplan\nApp_Version 版本")).toEqual({
       fields: [text("plan", "plan")],
       skippedLines: [3],
+      headerLines: [1],
     });
   });
 
@@ -132,6 +137,34 @@ describe("资料字段批量粘贴解析", () => {
         text("a", "b"),
       ],
       skippedLines: [3],
+      headerLines: [],
+    });
+  });
+
+  it("只有一段的第一行能当表头，之后与表头词同名的数据行照常导入", () => {
+    expect(
+      parseProfileFieldText(
+        [
+          "key\tlabel",
+          "field\t名称",
+          "name\tlabel",
+          "",
+          "os 系统",
+          "key 名称",
+          "",
+          "key 名称",
+          "field 字段",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      fields: [
+        text("field", "字段"),
+        text("name", "label"),
+        text("os", "系统"),
+        text("key", "名称"),
+      ],
+      skippedLines: [],
+      headerLines: [1, 8],
     });
   });
 

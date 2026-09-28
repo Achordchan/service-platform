@@ -165,33 +165,44 @@ function splitTableRow(line: string) {
 
 /**
  * 把粘贴的清单解析成字段，逐行处理：
- * - 含 Tab 或竖线的行是表格：遇到表头（key/label/type 或 字段名/标签/类型）就按它定列，
+ * - 含 Tab 或竖线的行是表格：一段的第一行是表头（key/label/type 或 字段名/标签/类型）就按它定列，
  *   没有表头时按每组 2 列或 3 列切分；分隔线跳过；
  * - 其余行按「key 名称 [类型]」一行一个；
- * - 识别不了或有歧义的行不猜，行号放进 skippedLines 交给界面提示。
+ * - 识别不了或有歧义的行不猜，行号放进 skippedLines；当作表头忽略的行放进 headerLines，都交给界面提示。
  */
 export function parseProfileFieldText(text: string) {
   const fields: ProfileField[] = [];
   const skippedLines: number[] = [];
+  const headerLines: number[] = [];
   let roles: ColumnRole[] | null = null;
+  // 表头只可能是一段（空行分隔）的第一行；之后的行一律当数据，哪怕单元格恰好是表头词
+  let blockStarted = false;
   for (const [index, line] of text.split(/\r?\n/).entries()) {
     if (!line.trim()) {
       roles = null;
+      blockStarted = false;
       continue;
     }
+    const atBlockStart = !blockStarted;
     let parsed: ProfileField[] | null;
     if (/[\t|]/.test(line)) {
       const cells = splitTableRow(line);
       if (cells.every((cell) => /^:?-*:?$/.test(cell))) continue;
-      const header = parseHeader(cells);
+      blockStarted = true;
+      const header = atBlockStart ? parseHeader(cells) : null;
       if (header) {
         roles = header;
+        headerLines.push(index + 1);
         continue;
       }
       parsed = roles ? parseRowWithRoles(cells, roles) : parseRowWithoutHeader(cells);
     } else {
       const words = line.trim().split(/\s+/).map(cleanCell).filter(Boolean);
-      if (parseHeader(words)) continue;
+      blockStarted = true;
+      if (atBlockStart && parseHeader(words)) {
+        headerLines.push(index + 1);
+        continue;
+      }
       const field = parseWords(line);
       parsed = field ? [field] : null;
     }
@@ -206,7 +217,7 @@ export function parseProfileFieldText(text: string) {
       label: (field.label || field.key).slice(0, 60),
     });
   }
-  return { fields: [...byKey.values()], skippedLines };
+  return { fields: [...byKey.values()], skippedLines, headerLines };
 }
 
 /** 同 key 覆盖名称和类型，新 key 追加到末尾；空白行一并清掉 */
@@ -262,7 +273,8 @@ export function UniversalProfileFieldsEditor({
 }) {
   const [pasteOpen, setPasteOpen] = useState(false);
   const [pasteText, setPasteText] = useState("");
-  const { fields: parsed, skippedLines } = parseProfileFieldText(pasteText);
+  const { fields: parsed, skippedLines, headerLines } =
+    parseProfileFieldText(pasteText);
   const preview = mergeProfileFields(fields, parsed);
   const overLimit = preview.fields.length > MAX_PROFILE_FIELDS;
 
@@ -429,6 +441,11 @@ export function UniversalProfileFieldsEditor({
                   ))}
                 </Stack>
               </Stack>
+            ) : null}
+            {headerLines.length ? (
+              <Alert severity="info">
+                第 {headerLines.join("、")} 行识别为表头，未导入。如果它其实是字段，请把它挪到非首行或删掉上方空行。
+              </Alert>
             ) : null}
             {skippedLines.length ? (
               <Alert severity="warning">
