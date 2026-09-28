@@ -5,7 +5,8 @@ const MAX_STACK_FRAMES = 4;
 const MAX_MESSAGE_LENGTH = 300;
 const MAX_CAUSE_DEPTH = 2;
 // scheme://user:password@host —— 覆盖 postgres / redis / amqp / http 等所有连接串
-const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#@"']+@/gi;
+// userinfo 取到最后一个 @：密码里可以有未转义的 @（p@ss@host），PostgreSQL 按最后一个分隔
+const URL_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/?#"']*@/gi;
 // Cookie 头里多个键值用分号分隔，按键值匹配只能抹掉第一个：整行抹掉
 const COOKIE_HEADER = /\b((?:set-)?cookie)(\s*[:=]\s*)[^\r\n]*/gi;
 // 认证头的值可能带 scheme 前缀（Bearer xxx），要连同前缀后的令牌一起抹掉
@@ -19,11 +20,19 @@ const EMAIL_VALUE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}/g;
 const PREFIXED_KEY_VALUE =
   /\b(?:sk|pk|rk|ghp|gho|ghu|ghs|github_pat|xox[abpr]|AKIA)[-_]?[A-Za-z0-9_-]{16,}/g;
-const URL_QUERY = /(https?:\/\/[^\s?#"']+)[?#][^\s"']*/gi;
 // 7 位以上数字，含带空格或横杠分组的手机号（138-0013-8000）
 const LONG_NUMBER = /(?<![\w.])\+?\d(?:[\s-]?\d){6,}(?![\w.])/g;
-// 双引号成对匹配（可跨行）；单引号两侧不能是字母数字，免得把 can't / isn't 当引号
-const QUOTED_VALUE = /"([^"]*)"|(?<![A-Za-z0-9])'([^']*)'(?![A-Za-z0-9])/g;
+// 引号串识别转义（\" 不算结束），嵌套序列化的 JSON 整段算一个串；可跨行。
+// 单引号两侧不能是字母数字，免得把 can't / isn't 当引号
+const QUOTED_SPAN =
+  /"((?:[^"\\]|\\[\s\S])*)"|(?<![A-Za-z0-9])'((?:[^'\\]|\\[\s\S])*)'(?![A-Za-z0-9])/g;
+const SENSITIVE_WORD =
+  /^[A-Za-z0-9_-]*(?:password|passwd|passphrase|token|secret|api[_-]?key|access[_-]?key|private[_-]?key|credential|session|authorization|cookie)[A-Za-z0-9_-]*$/i;
+const AUTH_SCHEME_WORD = /^(?:bearer|basic|embed|digest)$/i;
+// 普通单词：字母（含中文）、数字、下划线、横杠、点，可带英文撇号（can't）
+const PLAIN_WORD = /^[\p{L}\p{M}\p{N}_.-]+(?:['’][\p{L}]+)?$/u;
+const LEADING_PUNCTUATION = /^[(（[【]+/;
+const TRAILING_PUNCTUATION = /[,.;:!?，。；：！？)）\]】]+$/;
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/;
 const SQL_OBJECT_KEYWORD =
   /\b(table|relation|column|constraint|index|type|function|policy|schema|sequence|view|trigger|role|database|model|field)\s*$/i;
@@ -82,50 +91,87 @@ export function redactPath(pathname: string) {
 }
 
 /**
- * 引号里的内容一律视为可能的用户输入，只保留两类结构信息：
- * SQL 关键词后的标识符（table "Notification"）和 JSON 键名（{"token": …}）。
+ * 引号串一律视为可能的用户输入，只保留紧跟 SQL 关键词的标识符（table "Notification"）。
+ * 没有配对的双引号从它开始到结尾整段打码（截断或残缺的消息）。
  */
-function redactQuotedValues(value: string) {
-  return value.replace(
-    QUOTED_VALUE,
-    (match, double: string | undefined, single: string | undefined, offset: number, whole: string) => {
-      const inner = double ?? single ?? "";
-      const quote = double !== undefined ? '"' : "'";
-      const before = whole.slice(0, offset);
-      const after = whole.slice(offset + match.length);
-      const keep =
-        quote === '"' &&
-        SQL_IDENTIFIER.test(inner) &&
-        (SQL_OBJECT_KEYWORD.test(before) ||
-          (/[{,]\s*$/.test(before) && /^\s*:/.test(after)));
-      return keep ? match : `${quote}[REDACTED]${quote}`;
+function redactQuotedSpans(value: string) {
+  const spans: string[] = [];
+  // 先把每个引号串换成占位符，剩下的双引号就是没有配对的
+  const masked = value.replace(
+    QUOTED_SPAN,
+    (match, double: string | undefined, _single: string | undefined, offset: number, whole: string) => {
+      const kept =
+        double !== undefined &&
+        SQL_IDENTIFIER.test(double) &&
+        SQL_OBJECT_KEYWORD.test(whole.slice(0, offset));
+      spans.push(kept ? match : double !== undefined ? '"[REDACTED]"' : "'[REDACTED]'");
+      return `\u0000${spans.length - 1}\u0000`;
     },
   );
+  const dangling = masked.indexOf('"');
+  const truncated =
+    dangling === -1 ? masked : `${masked.slice(0, dangling)}[REDACTED]`;
+  return truncated.replace(/\u0000(\d+)\u0000/g, (_match, index: string) => spans[Number(index)]);
 }
 
-// 截断或残缺的消息里落单的双引号后面同样可能是用户输入
-function redactDanglingQuote(value: string) {
-  const count = value.split('"').length - 1;
-  if (count % 2 === 0) return value;
-  const last = value.lastIndexOf('"');
-  return `${value.slice(0, last)}"[REDACTED]`;
+function looksLikeSecret(word: string) {
+  if (!/^[\x00-\x7F]+$/.test(word)) return false;
+  const hasLetter = /[A-Za-z]/.test(word);
+  const hasDigit = /\d/.test(word);
+  return word.length > 32 || (hasLetter && hasDigit && word.length >= 8);
 }
 
 /**
- * 错误消息是排查的关键线索（例如 RLS 拒绝时的表名），但可能夹带用户输入：
- * 去掉凭据、邮箱、长数字、URL 查询串和非标识符的引号内容后截断再记。
+ * 逐词白名单：只有普通单词、已审过的 SQL 标识符和打码占位能留下；
+ * 带 @ :// = / \\ {} % 等符号的词（URL、连接串、JSON 片段、键值对）整个打码。
+ * 敏感键名、认证 scheme 之后的词打码；7 位以上纯数字记成 [NUMBER]。
+ */
+function redactWords(value: string) {
+  let redactNext = false;
+  return value
+    .split(/(\s+)/)
+    .map((part) => {
+      if (!part || /^\s+$/.test(part)) return part;
+      const leading = part.match(LEADING_PUNCTUATION)?.[0] ?? "";
+      const trailing = part.slice(leading.length).match(TRAILING_PUNCTUATION)?.[0] ?? "";
+      const core = part.slice(leading.length, part.length - trailing.length);
+      const previousWasKey = redactNext;
+      redactNext = SENSITIVE_WORD.test(core) || AUTH_SCHEME_WORD.test(core);
+      let safe: string;
+      if (!core) {
+        safe = "";
+      } else if (core === '"[REDACTED]"' || core === "'[REDACTED]'" || core === "[REDACTED]") {
+        safe = core;
+      } else if (/^"[A-Za-z_][A-Za-z0-9_.]{0,127}"$/.test(core)) {
+        // 能留到这一步的双引号标识符都已经在 redactQuotedSpans 里过了关键词检查
+        safe = core;
+      } else if (previousWasKey) {
+        safe = "[REDACTED]";
+      } else if (/^\+?\d[\d-]{6,}$/.test(core) && (core.match(/\d/g)?.length ?? 0) >= 7) {
+        safe = "[NUMBER]";
+      } else if (PLAIN_WORD.test(core) && !looksLikeSecret(core)) {
+        safe = core;
+      } else {
+        safe = "[REDACTED]";
+      }
+      return `${leading}${safe}${trailing}`;
+    })
+    .join("");
+}
+
+/**
+ * 错误消息是排查的关键线索（例如 RLS 拒绝时的表名），但可能夹带用户输入和凭据。
+ * 默认拒绝：Cookie 头整行、引号串、非普通单词一律打码，只留下可读的句子骨架。
  */
 function safeMessage(value: unknown) {
   if (typeof value !== "string" || !value.trim()) return undefined;
-  // 引号先于键值规则处理：JSON 里敏感字段后面的普通字段也可能是私人数据
-  const scrubbed = redactSensitiveText(
-    redactQuotedValues(
-      value.replace(URL_USERINFO, "$1[REDACTED]@").replace(COOKIE_HEADER, "$1$2[REDACTED]"),
-    ),
-  )
-    .replace(URL_QUERY, "$1?[REDACTED]")
+  const withoutCookies = value
+    .replace(COOKIE_HEADER, "$1$2[REDACTED]")
+    // 按空格拆词前先把跨空格/横杠分组的号码（+86 138 0013 8000）整体替换
     .replace(LONG_NUMBER, "[NUMBER]");
-  const redacted = redactDanglingQuote(scrubbed).replace(/\s+/g, " ").trim();
+  const redacted = redactWords(redactQuotedSpans(withoutCookies))
+    .replace(/\s+/g, " ")
+    .trim();
   return redacted.length > MAX_MESSAGE_LENGTH
     ? `${redacted.slice(0, MAX_MESSAGE_LENGTH)}…`
     : redacted;

@@ -162,7 +162,7 @@ describe("API 意外错误响应", () => {
       {
         name: "Error",
         message:
-          "provider rejected token=[REDACTED] for [EMAIL] at https://api.example.test/v1/send?[REDACTED] phone [NUMBER] value '[REDACTED]'",
+          "provider rejected [REDACTED] for [REDACTED] at [REDACTED] phone [NUMBER] value '[REDACTED]'",
       },
     ]);
     for (const secret of ["abc123", "bob@example.com", "key=zzz", "13800138000", "secret input"]) {
@@ -201,15 +201,34 @@ describe("API 意外错误响应", () => {
     expect(multiline.logged).not.toContain("alice");
 
     const dangling = logFor(new Error('value too long: "partial user inp'));
-    expect(dangling.record.error.message).toBe('value too long: "[REDACTED]');
+    expect(dangling.record.error.message).toBe("value too long: [REDACTED]");
   });
 
-  it("URL 去掉账号密码后仍保留主机和路径便于排查", () => {
-    const { record } = logFor(
-      new Error("Connection failed: postgres://app:s3cr3t@db.internal:5432/app"),
+  it("URL、连接串整段打码，密码里带多个 @ 也不会漏出片段", () => {
+    const { logged, record } = logFor(
+      new Error("Connection failed: postgres://app:p@ssw0rd@localhost:5432/app"),
     );
+    expect(record.error.message).toBe("Connection failed: [REDACTED]");
+    expect(logged).not.toContain("ssw0rd");
+  });
+
+  it("嵌套序列化 JSON 里转义的引号不会让凭据漏出", () => {
+    const { logged, record } = logFor(
+      new Error('payload {"body":"{\\"password\\":\\"hunterTwo\\"}"} rejected'),
+    );
+    expect(logged).not.toContain("hunterTwo");
+    expect(record.error.message).toBe("payload [REDACTED] rejected");
+  });
+
+  it("纯文本里敏感键名和认证 scheme 之后的词打码", () => {
+    const { logged, record } = logFor(
+      new Error("login failed: password hunter2 and token abcdef, auth Bearer qwerty"),
+    );
+    for (const secret of ["hunter2", "abcdef", "qwerty"]) {
+      expect(logged).not.toContain(secret);
+    }
     expect(record.error.message).toBe(
-      "Connection failed: postgres://[REDACTED]@db.internal:5432/app",
+      "login failed: password [REDACTED] and token [REDACTED], auth Bearer [REDACTED]",
     );
   });
 
@@ -224,11 +243,9 @@ describe("API 意外错误响应", () => {
     for (const secret of secrets) expect(logged).not.toContain(secret);
   });
 
-  it("保留 JSON 键名和撇号前后的表名，便于定位", () => {
+  it("JSON 片段整段打码，撇号前后的表名照常保留", () => {
     const json = logFor(new Error('payload {"token":"abc123","value":"private note"}'));
-    expect(json.record.error.message).toBe(
-      'payload {"token":"[REDACTED]","value":"[REDACTED]"}',
-    );
+    expect(json.record.error.message).toBe("payload [REDACTED]");
     const apostrophe = logFor(
       new Error(`can't insert: new row violates row-level security policy for table "Notification", isn't allowed`),
     );
