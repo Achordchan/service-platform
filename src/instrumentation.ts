@@ -11,9 +11,13 @@ export async function register() {
     }
   } catch (error) {
     // Do not crash the app if the queue is temporarily unavailable.
+    const { describeErrorForLog } = await import("@/lib/error-log");
     console.error(
-      "邮件 worker 启动延后：",
-      error instanceof Error ? error.message : error,
+      "ACHORD_MAIL_WORKER_START_DEFERRED",
+      JSON.stringify({
+        event: "mail_worker.start_deferred",
+        error: describeErrorForLog(error),
+      }),
     );
   }
 }
