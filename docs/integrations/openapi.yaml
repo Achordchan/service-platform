@@ -1,15 +1,17 @@
 openapi: 3.1.0
 info:
   title: Achord Connect v1
-  version: 1.0.0
-  description: Third-party server API for issuing one-time iframe launch tickets.
+  version: 1.1.0
+  description: >-
+    Third-party server API for issuing one-time launch tickets (iframe or Native Launch)
+    and reading a contact's unread counts.
 servers:
   - url: https://support.achord.cn
 paths:
   /api/v1/integrations/universal/launch-tickets:
     post:
       operationId: createLaunchTicket
-      summary: 创建 60 秒单次 iframe 票据
+      summary: 创建 60 秒单次票据（iframe 或 Native Launch）
       security:
         - basicAuth: []
       requestBody:
@@ -31,7 +33,54 @@ paths:
                     $ref: '#/components/schemas/LaunchTicketResponse'
         '401':
           $ref: '#/components/responses/Error'
+        '403':
+          description: UNIVERSAL_NATIVE_LAUNCH_DISABLED（native 票据但连接未开启）或 UNIVERSAL_RETURN_ORIGIN_INVALID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: UNIVERSAL_IFRAME_NOT_CONFIGURED（连接未配置 Origin，只能创建 native 票据）
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '413':
+          $ref: '#/components/responses/Error'
+        '422':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+  /api/v1/integrations/universal/contacts/{externalUserId}/unread:
+    get:
+      operationId: getContactUnread
+      summary: 查询外部用户的未读数（服务器之间调用）
+      description: >-
+        只返回当前凭据所属连接下的联系人。联系人不存在时同样返回 200 与 0，不泄露用户是否存在。
+        requests 只含有未读的请求，按 updatedAt 倒序，最多 50 条。每个连接每分钟 600 次。
+      security:
+        - basicAuth: []
+      parameters:
+        - in: path
+          name: externalUserId
+          required: true
+          description: 创建票据时使用的 user.id，需要 URL 编码。
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 191
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    $ref: '#/components/schemas/ContactUnread'
+        '401':
           $ref: '#/components/responses/Error'
         '422':
           $ref: '#/components/responses/Error'
@@ -96,7 +145,18 @@ components:
               type: string
               format: uri
               maxLength: 2048
-              description: Required when the connection allows multiple Origins; must exactly match one configured Origin.
+              description: >-
+                iframe only. Required when the connection allows multiple Origins; must exactly
+                match one configured Origin. Must be omitted for launchMode=native (422
+                UNIVERSAL_RETURN_ORIGIN_NOT_ALLOWED_FOR_NATIVE).
+            launchMode:
+              type: string
+              enum: [iframe, native]
+              default: iframe
+              description: >-
+                native opens the portal top-level in the app's own window, system browser or
+                WebView, without iframe Origin checks. Requires the connection to enable
+                Native Launch (otherwise 403 UNIVERSAL_NATIVE_LAUNCH_DISABLED).
     LaunchTicketResponse:
       type: object
       required: [launchUrl, expiresAt]
@@ -104,10 +164,38 @@ components:
         launchUrl:
           type: string
           format: uri
-          description: Contains a one-time ticket in the URL fragment.
+          description: >-
+            Contains a one-time ticket in the URL fragment, never in the query string.
+            Native tickets append `&mode=native` to the fragment, e.g.
+            `https://support.achord.cn/embed/connect/{publicId}#ticket=act_…&mode=native`.
         expiresAt:
           type: string
           format: date-time
+    ContactUnread:
+      type: object
+      required: [externalUserId, unreadCount, requests]
+      properties:
+        externalUserId:
+          type: string
+        unreadCount:
+          type: integer
+          minimum: 0
+          description: Total unread count across all of the contact's requests.
+        requests:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            required: [id, number, title, status, unreadCount, updatedAt]
+            properties:
+              id: { type: string }
+              number: { type: string }
+              title: { type: string }
+              status:
+                type: string
+                enum: [PENDING, IN_PROGRESS, WAITING_CUSTOMER, RESOLVED, CLOSED]
+              unreadCount: { type: integer, minimum: 1 }
+              updatedAt: { type: string, format: date-time }
     ErrorEnvelope:
       type: object
       required: [error]
@@ -162,6 +250,10 @@ webhooks:
                     - request.unread.changed
                     - connector.test
                 createdAt: { type: string, format: date-time }
-                data: { type: object }
+                data:
+                  type: object
+                  description: >-
+                    For request.unread.changed: externalUserId, unreadCount (this request),
+                    contactUnreadCount (all of the contact's requests; additive field) and request.
       responses:
         '200': { description: Accepted }

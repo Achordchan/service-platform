@@ -28,7 +28,7 @@ export type UniversalGuideStage =
   | "ACTIVE";
 
 const stageMessages: Record<UniversalGuideStage, string> = {
-  CONFIGURE: "当前下一步：填写第三方网页的 HTTPS Origin 并保存连接配置。",
+  CONFIGURE: "当前下一步：填写第三方网页的 HTTPS Origin（或开启原生应用启动）并保存连接配置。",
   CREDENTIALS: "当前下一步：生成 Client ID 和 Client Secret，并立即保存到第三方后端。",
   ACTIVATE: "当前下一步：执行连接检测，通过后激活连接。Webhook 可以稍后配置。",
   ACTIVE: "连接已经激活。第三方后端现在可以为已登录用户创建一次性进入票据。",
@@ -73,12 +73,14 @@ export function UniversalIntegrationGuideDialog({
           >
             <Tab label="接入步骤" />
             <Tab label="代码示例" />
+            <Tab label="原生 App（Native Launch）" />
             <Tab label="产品边界" />
           </Tabs>
           <Divider />
           {tab === 0 ? <QuickStartGuide /> : null}
           {tab === 1 ? <CodeGuide platformOrigin={platformOrigin} /> : null}
-          {tab === 2 ? <BoundaryGuide /> : null}
+          {tab === 2 ? <NativeLaunchGuide platformOrigin={platformOrigin} /> : null}
+          {tab === 3 ? <BoundaryGuide /> : null}
         </Stack>
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -105,7 +107,7 @@ function QuickStartGuide() {
       </GuideSection>
       <GuideSection title="3. 检测并激活">
         <Typography variant="body2" color="text.secondary">
-          至少配置一个 Origin 和一个有效凭据后执行连接检测。Webhook
+          至少配置一个 Origin（或开启原生应用启动）和一个有效凭据后执行连接检测。Webhook
           是可选项，不配置也可以先激活连接。
         </Typography>
       </GuideSection>
@@ -177,6 +179,82 @@ window.addEventListener("message", (event) => {
   );
 }
 
+function NativeLaunchGuide({ platformOrigin }: { platformOrigin: string }) {
+  const baseUrl = platformOrigin || "https://support.example.com";
+  const backendExample = `// App 后端（持有 Client Secret）：为已登录用户创建 native 票据
+const basic = Buffer.from(\`${"${CLIENT_ID}:${CLIENT_SECRET}"}\`).toString("base64");
+
+const response = await fetch(
+  "${baseUrl}/api/v1/integrations/universal/launch-tickets",
+  {
+    method: "POST",
+    headers: {
+      Authorization: \`Basic ${"${basic}"}\`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      user: { id: String(currentUser.id), name: currentUser.name },
+      // native 票据不能带 returnOrigin
+      context: { launchMode: "native", theme: "system", locale: "zh-CN" },
+    }),
+  },
+);
+const { data } = await response.json();
+// data.launchUrl 形如 ${baseUrl}/embed/connect/<publicId>#ticket=act_…&mode=native
+return data.launchUrl;`;
+  const appExample = `// App 端：拿到 launchUrl 后原样顶层打开（独立窗口 / 系统浏览器 / WebView），不要放进 iframe。
+// 可选：在页面加载前注入桥接对象，接收门户事件
+window.AchordConnectNative = {
+  postMessage(message) {
+    const event = JSON.parse(message);
+    if (event.source !== "achord-connect-v1") return;
+    if (event.type === "unread-changed") updateBadge(event.unreadCount);
+    if (event.type === "session-expired") showReopenHint();
+    if (event.type === "close-requested") closeSupportWindow();
+  },
+};`;
+  const unreadExample = `// App 后端：启动时或 Webhook 丢失后重建「工单」按钮红点
+const response = await fetch(
+  \`${baseUrl}/api/v1/integrations/universal/contacts/${"${encodeURIComponent(userId)}"}/unread\`,
+  { headers: { Authorization: \`Basic ${"${basic}"}\` } },
+);
+const { data } = await response.json(); // { externalUserId, unreadCount, requests }`;
+
+  return (
+    <Stack spacing={2.5}>
+      <Typography variant="body2" color="text.secondary">
+        桌面或移动 App 没有 HTTPS 网页来源，不能走 iframe 模式。先在连接配置里开启“允许原生应用启动（Native
+        Launch）”，保存后重新执行连接检测。只做原生接入时可以不填 Origin。
+      </Typography>
+      <GuideSection title="1. App 后端创建 native 票据">
+        <Typography variant="body2" color="text.secondary">
+          与网页接入同一个接口，context.launchMode 传 &quot;native&quot;。票据同样 60 秒有效、只能兑换一次，只放在
+          URL 片段里。
+        </Typography>
+        <CodeBlock value={backendExample} />
+      </GuideSection>
+      <GuideSection title="2. App 顶层打开 launchUrl">
+        <Typography variant="body2" color="text.secondary">
+          在 App 的独立窗口、系统浏览器或 WebView 中原样打开 launchUrl，不要去掉片段里的 mode=native。门户右上角提供“关闭”按钮；附件和外部链接会以新窗口打开，宿主可把新窗口交给系统浏览器处理。
+        </Typography>
+      </GuideSection>
+      <GuideSection title="3. 可选：注入 window.AchordConnectNative 接收事件">
+        <Typography variant="body2" color="text.secondary">
+          门户会把 ready、unread-changed（unreadCount 为该用户全部请求的未读总数）、session-expired、close-requested
+          以 JSON 字符串传给 postMessage。没有桥接对象时门户静默跳过。
+        </Typography>
+        <CodeBlock value={appExample} />
+      </GuideSection>
+      <GuideSection title="4. 服务端同步未读数">
+        <CodeBlock value={unreadExample} />
+      </GuideSection>
+      <Alert severity="warning">
+        会话最长 2 小时、不续期。过期后门户会提示用户关闭窗口，App 需要重新创建票据再打开。
+      </Alert>
+    </Stack>
+  );
+}
+
 function BoundaryGuide() {
   return (
     <Stack spacing={2.5}>
@@ -185,6 +263,7 @@ function BoundaryGuide() {
           items={[
             "拥有自身登录体系和可信后端的第三方网页产品。",
             "由第三方后端创建短期单次票据，再将完整服务请求门户嵌入 iframe。",
+            "拥有可信后端的桌面或移动 App：以 Native Launch 模式在 App 窗口、系统浏览器或 WebView 中顶层打开门户。",
             "外部用户只访问自己的服务请求，不创建平台正式账号。",
             "支持公开回复、附件、在线状态、输入提示、未读事件和可选 Webhook。",
           ]}
@@ -196,14 +275,14 @@ function BoundaryGuide() {
           items={[
             "没有可信后端时，把 Client Secret 直接放进网页或 App。",
             "直接使用固定嵌入地址绕过一次性票据。",
-            "原生 App 在没有 HTTPS Origin 的情况下使用当前 iframe 模式。",
-            "通过 file://、null Origin 或自定义协议伪装可信网页来源。",
+            "通过 file://、null Origin 或自定义协议冒充 iframe 来源。",
           ]}
         />
       </GuideSection>
       <Alert severity="info">
-        原生 App 需要单独的 Native Launch 模式：App 后端创建票据，App
-        使用系统浏览器、Custom Tabs 或 WebView 打开临时地址。当前版本尚未提供该模式。
+        原生 App 需要单独的 Native Launch 模式：在连接配置中开启后，由 App 后端以 launchMode:
+        &quot;native&quot; 创建票据，App 在独立窗口、系统浏览器或 WebView 中顶层打开 launchUrl。详见“原生
+        App（Native Launch）”一节。
       </Alert>
     </Stack>
   );

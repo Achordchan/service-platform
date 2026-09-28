@@ -23,6 +23,16 @@
 - 多 Origin 连接由第三方后端在签票时提交允许列表内的 `context.returnOrigin`，浏览器检测到的父 Origin 只能做一致性校验，不能覆盖该可信来源。
 - Universal 票据兑换必须取得真实父页面 Origin，并与 `context.returnOrigin` 完全一致；无法取得父来源时直接拒绝兑换。宿主不得通过 `referrerpolicy="no-referrer"` 隐藏 iframe 来源。
 
+## Native Launch 边界
+
+- native 票据只能由持有 Client Secret 的后端以 `context.launchMode = "native"` 创建，且连接必须开启 `allowNativeLaunch`；同样 60 秒过期、只能兑换一次、只放在 URL 片段里。
+- 兑换时只按**票据上存的** `launchMode` 决定是否跳过父页面来源校验，前端片段里的 `mode` 与请求体里的 `parentOrigin` 都不作数：iframe 票据缺少父页面来源仍然拒绝，不能被降级成 native。
+- native 会话的 `parentOrigins` 为空，门户不向任何 Origin `postMessage`；兑换不改写联系人的 `lastParentOrigin`，不影响 iframe 会话的来源信任记录和邮件返回入口。
+- 只开 Native Launch、不配 Origin 的连接，`frame-ancestors` 为 `'none'`，门户不能被任何网页嵌入。
+- native 门户的附件在系统浏览器打开时使用 60 秒有效、HMAC 绑定「会话 + 附件」的下载链接；兑现时按会话现状重新鉴权，链接只签给 native 会话。
+- 仍不支持：把 Client Secret 放进 App、用固定地址绕过票据、用 `file://` / `null` Origin / 自定义协议冒充 iframe 来源。
+- 服务端未读查询 `GET /api/v1/integrations/universal/contacts/{externalUserId}/unread` 只返回当前连接下的联系人，联系人不存在与没有未读的响应完全相同。
+
 ## 网络边界
 
 - 创建票据和通用票据兑换接口的 JSON 请求体在应用与 Nginx 两层限制为 64KB；签票接口先验证 Basic Auth，再读取正文。
@@ -37,4 +47,4 @@
 
 - 插件停用、连接停用或归档会撤销现有 Embed Session，阻止新票据和后续 Webhook 业务投递。
 - 归档不会删除外部联系人、工单、消息、附件或审计历史。
-- v1 只提供完整 iframe 门户，不承诺 Headless 工单 API、跨项目连接、正式账号合并或客户门户整体嵌入。
+- v1 只提供完整门户（iframe 或 Native Launch 顶层打开），不承诺 Headless 工单 API、跨项目连接、正式账号合并或客户门户整体嵌入。

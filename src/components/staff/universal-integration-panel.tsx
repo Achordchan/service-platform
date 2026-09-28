@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Checkbox,
+  Chip,
   Dialog,
   DialogActions,
   DialogContent,
@@ -52,12 +53,26 @@ type CredentialView = {
   createdAt: string;
 };
 
+type RecentSessionView = {
+  id: string;
+  contactId: string;
+  contactName: string;
+  externalUserId: string;
+  launchMode: "iframe" | "native";
+  createdAt: string;
+  lastSeenAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  status: "ACTIVE" | "EXPIRED" | "REVOKED";
+};
+
 type ConnectionView = {
   bindingId: string;
   publicId: string;
   bindingStatus: "DRAFT" | "ACTIVE" | "DISABLED" | "ARCHIVED";
   name: string;
   allowedOrigins: string[];
+  allowNativeLaunch: boolean;
   profileFields: ProfileField[];
   emailNotificationsEnabled: boolean;
   customerMemberNotificationsEnabled: boolean;
@@ -71,7 +86,28 @@ type ConnectionView = {
   embedUrl: string;
   activeCredentialCount: number;
   credentials: CredentialView[];
+  recentSessions?: RecentSessionView[];
 };
+
+const launchModeLabels: Record<RecentSessionView["launchMode"], string> = {
+  iframe: "iframe",
+  native: "Native",
+};
+
+const sessionStatusLabels: Record<RecentSessionView["status"], string> = {
+  ACTIVE: "",
+  EXPIRED: " · 已过期",
+  REVOKED: " · 已撤销",
+};
+
+function formatSessionTime(value: string) {
+  return new Date(value).toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 type WebhookEventType =
   | "request.created"
@@ -112,6 +148,7 @@ type DeliveryView = {
 type ConnectionDraft = {
   name: string;
   origins: string;
+  allowNativeLaunch: boolean;
   profileFields: ProfileField[];
   webhookUrl: string;
   webhookEvents: WebhookEventType[];
@@ -128,6 +165,7 @@ function connectionDraftFrom(
   return {
     name: connection?.name ?? fallbackName ?? "",
     origins: connection?.allowedOrigins.join("\n") ?? "",
+    allowNativeLaunch: connection?.allowNativeLaunch ?? false,
     profileFields: connection?.profileFields ?? [],
     webhookUrl: connection?.webhookUrl ?? "",
     webhookEvents:
@@ -185,6 +223,7 @@ export function UniversalIntegrationPanel({
   const {
     name,
     origins,
+    allowNativeLaunch,
     profileFields,
     webhookUrl,
     webhookEvents,
@@ -209,7 +248,16 @@ export function UniversalIntegrationPanel({
   function replaceCachedConnection(connection: ConnectionView) {
     setDraft(null);
     queryClient.setQueryData<IntegrationView>(integrationKey, (current) =>
-      current ? { ...current, connection } : current,
+      current
+        ? {
+            ...current,
+            connection: {
+              ...connection,
+              recentSessions:
+                connection.recentSessions ?? current.connection?.recentSessions,
+            },
+          }
+        : current,
     );
     invalidateIntegration();
   }
@@ -272,6 +320,7 @@ export function UniversalIntegrationPanel({
         .split("\n")
         .map((item) => item.trim())
         .filter(Boolean),
+      allowNativeLaunch,
       profileFields,
       emailNotificationsEnabled: emailNotifications,
       customerMemberNotificationsEnabled: customerNotifications,
@@ -496,7 +545,9 @@ export function UniversalIntegrationPanel({
         </Alert>
       ) : activeStep === 4 ? (
         <Alert severity="success">
-          Achord Connect 已激活，允许 {view.connection?.allowedOrigins.length ?? 0} 个嵌入来源，当前有 {activeCredentialCount} 个有效凭据。
+          Achord Connect 已激活，允许 {view.connection?.allowedOrigins.length ?? 0} 个嵌入来源
+          {view.connection?.allowNativeLaunch ? "并允许原生应用启动" : ""}
+          ，当前有 {activeCredentialCount} 个有效凭据。
         </Alert>
       ) : (
         <Stepper activeStep={activeStep} alternativeLabel>
@@ -530,9 +581,29 @@ export function UniversalIntegrationPanel({
           }
           multiline
           minRows={2}
-          helperText="每行一个完整 Origin，例如 https://app.example.com"
+          helperText="每行一个完整 Origin，例如 https://app.example.com。只做原生 App 接入时可留空"
           disabled={!canModify || busy}
         />
+        <Box>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={allowNativeLaunch}
+                onChange={(event) =>
+                  updateDraft((current) => ({
+                    ...current,
+                    allowNativeLaunch: event.target.checked,
+                  }))
+                }
+                disabled={!canModify || busy}
+              />
+            }
+            label="允许原生应用启动（Native Launch）"
+          />
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", pl: { xs: 0, sm: 6 } }}>
+            用于桌面或移动 App：由 App 后端创建票据，App 在自己的窗口、系统浏览器或 WebView 中顶层打开，不做 iframe 来源校验。
+          </Typography>
+        </Box>
         <Stack spacing={1.25}>
           <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
             <Typography variant="subtitle2">用户自定义资料</Typography>
@@ -790,6 +861,36 @@ export function UniversalIntegrationPanel({
             ) : null}
           </Stack>
           {view.connection.lastError ? <Alert severity="error">{view.connection.lastError}</Alert> : null}
+        </Stack>
+      ) : null}
+
+      {view.connection?.recentSessions?.length ? (
+        <Stack spacing={1}>
+          <Typography variant="h3">最近会话</Typography>
+          {view.connection.recentSessions.map((session) => (
+            <Stack
+              key={session.id}
+              direction={{ xs: "column", sm: "row" }}
+              spacing={1}
+              sx={{ alignItems: { sm: "center" }, justifyContent: "space-between" }}
+            >
+              <Stack direction="row" spacing={1} sx={{ alignItems: "center", minWidth: 0 }}>
+                <Chip
+                  size="small"
+                  variant="outlined"
+                  color={session.launchMode === "native" ? "secondary" : "default"}
+                  label={launchModeLabels[session.launchMode]}
+                />
+                <Typography variant="body2" noWrap sx={{ minWidth: 0 }}>
+                  {session.contactName} · {session.externalUserId}
+                </Typography>
+              </Stack>
+              <Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>
+                {formatSessionTime(session.createdAt)} 进入
+                {sessionStatusLabels[session.status]}
+              </Typography>
+            </Stack>
+          ))}
         </Stack>
       ) : null}
 

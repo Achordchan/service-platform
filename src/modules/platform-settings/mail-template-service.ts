@@ -39,6 +39,7 @@ export async function buildTemplateMail(input: {
   key: MailTemplateKey;
   variables: Record<string, string>;
   actionUrl?: string;
+  actionNotice?: string;
 }) {
   return withSystemDb((tx) => buildTemplateMailInTx(tx, input));
 }
@@ -49,6 +50,7 @@ export async function buildTemplateMailInTx(
     key: MailTemplateKey;
     variables: Record<string, string>;
     actionUrl?: string;
+    actionNotice?: string;
   },
 ) {
   const override = await tx.mailTemplateOverride.findUnique({
@@ -56,6 +58,16 @@ export async function buildTemplateMailInTx(
   });
   const content = effectiveContent(input.key, override);
   const rendered = renderTemplateContent(input.key, content, input.variables);
+  if (!input.actionUrl && input.actionNotice) {
+    // 没有可回的链接：去掉按钮，把提示作为正文最后一段
+    return {
+      templateKey: input.key,
+      ...rendered,
+      body: `${rendered.body}\n\n${input.actionNotice}`,
+      actionLabel: null,
+      actionUrl: null,
+    };
+  }
   return {
     templateKey: input.key,
     ...rendered,
