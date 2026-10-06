@@ -66,7 +66,8 @@ const FIVE = [
 ];
 
 describe("formatRelativeTime", () => {
-  const now = new Date("2026-10-06T12:00:00+08:00").getTime();
+  // 用本地时间构造，formatRelativeTime 按运行环境时区取日历日期
+  const now = new Date(2026, 9, 6, 12, 0, 0).getTime();
   const ago = (ms: number) => new Date(now - ms).toISOString();
   const minute = 60_000;
   const hour = 60 * minute;
@@ -81,8 +82,8 @@ describe("formatRelativeTime", () => {
   });
 
   it("超过一周显示日期，跨年带年份", () => {
-    expect(formatRelativeTime("2026-09-12T08:00:00+08:00", now)).toBe("9 月 12 日");
-    expect(formatRelativeTime("2025-12-31T08:00:00+08:00", now)).toBe("2025 年 12 月 31 日");
+    expect(formatRelativeTime(new Date(2026, 8, 12, 12, 0, 0).toISOString(), now)).toBe("9 月 12 日");
+    expect(formatRelativeTime(new Date(2025, 11, 31, 12, 0, 0).toISOString(), now)).toBe("2025 年 12 月 31 日");
   });
 
   it("时钟略快于服务端时不出现负数", () => {
