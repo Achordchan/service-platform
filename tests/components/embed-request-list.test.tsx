@@ -81,6 +81,19 @@ describe("formatRelativeTime", () => {
     expect(formatRelativeTime(ago(3 * day), now)).toBe("3 天前");
   });
 
+  it("「昨天」按日历日判断，不是 24–48 小时前", () => {
+    const local = (m: number, d: number, h: number, min: number) =>
+      new Date(2026, m - 1, d, h, min, 0).getTime();
+    const at = local(10, 6, 0, 30);
+    const iso = (t: number) => new Date(t).toISOString();
+    // 前天 23:30 → 25 小时前，但日历上是前天
+    expect(formatRelativeTime(iso(local(10, 4, 23, 30)), at)).toBe("2 天前");
+    // 昨天 23:30 → 1 小时前，仍按小时显示
+    expect(formatRelativeTime(iso(local(10, 5, 23, 30)), at)).toBe("1 小时前");
+    // 昨天 00:10 → 超过 24 小时且确实是昨天
+    expect(formatRelativeTime(iso(local(10, 5, 0, 10)), at)).toBe("昨天");
+  });
+
   it("超过一周显示日期，跨年带年份", () => {
     expect(formatRelativeTime(new Date(2026, 8, 12, 12, 0, 0).toISOString(), now)).toBe("9 月 12 日");
     expect(formatRelativeTime(new Date(2025, 11, 31, 12, 0, 0).toISOString(), now)).toBe("2025 年 12 月 31 日");

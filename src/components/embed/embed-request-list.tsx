@@ -130,19 +130,30 @@ const FOOTER_META: Partial<Record<EmbedRequestStatus, FooterMeta>> = {
   },
 };
 
+// 本地日历日相差几天；用 UTC 分量做减法，夏令时切换日不会让「一天」变成 23/25 小时
+function calendarDayDiff(from: Date, to: Date) {
+  const dayMs = 24 * 60 * 60_000;
+  return Math.round(
+    (Date.UTC(to.getFullYear(), to.getMonth(), to.getDate()) -
+      Date.UTC(from.getFullYear(), from.getMonth(), from.getDate())) /
+      dayMs,
+  );
+}
+
 export function formatRelativeTime(iso: string, now: number = Date.now()) {
   const time = new Date(iso).getTime();
   if (Number.isNaN(time)) return "";
   const diff = Math.max(0, now - time);
   const minute = 60_000;
   const hour = 60 * minute;
-  const day = 24 * hour;
   if (diff < minute) return "刚刚";
   if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`;
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`;
-  if (diff < 2 * day) return "昨天";
-  if (diff < 7 * day) return `${Math.floor(diff / day)} 天前`;
+  if (diff < 24 * hour) return `${Math.floor(diff / hour)} 小时前`;
+  // 满 24 小时后按日历日算：「昨天」必须真的是昨天，而不是 24–48 小时前
   const date = new Date(time);
+  const days = calendarDayDiff(date, new Date(now));
+  if (days <= 1) return "昨天";
+  if (days < 7) return `${days} 天前`;
   const sameYear = date.getFullYear() === new Date(now).getFullYear();
   return `${sameYear ? "" : `${date.getFullYear()} 年 `}${date.getMonth() + 1} 月 ${date.getDate()} 日`;
 }
