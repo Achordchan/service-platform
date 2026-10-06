@@ -406,9 +406,8 @@ function RequestCard({
   const status = STATUS_META[request.status];
   const statusTone = status[mode];
   const footerMeta = FOOTER_META[request.status];
-  // 已解决的确认入口在详情里，只读项目没有这个动作，别提示
-  const footer =
-    footerMeta && (request.status !== "RESOLVED" || writable) ? footerMeta : null;
+  // 回复与确认都要写权限；只读项目里提示这些动作会把用户引向不可用的入口
+  const footer = writable ? (footerMeta ?? null) : null;
   const highPriority = request.priority === "HIGH" || request.priority === "URGENT";
   const StatusIcon = status.Icon;
   const neutral = alpha(theme.palette.text.primary, dark ? 0.1 : 0.06);

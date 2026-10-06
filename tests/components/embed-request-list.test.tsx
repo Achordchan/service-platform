@@ -117,10 +117,15 @@ describe("EmbedRequestListView", () => {
     expect(screen.getByRole("button", { name: /请求 b/ }).textContent).not.toContain("去");
   });
 
-  it("只读项目不提示去确认已解决的请求", () => {
+  it("只读项目不显示任何行动提示带", () => {
     render(<Harness requests={FIVE} writable={false} />);
-    expect(screen.getByRole("button", { name: /请求 d/ }).textContent).not.toContain("去确认");
-    expect(screen.getByRole("button", { name: /请求 a/ }).textContent).toContain("去回复");
+    const waiting = screen.getByRole("button", { name: /请求 a/ });
+    const resolved = screen.getByRole("button", { name: /请求 d/ });
+    expect(waiting.textContent).not.toContain("去回复");
+    expect(waiting.textContent).not.toContain("客服在等你的回复");
+    expect(resolved.textContent).not.toContain("去确认");
+    // 状态 Chip 仍在，只是不再引导动作
+    expect(waiting.textContent).toContain("等待客户");
   });
 
   it("底部提示不含「关闭」，不干扰名为「关闭」的宿主按钮查询", () => {
