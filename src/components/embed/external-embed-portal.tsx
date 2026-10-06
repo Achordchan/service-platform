@@ -28,7 +28,6 @@ import {
   useMediaQuery,
 } from "@mui/material";
 import { ThemeProvider } from "@mui/material/styles";
-import AddOutlinedIcon from "@mui/icons-material/AddOutlined";
 import ArrowBackOutlinedIcon from "@mui/icons-material/ArrowBackOutlined";
 import AttachFileOutlinedIcon from "@mui/icons-material/AttachFileOutlined";
 import CloseOutlinedIcon from "@mui/icons-material/CloseOutlined";
@@ -49,7 +48,12 @@ import {
 import { RequestReplyPreview } from "@/components/shared/request-reply-preview";
 import { RichTextEditor } from "@/components/shared/rich-text-editor";
 import { ContentRiskNotice } from "@/components/shared/content-risk-notice";
-import { UnreadCountPill } from "@/components/shared/tab-badge-label";
+import {
+  EmbedCreateFab,
+  EmbedListHero,
+  EmbedRequestListView,
+  type EmbedListFilter,
+} from "@/components/embed/embed-request-list";
 import { fileNames, uploadFilesBestEffort } from "@/lib/file-upload";
 import {
   appendDraftMeta,
@@ -241,6 +245,7 @@ function ExternalEmbedPortal({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [listFilter, setListFilter] = useState<EmbedListFilter>("all");
   const [replyTarget, setReplyTarget] = useState<ChatReplyTarget | null>(null);
   const [reeditDraft, setReeditDraft] = useState<ChatReeditDraft | null>(null);
   const [counterpartPresence, setCounterpartPresence] = useState<{
@@ -848,6 +853,26 @@ function ExternalEmbedPortal({
       关闭
     </Button>
   ) : null;
+  // 头部用的纯图标版本；错误页没有头部，继续用上面带文字的按钮
+  const nativeCloseIconButton = nativeMode ? (
+    <Tooltip title="关闭">
+      <IconButton
+        aria-label="关闭"
+        onClick={requestClose}
+        sx={{
+          flexShrink: 0,
+          width: 44,
+          height: 44,
+          borderRadius: "12px",
+          border: "1px solid",
+          borderColor: "divider",
+          color: "text.secondary",
+        }}
+      >
+        <CloseOutlinedIcon />
+      </IconButton>
+    </Tooltip>
+  ) : null;
   const hostSnackbar = (
     <Snackbar
       open={Boolean(hostNotice)}
@@ -916,28 +941,66 @@ function ExternalEmbedPortal({
     <ThemeProvider theme={embedTheme}>
     <Box
       data-testid="external-embed-shell"
-      sx={{ minHeight: "100dvh", bgcolor: "background.default" }}
+      sx={{
+        minHeight: "100dvh",
+        // 页面没有 CssBaseline，不显式设置的话暗色下标题会继承浏览器默认的黑色
+        color: "text.primary",
+        // 列表页用淡灰底衬出白色卡片；详情的聊天区保持原来的纸面底色
+        bgcolor: detail
+          ? "background.default"
+          : embedTheme.palette.mode === "dark"
+            ? "background.default"
+            : "#f3f5f9",
+      }}
     >
-      <AppBar position="sticky" elevation={0} color="inherit" sx={{ borderBottom: "1px solid", borderColor: "divider" }}>
-        <Toolbar sx={{ gap: 1.5 }}>
-          {detail ? (
-            <Tooltip title="返回服务请求列表">
-              <IconButton onClick={() => { setDetail(null); detailIdRef.current = null; setReplyTarget(null); }}>
-                <ArrowBackOutlinedIcon />
-              </IconButton>
-            </Tooltip>
-          ) : null}
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography sx={{ fontWeight: 650 }} noWrap>{list.project.title}</Typography>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {session.contact.name} · {connectorLabel}
-            </Typography>
-          </Box>
-          {nativeCloseButton}
-        </Toolbar>
+      <AppBar position="sticky" elevation={0} color="inherit" sx={{ borderBottom: "1px solid", borderColor: "divider", bgcolor: "background.paper" }}>
+        <Container maxWidth={false} disableGutters sx={{ maxWidth: detail ? 1200 : 800, px: { xs: 2, sm: 3 } }}>
+          <Toolbar disableGutters sx={{ gap: 1.5 }}>
+            {detail ? (
+              <Tooltip title="返回服务请求列表">
+                <IconButton onClick={() => { setDetail(null); detailIdRef.current = null; setReplyTarget(null); }}>
+                  <ArrowBackOutlinedIcon />
+                </IconButton>
+              </Tooltip>
+            ) : (
+              <Box
+                aria-hidden="true"
+                sx={{
+                  flexShrink: 0,
+                  width: 40,
+                  height: 40,
+                  borderRadius: "12px",
+                  bgcolor: "primary.main",
+                  color: "primary.contrastText",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 18,
+                  fontWeight: 700,
+                }}
+              >
+                {Array.from(list.project.title.trim())[0]?.toUpperCase() ?? "A"}
+              </Box>
+            )}
+            <Box sx={{ minWidth: 0, flex: 1 }}>
+              <Typography sx={{ fontWeight: 700 }} noWrap>{list.project.title}</Typography>
+              <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                {session.contact.name} · {connectorLabel}
+              </Typography>
+            </Box>
+            {nativeCloseIconButton}
+          </Toolbar>
+        </Container>
       </AppBar>
 
-      <Container maxWidth="lg" sx={{ py: { xs: 2, md: 3 }, px: { xs: 1.5, sm: 3 } }}>
+      <Container
+        maxWidth={false}
+        sx={
+          detail
+            ? { maxWidth: 1200, py: { xs: 2, md: 3 }, px: { xs: 1.5, sm: 3 } }
+            : { maxWidth: 800, py: { xs: 3, sm: 4.5 }, px: { xs: 2, sm: 3 } }
+        }
+      >
         {detail ? (
           <Stack spacing={2}>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ justifyContent: "space-between" }}>
@@ -1056,53 +1119,27 @@ function ExternalEmbedPortal({
             )}
           </Stack>
         ) : (
-          <Stack spacing={1.5}>
-            {list.project.writable ? (
-              <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
-                <Button
-                  variant="contained"
-                  startIcon={<AddOutlinedIcon />}
-                  onClick={() => setCreateOpen(true)}
-                  sx={{ width: { xs: "100%", sm: "auto" } }}
-                >
-                  新建服务请求
-                </Button>
-              </Box>
-            ) : null}
+          <Stack spacing={{ xs: 2.5, sm: 3 }}>
+            <EmbedListHero
+              contactName={session.contact.name}
+              canCreate={list.project.writable && list.requests.length > 0}
+              onCreate={() => setCreateOpen(true)}
+            />
             {!list.project.writable ? <Alert severity="info">当前项目只允许查看历史服务请求。</Alert> : null}
-            {list.requests.map((request) => (
-              <Paper
-                key={request.id}
-                component="button"
-                type="button"
-                variant="outlined"
-                onClick={() => void loadDetail(request.id)}
-                sx={{ p: 2, textAlign: "left", cursor: "pointer", width: "100%", bgcolor: "background.paper" }}
-              >
-                <Stack direction="row" spacing={1.5} sx={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <Box sx={{ minWidth: 0, flex: 1 }}>
-                    <Stack
-                      direction="row"
-                      spacing={0.75}
-                      sx={{ alignItems: "center", minWidth: 0 }}
-                    >
-                      <Typography sx={{ fontWeight: 650, minWidth: 0 }} noWrap>
-                        {request.title}
-                      </Typography>
-                      <UnreadCountPill count={request.unreadCount} />
-                    </Stack>
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                      {request.number} · {request.category.name}
-                    </Typography>
-                  </Box>
-                  <Chip size="small" label={statusLabels[request.status]} />
-                </Stack>
-              </Paper>
-            ))}
-            {list.requests.length === 0 ? <Alert severity="info">暂无服务请求。</Alert> : null}
+            <EmbedRequestListView
+              requests={list.requests}
+              writable={list.project.writable}
+              filter={listFilter}
+              onFilterChange={setListFilter}
+              onOpen={(requestId) => void loadDetail(requestId)}
+              onCreate={() => setCreateOpen(true)}
+            />
           </Stack>
         )}
       </Container>
+      {!detail && list.project.writable && list.requests.length > 0 ? (
+        <EmbedCreateFab onCreate={() => setCreateOpen(true)} />
+      ) : null}
       <CreateRequestDialog
         open={createOpen}
         onClose={() => setCreateOpen(false)}
