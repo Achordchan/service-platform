@@ -43,6 +43,7 @@ import {
 } from "@/modules/plugins/content-risk-service";
 import { writeAuditLog } from "@/modules/audit/audit-service";
 import { DomainError } from "@/modules/projects/errors";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000];
 const MAX_ATTEMPTS = 5;
@@ -1398,17 +1399,21 @@ async function removeRiskAttachmentFiles(
   storageKeys: string[],
 ) {
   let failedCount = 0;
+  let firstError: unknown;
   for (const storageKey of storageKeys) {
     try {
       await removePrivateFile(storageKey);
-    } catch {
+    } catch (error) {
+      firstError ??= error;
       failedCount += 1;
     }
   }
   if (failedCount > 0) {
-    console.error("CONTENT_RISK_ATTACHMENT_CLEANUP_FAILED", {
-      reviewId: typeof review === "string" ? review : review.id,
-      failedCount,
+    reportSystemError(firstError, {
+      source: "attachment-storage",
+      operation: "content_risk.attachment_file_delete_failed",
+      context: { reviewId: typeof review === "string" ? review : review.id, failedCount },
+      logLabel: "CONTENT_RISK_ATTACHMENT_CLEANUP_FAILED",
     });
   }
 }

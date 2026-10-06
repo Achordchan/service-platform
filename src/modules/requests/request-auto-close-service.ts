@@ -8,6 +8,7 @@ import {
   REQUEST_AUTO_CLOSE_DAYS,
   requestAutoCloseCutoff,
 } from "@/modules/requests/request-auto-close-policy";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const REQUEST_AUTO_CLOSE_BATCH_SIZE = 100;
 
@@ -46,13 +47,12 @@ export async function closeResolvedRequestsDue(now = new Date()) {
       }
     } catch (error) {
       failedCount += 1;
-      console.error(
-        "ACHORD_REQUEST_AUTO_CLOSE_FAILED",
-        JSON.stringify({
-          requestId: candidate.id,
-          error: error instanceof Error ? error.message : String(error),
-        }),
-      );
+      reportSystemError(error, {
+        source: "request-auto-close",
+        operation: "request.auto_close_failed",
+        context: { requestId: candidate.id },
+        logLabel: "ACHORD_REQUEST_AUTO_CLOSE_FAILED",
+      });
     }
   }
 

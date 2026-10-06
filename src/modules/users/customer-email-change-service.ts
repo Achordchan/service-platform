@@ -21,6 +21,7 @@ import {
 } from "@/modules/projects/errors";
 import { resolveLockedMailDeliveryMode } from "@/modules/platform-settings/mail-provider-lifecycle";
 import { mailboxFromSender } from "@/modules/platform-settings/smtp-sender";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const emailSchema = z.string().trim().email().max(160);
 
@@ -560,9 +561,15 @@ export async function confirmCustomerEmailChange(rawToken: string) {
       ),
     ),
   );
-  if (notifications.some((item) => item.status === "rejected")) {
-    console.error("USER_EMAIL_CHANGE_NOTICE_FAILED", {
-      emailChangeId: result.change.id,
+  const rejected = notifications.find(
+    (item): item is PromiseRejectedResult => item.status === "rejected",
+  );
+  if (rejected) {
+    reportSystemError(rejected.reason, {
+      source: "email-change",
+      operation: "user_email_change.notice_failed",
+      context: { emailChangeId: result.change.id },
+      logLabel: "USER_EMAIL_CHANGE_NOTICE_FAILED",
     });
   }
 

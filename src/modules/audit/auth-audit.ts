@@ -2,6 +2,7 @@ import "server-only";
 
 import type { Prisma } from "@/generated/prisma/client";
 import { withSystemDb } from "@/lib/actor";
+import { reportSystemError } from "@/lib/system-error-log";
 
 /**
  * 认证类审计事件。区别于业务 writeAuditLog（在请求 actor 事务内写入），认证事件
@@ -62,13 +63,12 @@ export async function recordAuthEvent(input: AuthAuditInput): Promise<void> {
       }),
     );
   } catch (error) {
-    console.error(
-      "ACHORD_AUTH_AUDIT_FAILED",
-      JSON.stringify({
-        event: "auth.audit_write_failed",
-        action: input.action,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
+    reportSystemError(error, {
+      source: "auth-audit",
+      operation: "auth.audit_write_failed",
+      context: { action: input.action },
+      logLabel: "ACHORD_AUTH_AUDIT_FAILED",
+      event: "auth.audit_write_failed",
+    });
   }
 }

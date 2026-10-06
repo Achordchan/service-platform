@@ -34,6 +34,7 @@ import type {
   CreateProjectInput,
   UpdateProjectInput,
 } from "@/modules/projects/schemas";
+import { reportSystemError } from "@/lib/system-error-log";
 
 function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -639,17 +640,21 @@ export async function deleteProject(actor: Actor, projectId: string) {
   });
 
   let failedCount = 0;
+  let firstError: unknown;
   for (const storageKey of storageKeys) {
     try {
       await removePrivateFile(storageKey);
-    } catch {
+    } catch (error) {
+      firstError ??= error;
       failedCount += 1;
     }
   }
   if (failedCount > 0) {
-    console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
-      projectId,
-      failedCount,
+    reportSystemError(firstError, {
+      source: "attachment-storage",
+      operation: "project.attachment_file_delete_failed",
+      context: { projectId, failedCount },
+      logLabel: "PROJECT_ATTACHMENT_FILE_DELETE_FAILED",
     });
   }
 }

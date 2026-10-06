@@ -18,6 +18,7 @@ import {
   assertFound,
   DomainError,
 } from "@/modules/projects/errors";
+import { reportSystemError } from "@/lib/system-error-log";
 
 export async function sendPluginTestMessage(
   actor: Actor,
@@ -155,10 +156,12 @@ async function recordPluginTestAudit(
         metadata,
       }),
     );
-  } catch {
-    console.error(
-      "ACHORD_PLUGIN_TEST_AUDIT_FAILED",
-      JSON.stringify({ pluginKey, result }),
-    );
+  } catch (error) {
+    reportSystemError(error, {
+      source: "plugin-test-message",
+      operation: "plugin_test_message.audit_failed",
+      context: { pluginKey, result },
+      logLabel: "ACHORD_PLUGIN_TEST_AUDIT_FAILED",
+    });
   }
 }

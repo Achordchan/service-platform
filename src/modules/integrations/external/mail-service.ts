@@ -5,6 +5,7 @@ import { enqueueMail } from "@/lib/jobs";
 import { withSystemDb } from "@/lib/system-db";
 import { resolveUniversalMailAction } from "@/modules/integrations/external/action-url";
 import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const statusTemplates: Partial<Record<RequestStatus, MailTemplateKey>> = {
   WAITING_CUSTOMER: "EXTERNAL_REQUEST_WAITING_CUSTOMER",
@@ -88,10 +89,11 @@ export async function enqueueExternalRequestStatusMail(
   try {
     await enqueueMail(mail);
   } catch (error) {
-    console.error("EXTERNAL_REQUEST_MAIL_QUEUE_FAILED", {
-      serviceRequestId,
-      templateKey,
-      error: error instanceof Error ? error.message : "unknown",
+    reportSystemError(error, {
+      source: "request-mail",
+      operation: "external_request_mail.queue_failed",
+      context: { serviceRequestId, templateKey },
+      logLabel: "EXTERNAL_REQUEST_MAIL_QUEUE_FAILED",
     });
   }
 }

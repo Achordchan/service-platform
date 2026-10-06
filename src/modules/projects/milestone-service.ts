@@ -36,6 +36,7 @@ import type {
   CreateMilestoneInput,
   UpdateMilestoneInput,
 } from "@/modules/projects/schemas";
+import { reportSystemError } from "@/lib/system-error-log";
 
 function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -572,17 +573,21 @@ async function removeMilestoneFiles(
   storageKeys: string[],
 ) {
   let failedCount = 0;
+  let firstError: unknown;
   for (const storageKey of storageKeys) {
     try {
       await removePrivateFile(storageKey);
-    } catch {
+    } catch (error) {
+      firstError ??= error;
       failedCount += 1;
     }
   }
   if (failedCount > 0) {
-    console.error("MILESTONE_ATTACHMENT_FILE_DELETE_FAILED", {
-      milestoneId,
-      failedCount,
+    reportSystemError(firstError, {
+      source: "attachment-storage",
+      operation: "milestone.attachment_file_delete_failed",
+      context: { milestoneId, failedCount },
+      logLabel: "MILESTONE_ATTACHMENT_FILE_DELETE_FAILED",
     });
   }
 }

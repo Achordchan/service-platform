@@ -62,6 +62,7 @@ import {
   statusAfterStaffPublicReply,
 } from "@/modules/requests/request-state-machine";
 import type { MailTemplateKey } from "@/modules/platform-settings/mail-template-catalog";
+import { reportSystemError } from "@/lib/system-error-log";
 
 type ExternalRequestMail = {
   to: string;
@@ -100,9 +101,11 @@ async function enqueueExternalRequestMail(mail: ExternalRequestMail | null) {
     await enqueueMail(mail);
     return true;
   } catch (error) {
-    console.error("EXTERNAL_REQUEST_MAIL_QUEUE_FAILED", {
-      templateKey: mail.templateKey,
-      error: error instanceof Error ? error.message : "unknown",
+    reportSystemError(error, {
+      source: "request-mail",
+      operation: "external_request_mail.queue_failed",
+      context: { templateKey: mail.templateKey },
+      logLabel: "EXTERNAL_REQUEST_MAIL_QUEUE_FAILED",
     });
     return false;
   }

@@ -14,6 +14,7 @@ import {
   templateIdFor,
   WECHAT_SUBSCRIBE_TEMPLATES,
 } from "@/modules/miniapp/wechat-subscribe-message-service";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const RETRY_DELAYS_MS = [60_000, 5 * 60_000, 30 * 60_000];
 const MAX_ATTEMPTS = 4;
@@ -266,7 +267,12 @@ export async function processWechatSubscribeMessageDelivery(
     )
     .catch((error: unknown) => {
       // 事务回滚后 claim 仍在（PROCESSING）：交给 stale 超时机制重新捞起重投
-      console.error("[wechat-subscribe] delivery transaction failed:", error);
+      reportSystemError(error, {
+        source: "wechat-subscribe-worker",
+        operation: "wechat_subscribe.delivery_transaction_failed",
+        context: { deliveryId },
+        logLabel: "[wechat-subscribe] delivery transaction failed",
+      });
     });
 
   if (skipped) {
