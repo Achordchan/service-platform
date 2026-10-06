@@ -95,6 +95,25 @@ describe("系统报错日志集成", () => {
     expect(stored).not.toContain("ops%40example.com");
   });
 
+  it("请求路径里的 %00 不会让日志写不进库（PostgreSQL 不接受 NUL）", async () => {
+    resetSystemErrorThrottleForTest();
+    const referenceId = `${prefix}_nul`;
+
+    const result = await recordSystemError(new Error("x"), {
+      referenceId,
+      source: "project-api",
+      request: { method: "GET", path: "/api/v1/admin/system-errors/err_a\u0000b" },
+      context: { note: "a\u0000b" },
+    });
+
+    expect(result.persisted).toBe(true);
+    const row = await ownerPool.query<{ requestPath: string }>(
+      `SELECT "requestPath" FROM "SystemErrorLog" WHERE "referenceId" = $1`,
+      [referenceId],
+    );
+    expect(row.rows[0].requestPath).toBe("/api/v1/admin/system-errors/err_ab");
+  });
+
   it("业务事务回滚时错误日志仍然存在（核心验收）", async () => {
     resetSystemErrorThrottleForTest();
     const referenceId = `${prefix}_rollback`;

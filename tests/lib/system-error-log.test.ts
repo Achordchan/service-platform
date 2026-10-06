@@ -84,6 +84,21 @@ describe("系统报错记录的脱敏边界", () => {
     });
   });
 
+  it("控制字符（NUL 等）不会进入落库内容：请求路径解码后的 %00 曾让整条日志写不进库", () => {
+    const record = buildSystemErrorRecord(new LoggableError("坏\u0000消息"), {
+      source: "project-api",
+      request: { method: "GET", path: "/api/v1/x/err_a%00b" },
+      context: { note: "a\u0000b\u0007c" },
+    });
+    const serialized = JSON.stringify(record);
+
+    expect(serialized).not.toContain("\\u0000");
+    expect(serialized).not.toContain("\\u0007");
+    expect(record.requestPath).toBe("/api/v1/x/err_ab");
+    expect(record.context).toEqual({ note: "abc" });
+    expect(record.details).toMatchObject({ message: "坏消息" });
+  });
+
   it("只有 LoggableError 的消息会被记录，普通 Error 的消息不记", () => {
     const plain = buildSystemErrorRecord(new Error("来自第三方的原文"), {
       source: "project-api",

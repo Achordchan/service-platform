@@ -153,8 +153,8 @@ export function SystemErrorWorkspace() {
       {
         field: "referenceId",
         headerName: "错误编号",
-        minWidth: 250,
-        flex: 1.1,
+        minWidth: 300,
+        flex: 1,
         renderCell: ({ row }) => (
           <Typography variant="caption" sx={monoSx} noWrap>
             {row.referenceId}
@@ -235,7 +235,7 @@ export function SystemErrorWorkspace() {
             value={filters.search}
             onChange={(event) => update("search", event.target.value)}
             size="small"
-            sx={{ flex: "1 1 300px" }}
+            sx={{ flex: { xs: "none", md: "1 1 300px" } }}
           />
           <TextField
             select
@@ -243,7 +243,7 @@ export function SystemErrorWorkspace() {
             value={filters.category}
             onChange={(event) => update("category", event.target.value)}
             size="small"
-            sx={{ flex: "0 1 180px", minWidth: 150 }}
+            sx={{ flex: { xs: "none", md: "0 1 180px" }, minWidth: 150 }}
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.categoryOptions ?? []).map((option) => (
@@ -258,7 +258,7 @@ export function SystemErrorWorkspace() {
             value={filters.source}
             onChange={(event) => update("source", event.target.value)}
             size="small"
-            sx={{ flex: "0 1 180px", minWidth: 150 }}
+            sx={{ flex: { xs: "none", md: "0 1 180px" }, minWidth: 150 }}
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.sources ?? []).map((source) => (
@@ -273,7 +273,7 @@ export function SystemErrorWorkspace() {
             value={filters.operation}
             onChange={(event) => update("operation", event.target.value)}
             size="small"
-            sx={{ flex: "0 1 220px", minWidth: 180 }}
+            sx={{ flex: { xs: "none", md: "0 1 220px" }, minWidth: 180 }}
           >
             <MenuItem value="">全部</MenuItem>
             {(facets?.operations ?? []).map((operation) => (
@@ -282,7 +282,7 @@ export function SystemErrorWorkspace() {
               </MenuItem>
             ))}
           </TextField>
-          <Box sx={{ flex: "0 1 170px", minWidth: 150 }}>
+          <Box sx={{ flex: { xs: "none", md: "0 1 170px" }, minWidth: 150 }}>
             <DateStringPicker
               label="起始日期"
               value={filters.from}
@@ -290,7 +290,7 @@ export function SystemErrorWorkspace() {
               maxDate={filters.to || undefined}
             />
           </Box>
-          <Box sx={{ flex: "0 1 170px", minWidth: 150 }}>
+          <Box sx={{ flex: { xs: "none", md: "0 1 170px" }, minWidth: 150 }}>
             <DateStringPicker
               label="结束日期"
               value={filters.to}

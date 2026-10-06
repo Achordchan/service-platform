@@ -60,6 +60,20 @@ export function newSystemErrorReferenceId() {
   return `err_${randomUUID().replaceAll("-", "")}`;
 }
 
+// PostgreSQL 的 text / jsonb 都不接受 NUL，其余控制字符进日志也只会弄乱导出。
+// 请求路径会被解码（%00 → NUL），攻击者随手构造一个就能让整条日志写不进去，所以入库前统一清掉
+function stripControlChars(value: string) {
+  return value.replace(/[\u0000-\u001f\u007f]/g, "");
+}
+
+function cleanDetails<T>(details: T): T {
+  return JSON.parse(
+    JSON.stringify(details, (_key, value: unknown) =>
+      typeof value === "string" ? stripControlChars(value) : value,
+    ),
+  ) as T;
+}
+
 function safeContext(context?: Record<string, unknown>) {
   if (!context) return undefined;
   const entries: Array<[string, string | number | boolean]> = [];
@@ -70,7 +84,7 @@ function safeContext(context?: Record<string, unknown>) {
     if (typeof value === "string") {
       entries.push([
         key,
-        redactSensitiveText(value).slice(0, MAX_CONTEXT_VALUE_LENGTH),
+        stripControlChars(redactSensitiveText(value)).slice(0, MAX_CONTEXT_VALUE_LENGTH),
       ]);
     } else if (typeof value === "number" || typeof value === "boolean") {
       entries.push([key, value]);
@@ -85,14 +99,18 @@ export function buildSystemErrorRecord(error: unknown, input: SystemErrorInput) 
     input.referenceId && SYSTEM_ERROR_REFERENCE_PATTERN.test(input.referenceId)
       ? input.referenceId
       : newSystemErrorReferenceId();
-  const details = describeErrorForLog(error);
-  const method = input.request?.method?.slice(0, 16);
+  const details = cleanDetails(describeErrorForLog(error));
+  const method = input.request?.method
+    ? stripControlChars(input.request.method).slice(0, 16)
+    : undefined;
   // 查询串和片段可能带令牌、请求参数，只记路径本身；调用方传进来什么都先去掉
   const rawPath = input.request?.path?.split(/[?#]/, 1)[0];
   const path = rawPath
-    ? redactPath(rawPath).slice(0, MAX_PATH_LENGTH)
+    ? stripControlChars(redactPath(rawPath)).slice(0, MAX_PATH_LENGTH)
     : undefined;
-  const actorId = input.actor?.id?.slice(0, 128);
+  const actorId = input.actor?.id
+    ? stripControlChars(input.actor.id).slice(0, 128)
+    : undefined;
   return {
     referenceId,
     category: details.category,
