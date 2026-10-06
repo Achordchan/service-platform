@@ -1609,3 +1609,40 @@ model Feedback {
   @@index([issueStatus])
   @@index([submitterId, createdAt(sort: Desc)])
 }
+
+/// 系统报错日志：API 意外错误、后台任务失败。只存 describeErrorForLog 脱敏后的内容，
+/// 不存请求体、请求头、数据库 DETAIL。写入走独立事务，不随业务事务回滚；
+/// 读写改删都只放行平台管理员（RLS）。无外键：用户被删后日志仍要保留，且写日志不能因关联失败。
+model SystemErrorLog {
+  id              BigInt   @id @default(autoincrement())
+  /// 用户报错时看到的错误编号（err_ 前缀）；唯一，按它精确搜索
+  referenceId     String   @unique
+  /// 错误分类，对应 describeErrorForLog 的 category（DATABASE_PERMISSION 等）
+  category        String
+  /// 错误类型名（Error.name）
+  errorName       String
+  /// 发生位置：project-api / request-api / mail-worker 等
+  source          String
+  /// 具体操作：audit_logs.list / mail.queue_failed 等
+  operation       String?
+  requestMethod   String?
+  /// 已脱敏的请求路径（不含查询串）
+  requestPath     String?
+  /// STAFF / CUSTOMER / EXTERNAL_CONTACT / SYSTEM；无法识别时为空
+  actorType       String?
+  actorId         String?
+  /// describeErrorForLog 的完整结构化结果
+  details         Json
+  /// 调用点补充的业务标识（mailMessageId 等），已过滤只留标量并脱敏
+  context         Json?
+  /// 同一编号重复发生的次数。只有编号由业务决定的失败（如 mail_<邮件ID>）会累加，
+  /// 随机编号的 API 错误永远是 1
+  occurrenceCount Int      @default(1)
+  /// 最近一次发生时间；重复发生时刷新，保留期与列表排序都按它算
+  createdAt       DateTime @default(now())
+
+  @@index([createdAt(sort: Desc)])
+  @@index([category, createdAt(sort: Desc)])
+  @@index([source, createdAt(sort: Desc)])
+  @@index([operation, createdAt(sort: Desc)])
+}

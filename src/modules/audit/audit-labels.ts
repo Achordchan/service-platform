@@ -42,6 +42,7 @@ const verbLabels: Record<string, string> = {
 };
 
 const resourceLabels: Record<string, string> = {
+  SystemErrorLog: "系统报错日志",
   Attachment: "附件",
   ATTACHMENT: "附件",
   CustomerSpace: "客户空间",
@@ -175,6 +176,9 @@ const actionLabels: Record<string, string> = {
   INLINE_IMAGE_UPLOADED: "上传内嵌图片",
   ATTACHMENT_DOWNLOADED: "下载附件",
   SUPPORT_PLAYBOOK_IMAGE_UPLOADED: "上传回复模板图片",
+
+  // 系统报错日志
+  SYSTEM_ERROR_LOG_EXPORTED: "导出系统报错日志",
 
   // 平台设置 / 邮件
   PLATFORM_SETTINGS_UPDATED: "更新平台设置",

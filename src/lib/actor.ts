@@ -88,6 +88,7 @@ export async function withActorDb<T>(
 
 export async function withSystemDb<T>(
   callback: (tx: Prisma.TransactionClient) => Promise<T>,
+  options?: Parameters<typeof withActorDb>[2],
 ) {
   const systemActor: Actor = {
     id: "system",
@@ -98,5 +99,5 @@ export async function withSystemDb<T>(
     isStaff: true,
     permissions: [],
   };
-  return withActorDb(systemActor, callback);
+  return withActorDb(systemActor, callback, options);
 }

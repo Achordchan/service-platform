@@ -58,7 +58,9 @@ import {
 } from "@/modules/integrations/universal/webhook-service";
 import { createDueNotificationMailMessages } from "@/modules/notifications/notification-email-service";
 import { closeResolvedRequestsDue } from "@/modules/requests/request-auto-close-service";
-import { describeErrorForLog } from "@/lib/error-log";
+import { instrumentBossJobFailures } from "@/lib/job-failure-log";
+import { reportSystemError } from "@/lib/system-error-log";
+import { cleanupExpiredSystemErrorLogs } from "@/modules/system-errors/system-error-retention";
 import {
   describeMailQueueFailure,
   formatMailFailureMessage,
@@ -84,6 +86,7 @@ export const WECHAT_SUBSCRIBE_SWEEP_JOB = "wechat-subscribe-sweep";
 export const ATTACHMENT_PREVIEW_JOB = "attachment-preview-render";
 export const ATTACHMENT_PREVIEW_SWEEP_JOB = "attachment-preview-sweep";
 export const REQUEST_PRESENCE_SWEEP_JOB = "request-presence-sweep";
+export const SYSTEM_ERROR_LOG_SWEEP_JOB = "system-error-log-sweep";
 
 type MailJobData = {
   mailMessageId: string;
@@ -156,6 +159,7 @@ async function startBoss() {
   await boss.createQueue(ATTACHMENT_PREVIEW_JOB);
   await boss.createQueue(ATTACHMENT_PREVIEW_SWEEP_JOB);
   await boss.createQueue(REQUEST_PRESENCE_SWEEP_JOB);
+  await boss.createQueue(SYSTEM_ERROR_LOG_SWEEP_JOB);
   return boss;
 }
 
@@ -440,16 +444,20 @@ export async function dispatchQueuedMailMessage(
 }
 
 
-// 后台失败不能静默吞掉：定时扫描会兜底重试，但日志里必须留下原因
+// 后台失败不能静默吞掉：定时扫描会兜底重试，但日志里必须留下原因；
+// 同时落库到「系统报错日志」，平台管理员在后台能直接看到
 function logWorkerError(
   event: string,
   error: unknown,
   context?: Record<string, string>,
 ) {
-  console.error(
+  reportSystemError(error, {
+    source: "worker",
+    operation: event.replace(/^ACHORD_/, "").toLowerCase(),
+    context,
+    logLabel: event,
     event,
-    JSON.stringify({ event, ...context, error: describeErrorForLog(error) }),
-  );
+  });
 }
 
 export async function recordMailQueueFailure(
@@ -459,16 +467,20 @@ export async function recordMailQueueFailure(
 ) {
   const failure = describeMailQueueFailure(error);
   const referenceId = mailFailureReferenceId(mailMessageId);
-  console.error(
-    "ACHORD_MAIL_QUEUE_FAILED",
-    JSON.stringify({
-      event: "mail.queue_failed",
-      referenceId,
+  // 编号 mail_<邮件ID> 已写进邮件的错误提示，管理员按它就能在系统报错日志里查到
+  reportSystemError(error, {
+    referenceId,
+    source: "mail-worker",
+    operation: "mail.queue_failed",
+    context: {
       mailMessageId,
       phase,
-      error: failure,
-    }),
-  );
+      failureCategory: failure.category,
+      failureCode: failure.code,
+    },
+    logLabel: "ACHORD_MAIL_QUEUE_FAILED",
+    event: "mail.queue_failed",
+  });
   await withSystemDb((tx) =>
     tx.mailMessage.updateMany({
       where: { id: mailMessageId, status: "QUEUED" },
@@ -839,6 +851,7 @@ export async function startMailWorker() {
   globalForBoss.bossWorkerPromise = (async () => {
     await ensurePluginInstallations();
     const boss = await getBoss();
+    instrumentBossJobFailures(boss);
     await startDatabaseListener().catch((error) =>
       logWorkerError("ACHORD_DB_LISTENER_START_FAILED", error),
     );
@@ -854,6 +867,7 @@ export async function startMailWorker() {
     await boss.schedule(ATTACHMENT_PREVIEW_SWEEP_JOB, "*/10 * * * *");
     // 在线记录的保留期清理：错开整点，避开其它每日任务
     await boss.schedule(REQUEST_PRESENCE_SWEEP_JOB, "41 3 * * *");
+    await boss.schedule(SYSTEM_ERROR_LOG_SWEEP_JOB, "29 4 * * *");
     await boss.work<MailJobData>(
       EMAIL_JOB,
       { includeMetadata: true },
@@ -963,6 +977,13 @@ export async function startMailWorker() {
       { batchSize: 1, localConcurrency: 1 },
       async () => {
         await cleanupExpiredMiniappIdentityData();
+      },
+    );
+    await boss.work(
+      SYSTEM_ERROR_LOG_SWEEP_JOB,
+      { batchSize: 1, localConcurrency: 1 },
+      async () => {
+        await cleanupExpiredSystemErrorLogs();
       },
     );
     await boss.work(
