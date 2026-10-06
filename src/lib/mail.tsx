@@ -40,7 +40,7 @@ import {
   MailDeliveryError,
 } from "@/modules/platform-settings/mail-delivery-error";
 import { createSmtpTransport } from "@/modules/platform-settings/smtp-transport";
-import { reportSystemError } from "@/lib/system-error-log";
+import { markSystemErrorReported, reportSystemError } from "@/lib/system-error-log";
 
 type StoredMailPayload = {
   id: string;
@@ -538,7 +538,8 @@ export async function processMailMessage(
         },
       }),
     );
-    throw new MailDeliveryError(failure);
+    // 上面已按 mail_<邮件ID> 记录；新抛出的对象要显式标记，任务包装层才不会再记一行
+    throw markSystemErrorReported(new MailDeliveryError(failure));
   }
 }
 

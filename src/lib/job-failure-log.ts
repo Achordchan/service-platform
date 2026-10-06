@@ -1,5 +1,5 @@
 import type { PgBoss } from "pg-boss";
-import { reportSystemError } from "@/lib/system-error-log";
+import { isSystemErrorReported, reportSystemError } from "@/lib/system-error-log";
 
 type Handler = (...args: unknown[]) => Promise<unknown>;
 
@@ -21,13 +21,16 @@ export function instrumentBossJobFailures(boss: Pick<PgBoss, "work">) {
     try {
       return await handler(...args);
     } catch (error) {
-      reportSystemError(error, {
-        source: "worker",
-        operation: `job.${queue}`,
-        context: { queue },
-        logLabel: "ACHORD_JOB_FAILED",
-        event: "job.failed",
-      });
+      // 处理函数里已经记录过的错误（邮件投递失败等）不再重复记
+      if (!isSystemErrorReported(error)) {
+        reportSystemError(error, {
+          source: "worker",
+          operation: `job.${queue}`,
+          context: { queue },
+          logLabel: "ACHORD_JOB_FAILED",
+          event: "job.failed",
+        });
+      }
       throw error;
     }
   };

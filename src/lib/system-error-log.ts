@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   describeErrorForLog,
+  redactLongNumbers,
   redactPath,
   redactSensitiveText,
   safeIdentifier,
@@ -56,6 +57,19 @@ const ACTOR_LOOKUP_TIMEOUT_MS = 1_500;
 const MAX_PERSISTED_PER_WINDOW = 120;
 const THROTTLE_WINDOW_MS = 60_000;
 
+// 已经记录过的错误对象。处理函数先 reportSystemError 再原样抛出时，
+// 外层（pg-boss 任务包装）看到同一个对象就不会再记一遍，否则每次失败两行、重试 N 次 2N 行
+const reportedErrors = new WeakSet<object>();
+
+export function markSystemErrorReported<T>(error: T): T {
+  if (typeof error === "object" && error !== null) reportedErrors.add(error);
+  return error;
+}
+
+export function isSystemErrorReported(error: unknown) {
+  return typeof error === "object" && error !== null && reportedErrors.has(error);
+}
+
 export function newSystemErrorReferenceId() {
   return `err_${randomUUID().replaceAll("-", "")}`;
 }
@@ -82,10 +96,10 @@ function safeContext(context?: Record<string, unknown>) {
     const key = safeIdentifier(rawKey);
     if (!key) continue;
     if (typeof value === "string") {
-      entries.push([
-        key,
-        stripControlChars(redactSensitiveText(value)).slice(0, MAX_CONTEXT_VALUE_LENGTH),
-      ]);
+      let text = redactSensitiveText(value);
+      // 自由文本（如 SMTP 返回的说明）可能夹带手机号；ID 类字段不能用这条，会抹掉纯数字 ID
+      if (key.endsWith("Message")) text = redactLongNumbers(text);
+      entries.push([key, stripControlChars(text).slice(0, MAX_CONTEXT_VALUE_LENGTH)]);
     } else if (typeof value === "number" || typeof value === "boolean") {
       entries.push([key, value]);
     }
@@ -225,6 +239,7 @@ async function persistRecord(record: SystemErrorRecord) {
 }
 
 function buildOrFallback(error: unknown, input: SystemErrorInput) {
+  markSystemErrorReported(error);
   try {
     return { record: buildSystemErrorRecord(error, input) };
   } catch (buildError) {

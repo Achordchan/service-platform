@@ -15,6 +15,8 @@ vi.mock("@/lib/system-error-store", () => store);
 import { LoggableError } from "@/lib/error-log";
 import {
   buildSystemErrorRecord,
+  isSystemErrorReported,
+  markSystemErrorReported,
   recordSystemError,
   reportSystemError,
   resetSystemErrorThrottleForTest,
@@ -232,5 +234,35 @@ describe("reportSystemError", () => {
       actorType: "STAFF",
     });
     expect(records.some((record) => record.actorType === undefined)).toBe(true);
+  });
+});
+
+describe("已记录错误的去重标记", () => {
+  it("记录过的错误对象会被标记，没记录过的不会；新抛出的错误要显式标记", async () => {
+    const reported = new Error("a");
+    const untouched = new Error("b");
+
+    reportSystemError(reported, { source: "project-api" });
+    await recordSystemError(new Error("c"), { source: "project-api" });
+
+    expect(isSystemErrorReported(reported)).toBe(true);
+    expect(isSystemErrorReported(untouched)).toBe(false);
+    expect(isSystemErrorReported("字符串错误")).toBe(false);
+    expect(isSystemErrorReported(markSystemErrorReported(new Error("wrapper")))).toBe(true);
+  });
+
+  it("自由文本里的长数字被打码，纯数字 ID 不受影响", () => {
+    const record = buildSystemErrorRecord(new Error("x"), {
+      source: "mail-worker",
+      context: {
+        failureMessage: "收件人手机 13800138000 投递失败",
+        providerId: "12345678901",
+      },
+    });
+
+    expect(record.context).toEqual({
+      failureMessage: "收件人手机 [NUMBER] 投递失败",
+      providerId: "12345678901",
+    });
   });
 });
