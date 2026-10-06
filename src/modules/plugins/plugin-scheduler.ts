@@ -6,6 +6,7 @@ import {
 import { withSystemDb } from "@/lib/system-db";
 import { ensurePluginInstallations } from "@/modules/plugins/plugin-installation-service";
 import { IMAGE_WEBP_PLUGIN_KEY } from "@/modules/plugins/plugin-registry";
+import { reportSystemError } from "@/lib/system-error-log";
 
 export async function scheduleAttachmentPluginJobs(attachmentId: string) {
   try {
@@ -24,10 +25,11 @@ export async function scheduleAttachmentPluginJobs(attachmentId: string) {
     }
     await queueImageWebpAttachment(attachmentId);
   } catch (error) {
-    console.error("PLUGIN_ATTACHMENT_JOB_QUEUE_FAILED", {
-      attachmentId,
-      pluginKey: IMAGE_WEBP_PLUGIN_KEY,
-      error: error instanceof Error ? error.message : String(error),
+    reportSystemError(error, {
+      source: "plugin-scheduler",
+      operation: "plugin.attachment_job_queue_failed",
+      context: { attachmentId, pluginKey: IMAGE_WEBP_PLUGIN_KEY },
+      logLabel: "PLUGIN_ATTACHMENT_JOB_QUEUE_FAILED",
     });
   }
 }

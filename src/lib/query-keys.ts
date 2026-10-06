@@ -17,6 +17,11 @@ export const queryKeys = {
   feedback: {
     list: (query: string) => ["feedback", "list", query] as const,
   },
+  systemErrors: {
+    list: (query: string) => ["system-errors", "list", query] as const,
+    detail: (referenceId: string) =>
+      ["system-errors", "detail", referenceId] as const,
+  },
   notifications: {
     list: ["notifications", "list"] as const,
     summary: ["notifications", "summary"] as const,

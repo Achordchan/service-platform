@@ -112,6 +112,11 @@ export function redactSensitiveText(value: string) {
     .replace(EMAIL_VALUE, "[EMAIL]");
 }
 
+/** 长数字串（手机号、证件号）打码；只给自由文本用，ID 类字段别用，会把纯数字 ID 抹掉 */
+export function redactLongNumbers(value: string) {
+  return value.replace(LONG_NUMBER, "[NUMBER]");
+}
+
 /** 请求路径可能带外部用户 ID（常是邮箱），先解码 %40 之类再脱敏 */
 export function redactPath(pathname: string) {
   let decoded = pathname;

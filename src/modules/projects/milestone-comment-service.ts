@@ -33,6 +33,7 @@ import type {
   CreateMilestoneCommentInput,
   UpdateMilestoneCommentInput,
 } from "@/modules/projects/schemas";
+import { reportSystemError } from "@/lib/system-error-log";
 
 function auditMetadata(value: unknown) {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -470,10 +471,12 @@ export function deleteMilestoneComment(
     return { storageKeys };
   }).then(async ({ storageKeys }) => {
     const failed: Array<{ storageKey: string; error: string }> = [];
+    const failedErrors: unknown[] = [];
     for (const storageKey of storageKeys) {
       try {
         await removePrivateFile(storageKey);
       } catch (error) {
+        failedErrors.push(error);
         failed.push({
           storageKey,
           error: error instanceof Error ? error.message : String(error),
@@ -481,9 +484,11 @@ export function deleteMilestoneComment(
       }
     }
     if (failed.length > 0) {
-      console.error("MILESTONE_COMMENT_ATTACHMENT_FILE_DELETE_FAILED", {
-        milestoneCommentId,
-        failed,
+      reportSystemError(failedErrors[0], {
+        source: "attachment-storage",
+        operation: "milestone_comment.attachment_file_delete_failed",
+        context: { milestoneCommentId, failedCount: failed.length },
+        logLabel: "MILESTONE_COMMENT_ATTACHMENT_FILE_DELETE_FAILED",
       });
       try {
         await withActorDb(actor, (tx) =>
@@ -497,9 +502,11 @@ export function deleteMilestoneComment(
           }),
         );
       } catch (auditError) {
-        console.error("MILESTONE_COMMENT_FILE_DELETE_AUDIT_FAILED", {
-          milestoneCommentId,
-          auditError,
+        reportSystemError(auditError, {
+          source: "attachment-storage",
+          operation: "milestone_comment.file_delete_audit_failed",
+          context: { milestoneCommentId },
+          logLabel: "MILESTONE_COMMENT_FILE_DELETE_AUDIT_FAILED",
         });
       }
     }

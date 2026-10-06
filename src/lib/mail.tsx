@@ -40,6 +40,7 @@ import {
   MailDeliveryError,
 } from "@/modules/platform-settings/mail-delivery-error";
 import { createSmtpTransport } from "@/modules/platform-settings/smtp-transport";
+import { markSystemErrorReported, reportSystemError } from "@/lib/system-error-log";
 
 type StoredMailPayload = {
   id: string;
@@ -489,15 +490,16 @@ export async function processMailMessage(
       try {
         await reconcileStoredResendEvents(delivery.providerId, message.id);
       } catch (error) {
-        console.error(
-          "ACHORD_RESEND_EVENT_RECONCILIATION_FAILED",
-          JSON.stringify({
-            event: "mail.resend_event_reconciliation_failed",
+        reportSystemError(error, {
+          source: "mail-worker",
+          operation: "mail.resend_event_reconciliation_failed",
+          context: {
             mailMessageId: message.id,
             providerId: delivery.providerId,
-            error: describeMailDeliveryFailure("RESEND", error),
-          }),
-        );
+          },
+          logLabel: "ACHORD_RESEND_EVENT_RECONCILIATION_FAILED",
+          event: "mail.resend_event_reconciliation_failed",
+        });
       }
     }
     return { id: message.id, mode: payload.deliveryMode };
@@ -507,20 +509,25 @@ export async function processMailMessage(
     const errorMessage = formatMailFailureMessage(failure.message, referenceId);
     const attemptsExhausted =
       message.attemptCount >= maxMailAttempts(message.deliveryMode);
-    console.error(
-      "ACHORD_MAIL_DELIVERY_FAILED",
-      JSON.stringify({
-        event: "mail.delivery_failed",
-        referenceId,
+    // 编号 mail_<邮件ID> 已写进邮件的错误提示，管理员按它就能在系统报错日志里查到
+    reportSystemError(error, {
+      referenceId,
+      source: "mail-worker",
+      operation: "mail.delivery_failed",
+      context: {
         mailMessageId: message.id,
         deliveryMode: message.deliveryMode,
         templateKey: message.templateKey,
         sourceType: message.sourceType,
         attempt: message.attemptCount,
-        finalAttempt: options.finalAttempt,
-        error: failure,
-      }),
-    );
+        finalAttempt: Boolean(options.finalAttempt),
+        failureCategory: failure.category,
+        failureCode: failure.code,
+        failureMessage: failure.message,
+      },
+      logLabel: "ACHORD_MAIL_DELIVERY_FAILED",
+      event: "mail.delivery_failed",
+    });
     await withSystemDb((tx) =>
       tx.mailMessage.update({
         where: { id: message.id },
@@ -531,7 +538,8 @@ export async function processMailMessage(
         },
       }),
     );
-    throw new MailDeliveryError(failure);
+    // 上面已按 mail_<邮件ID> 记录；新抛出的对象要显式标记，任务包装层才不会再记一行
+    throw markSystemErrorReported(new MailDeliveryError(failure));
   }
 }
 

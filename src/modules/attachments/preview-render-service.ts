@@ -22,6 +22,7 @@ import {
   removePrivateFile,
   writePrivateFile,
 } from "@/modules/attachments/private-storage";
+import { reportSystemError } from "@/lib/system-error-log";
 
 const execFileAsync = promisify(execFile);
 
@@ -139,15 +140,13 @@ export async function renderAttachmentPdfPreview(attachmentId: string) {
         data: { previewStatus: "FAILED" },
       }),
     ).catch(() => undefined);
-    console.error(
-      "ACHORD_ATTACHMENT_PREVIEW_FAILED",
-      JSON.stringify({
-        event: "attachment.preview_render_failed",
-        attachmentId: attachment.id,
-        mimeType: attachment.mimeType,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
+    reportSystemError(error, {
+      source: "attachment-preview",
+      operation: "attachment.preview_render_failed",
+      context: { attachmentId: attachment.id, mimeType: attachment.mimeType },
+      logLabel: "ACHORD_ATTACHMENT_PREVIEW_FAILED",
+      event: "attachment.preview_render_failed",
+    });
     throw error;
   }
 }

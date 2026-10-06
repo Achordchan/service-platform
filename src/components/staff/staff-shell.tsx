@@ -27,6 +27,7 @@ import FeedbackOutlinedIcon from "@mui/icons-material/FeedbackOutlined";
 import GppMaybeOutlinedIcon from "@mui/icons-material/GppMaybeOutlined";
 import MenuOutlinedIcon from "@mui/icons-material/MenuOutlined";
 import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
+import BugReportOutlinedIcon from "@mui/icons-material/BugReportOutlined";
 import HistoryOutlinedIcon from "@mui/icons-material/HistoryOutlined";
 import SettingsOutlinedIcon from "@mui/icons-material/SettingsOutlined";
 import SupportAgentOutlinedIcon from "@mui/icons-material/SupportAgentOutlined";
@@ -91,6 +92,11 @@ const adminNavigation = [
     href: "/staff/audit-logs",
     label: "审计日志",
     icon: <HistoryOutlinedIcon fontSize="small" />,
+  },
+  {
+    href: "/staff/system-errors",
+    label: "系统报错",
+    icon: <BugReportOutlinedIcon fontSize="small" />,
   },
   {
     href: "/staff/settings",

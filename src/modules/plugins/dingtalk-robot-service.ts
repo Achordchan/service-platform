@@ -11,7 +11,9 @@ import {
   type DingTalkRobotTemplate,
 } from "@achord/plugin-dingtalk-robot/config";
 import type { Prisma } from "@/generated/prisma/client";
+import { LoggableError } from "@/lib/error-log";
 import { env } from "@/lib/runtime-env";
+import { reportSystemError } from "@/lib/system-error-log";
 import { withSystemDb } from "@/lib/system-db";
 import {
   decryptPluginSecretConfig,
@@ -86,9 +88,11 @@ export async function recordDingTalkContentRiskAlert(
     )
   `;
   if (result?.outcome === "ERROR") {
-    console.error("ACHORD_CONTENT_RISK_DINGTALK_ENQUEUE_FAILED", {
-      reviewId: input.reviewId,
-      errorCode: result.errorCode,
+    reportSystemError(new LoggableError("内容风控钉钉通知入队失败"), {
+      source: "dingtalk-robot",
+      operation: "dingtalk.content_risk_enqueue_failed",
+      context: { reviewId: input.reviewId, errorCode: result.errorCode },
+      logLabel: "ACHORD_CONTENT_RISK_DINGTALK_ENQUEUE_FAILED",
     });
   }
   return result?.deliveryId ?? null;
@@ -132,16 +136,18 @@ export async function recordDingTalkRobotDelivery(
     result.outcome === "INVALID" ||
     result.outcome === "DENIED"
   ) {
-    console.error(
-      "ACHORD_DINGTALK_OUTBOX_ENQUEUE_FAILED",
-      JSON.stringify({
-        event: "dingtalk.outbox_enqueue_failed",
+    reportSystemError(new LoggableError("钉钉通知入队失败"), {
+      source: "dingtalk-robot",
+      operation: "dingtalk.outbox_enqueue_failed",
+      context: {
         eventType: input.eventType,
         requestId: input.requestId,
         outcome: result?.outcome ?? "NO_RESULT",
         errorCode: result?.errorCode ?? "NO_RESULT",
-      }),
-    );
+      },
+      logLabel: "ACHORD_DINGTALK_OUTBOX_ENQUEUE_FAILED",
+      event: "dingtalk.outbox_enqueue_failed",
+    });
   }
   if (result?.deliveryId && input.contentRiskReviewId) {
     const [held] = await tx.$queryRaw<Array<{ held: boolean }>>`

@@ -20,6 +20,11 @@ vi.mock("@/modules/plugins/plugin-registry", () => ({
   tryParseRegisteredPluginConfig: vi.fn(),
 }));
 
+// 落库有专门的集成测试；这里只验证 console 输出
+vi.mock("@/lib/system-error-store", () => ({
+  persistSystemErrorRow: vi.fn(async () => {}),
+}));
+
 import { recordDingTalkRobotDelivery } from "@/modules/plugins/dingtalk-robot-service";
 
 describe("钉钉 Outbox 入队", () => {

@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+
+// 落库有专门的集成测试；这里只验证 console 输出与响应
+vi.mock("@/lib/system-error-store", () => ({
+  persistSystemErrorRow: vi.fn(async () => {}),
+}));
 import { unexpectedApiErrorResponse } from "@/lib/api-error";
 import { LoggableError } from "@/lib/error-log";
 

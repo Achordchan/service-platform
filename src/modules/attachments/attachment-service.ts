@@ -69,6 +69,7 @@ import {
   enforceActorPublicContentRules,
   isContentRiskAttachmentRevoked,
 } from "@/modules/plugins/content-risk-service";
+import { reportSystemError } from "@/lib/system-error-log";
 
 export type UploadAttachmentInput = {
   fileName: string;
@@ -532,14 +533,13 @@ export async function queuePreviewRenderIfNeeded(
   try {
     await queueAttachmentPreviewRender(attachmentId);
   } catch (error) {
-    console.error(
-      "ACHORD_ATTACHMENT_PREVIEW_ENQUEUE_FAILED",
-      JSON.stringify({
-        event: "attachment.preview_enqueue_failed",
-        attachmentId,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-    );
+    reportSystemError(error, {
+      source: "attachment-preview",
+      operation: "attachment.preview_enqueue_failed",
+      context: { attachmentId },
+      logLabel: "ACHORD_ATTACHMENT_PREVIEW_ENQUEUE_FAILED",
+      event: "attachment.preview_enqueue_failed",
+    });
   }
 }
 
@@ -1107,10 +1107,11 @@ export async function deleteProjectAttachment(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failed.push({ storageKey, error: message });
-        console.error("PROJECT_ATTACHMENT_FILE_DELETE_FAILED", {
-          attachmentId,
-          storageKey,
-          error: message,
+        reportSystemError(error, {
+          source: "attachment-storage",
+          operation: "project.attachment_file_delete_failed",
+          context: { attachmentId },
+          logLabel: "PROJECT_ATTACHMENT_FILE_DELETE_FAILED",
         });
       }
     }
@@ -1128,12 +1129,11 @@ export async function deleteProjectAttachment(
         );
       } catch (auditError) {
         // 审计也写不进去就只剩日志了，但不能因此把已完成的删除报成失败
-        console.error("PROJECT_ATTACHMENT_FILE_DELETE_AUDIT_FAILED", {
-          attachmentId,
-          error:
-            auditError instanceof Error
-              ? auditError.message
-              : String(auditError),
+        reportSystemError(auditError, {
+          source: "attachment-storage",
+          operation: "project.attachment_file_delete_audit_failed",
+          context: { attachmentId },
+          logLabel: "PROJECT_ATTACHMENT_FILE_DELETE_AUDIT_FAILED",
         });
       }
     }

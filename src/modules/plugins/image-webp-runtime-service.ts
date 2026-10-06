@@ -21,6 +21,7 @@ import {
   publishProjectChange,
   publishRequestChange,
 } from "@/modules/notifications/notification-service";
+import { reportSystemError } from "@/lib/system-error-log";
 
 type OptimizationOutcome = {
   status: "COMPLETED" | "SKIPPED" | "FAILED";
@@ -272,10 +273,11 @@ export async function optimizeAttachmentWithWebp(
       );
     }
     await removePrivateFile(attachment.storageKey).catch((error) => {
-      console.error("PLUGIN_OLD_ATTACHMENT_FILE_DELETE_FAILED", {
-        attachmentId: attachment.id,
-        storageKey: attachment.storageKey,
-        error: error instanceof Error ? error.message : String(error),
+      reportSystemError(error, {
+        source: "attachment-storage",
+        operation: "plugin.old_attachment_file_delete_failed",
+        context: { attachmentId: attachment.id },
+        logLabel: "PLUGIN_OLD_ATTACHMENT_FILE_DELETE_FAILED",
       });
     });
     return outcome;
