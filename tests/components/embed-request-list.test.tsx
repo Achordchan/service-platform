@@ -151,6 +151,20 @@ describe("EmbedRequestListView", () => {
     expect(screen.getByRole("button", { name: /请求 e/ })).toBeTruthy();
   });
 
+  it("卡片与筛选按钮在键盘聚焦时有可见轮廓", () => {
+    render(<Harness requests={FIVE} />);
+    const targets = [
+      screen.getByRole("button", { name: /请求 b/ }),
+      screen.getByRole("button", { name: /^进行中/ }),
+    ];
+    for (const element of targets) {
+      expect(getComputedStyle(element).outline).not.toContain("solid");
+      // MUI 在键盘聚焦时会加上这个类名
+      element.classList.add("Mui-focusVisible");
+      expect(getComputedStyle(element).outline).toContain("2px solid");
+    }
+  });
+
   it("请求太少时不显示筛选条", () => {
     render(<Harness requests={FIVE.slice(0, 3)} />);
     expect(screen.queryByRole("group", { name: "按状态筛选" })).toBeNull();

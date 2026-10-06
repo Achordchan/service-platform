@@ -44,6 +44,14 @@ const FILTERS: Array<{ key: EmbedListFilter; label: string }> = [
 // 请求太少时筛选条只是噪音
 const FILTER_MIN_REQUESTS = 4;
 
+// ButtonBase 会去掉浏览器默认轮廓，不补的话键盘 Tab 时看不到焦点在哪
+const focusRing = (color: string) => ({
+  "&.Mui-focusVisible": {
+    outline: `2px solid ${color}`,
+    outlineOffset: 2,
+  },
+});
+
 const STATUS_GROUP: Record<EmbedRequestStatus, Exclude<EmbedListFilter, "all">> = {
   WAITING_CUSTOMER: "wait",
   PENDING: "doing",
@@ -362,6 +370,7 @@ function FilterTabs({
                 color: active ? theme.palette.text.primary : theme.palette.text.secondary,
                 bgcolor: active ? theme.palette.background.paper : "transparent",
                 boxShadow: active ? `0 1px 2px ${alpha("#000", dark ? 0.4 : 0.08)}` : "none",
+                ...focusRing(theme.palette.primary.main),
               }}
             >
               {item.label}
@@ -438,6 +447,7 @@ function RequestCard({
           transition: "none",
           "&:hover": { transform: "none" },
         },
+        ...focusRing(theme.palette.primary.main),
       }}
     >
       <Box
