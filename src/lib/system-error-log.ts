@@ -218,10 +218,7 @@ function loadStore() {
 }
 
 /** 落库一条已整理好的记录：限流、超时、降级都在这里，永不抛错 */
-async function persistRecord(record: SystemErrorRecord) {
-  if (!takePersistSlot()) {
-    return { referenceId: record.referenceId, persisted: false };
-  }
+async function writeRecord(record: SystemErrorRecord) {
   try {
     const { persistSystemErrorRow } = await loadStore();
     await withTimeout(persistSystemErrorRow(record), PERSIST_TIMEOUT_MS);
@@ -267,27 +264,42 @@ export async function recordSystemError(
   const built = buildOrFallback(error, input);
   if (!built.record) return { referenceId: built.referenceId, persisted: false };
   consoleLine(built.record, input);
-  return persistRecord(built.record);
+  if (!takePersistSlot()) {
+    return { referenceId: built.record.referenceId, persisted: false };
+  }
+  return writeRecord(built.record);
 }
 
 /**
  * 同步版：先同步打 console（保证日志一定先落到 journalctl），再在后台落库，
  * 立刻返回编号。API 错误响应、worker 失败回调用它，不用等库。
- * pendingActor 是异步解析请求身份的 Promise：必须在请求上下文里同步发起，
- * 这里只负责限时等它，超时或失败就当作身份未知。
+ *
+ * resolveActor 异步解析请求身份（要查库）：先过限流再同步发起——错误风暴或数据库故障时，
+ * 超过限额的错误不能每个都再多发一次认证查询，否则会放大故障；
+ * 发起必须在请求上下文里同步完成，这里只负责限时等结果，超时或失败就当作身份未知。
  */
 export function reportSystemError(
   error: unknown,
   input: SystemErrorInput,
-  pendingActor?: Promise<SystemErrorActor | undefined>,
+  resolveActor?: () => Promise<SystemErrorActor | undefined>,
 ) {
   const built = buildOrFallback(error, input);
   if (!built.record) return built.referenceId;
   const record = built.record;
   consoleLine(record, input);
+  if (!takePersistSlot()) return record.referenceId;
+
+  let pendingActor: Promise<SystemErrorActor | undefined> | undefined;
+  if (resolveActor && !record.actorType) {
+    try {
+      pendingActor = resolveActor();
+    } catch {
+      pendingActor = undefined;
+    }
+  }
   void (async () => {
     let finalRecord = record;
-    if (pendingActor && !record.actorType) {
+    if (pendingActor) {
       const actor = await withTimeout(pendingActor, ACTOR_LOOKUP_TIMEOUT_MS).catch(
         () => undefined,
       );
@@ -299,7 +311,7 @@ export function reportSystemError(
         };
       }
     }
-    await persistRecord(finalRecord);
+    await writeRecord(finalRecord);
   })();
   return record.referenceId;
 }

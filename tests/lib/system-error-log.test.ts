@@ -218,12 +218,12 @@ describe("reportSystemError", () => {
     reportSystemError(
       new Error("a"),
       { source: "project-api" },
-      Promise.resolve({ type: "STAFF", id: "user-1" }),
+      () => Promise.resolve({ type: "STAFF", id: "user-1" }),
     );
     reportSystemError(
       new Error("b"),
       { source: "project-api" },
-      Promise.reject(new Error("lookup failed")),
+      () => Promise.reject(new Error("lookup failed")),
     );
 
     await vi.waitFor(() =>
@@ -264,5 +264,19 @@ describe("已记录错误的去重标记", () => {
       failureMessage: "收件人手机 [NUMBER] 投递失败",
       providerId: "12345678901",
     });
+  });
+});
+
+describe("身份查询受限流约束", () => {
+  it("超过落库限额的错误不会再发起身份查询，避免放大数据库故障", async () => {
+    const resolveActor = vi.fn(async () => ({ type: "STAFF" as const, id: "u" }));
+    for (let index = 0; index < 125; index += 1) {
+      reportSystemError(new Error("storm"), { source: "project-api" }, resolveActor);
+    }
+
+    expect(resolveActor).toHaveBeenCalledTimes(120);
+    await vi.waitFor(() =>
+      expect(store.persistSystemErrorRow).toHaveBeenCalledTimes(120),
+    );
   });
 });

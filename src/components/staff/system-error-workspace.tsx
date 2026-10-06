@@ -361,6 +361,8 @@ export function SystemErrorWorkspace() {
             onPaginationModelChange={setPagination}
             pageSizeOptions={[25, 50, 100]}
             disableColumnFilter
+            // 服务端分页下列头排序只会重排当前页，结果会误导；列表固定按时间倒序
+            disableColumnSorting
             disableRowSelectionOnClick
             onRowClick={({ row }) => setOpenReferenceId(row.referenceId)}
             slots={{ noRowsOverlay: noRows }}

@@ -45,8 +45,7 @@ export function unexpectedApiErrorResponse(
   const request = requestContext(context.request);
 
   // console 同步打印，落库在后台进行：不拖慢 500 响应，库不可用时也不影响响应。
-  // 身份解析要读请求头，必须在这里（请求上下文内）同步发起。
-  const pendingActor = context.actor ? undefined : resolveErrorActorLazily();
+  // 身份解析要读请求头，由 reportSystemError 在过限流后、仍在请求上下文内同步发起。
   reportSystemError(
     error,
     {
@@ -58,7 +57,7 @@ export function unexpectedApiErrorResponse(
       logLabel: "ACHORD_API_UNEXPECTED_ERROR",
       event: "api.unexpected_error",
     },
-    pendingActor,
+    context.actor ? undefined : resolveErrorActorLazily,
   );
 
   return NextResponse.json(

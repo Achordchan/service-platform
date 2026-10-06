@@ -93,7 +93,12 @@ for (const viewport of [
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
 
-    await page.getByRole("button", { name: "新建服务请求" }).click();
+    // 窄屏下头部按钮隐藏，改用底部悬浮的「新建请求」
+    await page
+      .getByRole("button", {
+        name: viewport.name === "mobile" ? "新建请求" : "新建服务请求",
+      })
+      .click();
     await expect(page.getByRole("dialog")).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
