@@ -185,3 +185,36 @@ describe("里程碑详情弹窗的常驻评论区", () => {
     );
   });
 });
+
+describe("里程碑详情弹窗的附件", () => {
+  const withFile: MilestoneListItem = {
+    ...milestone,
+    description: null,
+    comments: [],
+    attachments: [
+      {
+        id: "att-1",
+        originalName: "9月报表.pdf",
+        mimeType: "application/pdf",
+        size: 2048,
+        createdAt: new Date("2026-10-14T07:27:00Z").toISOString(),
+      },
+    ],
+  };
+
+  it("没有正文和评论、只有附件时也能打开详情并看到文件", () => {
+    renderWithTheme(<MilestoneList milestones={[withFile]} />);
+    fireEvent.click(screen.getByRole("button", { name: "查看详情" }));
+    expect(screen.getByText("9月报表.pdf")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "下载 9月报表.pdf" })).toBeTruthy();
+  });
+
+  it("里程碑被撤回时不展示附件", () => {
+    renderWithTheme(
+      <MilestoneList
+        milestones={[{ ...withFile, contentRiskStatus: "REVOKED" }]}
+      />,
+    );
+    expect(screen.queryByText("9月报表.pdf")).toBeNull();
+  });
+});

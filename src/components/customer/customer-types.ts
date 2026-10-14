@@ -74,6 +74,7 @@ export type ProjectMilestone = {
   endDate?: string | null;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
+  attachments?: ProjectAttachment[];
   comments: Array<{
     id: string;
     body: string;

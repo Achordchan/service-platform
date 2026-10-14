@@ -62,7 +62,8 @@ export async function loadProjectDetail(
   const milestoneRows = shouldLoadMilestones
     ? await tx.milestone.findMany({
         where: { projectId },
-        orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+        // 新建的在上，与进度动态一致；sortOrder 创建时取当前条数，故倒序即新到旧
+        orderBy: [{ sortOrder: "desc" }, { createdAt: "desc" }],
       })
     : [];
   // 里程碑评论跟着里程碑走：里程碑加载了才加载，可见性口径与里程碑一致
