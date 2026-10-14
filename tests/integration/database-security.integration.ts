@@ -816,6 +816,62 @@ describe("新增业务字段的数据库写保护", () => {
       ]);
     }
   });
+
+  it("里程碑允许挂非内嵌文件附件，但不能同时挂工单", async () => {
+    const milestoneId = randomUUID();
+    const fileId = randomUUID();
+    const mixedId = randomUUID();
+    await ownerPool.query(
+      `
+        INSERT INTO "Milestone" (
+          id, title, status, "projectId", "createdById", "updatedAt"
+        ) VALUES ($1, '里程碑文件附件', 'NOT_STARTED', $2, $3, NOW())
+      `,
+      [milestoneId, fixture.projectAId, fixture.technician.id],
+    );
+    try {
+      await ownerPool.query(
+        `
+          INSERT INTO "Attachment" (
+            id, "originalName", "storageKey", "mimeType", size, visibility,
+            inline, "projectId", "milestoneId", "uploadedById"
+          ) VALUES ($1, 'spec.pdf', $2, 'application/pdf', 8,
+            'CUSTOMER_VISIBLE', false, $3, $4, $5)
+        `,
+        [
+          fileId,
+          `integration/${fixture.prefix}/milestone-file.pdf`,
+          fixture.projectAId,
+          milestoneId,
+          fixture.technician.id,
+        ],
+      );
+      await expect(
+        ownerPool.query(
+          `
+            INSERT INTO "Attachment" (
+              id, "originalName", "storageKey", "mimeType", size, visibility,
+              inline, "projectId", "milestoneId", "serviceRequestId",
+              "uploadedById"
+            ) VALUES ($1, 'mixed.pdf', $2, 'application/pdf', 8,
+              'CUSTOMER_VISIBLE', false, $3, $4, $5, $6)
+          `,
+          [
+            mixedId,
+            `integration/${fixture.prefix}/milestone-mixed.pdf`,
+            fixture.projectAId,
+            milestoneId,
+            fixture.assignedRequestAId,
+            fixture.technician.id,
+          ],
+        ),
+      ).rejects.toThrow(/Attachment_milestone_parent_exclusive_check/);
+    } finally {
+      await ownerPool.query('DELETE FROM "Milestone" WHERE id = $1', [
+        milestoneId,
+      ]);
+    }
+  });
 });
 
 async function createFixture(): Promise<Fixture> {
