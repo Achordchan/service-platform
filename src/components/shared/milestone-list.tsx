@@ -20,7 +20,11 @@ import { CollapsibleText } from "@/components/shared/collapsible-text";
 import { StatusIndicator } from "@/components/shared/status-indicator";
 import { ContentRiskStatusLine } from "@/components/shared/content-risk-notice";
 import { CommentSection } from "@/components/shared/comment-section";
-import type { MilestoneStatus } from "@/components/customer/customer-types";
+import type {
+  MilestoneStatus,
+  ProjectAttachment,
+} from "@/components/customer/customer-types";
+import { ProjectFiles } from "@/components/customer/project-files";
 import {
   extractInlineAttachmentIds,
   htmlToPlainText,
@@ -35,7 +39,7 @@ export type MilestoneListItem = {
   endDate?: string | null;
   createdAt: string;
   contentRiskStatus?: "PENDING" | "REVOKED" | null;
-  attachments?: Array<{ id: string }>;
+  attachments?: ProjectAttachment[];
   comments?: MilestoneCommentItem[];
 };
 
@@ -272,6 +276,7 @@ export function MilestoneList({
                 ) : null}
                 {!revoked &&
                 (milestone.description ||
+                  (milestone.attachments?.length ?? 0) > 0 ||
                   (milestone.comments?.length ?? 0) > 0 ||
                   canComment ||
                   renderActions) ? (
@@ -287,6 +292,7 @@ export function MilestoneList({
                     }}
                   >
                     {milestone.description ||
+                    (milestone.attachments?.length ?? 0) > 0 ||
                     (milestone.comments?.length ?? 0) > 0 ||
                     canComment ? (
                       <Button
@@ -366,6 +372,18 @@ export function MilestoneList({
                   text={detail.description}
                   collapsible={false}
                 />
+              ) : null}
+              {detail.contentRiskStatus !== "REVOKED" &&
+              (detail.attachments?.length ?? 0) > 0 ? (
+                <Stack spacing={1}>
+                  <Typography variant="subtitle2" color="text.secondary">
+                    附件
+                  </Typography>
+                  <ProjectFiles
+                    files={detail.attachments!}
+                    contentRiskEnabled={contentRiskEnabled}
+                  />
+                </Stack>
               ) : null}
               {/* 评论区常驻详情弹窗；父里程碑被撤回后，评论与输入同时隐藏，
                   不能继续对已撤回内容发言。 */}
