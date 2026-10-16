@@ -140,6 +140,17 @@ export default async function CustomerProjectPage({
       endDate: milestone.endDate?.toISOString() ?? null,
       createdAt: milestone.createdAt.toISOString(),
       contentRiskStatus: milestone.contentRiskStatus,
+      attachments: milestone.attachments.map((attachment) => ({
+        id: attachment.id,
+        originalName: attachment.originalName,
+        title: attachment.title,
+        note: attachment.note,
+        previewStatus: attachment.previewStatus,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        createdAt: attachment.createdAt.toISOString(),
+        contentRiskStatus: attachment.contentRiskStatus,
+      })),
       comments: milestone.comments.map((comment) => ({
         id: comment.id,
         body: comment.body,
