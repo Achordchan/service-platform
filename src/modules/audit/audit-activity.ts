@@ -94,8 +94,7 @@ async function loadAuthEventsForRange(
     from: Date;
     to: Date;
     now: Date;
-    actorId?: string;
-    requireActor?: boolean;
+    actorIds?: string[];
   },
 ): Promise<AuditAuthEvent[]> {
   const lookbackStart = new Date(params.from.getTime() - SESSION_LOOKBACK_MS);
@@ -104,8 +103,7 @@ async function loadAuthEventsForRange(
   );
   const events = await tx.auditLog.findMany({
     where: {
-      ...(params.actorId ? { actorId: params.actorId } : {}),
-      ...(params.requireActor ? { actorId: { not: null } } : {}),
+      ...(params.actorIds ? { actorId: { in: params.actorIds } } : {}),
       action: { in: ["USER_LOGIN", "USER_LOGOUT"] },
       createdAt: { gte: lookbackStart, lte: lookaheadEnd },
     },
@@ -121,7 +119,6 @@ async function loadAuthEventsForRange(
     orderBy: { createdAt: "asc" },
   });
 
-  const actorFilter = params.actorId ?? null;
   // 直接按「登录 <= to 且登出 >= from」找与区间有交集的完成会话。
   // 这样即使登录早于 from - 30d、登出晚于 to + 30d，也能把两端都取回来；
   // 只查与区间相交的会话，不会把之后所有认证流量都拉进来。
@@ -138,7 +135,10 @@ async function loadAuthEventsForRange(
         AND l."createdAt" <= ${params.to}
         AND o."createdAt" >= ${params.from}
         AND o."createdAt" <= ${params.now}
-        AND (${actorFilter}::text IS NULL OR l."actorId" = ${actorFilter})
+        AND (
+          ${params.actorIds === undefined}
+          OR l."actorId" = ANY(${params.actorIds ?? []}::text[])
+        )
     )
     SELECT
       a.id, a.action, a."actorId", a."createdAt", a."ipAddress", a."userAgent", a.metadata
@@ -581,11 +581,7 @@ export async function listAuditPeople(
       },
     });
 
-    const activityRows = await tx.auditLog.groupBy({
-      by: ["actorId"],
-      where: { actorId: { not: null }, createdAt: { gte: from, lte: to } },
-      _count: { actorId: true },
-    });
+    const total = users.length;
     const lastActiveRows = await tx.auditLog.groupBy({
       by: ["actorId"],
       // 「最近操作」只算业务操作；只看登录/登出会把它误当成做过事
@@ -595,36 +591,82 @@ export async function listAuditPeople(
       },
       _max: { createdAt: true },
     });
+    const lastActiveByUser = new Map<string, Date>();
+    for (const row of lastActiveRows) {
+      if (row.actorId && row._max.createdAt) {
+        lastActiveByUser.set(row.actorId, row._max.createdAt);
+      }
+    }
+
+    // 排序只需要「是否在线 + 最近操作」，先取这两个轻量指标
+    const liveWebUserRows = await tx.session.groupBy({
+      by: ["userId"],
+      where: { expiresAt: { gt: now } },
+    });
+    const liveMiniappUserRows = await tx.miniappSession.groupBy({
+      by: ["userId"],
+      where: { expiresAt: { gt: now }, revokedAt: null },
+    });
+    const onlineUserIds = new Set<string>([
+      ...liveWebUserRows.map((row) => row.userId),
+      ...liveMiniappUserRows.map((row) => row.userId),
+    ]);
+
+    // 先只排序、切页；认证事件、live session 与会话重建只针对当前页用户
+    const orderedUsers = [...users].sort((left, right) => {
+      const leftOnline = onlineUserIds.has(left.id);
+      const rightOnline = onlineUserIds.has(right.id);
+      if (leftOnline !== rightOnline) return leftOnline ? -1 : 1;
+      const leftTime = lastActiveByUser.get(left.id)?.getTime() ?? 0;
+      const rightTime = lastActiveByUser.get(right.id)?.getTime() ?? 0;
+      if (leftTime !== rightTime) return rightTime - leftTime;
+      return left.name.localeCompare(right.name, "zh-CN");
+    });
+    const pageUsers = orderedUsers.slice(
+      page * pageSize,
+      page * pageSize + pageSize,
+    );
+    const pageUserIds = pageUsers.map((user) => user.id);
+    const activeWindowDays = eachShanghaiDay(from, to).length;
+
+    if (pageUserIds.length === 0) {
+      return { rows: [], total, activeWindowDays };
+    }
+
+    const activityRows = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: {
+        actorId: { in: pageUserIds },
+        createdAt: { gte: from, lte: to },
+      },
+      _count: { actorId: true },
+    });
     // 估算会话结束时间只能用区间内的最后一次操作；全时间的最末操作只用于展示
     const rangeActivityRows = await tx.auditLog.groupBy({
       by: ["actorId"],
       where: {
-        actorId: { not: null },
+        actorId: { in: pageUserIds },
         createdAt: { gte: from, lte: to },
         action: { notIn: NON_ACTIVITY_ACTIONS },
       },
       _max: { createdAt: true },
     });
-    // 最近登录的「时间 + 设备 + IP」必须来自同一条事件；独立聚合会拼出
-    // 「历史区间的时间戳 + 更近一次登录的设备」这种错位信息。
-    const userIds = users.map((user) => user.id);
-    const latestLoginRows = userIds.length
-      ? await tx.$queryRaw<
-          Array<{
-            actorId: string;
-            createdAt: Date;
-            ipAddress: string | null;
-            userAgent: string | null;
-          }>
-        >`
-          SELECT DISTINCT ON ("actorId")
-            "actorId", "createdAt", "ipAddress", "userAgent"
-          FROM "AuditLog"
-          WHERE action = 'USER_LOGIN'
-            AND "actorId" = ANY(${userIds}::text[])
-          ORDER BY "actorId", "createdAt" DESC
-        `
-      : [];
+    // 最近登录的「时间 + 设备 + IP」必须来自同一条事件
+    const latestLoginRows = await tx.$queryRaw<
+      Array<{
+        actorId: string;
+        createdAt: Date;
+        ipAddress: string | null;
+        userAgent: string | null;
+      }>
+    >`
+      SELECT DISTINCT ON ("actorId")
+        "actorId", "createdAt", "ipAddress", "userAgent"
+      FROM "AuditLog"
+      WHERE action = 'USER_LOGIN'
+        AND "actorId" = ANY(${pageUserIds}::text[])
+      ORDER BY "actorId", "createdAt" DESC
+    `;
     const latestLoginByUser = new Map(
       latestLoginRows.map((row) => [row.actorId, row]),
     );
@@ -632,10 +674,10 @@ export async function listAuditPeople(
       from,
       to,
       now,
-      requireActor: true,
+      actorIds: pageUserIds,
     });
     const liveWebSessions = await tx.session.findMany({
-      where: { expiresAt: { gt: now } },
+      where: { userId: { in: pageUserIds }, expiresAt: { gt: now } },
       select: {
         id: true,
         userId: true,
@@ -646,7 +688,7 @@ export async function listAuditPeople(
       },
     });
     const liveMiniappSessions = await tx.miniappSession.findMany({
-      where: { expiresAt: { gt: now }, revokedAt: null },
+      where: { userId: { in: pageUserIds }, expiresAt: { gt: now }, revokedAt: null },
       select: { id: true, userId: true, createdAt: true, expiresAt: true },
     });
     const liveSessions = [
@@ -662,13 +704,6 @@ export async function listAuditPeople(
     const activityByUser = new Map(
       activityRows.flatMap((row) =>
         row.actorId ? [[row.actorId, row._count.actorId] as const] : [],
-      ),
-    );
-    const lastActiveByUser = new Map(
-      lastActiveRows.flatMap((row) =>
-        row.actorId && row._max.createdAt
-          ? [[row.actorId, row._max.createdAt] as const]
-          : [],
       ),
     );
     const lastActivityForDuration = new Map<string, Date>();
@@ -727,9 +762,7 @@ export async function listAuditPeople(
       durationByUser.set(session.userId, entry);
     }
 
-    const liveUserIds = new Set(liveSessions.map((session) => session.userId));
-
-    const rows: AuditPersonActivityRow[] = users.map((user) => {
+    const rows: AuditPersonActivityRow[] = pageUsers.map((user) => {
       const duration = durationByUser.get(user.id);
       return {
         id: user.id,
@@ -738,7 +771,7 @@ export async function listAuditPeople(
         roleLabel:
           user.roleGroup?.name ?? platformRoleLabel(user.platformRole) ?? "用户",
         kind: "USER",
-        isOnline: liveUserIds.has(user.id),
+        isOnline: onlineUserIds.has(user.id),
         lastActiveAt: lastActiveByUser.get(user.id)?.toISOString() ?? null,
         lastLoginAt: latestLoginByUser.get(user.id)?.createdAt.toISOString() ?? null,
         loginCount: 0,
@@ -757,7 +790,7 @@ export async function listAuditPeople(
       };
     });
 
-    // 登录次数按区间统计；放在这里一次性算，避免每行再查库
+    // 登录次数按区间统计；只遍历当前页用户的认证事件
     const loginCountByUser = new Map<string, number>();
     for (const event of authEvents) {
       if (
@@ -775,19 +808,7 @@ export async function listAuditPeople(
       row.loginCount = loginCountByUser.get(row.id) ?? 0;
     }
 
-    rows.sort((left, right) => {
-      if (left.isOnline !== right.isOnline) return left.isOnline ? -1 : 1;
-      const leftTime = left.lastActiveAt ? new Date(left.lastActiveAt).getTime() : 0;
-      const rightTime = right.lastActiveAt ? new Date(right.lastActiveAt).getTime() : 0;
-      if (leftTime !== rightTime) return rightTime - leftTime;
-      return left.name.localeCompare(right.name, "zh-CN");
-    });
-
-    return {
-      rows: rows.slice(page * pageSize, page * pageSize + pageSize),
-      total: rows.length,
-      activeWindowDays: eachShanghaiDay(from, to).length,
-    };
+    return { rows, total, activeWindowDays };
   });
 }
 
@@ -855,7 +876,7 @@ export async function getAuditPersonDetail(
       from,
       to,
       now,
-      actorId: userId,
+      actorIds: [userId],
     });
     const liveWebSessions = await tx.session.findMany({
       where: { userId, expiresAt: { gt: now } },

@@ -29,6 +29,15 @@ describe("审计统计区间", () => {
     ).toThrowError(/开始时间不能晚于结束时间/);
   });
 
+  it("按北京时间自然日计数，带具体时刻的 367 个日历日会拒绝", () => {
+    expect(() =>
+      resolveAuditRange({
+        from: new Date("2025-01-01T12:00:00+08:00"),
+        to: new Date("2026-01-02T11:00:00+08:00"),
+      }),
+    ).toThrowError(/统计区间最长/);
+  });
+
   it("超过一年会拒绝，避免一次查询扫全表", () => {
     expect(() =>
       resolveAuditRange({

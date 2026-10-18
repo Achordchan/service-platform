@@ -53,8 +53,13 @@ export function resolveAuditRange(
       422,
     );
   }
-  // 结束日是 23:59:59.999，向下取整得到实际覆盖的自然日数
-  const days = Math.floor((to.getTime() - from.getTime()) / DAY_MS) + 1;
+  // 按北京时间自然日计数：带具体时刻的区间可能跨 367 个日历日但只相隔 366 天，
+  // 不能只用毫秒差判断，否则 eachShanghaiDay 会截掉最后一天。
+  const dayNumber = (key: string) => {
+    const [year, month, day] = key.split("-").map(Number);
+    return Date.UTC(year!, month! - 1, day!) / DAY_MS;
+  };
+  const days = dayNumber(shanghaiDayKey(to)) - dayNumber(shanghaiDayKey(from)) + 1;
   if (days > AUDIT_ACTIVITY_RANGE_MAX_DAYS) {
     throw new DomainError(
       "AUDIT_RANGE_TOO_LONG",
