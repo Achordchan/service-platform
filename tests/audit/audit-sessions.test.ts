@@ -126,6 +126,34 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ key: "s1", endReason: "UNKNOWN" });
   });
 
+  it("预配对按用户隔离，别人的登出不会关闭自己的旧登录", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0, userId: "u1" }),
+        event({ action: "USER_LOGOUT", minutes: 1, userId: "u2" }),
+        {
+          id: nextId++,
+          action: "USER_LOGOUT",
+          actorId: "u1",
+          createdAt: at(30),
+          ipAddress: "203.0.113.10",
+          userAgent: "Mozilla/5.0 Chrome/138.0",
+          metadata: {
+            sessionId: "s-a",
+            sessionStartedAt: at(0).toISOString(),
+          },
+        },
+      ],
+      { now, to },
+    );
+    expect(sessions.filter((item) => item.endReason === "LOGGED_OUT")).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      key: "s-a",
+      startedAt: at(0),
+      durationMs: 30 * 60_000,
+    });
+  });
+
   it("已关闭的旧登录不会被后面的新登出认领", () => {
     const sessions = buildAuditSessions(
       [

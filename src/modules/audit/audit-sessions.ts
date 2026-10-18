@@ -107,37 +107,49 @@ export function buildAuditSessions(
   let syntheticId = -1n;
 
   // 先按现有配对规则模拟一遍，找出已被更早登出关闭的旧登录；
-  // 这些登录不能再被后面的新登出认领。
+  // 这些登录不能再被后面的新登出认领。必须按用户分组，否则 B 的登出
+  // 可能把同 IP/UA 的 A 的旧登录标记成已关闭。
   {
-    const open: AuditAuthEvent[] = [];
-    const sorted = [...working].sort(
-      (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
-    );
-    for (const event of sorted) {
-      if (event.action === "USER_LOGIN") {
-        open.push(event);
-        continue;
+    const byUser = new Map<string, AuditAuthEvent[]>();
+    for (const event of working) {
+      if (!event.actorId) continue;
+      const list = byUser.get(event.actorId) ?? [];
+      list.push(event);
+      byUser.set(event.actorId, list);
+    }
+    for (const userEvents of byUser.values()) {
+      const open: AuditAuthEvent[] = [];
+      const sorted = [...userEvents].sort(
+        (left, right) => left.createdAt.getTime() - right.createdAt.getTime(),
+      );
+      for (const event of sorted) {
+        if (event.action === "USER_LOGIN") {
+          open.push(event);
+          continue;
+        }
+        if (event.action !== "USER_LOGOUT") continue;
+        const eventSessionId = sessionIdOf(event.metadata);
+        let index = eventSessionId
+          ? open.findIndex(
+              (item) => sessionIdOf(item.metadata) === eventSessionId,
+            )
+          : -1;
+        if (index < 0) {
+          const candidates = open.filter(
+            (item) =>
+              (eventSessionId ? sessionIdOf(item.metadata) === null : true) &&
+              item.ipAddress === event.ipAddress &&
+              item.userAgent === event.userAgent,
+          );
+          if (candidates.length === 1) index = open.indexOf(candidates[0]!);
+        }
+        if (index < 0 && !eventSessionId && open.length === 1) index = 0;
+        if (index < 0) continue;
+        const [closed] = open.splice(index, 1);
+        if (closed) {
+          closedAtByLoginId.set(closed.id.toString(), event.createdAt.getTime());
+        }
       }
-      if (event.action !== "USER_LOGOUT") continue;
-      const eventSessionId = sessionIdOf(event.metadata);
-      let index = eventSessionId
-        ? open.findIndex(
-            (item) => sessionIdOf(item.metadata) === eventSessionId,
-          )
-        : -1;
-      if (index < 0) {
-        const candidates = open.filter(
-          (item) =>
-            (eventSessionId ? sessionIdOf(item.metadata) === null : true) &&
-            item.ipAddress === event.ipAddress &&
-            item.userAgent === event.userAgent,
-        );
-        if (candidates.length === 1) index = open.indexOf(candidates[0]!);
-      }
-      if (index < 0 && !eventSessionId && open.length === 1) index = 0;
-      if (index < 0) continue;
-      const [closed] = open.splice(index, 1);
-      if (closed) closedAtByLoginId.set(closed.id.toString(), event.createdAt.getTime());
     }
   }
   for (const event of working) {
