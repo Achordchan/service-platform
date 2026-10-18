@@ -261,6 +261,26 @@ describe("登录会话配对", () => {
     expect(second).toMatchObject({ endReason: "STALE", durationMs: 90 * 60_000 });
   });
 
+  it("滚动发布时优先保留新登录的精确 sessionId，旧登录不能抢走", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGIN", minutes: 1, sessionId: "s-live" }),
+      ],
+      {
+        now,
+        to,
+        liveSessions: [live({ id: "s-live", minutes: 1 })],
+      },
+    );
+    expect(
+      sessions.find((item) => item.key === "s-live")?.endReason,
+    ).toBe("ACTIVE");
+    expect(
+      sessions.find((item) => item.key.startsWith("login-"))?.endReason,
+    ).toBe("UNKNOWN");
+  });
+
   it("没有登录事件的 live session 也能补成「登录中」", () => {
     const sessions = buildAuditSessions([], {
       now,

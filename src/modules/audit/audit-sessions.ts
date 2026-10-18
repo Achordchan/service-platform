@@ -157,33 +157,45 @@ export function buildAuditSessions(
     const lastActivity = lastActivityByUser.get(userId) ?? null;
     const userLive = liveByUser.get(userId) ?? [];
     const matchedLiveIds = new Set<string>();
+    const liveByPendingKey = new Map<string, AuditLiveSession>();
+
+    // 先为有 sessionId 的登录保留精确匹配的 live session。否则滚动发布时，
+    // 同一浏览器里更早的无标识旧登录可能先按 IP/UA 抢走新会话。
+    for (const pending of open) {
+      if (!pending.sessionId) continue;
+      const live = userLive.find(
+        (session) =>
+          !matchedLiveIds.has(session.id) &&
+          session.id === pending.sessionId,
+      );
+      if (!live) continue;
+      matchedLiveIds.add(live.id);
+      liveByPendingKey.set(pending.key, live);
+    }
+
+    // 旧登录再去认领剩下的 live session；多个候选时保守放弃
+    for (const pending of open) {
+      if (pending.sessionId) continue;
+      const candidates = userLive.filter(
+        (session) =>
+          !matchedLiveIds.has(session.id) &&
+          Math.abs(
+            session.createdAt.getTime() - pending.startedAt.getTime(),
+          ) < LIVE_SESSION_MATCH_MS &&
+          // 小程序会话没有 IP/UA；Web 会话的 IP 可能因代理与审计行不同，
+          // 因此时间窗内 IP 或 UA 任一匹配即可，两者都不同才不配对。
+          (session.client === "MINIAPP" ||
+            session.ipAddress === pending.ipAddress ||
+            session.userAgent === pending.userAgent),
+      );
+      if (candidates.length !== 1) continue;
+      matchedLiveIds.add(candidates[0]!.id);
+      liveByPendingKey.set(pending.key, candidates[0]!);
+    }
 
     for (const pending of open) {
-      // 每个 live session 只能被认领一次；旧登录有多个候选时保守放弃
-      const availableLive = userLive.filter(
-        (session) => !matchedLiveIds.has(session.id),
-      );
-      let live: AuditLiveSession | undefined;
-      if (pending.sessionId) {
-        live = availableLive.find((session) => session.id === pending.sessionId);
-      } else {
-        const candidates = availableLive.filter(
-          (session) =>
-            Math.abs(
-              session.createdAt.getTime() - pending.startedAt.getTime(),
-            ) < LIVE_SESSION_MATCH_MS &&
-            // 小程序会话没有 IP/UA；Web 会话的 IP 可能因代理与审计行不同，
-            // 因此时间窗内 IP 或 UA 任一匹配即可，两者都不同才不配对。
-            (session.client === "MINIAPP" ||
-              session.ipAddress === pending.ipAddress ||
-              session.userAgent === pending.userAgent),
-        );
-        if (candidates.length === 1) live = candidates[0];
-      }
-
+      const live = liveByPendingKey.get(pending.key);
       if (live) {
-        // 记录真正匹配到的 live session，后面只给未匹配的补录
-        matchedLiveIds.add(live.id);
         // 仍在登录：只统计到「现在 / 区间结束」，不把 7 天有效期当停留时长
         const end = new Date(Math.min(now.getTime(), to.getTime()));
         sessions.push(finishSession(pending, end, "ACTIVE", userId));

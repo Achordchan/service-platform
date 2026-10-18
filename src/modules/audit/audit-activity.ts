@@ -70,9 +70,32 @@ function sessionIdOf(metadata: unknown): string | null {
  * 认证事件不能只取 [from, to]：
  * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
  * - 后续登录要一起取，否则旧登录会跟更晚的登出错误配对；
- * - 登录可能早于 30 天 lookback，但登出在区间内。
- * 因此取 [from - 30d, to + 30d]，并对登出里的 sessionId 回查更早的登录。
+ * - 登录可能早于 30 天 lookback，但登出在区间内；
+ * - 续期很久的会话，登出可能在 to + 30d 之后。
+ * 因此先取 [from - 30d, to + 30d]，再按已知 sessionId 回查窗口外的登录/登出。
  */
+type RawAuthRow = {
+  id: bigint;
+  action: string;
+  actorId: string | null;
+  createdAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+  metadata: unknown;
+};
+
+function toAuthEvent(row: RawAuthRow): AuditAuthEvent {
+  return {
+    id: row.id,
+    action: row.action,
+    actorId: row.actorId,
+    createdAt: row.createdAt,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    metadata: row.metadata,
+  };
+}
+
 async function loadAuthEventsForRange(
   tx: Prisma.TransactionClient,
   params: {
@@ -85,10 +108,7 @@ async function loadAuthEventsForRange(
 ): Promise<AuditAuthEvent[]> {
   const lookbackStart = new Date(params.from.getTime() - SESSION_LOOKBACK_MS);
   const lookaheadEnd = new Date(
-    Math.min(
-      params.to.getTime() + AUTH_LOOKAHEAD_MS,
-      params.now.getTime(),
-    ),
+    Math.min(params.to.getTime() + AUTH_LOOKAHEAD_MS, params.now.getTime()),
   );
   const events = await tx.auditLog.findMany({
     where: {
@@ -109,53 +129,72 @@ async function loadAuthEventsForRange(
     orderBy: { createdAt: "asc" },
   });
 
-  const sessionIds = [
+  const actorFilter = params.actorId ?? null;
+  const loginSessionIds = [
     ...new Set(
       events
+        .map((event) =>
+          event.action === "USER_LOGIN" ? sessionIdOf(event.metadata) : null,
+        )
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const closedSessionIds = new Set(
+    events
+      .map((event) =>
+        event.action === "USER_LOGOUT" ? sessionIdOf(event.metadata) : null,
+      )
+      .filter((id): id is string => Boolean(id)),
+  );
+  const unclosedSessionIds = loginSessionIds.filter(
+    (id) => !closedSessionIds.has(id),
+  );
+
+  // 登录在窗口内、登出在 to + 30d 之后：按 sessionId 把之后的登出也找回来
+  const logoutRows =
+    unclosedSessionIds.length > 0
+      ? await tx.$queryRaw<RawAuthRow[]>`
+          SELECT
+            id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
+          FROM "AuditLog"
+          WHERE action = 'USER_LOGOUT'
+            AND "createdAt" <= ${params.now}
+            AND metadata->>'sessionId' = ANY(${unclosedSessionIds}::text[])
+            AND (${actorFilter}::text IS NULL OR "actorId" = ${actorFilter})
+        `
+      : [];
+
+  // 登出在窗口内、登录早于 lookback：按 sessionId 回查更早的登录
+  const logoutSessionIds = [
+    ...new Set(
+      [...events, ...logoutRows]
         .map((event) =>
           event.action === "USER_LOGOUT" ? sessionIdOf(event.metadata) : null,
         )
         .filter((id): id is string => Boolean(id)),
     ),
   ];
-  if (sessionIds.length === 0) return events;
-
-  // sessionId 是字符串，不受 createdAt 窗口限制；30 天以上的长会话也能配上
-  const loginRows = await tx.$queryRaw<
-    Array<{
-      id: bigint;
-      action: string;
-      actorId: string | null;
-      createdAt: Date;
-      ipAddress: string | null;
-      userAgent: string | null;
-      metadata: unknown;
-    }>
-  >`
-    SELECT
-      id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
-    FROM "AuditLog"
-    WHERE action = 'USER_LOGIN'
-      AND "createdAt" <= ${lookaheadEnd}
-      AND metadata->>'sessionId' = ANY(${sessionIds}::text[])
-      AND (${params.actorId ?? null}::text IS NULL OR "actorId" = ${params.actorId ?? null})
-  `;
+  const loginRows =
+    logoutSessionIds.length > 0
+      ? await tx.$queryRaw<RawAuthRow[]>`
+          SELECT
+            id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
+          FROM "AuditLog"
+          WHERE action = 'USER_LOGIN'
+            AND "createdAt" <= ${params.now}
+            AND metadata->>'sessionId' = ANY(${logoutSessionIds}::text[])
+            AND (${actorFilter}::text IS NULL OR "actorId" = ${actorFilter})
+        `
+      : [];
 
   const seen = new Set(events.map((event) => event.id.toString()));
-  return [
-    ...events,
-    ...loginRows
-      .filter((row) => !seen.has(row.id.toString()))
-      .map((row) => ({
-        id: row.id,
-        action: row.action,
-        actorId: row.actorId,
-        createdAt: row.createdAt,
-        ipAddress: row.ipAddress,
-        userAgent: row.userAgent,
-        metadata: row.metadata,
-      })),
-  ];
+  const merged: AuditAuthEvent[] = [...events];
+  for (const row of [...logoutRows, ...loginRows]) {
+    if (seen.has(row.id.toString())) continue;
+    seen.add(row.id.toString());
+    merged.push(toAuthEvent(row));
+  }
+  return merged;
 }
 
 const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
