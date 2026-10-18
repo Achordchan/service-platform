@@ -58,14 +58,6 @@ function isCredentialLogin(metadata: unknown): boolean {
     : true;
 }
 
-function sessionIdOf(metadata: unknown): string | null {
-  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-    return null;
-  }
-  const value = (metadata as Record<string, unknown>).sessionId;
-  return typeof value === "string" && value ? value : null;
-}
-
 /**
  * 认证事件不能只取 [from, to]：
  * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
@@ -130,66 +122,33 @@ async function loadAuthEventsForRange(
   });
 
   const actorFilter = params.actorId ?? null;
-  const loginSessionIds = [
-    ...new Set(
-      events
-        .map((event) =>
-          event.action === "USER_LOGIN" ? sessionIdOf(event.metadata) : null,
-        )
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const closedSessionIds = new Set(
-    events
-      .map((event) =>
-        event.action === "USER_LOGOUT" ? sessionIdOf(event.metadata) : null,
-      )
-      .filter((id): id is string => Boolean(id)),
-  );
-  const unclosedSessionIds = loginSessionIds.filter(
-    (id) => !closedSessionIds.has(id),
-  );
-
-  // 登录在窗口内、登出在 to + 30d 之后：按 sessionId 把之后的登出也找回来
-  const logoutRows =
-    unclosedSessionIds.length > 0
-      ? await tx.$queryRaw<RawAuthRow[]>`
-          SELECT
-            id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
-          FROM "AuditLog"
-          WHERE action = 'USER_LOGOUT'
-            AND "createdAt" <= ${params.now}
-            AND metadata->>'sessionId' = ANY(${unclosedSessionIds}::text[])
-            AND (${actorFilter}::text IS NULL OR "actorId" = ${actorFilter})
-        `
-      : [];
-
-  // 登出在窗口内、登录早于 lookback：按 sessionId 回查更早的登录
-  const logoutSessionIds = [
-    ...new Set(
-      [...events, ...logoutRows]
-        .map((event) =>
-          event.action === "USER_LOGOUT" ? sessionIdOf(event.metadata) : null,
-        )
-        .filter((id): id is string => Boolean(id)),
-    ),
-  ];
-  const loginRows =
-    logoutSessionIds.length > 0
-      ? await tx.$queryRaw<RawAuthRow[]>`
-          SELECT
-            id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
-          FROM "AuditLog"
-          WHERE action = 'USER_LOGIN'
-            AND "createdAt" <= ${params.now}
-            AND metadata->>'sessionId' = ANY(${logoutSessionIds}::text[])
-            AND (${actorFilter}::text IS NULL OR "actorId" = ${actorFilter})
-        `
-      : [];
+  // 直接按「登录 <= to 且登出 >= from」找与区间有交集的完成会话。
+  // 这样即使登录早于 from - 30d、登出晚于 to + 30d，也能把两端都取回来；
+  // 只查与区间相交的会话，不会把之后所有认证流量都拉进来。
+  const pairedRows = await tx.$queryRaw<RawAuthRow[]>`
+    WITH paired AS (
+      SELECT l.id AS login_id, o.id AS logout_id
+      FROM "AuditLog" l
+      JOIN "AuditLog" o
+        ON o.action = 'USER_LOGOUT'
+       AND o.metadata->>'sessionId' = l.metadata->>'sessionId'
+       AND o."actorId" = l."actorId"
+      WHERE l.action = 'USER_LOGIN'
+        AND l.metadata->>'sessionId' IS NOT NULL
+        AND l."createdAt" <= ${params.to}
+        AND o."createdAt" >= ${params.from}
+        AND o."createdAt" <= ${params.now}
+        AND (${actorFilter}::text IS NULL OR l."actorId" = ${actorFilter})
+    )
+    SELECT
+      a.id, a.action, a."actorId", a."createdAt", a."ipAddress", a."userAgent", a.metadata
+    FROM "AuditLog" a
+    JOIN paired p ON a.id = p.login_id OR a.id = p.logout_id
+  `;
 
   const seen = new Set(events.map((event) => event.id.toString()));
   const merged: AuditAuthEvent[] = [...events];
-  for (const row of [...logoutRows, ...loginRows]) {
+  for (const row of pairedRows) {
     if (seen.has(row.id.toString())) continue;
     seen.add(row.id.toString());
     merged.push(toAuthEvent(row));

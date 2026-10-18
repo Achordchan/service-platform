@@ -75,15 +75,19 @@ export async function revokeMiniappSessionByAuthorization(
   const tokenHash = hashSecretToken(token);
   const record = await prisma.miniappSession.findUnique({
     where: { tokenHash },
-    select: { id: true, userId: true, revokedAt: true },
+    select: { id: true, userId: true, revokedAt: true, expiresAt: true },
   });
   // 重复登出不写审计，避免把同一次退出记成多条
   if (!record || record.revokedAt) return false;
+  const now = new Date();
+  // 已过期的会话再收到“登出”时，只做撤销，不记成一次正常登出：
+  // 否则会把过期之后的离线时间也算进停留时长。
+  const expired = record.expiresAt.getTime() <= now.getTime();
   const result = await prisma.miniappSession.updateMany({
     where: { id: record.id, revokedAt: null },
-    data: { revokedAt: new Date() },
+    data: { revokedAt: now },
   });
-  if (result.count > 0) {
+  if (result.count > 0 && !expired) {
     await recordAuthEvent({
       action: "USER_LOGOUT",
       actorUserId: record.userId,

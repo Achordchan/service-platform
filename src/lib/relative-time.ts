@@ -21,7 +21,10 @@ function dayKeyInZone(date: Date, timeZone: string): string {
     });
     zoneDayFormatters.set(timeZone, formatter);
   }
-  return formatter.format(date);
+  const parts = formatter.formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
 }
 
 function calendarDayDiffInZone(from: Date, to: Date, timeZone: string) {

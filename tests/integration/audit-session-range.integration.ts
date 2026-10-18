@@ -64,6 +64,9 @@ beforeAll(async () => {
   // 会话 C：登录在区间前，登出在 to + 30 天 lookahead 之外
   await insert("USER_LOGIN", "2026-01-05T00:00:00Z", "sess-late");
   await insert("USER_LOGOUT", "2026-03-15T00:00:00Z", "sess-late");
+  // 会话 D：登录早于 from - 30d、登出晚于 to + 30d，两端都在初始窗口外
+  await insert("USER_LOGIN", "2025-12-01T00:00:00Z", "sess-spanning");
+  await insert("USER_LOGOUT", "2026-03-20T00:00:00Z", "sess-spanning");
 });
 
 afterAll(async () => {
@@ -80,12 +83,11 @@ describe("审计会话与统计区间", () => {
     });
 
     expect(detail).not.toBeNull();
-    expect(detail!.sessions).toHaveLength(3);
-    // A 在区间内 12h；B、C 完整落在区间内各 24h
-    expect(detail!.totals.sessionCount).toBe(3);
-    // to 是 23:59:59.999，B/C 各比整 24h 少 1ms
-    expect(detail!.totals.totalDurationMs).toBe(60 * 3_600_000 - 2);
-    expect(detail!.totals.avgDurationMs).toBe(71_999_999);
+    expect(detail!.sessions).toHaveLength(4);
+    // A 在区间内 12h；B、C、D 完整落在区间内各 (24h - 1ms)
+    expect(detail!.totals.sessionCount).toBe(4);
+    expect(detail!.totals.totalDurationMs).toBe(84 * 3_600_000 - 3);
+    expect(detail!.totals.avgDurationMs).toBe(75_599_999);
     expect(detail!.totals.loginCount).toBe(0);
     // 列表仍展示完整起止
     const old = detail!.sessions.find((item) => item.key === "sess-old");
