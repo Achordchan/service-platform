@@ -38,6 +38,8 @@ export type MiniappLoginResult =
 export type MiniappSessionIssued = {
   token: string;
   expiresAt: Date;
+  /** 小程序会话 ID：审计据此把这次登录与后续操作归入同一段会话 */
+  sessionId: string;
   user: { id: string; name: string; email: string };
 };
 
@@ -86,7 +88,7 @@ export async function createMiniappSessionForCode(
       targetUserId: binding.userId,
       ipAddress: network?.ipAddress ?? null,
       userAgent: network?.userAgent ?? null,
-      metadata: { path: "miniapp" },
+      metadata: { path: "miniapp", sessionId: session.sessionId },
     });
     return { status: "SESSION_ISSUED", ...session };
   }
@@ -343,29 +345,32 @@ export function getMiniappMe(actor: Actor) {
 // 同时匹配 userId 防止「快速解绑→换绑到其他账号」后按旧读取值错配签发。
 async function issueSessionForBinding(userId: string, openid?: string) {
   const tokenData = createMiniappSessionToken();
+  let sessionId: string | null = null;
   const issued = await prisma.$transaction(async (tx) => {
     const touched = await tx.wechatBinding.updateMany({
       where: openid ? { openid, userId } : { userId },
       data: { lastLoginAt: new Date() },
     });
     if (touched.count === 0) return false;
-    await tx.miniappSession.create({
+    const created = await tx.miniappSession.create({
       data: {
         tokenHash: tokenData.tokenHash,
         userId,
         expiresAt: tokenData.expiresAt,
       },
+      select: { id: true },
     });
+    sessionId = created.id;
     return true;
   });
-  if (!issued) {
+  if (!issued || !sessionId) {
     throw new DomainError(
       "BINDING_GONE",
       "微信绑定已解除，请重新登录并绑定",
       401,
     );
   }
-  return { token: tokenData.token, expiresAt: tokenData.expiresAt };
+  return { token: tokenData.token, expiresAt: tokenData.expiresAt, sessionId };
 }
 
 async function loadPendingTicket(ticket: string): Promise<PendingTicket> {
@@ -429,6 +434,7 @@ async function bindOpenidToUser(params: {
       403,
     );
   }
+  let miniappSessionId: string | null = null;
   try {
     await withActorDb(actor, async (tx) => {
       const existingByOpenid = await tx.wechatBinding.findUnique({
@@ -479,13 +485,15 @@ async function bindOpenidToUser(params: {
         },
         select: { id: true },
       });
-      await tx.miniappSession.create({
+      const createdSession = await tx.miniappSession.create({
         data: {
           tokenHash: tokenData.tokenHash,
           userId: params.userId,
           expiresAt: tokenData.expiresAt,
         },
+        select: { id: true },
       });
+      miniappSessionId = createdSession.id;
       await tx.miniappAuthTicket.updateMany({
         where: { id: params.ticketId, consumedAt: null },
         data: { consumedAt: now },
@@ -520,6 +528,13 @@ async function bindOpenidToUser(params: {
     }
     throw error;
   }
+  if (!miniappSessionId) {
+    throw new DomainError(
+      "BINDING_ACCOUNT_UNAVAILABLE",
+      "登录会话创建失败，请重试",
+      500,
+    );
+  }
   // 绑定成功同时签发了小程序会话，等同一次登录；同样绕过 better-auth，显式补审计
   await recordAuthEvent({
     action: "USER_LOGIN",
@@ -527,11 +542,16 @@ async function bindOpenidToUser(params: {
     targetUserId: params.userId,
     ipAddress: params.network?.ipAddress ?? null,
     userAgent: params.network?.userAgent ?? null,
-    metadata: { path: "miniapp-bind", method: params.method },
+    metadata: {
+      path: "miniapp-bind",
+      method: params.method,
+      sessionId: miniappSessionId,
+    },
   });
   return {
     token: tokenData.token,
     expiresAt: tokenData.expiresAt,
+    sessionId: miniappSessionId,
     user: { id: params.userId, name: params.userName, email: params.userEmail },
   };
 }

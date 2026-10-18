@@ -1,0 +1,960 @@
+import "server-only";
+
+import { addDays, parseISO } from "date-fns";
+import type { Actor } from "@/lib/actor";
+import { withActorDb } from "@/lib/actor";
+import {
+  AUDIT_PAGE_SIZE_MAX,
+  auditCategoryWhere,
+  auditRecordSelect,
+  loadAuditReferences,
+  mapAuditRecords,
+} from "@/modules/audit/audit-query";
+import {
+  auditCategoryFor,
+  auditCategoryLabel,
+  describeUserAgent,
+  platformRoleLabel,
+} from "@/modules/audit/audit-presentation";
+import {
+  buildAuditSessions,
+  toSessionViews,
+  type AuditAuthEvent,
+  type BuiltSession,
+} from "@/modules/audit/audit-sessions";
+import type {
+  AuditCategoryKey,
+  AuditOverview,
+  AuditPeoplePage,
+  AuditPersonActivityRow,
+  AuditPersonDetail,
+} from "@/modules/audit/audit-types";
+import { AUDIT_ACTIVITY_RANGE_MAX_DAYS } from "@/modules/audit/audit-range";
+import { assertAllowed } from "@/modules/projects/errors";
+
+const AUTH_ACTIONS = ["USER_LOGIN", "USER_LOGOUT"] as const;
+const ROUTINE_AUTH_ACTIONS = ["USER_LOGIN", "USER_LOGOUT"] as const;
+const NON_ACTIVITY_ACTIONS = [
+  "USER_LOGIN",
+  "USER_LOGOUT",
+  "USER_LOGIN_FAILED",
+  "USER_PASSWORD_RESET_REQUESTED",
+  "USER_PASSWORD_RESET_COMPLETED",
+];
+
+const TIME_ZONE = "Asia/Shanghai";
+const SESSION_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+
+/** 改密后 better-auth 会重建会话并发一条 USER_LOGIN，它不是一次真实登录。 */
+function isCredentialLogin(metadata: unknown): boolean {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? (metadata as Record<string, unknown>).path !== "/change-password"
+    : true;
+}
+
+const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function shanghaiDayKey(date: Date): string {
+  const parts = SHANGHAI_DAY_FORMATTER.formatToParts(date);
+  const pick = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+  return `${pick("year")}-${pick("month")}-${pick("day")}`;
+}
+
+function eachShanghaiDay(from: Date, to: Date): string[] {
+  const start = parseISO(`${shanghaiDayKey(from)}T00:00:00Z`);
+  const end = parseISO(`${shanghaiDayKey(to)}T00:00:00Z`);
+  const days: string[] = [];
+  let cursor = start;
+  while (cursor <= end && days.length < AUDIT_ACTIVITY_RANGE_MAX_DAYS) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor = addDays(cursor, 1);
+  }
+  return days;
+}
+
+type TrendRow = {
+  date: string;
+  actions: number;
+  activePeople: number;
+  logins: number;
+};
+
+function averageDuration(sessions: BuiltSession[]): number | null {
+  // 平均值只统计「有明确登出」的会话。进行中的会随时间变大，
+  // 未登出的只能按最后操作估算，混进平均值会系统性偏高。
+  const measured = sessions.filter(
+    (session) =>
+      typeof session.durationMs === "number" && session.endReason === "LOGGED_OUT",
+  );
+  if (measured.length === 0) return null;
+  const total = measured.reduce((sum, session) => sum + (session.durationMs ?? 0), 0);
+  return Math.round(total / measured.length);
+}
+
+export async function getAuditOverview(
+  actor: Actor,
+  range: { from: Date; to: Date },
+  now = new Date(),
+): Promise<AuditOverview> {
+  assertAllowed(actor.isPlatformAdmin);
+  const { from, to } = range;
+
+  return withActorDb(actor, async (tx) => {
+    // 往前多看 7 天：跨区间起点仍在进行的会话也能配上登录事件
+    const sessionWindowStart = new Date(from.getTime() - SESSION_LOOKBACK_MS);
+    const authEventsPromise = tx.auditLog.findMany({
+      where: {
+        action: { in: [...AUTH_ACTIONS] },
+        createdAt: { gte: sessionWindowStart, lte: to },
+      },
+      select: {
+        id: true,
+        action: true,
+        actorId: true,
+        createdAt: true,
+        ipAddress: true,
+        userAgent: true,
+        metadata: true,
+      },
+      orderBy: { createdAt: "asc" },
+      take: 20_000,
+    });
+
+    const lastActivityPromise = tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: {
+        actorId: { not: null },
+        createdAt: { gte: from, lte: to },
+        action: { notIn: NON_ACTIVITY_ACTIONS },
+      },
+      _max: { createdAt: true },
+    });
+
+    const liveSessionsPromise = Promise.all([
+      tx.session.findMany({
+        where: { expiresAt: { gt: now } },
+        select: {
+          id: true,
+          userId: true,
+          createdAt: true,
+          expiresAt: true,
+          ipAddress: true,
+          userAgent: true,
+          user: {
+            select: {
+              name: true,
+              email: true,
+              platformRole: true,
+              roleGroup: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      tx.miniappSession.findMany({
+        where: { expiresAt: { gt: now }, revokedAt: null },
+        select: {
+          id: true,
+          userId: true,
+          createdAt: true,
+          expiresAt: true,
+          user: {
+            select: {
+              name: true,
+              email: true,
+              platformRole: true,
+              roleGroup: { select: { name: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+    ]).then(([web, miniapp]) => [
+      ...web.map((session) => ({ ...session, client: "WEB" as const })),
+      ...miniapp.map((session) => ({
+        ...session,
+        ipAddress: null,
+        userAgent: null,
+        client: "MINIAPP" as const,
+      })),
+    ]);
+
+    const trendPromise = tx.$queryRaw<TrendRow[]>`
+      SELECT
+        -- createdAt 是 timestamp(3)，Prisma 按 UTC 写入；先按 UTC 还原瞬间，
+        -- 再转北京时间，避免依赖数据库会话时区（改为 UTC 时会整体偏一天）。
+        to_char(
+          (("createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${TIME_ZONE})::date,
+          'YYYY-MM-DD'
+        ) AS date,
+        COUNT(*)::int AS actions,
+        COUNT(DISTINCT "actorId")::int AS "activePeople",
+        COUNT(*) FILTER (
+          WHERE action = 'USER_LOGIN'
+            AND coalesce(metadata->>'path', '') <> '/change-password'
+        )::int AS logins
+      FROM "AuditLog"
+      WHERE "createdAt" >= ${from} AND "createdAt" <= ${to}
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    const totalsPromise = tx.$queryRaw<
+      Array<{
+        actionCount: number;
+        activePeople: number;
+        loginCount: number;
+        failedLoginCount: number;
+      }>
+    >`
+      SELECT
+        COUNT(*)::int AS "actionCount",
+        COUNT(DISTINCT "actorId")::int AS "activePeople",
+        COUNT(*) FILTER (
+          WHERE action = 'USER_LOGIN'
+            AND coalesce(metadata->>'path', '') <> '/change-password'
+        )::int AS "loginCount",
+        COUNT(*) FILTER (WHERE action = 'USER_LOGIN_FAILED')::int AS "failedLoginCount"
+      FROM "AuditLog"
+      WHERE "createdAt" >= ${from} AND "createdAt" <= ${to}
+    `;
+
+    const recentLoginRecordsPromise = tx.auditLog.findMany({
+      where: { action: "USER_LOGIN", createdAt: { gte: from, lte: to } },
+      orderBy: { id: "desc" },
+      take: 6,
+      select: auditRecordSelect,
+    });
+
+    const recentEventRecordsPromise = tx.auditLog.findMany({
+      where: {
+        // 登录/登出放在「最近登录」里，这里保留失败、重置密码等值得注意的事件
+        action: { notIn: [...ROUTINE_AUTH_ACTIONS] },
+        createdAt: { gte: from, lte: to },
+      },
+      orderBy: { id: "desc" },
+      take: 8,
+      select: auditRecordSelect,
+    });
+
+    const topPeoplePromise = tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: {
+        actorId: { not: null },
+        createdAt: { gte: from, lte: to },
+        // 「最活跃」按业务操作排，不把纯登录算成干活
+        action: { notIn: NON_ACTIVITY_ACTIONS },
+      },
+      _count: { actorId: true },
+      _max: { createdAt: true },
+      orderBy: { _count: { actorId: "desc" } },
+      take: 5,
+    });
+
+    const failureGroupsPromise = tx.$queryRaw<
+      Array<{ email: string | null; count: number }>
+    >`
+      SELECT metadata->>'email' AS email, COUNT(*)::int AS count
+      FROM "AuditLog"
+      WHERE action = 'USER_LOGIN_FAILED'
+        AND "createdAt" >= ${from} AND "createdAt" <= ${to}
+      GROUP BY 1
+      ORDER BY 2 DESC
+      LIMIT 5
+    `;
+
+    const multiIpPromise = tx.$queryRaw<
+      Array<{ actorId: string; ipCount: number }>
+    >`
+      SELECT "actorId", COUNT(DISTINCT "ipAddress")::int AS "ipCount"
+      FROM "AuditLog"
+      WHERE action = 'USER_LOGIN'
+        AND "actorId" IS NOT NULL
+        AND "ipAddress" IS NOT NULL
+        AND "createdAt" >= ${from} AND "createdAt" <= ${to}
+      GROUP BY 1
+      HAVING COUNT(DISTINCT "ipAddress") > 1
+      ORDER BY 2 DESC
+      LIMIT 5
+    `;
+
+    const [
+      authEvents,
+      lastActivityRows,
+      liveSessions,
+      trendRows,
+      totalsRows,
+      recentLoginRecords,
+      recentEventRecords,
+      topPeople,
+      failureGroups,
+      multiIp,
+    ] = await Promise.all([
+      authEventsPromise,
+      lastActivityPromise,
+      liveSessionsPromise,
+      trendPromise,
+      totalsPromise,
+      recentLoginRecordsPromise,
+      recentEventRecordsPromise,
+      topPeoplePromise,
+      failureGroupsPromise,
+      multiIpPromise,
+    ]);
+
+    const references = await loadAuditReferences(tx, [
+      ...recentLoginRecords,
+      ...recentEventRecords,
+    ]);
+
+    const lastActivityByUser = new Map<string, Date>();
+    for (const row of lastActivityRows) {
+      if (row.actorId && row._max.createdAt) {
+        lastActivityByUser.set(row.actorId, row._max.createdAt);
+      }
+    }
+
+    const sessions = buildAuditSessions(authEvents, {
+      now,
+      to,
+      lastActivityByUser,
+      liveSessions,
+    }).filter(
+      (session) =>
+        // 区间内开始的会话；跨区间但仍在登录的会话也保留（用于「当前登录中」）
+        session.startedAt.getTime() >= from.getTime() ||
+        session.endReason === "ACTIVE",
+    );
+
+    const trendByDate = new Map(trendRows.map((row) => [row.date, row]));
+    const trend = eachShanghaiDay(from, to).map((date) => {
+      const row = trendByDate.get(date);
+      return {
+        date,
+        actions: Number(row?.actions ?? 0),
+        activePeople: Number(row?.activePeople ?? 0),
+        logins: Number(row?.logins ?? 0),
+      };
+    });
+
+    const totals = totalsRows[0] ?? {
+      actionCount: 0,
+      activePeople: 0,
+      loginCount: 0,
+      failedLoginCount: 0,
+    };
+
+    const topUserIds = topPeople
+      .map((row) => row.actorId)
+      .filter((id): id is string => Boolean(id));
+    const topUsers = topUserIds.length
+      ? await tx.user.findMany({
+          where: { id: { in: topUserIds } },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            platformRole: true,
+            roleGroup: { select: { name: true } },
+          },
+        })
+      : [];
+    const topUserById = new Map(topUsers.map((user) => [user.id, user]));
+
+    const multiIpUserIds = multiIp.map((row) => row.actorId);
+    const multiIpUsers = multiIpUserIds.length
+      ? await tx.user.findMany({
+          where: { id: { in: multiIpUserIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const multiIpNameById = new Map(multiIpUsers.map((user) => [user.id, user.name]));
+
+    const notices: AuditOverview["notices"] = [];
+    const failedCount = Number(totals.failedLoginCount);
+    if (failedCount > 0) {
+      const topFailure = failureGroups[0];
+      const detail = topFailure?.email
+        ? `其中 ${topFailure.email} 失败 ${Number(topFailure.count)} 次`
+        : "请留意是否有账号被反复尝试";
+      notices.push({
+        key: "FAILED_LOGIN",
+        tone: failedCount >= 5 ? "warning" : "info",
+        title: `${failedCount} 次登录失败`,
+        description: detail,
+      });
+    }
+    if (multiIp.length > 0) {
+      const names = multiIp
+        .map((row) => multiIpNameById.get(row.actorId))
+        .filter((name): name is string => Boolean(name));
+      notices.push({
+        key: "MULTI_IP",
+        tone: "info",
+        title: `${multiIp.length} 个账号在多个网络登录`,
+        description: names.length
+          ? `${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""} 在统计区间内使用过不同 IP，可能是换了网络或使用多台设备。`
+          : "这些账号在统计区间内使用过不同 IP。",
+      });
+    }
+
+    return {
+      from: from.toISOString(),
+      to: to.toISOString(),
+      totals: {
+        actionCount: Number(totals.actionCount),
+        activePeople: Number(totals.activePeople),
+        loginCount: Number(totals.loginCount),
+        failedLoginCount: failedCount,
+        sessionCount: sessions.length,
+        avgSessionMs: averageDuration(sessions),
+        onlineNow: new Set(liveSessions.map((session) => session.userId)).size,
+      },
+      trend,
+      recentLogins: mapAuditRecords(recentLoginRecords, references),
+      recentEvents: mapAuditRecords(recentEventRecords, references),
+      topPeople: topPeople.flatMap((row) => {
+        const user = row.actorId ? topUserById.get(row.actorId) : null;
+        if (!user) return [];
+        return [
+          {
+            id: user.id,
+            name: user.name,
+            email: user.email,
+            roleLabel:
+              user.roleGroup?.name ??
+              platformRoleLabel(user.platformRole) ??
+              "用户",
+            actionCount: row._count.actorId,
+            lastActiveAt: (row._max.createdAt ?? from).toISOString(),
+          },
+        ];
+      }),
+      onlineSessions: liveSessions.slice(0, 12).map((session) => ({
+        sessionId: session.id,
+        userId: session.userId,
+        name: session.user.name,
+        email: session.user.email,
+        roleLabel:
+          session.user.roleGroup?.name ??
+          platformRoleLabel(session.user.platformRole) ??
+          "用户",
+        startedAt: session.createdAt.toISOString(),
+        durationMs: Math.max(0, now.getTime() - session.createdAt.getTime()),
+        ipAddress: session.ipAddress,
+        device:
+          session.client === "MINIAPP"
+            ? { browser: null, os: null, deviceType: "小程序", label: "微信小程序" }
+            : describeUserAgent(session.userAgent),
+      })),
+      notices,
+    };
+  });
+}
+
+export async function listAuditPeople(
+  actor: Actor,
+  params: {
+    from: Date;
+    to: Date;
+    search?: string;
+    role?: "STAFF" | "CUSTOMER";
+    page?: number;
+    pageSize?: number;
+  },
+  now = new Date(),
+): Promise<AuditPeoplePage> {
+  assertAllowed(actor.isPlatformAdmin);
+  const { from, to } = params;
+  const pageSize = Math.min(Math.max(params.pageSize ?? 25, 1), AUDIT_PAGE_SIZE_MAX);
+  const page = Math.max(params.page ?? 0, 0);
+  const search = params.search?.trim();
+
+  return withActorDb(actor, async (tx) => {
+    const users = await tx.user.findMany({
+      where: {
+        deletedAt: null,
+        ...(params.role === "STAFF"
+          ? { platformRole: { in: ["PLATFORM_ADMIN", "PROJECT_MANAGER", "TECHNICIAN"] } }
+          : params.role === "CUSTOMER"
+            ? { platformRole: "CUSTOMER" }
+            : {}),
+        ...(search
+          ? {
+              OR: [
+                { name: { contains: search, mode: "insensitive" } },
+                { email: { contains: search, mode: "insensitive" } },
+              ],
+            }
+          : {}),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        platformRole: true,
+        roleGroup: { select: { name: true } },
+      },
+    });
+
+    const [activityRows, lastActiveRows, lastLoginRows, authEvents, liveSessions] =
+      await Promise.all([
+        tx.auditLog.groupBy({
+          by: ["actorId"],
+          where: { actorId: { not: null }, createdAt: { gte: from, lte: to } },
+          _count: { actorId: true },
+        }),
+        tx.auditLog.groupBy({
+          by: ["actorId"],
+          // 「最近操作」只算业务操作；只看登录/登出会把它误当成做过事
+          where: {
+            actorId: { not: null },
+            action: { notIn: NON_ACTIVITY_ACTIONS },
+          },
+          _max: { createdAt: true },
+        }),
+        tx.auditLog.groupBy({
+          by: ["actorId"],
+          where: { actorId: { not: null }, action: "USER_LOGIN" },
+          _max: { createdAt: true },
+        }),
+        tx.auditLog.findMany({
+          where: {
+            action: { in: [...AUTH_ACTIONS] },
+            createdAt: {
+              gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
+              lte: to,
+            },
+            actorId: { not: null },
+          },
+          select: {
+            id: true,
+            action: true,
+            actorId: true,
+            createdAt: true,
+            ipAddress: true,
+            userAgent: true,
+            metadata: true,
+          },
+          orderBy: { createdAt: "asc" },
+          take: 20_000,
+        }),
+        Promise.all([
+          tx.session.findMany({
+            where: { expiresAt: { gt: now } },
+            select: {
+              id: true,
+              userId: true,
+              createdAt: true,
+              expiresAt: true,
+              ipAddress: true,
+              userAgent: true,
+            },
+            take: 5_000,
+          }),
+          tx.miniappSession.findMany({
+            where: { expiresAt: { gt: now }, revokedAt: null },
+            select: { id: true, userId: true, createdAt: true, expiresAt: true },
+            take: 5_000,
+          }),
+        ]).then(([web, miniapp]) => [
+          ...web.map((session) => ({ ...session, client: "WEB" as const })),
+          ...miniapp.map((session) => ({
+            ...session,
+            ipAddress: null,
+            userAgent: null,
+            client: "MINIAPP" as const,
+          })),
+        ]),
+      ]);
+
+    const activityByUser = new Map(
+      activityRows.flatMap((row) =>
+        row.actorId ? [[row.actorId, row._count.actorId] as const] : [],
+      ),
+    );
+    const lastActiveByUser = new Map(
+      lastActiveRows.flatMap((row) =>
+        row.actorId && row._max.createdAt
+          ? [[row.actorId, row._max.createdAt] as const]
+          : [],
+      ),
+    );
+    const lastLoginByUser = new Map(
+      lastLoginRows.flatMap((row) =>
+        row.actorId && row._max.createdAt
+          ? [[row.actorId, row._max.createdAt] as const]
+          : [],
+      ),
+    );
+    const lastActivityForDuration = new Map<string, Date>();
+    for (const row of lastActiveRows) {
+      if (row.actorId && row._max.createdAt) {
+        lastActivityForDuration.set(row.actorId, row._max.createdAt);
+      }
+    }
+
+    const sessions = buildAuditSessions(authEvents, {
+      now,
+      to,
+      lastActivityByUser: lastActivityForDuration,
+      liveSessions,
+    }).filter(
+      (session) =>
+        session.startedAt.getTime() >= from.getTime() ||
+        session.endReason === "ACTIVE",
+    );
+
+    const durationByUser = new Map<
+      string,
+      {
+        total: number;
+        measuredTotal: number;
+        measured: number;
+        estimatedTotal: number;
+        estimatedCount: number;
+        count: number;
+      }
+    >();
+    for (const session of sessions) {
+      const entry =
+        durationByUser.get(session.userId) ??
+        {
+          total: 0,
+          measuredTotal: 0,
+          measured: 0,
+          estimatedTotal: 0,
+          estimatedCount: 0,
+          count: 0,
+        };
+      entry.count += 1;
+      if (typeof session.durationMs === "number") {
+        // 累计只算「已登出 / 仍登录」；未登出的估算值不进合计，避免 12 天假会话
+        if (session.endReason === "LOGGED_OUT" || session.endReason === "ACTIVE") {
+          entry.total += session.durationMs;
+        }
+        if (session.endReason === "LOGGED_OUT") {
+          entry.measuredTotal += session.durationMs;
+          entry.measured += 1;
+        }
+        if (session.endReason === "STALE") {
+          entry.estimatedTotal += session.durationMs;
+          entry.estimatedCount += 1;
+        }
+      }
+      durationByUser.set(session.userId, entry);
+    }
+
+    const liveUserIds = new Set(liveSessions.map((session) => session.userId));
+    const latestLoginByUser = new Map<string, AuditAuthEvent>();
+    for (const event of authEvents) {
+      if (
+        !event.actorId ||
+        event.action !== "USER_LOGIN" ||
+        !isCredentialLogin(event.metadata)
+      ) {
+        continue;
+      }
+      const existing = latestLoginByUser.get(event.actorId);
+      if (!existing || existing.createdAt < event.createdAt) {
+        latestLoginByUser.set(event.actorId, event);
+      }
+    }
+
+    const rows: AuditPersonActivityRow[] = users.map((user) => {
+      const duration = durationByUser.get(user.id);
+      return {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        roleLabel:
+          user.roleGroup?.name ?? platformRoleLabel(user.platformRole) ?? "用户",
+        kind: "USER",
+        isOnline: liveUserIds.has(user.id),
+        lastActiveAt: lastActiveByUser.get(user.id)?.toISOString() ?? null,
+        lastLoginAt: lastLoginByUser.get(user.id)?.toISOString() ?? null,
+        loginCount: 0,
+        actionCount: activityByUser.get(user.id) ?? 0,
+        sessionCount: duration?.count ?? 0,
+        totalDurationMs: duration?.total ?? 0,
+        estimatedDurationMs: duration?.estimatedTotal ?? 0,
+        avgDurationMs:
+          duration && duration.measured > 0
+            ? Math.round(duration.measuredTotal / duration.measured)
+            : null,
+        lastIpAddress: latestLoginByUser.get(user.id)?.ipAddress ?? null,
+        lastDevice: latestLoginByUser.get(user.id)?.userAgent
+          ? describeUserAgent(latestLoginByUser.get(user.id)?.userAgent)
+          : null,
+      };
+    });
+
+    // 登录次数按区间统计；放在这里一次性算，避免每行再查库
+    const loginCountByUser = new Map<string, number>();
+    for (const event of authEvents) {
+      if (
+        event.action !== "USER_LOGIN" ||
+        !event.actorId ||
+        !isCredentialLogin(event.metadata) ||
+        event.createdAt.getTime() < from.getTime()
+      ) {
+        continue;
+      }
+      loginCountByUser.set(event.actorId, (loginCountByUser.get(event.actorId) ?? 0) + 1);
+    }
+    for (const row of rows) {
+      row.loginCount = loginCountByUser.get(row.id) ?? 0;
+    }
+
+    rows.sort((left, right) => {
+      if (left.isOnline !== right.isOnline) return left.isOnline ? -1 : 1;
+      const leftTime = left.lastActiveAt ? new Date(left.lastActiveAt).getTime() : 0;
+      const rightTime = right.lastActiveAt ? new Date(right.lastActiveAt).getTime() : 0;
+      if (leftTime !== rightTime) return rightTime - leftTime;
+      return left.name.localeCompare(right.name, "zh-CN");
+    });
+
+    return {
+      rows: rows.slice(page * pageSize, page * pageSize + pageSize),
+      total: rows.length,
+      activeWindowDays: eachShanghaiDay(from, to).length,
+    };
+  });
+}
+
+export async function getAuditPersonDetail(
+  actor: Actor,
+  userId: string,
+  params: {
+    from: Date;
+    to: Date;
+    page?: number;
+    pageSize?: number;
+    category?: AuditCategoryKey;
+  },
+  now = new Date(),
+): Promise<AuditPersonDetail | null> {
+  assertAllowed(actor.isPlatformAdmin);
+  const { from, to } = params;
+  const pageSize = Math.min(Math.max(params.pageSize ?? 25, 1), AUDIT_PAGE_SIZE_MAX);
+  const page = Math.max(params.page ?? 0, 0);
+
+  return withActorDb(actor, async (tx) => {
+    const user = await tx.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        platformRole: true,
+        roleGroup: { select: { name: true } },
+      },
+    });
+    if (!user) return null;
+
+    const categoryWhere = params.category
+      ? auditCategoryWhere(params.category)
+      : {};
+    const [actionGroups, timelineTotal, timelineRecords, authEvents, liveSessions, lastActive, lastLogin] =
+      await Promise.all([
+        tx.auditLog.groupBy({
+          by: ["action"],
+          where: { actorId: userId, createdAt: { gte: from, lte: to } },
+          _count: { _all: true },
+        }),
+        tx.auditLog.count({
+          where: {
+            actorId: userId,
+            createdAt: { gte: from, lte: to },
+            ...categoryWhere,
+          },
+        }),
+        tx.auditLog.findMany({
+          where: {
+            actorId: userId,
+            createdAt: { gte: from, lte: to },
+            ...categoryWhere,
+          },
+          orderBy: { id: "desc" },
+          skip: page * pageSize,
+          take: pageSize,
+          select: auditRecordSelect,
+        }),
+        tx.auditLog.findMany({
+          where: {
+            actorId: userId,
+            action: { in: [...AUTH_ACTIONS] },
+            createdAt: {
+              gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
+              lte: to,
+            },
+          },
+          select: {
+            id: true,
+            action: true,
+            actorId: true,
+            createdAt: true,
+            ipAddress: true,
+            userAgent: true,
+            metadata: true,
+          },
+          orderBy: { createdAt: "asc" },
+          take: 20_000,
+        }),
+        Promise.all([
+          tx.session.findMany({
+            where: { userId, expiresAt: { gt: now } },
+            select: {
+              id: true,
+              userId: true,
+              createdAt: true,
+              expiresAt: true,
+              ipAddress: true,
+              userAgent: true,
+            },
+            orderBy: { createdAt: "desc" },
+          }),
+          tx.miniappSession.findMany({
+            where: { userId, expiresAt: { gt: now }, revokedAt: null },
+            select: { id: true, userId: true, createdAt: true, expiresAt: true },
+            orderBy: { createdAt: "desc" },
+          }),
+        ]).then(([web, miniapp]) => [
+          ...web.map((session) => ({ ...session, client: "WEB" as const })),
+          ...miniapp.map((session) => ({
+            ...session,
+            ipAddress: null,
+            userAgent: null,
+            client: "MINIAPP" as const,
+          })),
+        ]),
+        tx.auditLog.aggregate({
+          where: { actorId: userId, action: { notIn: NON_ACTIVITY_ACTIONS } },
+          _max: { createdAt: true },
+        }),
+        tx.auditLog.aggregate({
+          where: { actorId: userId, action: "USER_LOGIN" },
+          _max: { createdAt: true },
+        }),
+      ]);
+
+    const references = await loadAuditReferences(tx, timelineRecords);
+    const lastActivityRows = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: {
+        actorId: userId,
+        createdAt: { gte: from, lte: to },
+        action: { notIn: NON_ACTIVITY_ACTIONS },
+      },
+      _max: { createdAt: true },
+    });
+    const lastBusinessActivity = lastActivityRows[0]?._max.createdAt ?? null;
+
+    const sessions = buildAuditSessions(authEvents, {
+      now,
+      to,
+      lastActivityByUser: new Map(
+        lastBusinessActivity ? [[userId, lastBusinessActivity]] : [],
+      ),
+      liveSessions,
+    }).filter(
+      (session) =>
+        session.startedAt.getTime() >= from.getTime() ||
+        session.endReason === "ACTIVE",
+    );
+
+    const breakdownMap = new Map<AuditCategoryKey, number>();
+    for (const group of actionGroups) {
+      const category = auditCategoryFor(group.action);
+      breakdownMap.set(
+        category,
+        (breakdownMap.get(category) ?? 0) + group._count._all,
+      );
+    }
+
+    const totalDurationMs = sessions.reduce(
+      (sum, session) =>
+        session.endReason === "LOGGED_OUT" || session.endReason === "ACTIVE"
+          ? sum + (session.durationMs ?? 0)
+          : sum,
+      0,
+    );
+    const measuredSessions = sessions.filter(
+      (session) =>
+        typeof session.durationMs === "number" && session.endReason === "LOGGED_OUT",
+    );
+    const measuredDurationMs = measuredSessions.reduce(
+      (sum, session) => sum + (session.durationMs ?? 0),
+      0,
+    );
+    const estimatedDurationMs = sessions.reduce(
+      (sum, session) =>
+        session.endReason === "STALE" ? sum + (session.durationMs ?? 0) : sum,
+      0,
+    );
+
+    return {
+      person: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        roleLabel:
+          user.roleGroup?.name ?? platformRoleLabel(user.platformRole) ?? "用户",
+        isOnline: liveSessions.length > 0,
+        lastActiveAt: lastActive._max.createdAt?.toISOString() ?? null,
+        lastLoginAt: lastLogin._max.createdAt?.toISOString() ?? null,
+      },
+      from: from.toISOString(),
+      to: to.toISOString(),
+      totals: {
+        actionCount: timelineTotal,
+        loginCount: authEvents.filter(
+          (event) =>
+            event.action === "USER_LOGIN" &&
+            isCredentialLogin(event.metadata) &&
+            event.createdAt.getTime() >= from.getTime(),
+        ).length,
+        sessionCount: sessions.length,
+        totalDurationMs,
+        estimatedDurationMs,
+        avgDurationMs:
+          measuredSessions.length > 0
+            ? Math.round(measuredDurationMs / measuredSessions.length)
+            : null,
+      },
+      currentSessions: liveSessions.map((session) => ({
+        sessionId: session.id,
+        startedAt: session.createdAt.toISOString(),
+        durationMs: Math.max(0, now.getTime() - session.createdAt.getTime()),
+        expiresAt: session.expiresAt.toISOString(),
+        ipAddress: session.ipAddress,
+        device:
+          session.client === "MINIAPP"
+            ? { browser: null, os: null, deviceType: "小程序", label: "微信小程序" }
+            : describeUserAgent(session.userAgent),
+      })),
+      sessions: toSessionViews(sessions),
+      breakdown: [...breakdownMap.entries()]
+        .map(([category, count]) => ({
+          category,
+          categoryLabel: auditCategoryLabel(category),
+          count,
+        }))
+        .sort((left, right) => right.count - left.count),
+      timeline: {
+        rows: mapAuditRecords(timelineRecords, references),
+        total: timelineTotal,
+        page,
+        pageSize,
+      },
+    };
+  });
+}

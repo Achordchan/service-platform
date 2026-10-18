@@ -16,7 +16,7 @@ export default async function StaffAuditLogsPage() {
       <Stack spacing={3}>
         <StaffPageHeading
           title="审计日志"
-          description="平台上所有敏感操作的完整记录，仅平台管理员可见。"
+          description="谁在什么时候登录、停留了多久、做了哪些操作。默认只看人话摘要，操作码、IP、User-Agent 等排查信息收在详情里。"
         />
         <AuditLogWorkspace />
       </Stack>

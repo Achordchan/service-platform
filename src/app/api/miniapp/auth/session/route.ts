@@ -49,6 +49,10 @@ export async function DELETE(request: Request) {
   try {
     const revoked = await revokeMiniappSessionByAuthorization(
       request.headers.get("authorization"),
+      {
+        ipAddress: clientIpFromHeaders(request.headers),
+        userAgent: request.headers.get("user-agent"),
+      },
     );
     // 重复登出也返回成功，客户端统一清理本地状态
     return NextResponse.json({ data: { revoked } });

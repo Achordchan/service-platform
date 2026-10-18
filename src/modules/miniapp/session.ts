@@ -3,6 +3,7 @@ import "server-only";
 import type { Actor } from "@/lib/actor";
 import { resolveActor } from "@/lib/actor";
 import { prisma } from "@/lib/db";
+import { recordAuthEvent } from "@/modules/audit/auth-audit";
 import {
   hashSecretToken,
   MINIAPP_SESSION_TTL_MS,
@@ -67,13 +68,35 @@ export async function resolveMiniappSessionFromAuthorization(
 
 export async function revokeMiniappSessionByAuthorization(
   authorization: string | null,
+  network?: { ipAddress: string | null; userAgent: string | null },
 ): Promise<boolean> {
   const token = extractBearerToken(authorization);
   if (!token) return false;
+  const tokenHash = hashSecretToken(token);
+  const record = await prisma.miniappSession.findUnique({
+    where: { tokenHash },
+    select: { id: true, userId: true, revokedAt: true },
+  });
+  // 重复登出不写审计，避免把同一次退出记成多条
+  if (!record || record.revokedAt) return false;
   const result = await prisma.miniappSession.updateMany({
-    where: { tokenHash: hashSecretToken(token), revokedAt: null },
+    where: { id: record.id, revokedAt: null },
     data: { revokedAt: new Date() },
   });
+  if (result.count > 0) {
+    await recordAuthEvent({
+      action: "USER_LOGOUT",
+      actorUserId: record.userId,
+      targetUserId: record.userId,
+      ipAddress: network?.ipAddress ?? null,
+      userAgent: network?.userAgent ?? null,
+      metadata: {
+        path: "miniapp",
+        sessionId: record.id,
+        endReason: "SIGN_OUT",
+      },
+    });
+  }
   return result.count > 0;
 }
 
