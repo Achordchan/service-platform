@@ -76,6 +76,9 @@ afterAll(async () => {
   await ownerPool.query(`DELETE FROM "AuditLog" WHERE action LIKE $1`, [
     `${marker}%`,
   ]);
+  await ownerPool.query(`DELETE FROM "AuditLog" WHERE "resourceId" = $1`, [
+    `${marker}-failed`,
+  ]);
   await ownerPool.end();
 });
 
@@ -209,6 +212,26 @@ describe("审计日志查询", () => {
 
     const byIp = await listAuditLogs(admin, { search: "10.0.0.2" });
     expect(ownRows(byIp.rows)).toHaveLength(1);
+  });
+
+  it("可以搜索失败登录展示的匿名邮箱", async () => {
+    const email = `failed-${marker}@example.test`;
+    await ownerPool.query(
+      `INSERT INTO "AuditLog" (
+         action, "resourceType", "resourceId", result, metadata,
+         "ipAddress", "userAgent", "createdAt"
+       ) VALUES ('USER_LOGIN_FAILED', 'User', $1, 'FAILURE', $2::jsonb,
+                 '10.0.0.9', 'integration-suite/1.0', now())`,
+      [`${marker}-failed`, JSON.stringify({ email, path: "/sign-in/email" })],
+    );
+
+    const page = await listAuditLogs(admin, {
+      search: email.toUpperCase(),
+      pageSize: 10,
+    });
+    expect(
+      page.rows.some((row) => row.action === "USER_LOGIN_FAILED"),
+    ).toBe(true);
   });
 
   it("facets 汇总出本套件写入的取值", async () => {

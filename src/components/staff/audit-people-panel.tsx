@@ -411,7 +411,7 @@ export function AuditPeoplePanel({ range }: { range: AuditRange }) {
             ))
           )}
 
-          {rows.length > 0 ? (
+          {rows.length > 0 || pagination.page > 0 ? (
             <Stack
               direction="row"
               sx={{

@@ -675,6 +675,14 @@ function buildWhere(
           { ipAddress: { contains: search, mode: "insensitive" } },
           { actor: { name: { contains: search, mode: "insensitive" } } },
           { actor: { email: { contains: search, mode: "insensitive" } } },
+          // 失败登录没有 actor，展示的是 metadata.email，也要能搜到
+          {
+            metadata: {
+              path: ["email"],
+              string_contains: search,
+              mode: "insensitive",
+            },
+          },
           { externalActor: { displayName: { contains: search, mode: "insensitive" } } },
           { serviceRequest: { number: { contains: search, mode: "insensitive" } } },
           { serviceRequest: { title: { contains: search, mode: "insensitive" } } },
