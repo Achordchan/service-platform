@@ -2,6 +2,11 @@ export const queryKeys = {
   attachmentPolicy: ["attachment-policy"] as const,
   auditLogs: {
     list: (query: string) => ["audit-logs", "list", query] as const,
+    facets: ["audit-logs", "facets"] as const,
+    overview: (query: string) => ["audit-logs", "overview", query] as const,
+    people: (query: string) => ["audit-logs", "people", query] as const,
+    person: (userId: string, query: string) =>
+      ["audit-logs", "person", userId, query] as const,
   },
   contentRisk: {
     plugin: ["content-risk", "plugin"] as const,

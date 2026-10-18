@@ -207,7 +207,7 @@ export async function issueWebQrSession(
   network?: { ipAddress: string | null; userAgent: string | null },
 ) {
   const token = randomBytes(32).toString("base64url");
-  await prisma.session.create({
+  const session = await prisma.session.create({
     data: {
       token,
       userId,
@@ -215,6 +215,7 @@ export async function issueWebQrSession(
       ipAddress: network?.ipAddress ?? undefined,
       userAgent: network?.userAgent ?? undefined,
     },
+    select: { id: true },
   });
   // 扫码登录直接落 Session 表、绕过 better-auth adapter，故 databaseHooks 不触发，
   // 在此显式补 USER_LOGIN 审计（含轮询请求的可信来源 IP/UA）。
@@ -224,7 +225,7 @@ export async function issueWebQrSession(
     targetUserId: userId,
     ipAddress: network?.ipAddress ?? null,
     userAgent: network?.userAgent ?? null,
-    metadata: { path: "web-qr-login" },
+    metadata: { path: "web-qr-login", sessionId: session.id },
   });
   const signature = createHmac("sha256", env.BETTER_AUTH_SECRET)
     .update(token)

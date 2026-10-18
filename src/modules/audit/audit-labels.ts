@@ -53,6 +53,7 @@ const resourceLabels: Record<string, string> = {
   MailTemplateOverride: "邮件模板",
   Membership: "成员关系",
   Milestone: "里程碑",
+  MilestoneComment: "里程碑评论",
   NotificationDeliveryRule: "通知规则",
   PlatformSetting: "平台设置",
   PluginInstallation: "插件安装",
@@ -72,6 +73,7 @@ const resourceLabels: Record<string, string> = {
   UniversalConnectorCredential: "连接器凭据",
   UpdateComment: "进度评论",
   User: "用户",
+  UserNotificationPreference: "通知偏好",
   UserEmailChange: "邮箱变更",
   WechatBinding: "微信绑定",
   WechatBindingCode: "微信绑定码",
@@ -80,6 +82,7 @@ const resourceLabels: Record<string, string> = {
 const resultLabels: Record<string, string> = {
   SUCCESS: "成功",
   FAILURE: "失败",
+  FAILED: "失败",
   DENIED: "拒绝",
 };
 
@@ -94,6 +97,7 @@ const actionLabels: Record<string, string> = {
   USER_LOGOUT: "登出",
   USER_LOGIN_FAILED: "登录失败",
   USER_PASSWORD_RESET_REQUESTED: "发起密码重置",
+  USER_PASSWORD_RESET_COMPLETED: "完成密码重置",
 
   // 项目
   PROJECT_CREATED: "创建项目",
@@ -220,11 +224,15 @@ const actionLabels: Record<string, string> = {
   WECHAT_BOUND_VIA_ACCOUNT: "微信绑定（账号验证）",
 
   // 集成 / 外部嵌入
+  UNIVERSAL_CONNECTION_CREATED: "创建通用连接器",
+  UNIVERSAL_CONNECTION_UPDATED: "更新通用连接器",
   UNIVERSAL_CONNECTION_CHECKED: "检查通用连接器",
   UNIVERSAL_CONNECTION_ARCHIVED: "归档通用连接器",
   UNIVERSAL_CREDENTIAL_CREATED: "创建连接器凭据",
   UNIVERSAL_CREDENTIAL_REVOKED: "撤销连接器凭据",
   UNIVERSAL_EMBED_SESSION_CREATED: "创建外部嵌入会话",
+  SUB2API_CONNECTION_CREATED: "创建 Sub2Api 连接",
+  SUB2API_CONNECTION_UPDATED: "更新 Sub2Api 连接",
   SUB2API_CONNECTION_CHECKED: "检查 Sub2Api 连接",
   SUB2API_CONNECTION_ARCHIVED: "归档 Sub2Api 连接",
   SUB2API_EMBED_SESSION_CREATED: "创建 Sub2Api 会话",
@@ -238,6 +246,7 @@ const actionLabels: Record<string, string> = {
 const UNAUTHENTICATED_ACTIONS = new Set<string>([
   "USER_LOGIN_FAILED",
   "USER_PASSWORD_RESET_REQUESTED",
+  "USER_PASSWORD_RESET_COMPLETED",
 ]);
 
 export function isUnauthenticatedAuditAction(action: string): boolean {

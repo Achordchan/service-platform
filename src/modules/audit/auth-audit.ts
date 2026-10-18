@@ -21,7 +21,8 @@ export type AuthAuditAction =
   | "USER_LOGIN"
   | "USER_LOGOUT"
   | "USER_LOGIN_FAILED"
-  | "USER_PASSWORD_RESET_REQUESTED";
+  | "USER_PASSWORD_RESET_REQUESTED"
+  | "USER_PASSWORD_RESET_COMPLETED";
 
 type AuthAuditInput = {
   action: AuthAuditAction;

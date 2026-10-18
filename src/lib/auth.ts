@@ -117,10 +117,24 @@ function emailOtpAccountGuard(): BetterAuthPlugin {
 // better-auth 在 before 之后会 defu 克隆该对象，克隆会复制字符串键属性，故属性能
 // 跨 before→after 存活（WeakMap 按对象身份则会因克隆换引用而落空）。
 const LOGOUT_USER_KEY = "__auditLogoutUserId";
+const LOGOUT_SESSION_KEY = "__auditLogoutSessionId";
+const LOGOUT_SESSION_STARTED_KEY = "__auditLogoutSessionStartedAt";
 
 function stashLogoutUser(ctx: unknown, userId: string) {
   if (ctx && typeof ctx === "object") {
     (ctx as Record<string, unknown>)[LOGOUT_USER_KEY] = userId;
+  }
+}
+
+function stashLogoutSession(ctx: unknown, sessionId: string) {
+  if (ctx && typeof ctx === "object") {
+    (ctx as Record<string, unknown>)[LOGOUT_SESSION_KEY] = sessionId;
+  }
+}
+
+function stashLogoutSessionStartedAt(ctx: unknown, startedAt: string) {
+  if (ctx && typeof ctx === "object") {
+    (ctx as Record<string, unknown>)[LOGOUT_SESSION_STARTED_KEY] = startedAt;
   }
 }
 
@@ -130,6 +144,22 @@ function takeLogoutUser(ctx: unknown): string | undefined {
   const userId = bag[LOGOUT_USER_KEY];
   delete bag[LOGOUT_USER_KEY];
   return typeof userId === "string" ? userId : undefined;
+}
+
+function takeLogoutSession(ctx: unknown): string | undefined {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  const bag = ctx as Record<string, unknown>;
+  const sessionId = bag[LOGOUT_SESSION_KEY];
+  delete bag[LOGOUT_SESSION_KEY];
+  return typeof sessionId === "string" ? sessionId : undefined;
+}
+
+function takeLogoutSessionStartedAt(ctx: unknown): string | undefined {
+  if (!ctx || typeof ctx !== "object") return undefined;
+  const bag = ctx as Record<string, unknown>;
+  const startedAt = bag[LOGOUT_SESSION_STARTED_KEY];
+  delete bag[LOGOUT_SESSION_STARTED_KEY];
+  return typeof startedAt === "string" ? startedAt : undefined;
 }
 
 // 认证审计：登出（before 捕获用户、after 成功后再记）与登录失败（端点抛 APIError
@@ -149,7 +179,20 @@ function authAuditPlugin(): BetterAuthPlugin {
               // 不拖慢随后的会话撤销。实际落库放到 after（端点成功后）。
               const current = await getSessionFromCtx(context);
               const userId = current?.user?.id;
-              if (userId) stashLogoutUser(context.context, userId);
+              const sessionId = current?.session?.id;
+              const startedAt = current?.session?.createdAt;
+              if (userId) {
+                stashLogoutUser(context.context, userId);
+                // 会话标识用于把这次登出与对应的登录配成一段完整会话，
+                // 「停留多久」才能算准，而不是靠「上一条登录」猜。
+                if (sessionId) stashLogoutSession(context.context, sessionId);
+                if (startedAt) {
+                  stashLogoutSessionStartedAt(
+                    context.context,
+                    new Date(startedAt).toISOString(),
+                  );
+                }
+              }
             } catch {
               // 取会话失败绝不阻断登出
             }
@@ -161,6 +204,8 @@ function authAuditPlugin(): BetterAuthPlugin {
           matcher: (context) => context.path === "/sign-out",
           handler: createAuthMiddleware(async (context) => {
             const userId = takeLogoutUser(context.context);
+            const sessionId = takeLogoutSession(context.context);
+            const sessionStartedAt = takeLogoutSessionStartedAt(context.context);
             // 端点抛错（未成功登出）不记，避免审计谎称会话已撤销。
             if (!userId || context.context.returned instanceof APIError) return;
             await recordAuthEvent({
@@ -169,6 +214,12 @@ function authAuditPlugin(): BetterAuthPlugin {
               targetUserId: userId,
               ipAddress: hookIp(context.headers),
               userAgent: hookUserAgent(context.headers),
+              metadata: sessionId
+                ? {
+                    sessionId,
+                    ...(sessionStartedAt ? { sessionStartedAt } : {}),
+                  }
+                : undefined,
             });
           }),
         },
@@ -236,6 +287,16 @@ export const auth = betterAuth({
         userAgent: hookUserAgent(request?.headers),
       });
     },
+    // 重置完成会撤销该账号全部会话，属于高价值安全事件；这里补记完成态，
+    // 避免审计里只有「申请」没有「结果」。
+    onPasswordReset: async ({ user }, request) => {
+      await recordAuthEvent({
+        action: "USER_PASSWORD_RESET_COMPLETED",
+        targetUserId: user.id,
+        ipAddress: hookIp(request?.headers),
+        userAgent: hookUserAgent(request?.headers),
+      });
+    },
   },
   session: {
     expiresIn: 60 * 60 * 24 * 7,
@@ -269,7 +330,11 @@ export const auth = betterAuth({
             ipAddress: hookIp(context?.headers) ?? session.ipAddress ?? null,
             userAgent:
               hookUserAgent(context?.headers) ?? session.userAgent ?? null,
-            metadata: context?.path ? { path: context.path } : undefined,
+            metadata: {
+              ...(context?.path ? { path: context.path } : {}),
+              // 会话标识与登录一一对应，登出时回填同一值即可算出停留时长
+              sessionId: session.id,
+            },
           });
         },
       },

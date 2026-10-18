@@ -220,7 +220,13 @@ export function updateProjectStaff(
       resourceId: updated.id,
       customerSpaceId: staff.project.customerSpaceId,
       projectId,
-      metadata: input,
+      // 记下成员 id 与变更前后角色：审计详情才能说清「谁的角色从什么改成了什么」
+      metadata: {
+        ...input,
+        userId: updated.userId,
+        previousRole: staff.role,
+        role: updated.role,
+      },
     });
     await publishProjectChange(tx, actor, {
       change: "PROJECT_STAFF_UPDATED",
