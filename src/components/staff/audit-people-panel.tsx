@@ -649,15 +649,30 @@ function AuditPersonDrawer({
               ) : null}
 
               <Box>
-                <Typography variant="h3" sx={{ mb: 1 }}>
-                  登录会话
-                </Typography>
+                <Stack
+                  direction="row"
+                  sx={{ justifyContent: "space-between", alignItems: "baseline", mb: 1 }}
+                >
+                  <Typography variant="h3">登录会话</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    共 {detail.sessions.length} 次
+                  </Typography>
+                </Stack>
                 {detail.sessions.length === 0 ? (
                   <Typography variant="body2" color="text.secondary">
                     统计区间内没有登录记录。
                   </Typography>
                 ) : (
-                  <Stack divider={<Divider flexItem />} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                  <Stack
+                    divider={<Divider flexItem />}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: "divider",
+                      borderRadius: 2,
+                      maxHeight: 360,
+                      overflowY: "auto",
+                    }}
+                  >
                     {detail.sessions.map((session) => (
                       <Stack key={session.key} spacing={0.75} sx={{ px: 1.5, py: 1.25 }}>
                         <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>

@@ -46,6 +46,7 @@ function live(input: {
   minutes: number;
   ipAddress?: string | null;
   userAgent?: string | null;
+  client?: "WEB" | "MINIAPP";
 }): AuditLiveSession {
   return {
     id: input.id,
@@ -54,7 +55,7 @@ function live(input: {
     expiresAt: at(input.minutes + 60 * 24 * 7),
     ipAddress: input.ipAddress ?? "203.0.113.10",
     userAgent: input.userAgent ?? "Mozilla/5.0 Chrome/138.0",
-    client: "WEB",
+    client: input.client ?? "WEB",
   };
 }
 
@@ -281,6 +282,33 @@ describe("登录会话配对", () => {
     ).toBe("UNKNOWN");
   });
 
+  it("旧 Web 登录不会认领同时间的小程序 live session", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGIN", minutes: 1, path: "miniapp" }),
+      ],
+      {
+        now,
+        to,
+        liveSessions: [
+          live({
+            id: "m-live",
+            minutes: 1,
+            ipAddress: null,
+            userAgent: null,
+            client: "MINIAPP",
+          }),
+        ],
+      },
+    );
+    expect(sessions.filter((item) => item.endReason === "ACTIVE")).toHaveLength(1);
+    expect(
+      sessions.find((item) => item.endReason === "ACTIVE")?.loginMethod,
+    ).toBe("小程序登录");
+    expect(sessions.filter((item) => item.endReason === "UNKNOWN")).toHaveLength(1);
+  });
+
   it("没有登录事件的 live session 也能补成「登录中」", () => {
     const sessions = buildAuditSessions([], {
       now,
@@ -441,6 +469,23 @@ describe("会话与统计区间", () => {
 });
 
 describe("会话展示", () => {
+  it("默认返回全部会话，不再静默截断 100 条", () => {
+    const views = toSessionViews(
+      Array.from({ length: 150 }, (_, index) => ({
+        key: `s-${index}`,
+        userId: "u1",
+        startedAt: at(index),
+        endedAt: at(index + 1),
+        durationMs: 60_000,
+        endReason: "LOGGED_OUT" as const,
+        ipAddress: null,
+        userAgent: null,
+        loginMethod: null,
+      })),
+    );
+    expect(views).toHaveLength(150);
+  });
+
   it("把结束原因翻译成中文，并解析设备", () => {
     const views = toSessionViews([
       {

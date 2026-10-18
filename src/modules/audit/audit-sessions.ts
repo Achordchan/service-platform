@@ -14,6 +14,21 @@ import type { AuditSessionView } from "@/modules/audit/audit-types";
 
 const LIVE_SESSION_MATCH_MS = 5 * 60_000;
 
+function loginClientFor(
+  metadata: unknown,
+  ipAddress: string | null,
+  userAgent: string | null,
+): "WEB" | "MINIAPP" {
+  const path =
+    metadata && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).path
+      : null;
+  if (path === "miniapp" || path === "miniapp-bind") return "MINIAPP";
+  // 更早的小程序登录没有 path，通常也没有 IP/UA；否则按 Web 处理
+  if (!path && !ipAddress && !userAgent) return "MINIAPP";
+  return "WEB";
+}
+
 export type AuditAuthEvent = {
   id: bigint;
   action: string;
@@ -101,6 +116,7 @@ export function buildAuditSessions(
       ipAddress: string | null;
       userAgent: string | null;
       loginMethod: string | null;
+      client: "WEB" | "MINIAPP";
       /** 下一次登录的时间：估计旧会话结束的上界，避免把后续操作算到旧会话上 */
       nextLoginAt: Date | null;
     }> = [];
@@ -119,6 +135,7 @@ export function buildAuditSessions(
           ipAddress: event.ipAddress,
           userAgent: event.userAgent,
           loginMethod: loginMethodFor(event.metadata),
+          client: loginClientFor(event.metadata, event.ipAddress, event.userAgent),
           nextLoginAt: null,
         });
         continue;
@@ -179,6 +196,7 @@ export function buildAuditSessions(
       const candidates = userLive.filter(
         (session) =>
           !matchedLiveIds.has(session.id) &&
+          session.client === pending.client &&
           Math.abs(
             session.createdAt.getTime() - pending.startedAt.getTime(),
           ) < LIVE_SESSION_MATCH_MS &&
@@ -335,9 +353,11 @@ const END_REASON_LABELS: Record<AuditSessionView["endReason"], string> = {
 
 export function toSessionViews(
   sessions: BuiltSession[],
-  limit = 100,
+  limit?: number,
 ): AuditSessionView[] {
-  return sessions.slice(0, limit).map((session) => ({
+  const visible =
+    typeof limit === "number" ? sessions.slice(0, limit) : sessions;
+  return visible.map((session) => ({
     key: session.key,
     startedAt: session.startedAt.toISOString(),
     endedAt: session.endedAt?.toISOString() ?? null,
