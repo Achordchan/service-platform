@@ -429,13 +429,38 @@ type ChangeRule = {
 };
 
 /** metadata 里常见的「变更前/变更后」成对字段。 */
+function nameChangeLabel(action: string, resourceType: string): string {
+  if (resourceType === "User" || action.startsWith("USER_")) return "姓名";
+  if (resourceType === "RoleGroup" || action.startsWith("ROLE_GROUP_")) {
+    return "权限组名称";
+  }
+  if (resourceType === "CustomerSpace" || action.startsWith("CUSTOMER_SPACE_")) {
+    return "客户空间名称";
+  }
+  if (
+    resourceType === "Project" ||
+    (action.startsWith("PROJECT_") && !action.startsWith("PROJECT_STAFF_"))
+  ) {
+    return "项目名称";
+  }
+  if (resourceType === "ServiceType" || action.startsWith("SERVICE_TYPE_")) {
+    return "服务类型名称";
+  }
+  if (resourceType === "Plugin" || action.startsWith("PLUGIN_")) {
+    return "插件名称";
+  }
+  return "名称";
+}
+
+/** metadata 里常见的「变更前/变更后」成对字段。 */
 function changeRules(
   resolveUserName?: (id: string) => string | null,
+  nameLabel = "姓名",
 ): ChangeRule[] {
   return [
     { from: "previousStatus", to: "status", label: "状态", format: statusText },
     { from: "previousStage", to: "currentStage", label: "项目阶段" },
-    { from: "previousName", to: "name", label: "姓名" },
+    { from: "previousName", to: "name", label: nameLabel },
     { from: "previousRole", to: "role", label: "项目角色", format: staffRoleText },
     { from: "previousPriority", to: "priority", label: "优先级", format: priorityText },
     { from: "oldEmail", to: "newEmail", label: "邮箱" },
@@ -457,10 +482,11 @@ function changeRules(
 export function auditChanges(
   metadata: unknown,
   resolveUserName?: (id: string) => string | null,
+  nameLabel = "姓名",
 ): AuditChangeView[] {
   const record = asRecord(metadata);
   const changes: AuditChangeView[] = [];
-  for (const rule of changeRules(resolveUserName)) {
+  for (const rule of changeRules(resolveUserName, nameLabel)) {
     const from = asString(record[rule.from]);
     const to = asString(record[rule.to]);
     // 只有一边存在也算一次变更（例如首次指派没有「原负责人」）
@@ -506,7 +532,11 @@ function actorIsCustomer(input: AuditPresentationInput) {
 export function buildAuditPresentation(input: AuditPresentationInput): AuditPresentation {
   const { action, metadata, object, scope } = input;
   const record = asRecord(metadata);
-  const changes = auditChanges(metadata, input.resolveUserName);
+  const changes = auditChanges(
+    metadata,
+    input.resolveUserName,
+    nameChangeLabel(action, input.resourceType),
+  );
   const context: AuditContextItem[] = [];
 
   const objectLabel = object?.label ?? null;

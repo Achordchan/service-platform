@@ -185,6 +185,46 @@ describe("审计事件的普通话摘要", () => {
     ]);
   });
 
+  it("名称变更按资源类型描述，不会把客户空间/权限组写成姓名", () => {
+    const space = present({
+      action: "CUSTOMER_SPACE_UPDATED",
+      actionLabel: "更新客户空间",
+      resourceType: "CustomerSpace",
+      metadata: { previousName: "旧空间", name: "新空间" },
+      object: null,
+      scope: null,
+      actorKind: "USER",
+      actorRoleLabel: "平台管理员",
+    });
+    expect(space.changes).toEqual([
+      { label: "客户空间名称", from: "旧空间", to: "新空间" },
+    ]);
+
+    const group = present({
+      action: "ROLE_GROUP_UPDATED",
+      actionLabel: "更新权限组",
+      resourceType: "RoleGroup",
+      metadata: { previousName: "旧权限组", name: "新权限组" },
+      object: null,
+      scope: null,
+      actorKind: "USER",
+      actorRoleLabel: "平台管理员",
+    });
+    expect(group.changes[0]?.label).toBe("权限组名称");
+
+    const user = present({
+      action: "USER_UPDATED",
+      actionLabel: "更新用户",
+      resourceType: "User",
+      metadata: { previousName: "旧姓名", name: "新姓名" },
+      object: null,
+      scope: null,
+      actorKind: "USER",
+      actorRoleLabel: "平台管理员",
+    });
+    expect(user.changes[0]?.label).toBe("姓名");
+  });
+
   it("更新类动作列出本次改了什么，而不泄露正文内容", () => {
     const result = present({
       action: "PROJECT_UPDATED",

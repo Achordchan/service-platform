@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import {
   Avatar,
@@ -372,16 +373,20 @@ const PRESET_OPTIONS: Array<{ value: AuditRangePreset; label: string }> = [
   { value: "custom", label: "自定义" },
 ];
 
-export function AuditRangePicker({
-  value,
-  onChange,
+function CustomRangeEditor({
+  from,
+  to,
+  onApply,
 }: {
-  value: AuditRange;
-  onChange: (range: AuditRange) => void;
+  from: string;
+  to: string;
+  onApply: (from: string, to: string) => void;
 }) {
   const toast = useToast();
-  const applyCustom = (next: Pick<AuditRange, "from" | "to">) => {
-    const days = auditRangeSpanDays(next.from, next.to);
+  const [draft, setDraft] = useState({ from, to });
+
+  const apply = () => {
+    const days = auditRangeSpanDays(draft.from, draft.to);
     if (!Number.isFinite(days) || days < 1) {
       toast.error("开始日期不能晚于结束日期");
       return;
@@ -390,8 +395,45 @@ export function AuditRangePicker({
       toast.error(`统计区间最长 ${AUDIT_RANGE_MAX_DAYS} 天，请缩小范围`);
       return;
     }
-    onChange({ ...value, ...next });
+    onApply(draft.from, draft.to);
   };
+
+  return (
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
+      <Box sx={{ minWidth: 150 }}>
+        <DateStringPicker
+          label="开始日期"
+          value={draft.from}
+          onChange={(next) =>
+            setDraft((current) => ({ ...current, from: next || current.from }))
+          }
+          maxDate={shanghaiDayKey()}
+        />
+      </Box>
+      <Box sx={{ minWidth: 150 }}>
+        <DateStringPicker
+          label="结束日期"
+          value={draft.to}
+          onChange={(next) =>
+            setDraft((current) => ({ ...current, to: next || current.to }))
+          }
+          maxDate={shanghaiDayKey()}
+        />
+      </Box>
+      <Button variant="outlined" size="small" onClick={apply}>
+        应用
+      </Button>
+    </Stack>
+  );
+}
+
+export function AuditRangePicker({
+  value,
+  onChange,
+}: {
+  value: AuditRange;
+  onChange: (range: AuditRange) => void;
+}) {
 
   return (
     <Stack
@@ -422,29 +464,14 @@ export function AuditRangePicker({
       </ToggleButtonGroup>
 
       {value.preset === "custom" ? (
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
-          <Box sx={{ minWidth: 150 }}>
-            <DateStringPicker
-              label="开始日期"
-              value={value.from}
-              onChange={(from) =>
-                applyCustom({ from: from || value.from, to: value.to })
-              }
-              maxDate={value.to}
-            />
-          </Box>
-          <Box sx={{ minWidth: 150 }}>
-            <DateStringPicker
-              label="结束日期"
-              value={value.to}
-              onChange={(to) =>
-                applyCustom({ from: value.from, to: to || value.to })
-              }
-              minDate={value.from}
-              maxDate={shanghaiDayKey()}
-            />
-          </Box>
-        </Stack>
+        <CustomRangeEditor
+          key={`${value.from}|${value.to}`}
+          from={value.from}
+          to={value.to}
+          onApply={(from, to) =>
+            onChange({ ...value, preset: "custom", from, to })
+          }
+        />
       ) : (
         <Typography variant="body2" color="text.secondary" sx={{ pl: { md: 0.5 } }}>
           {formatRangeLabel(value)}
