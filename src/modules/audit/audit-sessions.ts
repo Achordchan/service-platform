@@ -289,9 +289,8 @@ export function buildAuditSessions(
     for (const pending of open) {
       const live = liveByPendingKey.get(pending.key);
       if (live) {
-        // 仍在登录：只统计到「现在 / 区间结束」，不把 7 天有效期当停留时长
-        const end = new Date(Math.min(now.getTime(), to.getTime()));
-        sessions.push(finishSession(pending, end, "ACTIVE", userId));
+        // 仍在登录：会话本身统计到「现在」，区间截取交给 sessionDurationWithinRange
+        sessions.push(finishSession(pending, now, "ACTIVE", userId));
         continue;
       }
 
@@ -327,8 +326,8 @@ export function buildAuditSessions(
     for (const live of userLive) {
       if (live.createdAt.getTime() > to.getTime()) continue;
       if (matchedLiveIds.has(live.id)) continue;
-      const end = new Date(Math.min(now.getTime(), to.getTime()));
-      if (end.getTime() < live.createdAt.getTime()) continue;
+      if (now.getTime() < live.createdAt.getTime()) continue;
+      const end = now;
       sessions.push({
         key: live.id,
         userId,

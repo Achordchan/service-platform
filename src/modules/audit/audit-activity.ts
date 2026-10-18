@@ -58,6 +58,10 @@ function isCredentialLogin(metadata: unknown): boolean {
     : true;
 }
 
+const CREDENTIAL_LOGIN_ONLY = {
+  NOT: { metadata: { path: ["path"], equals: "/change-password" } },
+} satisfies Prisma.AuditLogWhereInput;
+
 /**
  * 认证事件不能只取 [from, to]：
  * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
@@ -348,7 +352,11 @@ export async function getAuditOverview(
     `;
 
     const recentLoginRecords = await tx.auditLog.findMany({
-      where: { action: "USER_LOGIN", createdAt: { gte: from, lte: to } },
+      where: {
+        action: "USER_LOGIN",
+        createdAt: { gte: from, lte: to },
+        ...CREDENTIAL_LOGIN_ONLY,
+      },
       orderBy: { id: "desc" },
       take: 6,
       select: auditRecordSelect,
@@ -681,6 +689,7 @@ export async function listAuditPeople(
         "actorId", "createdAt", "ipAddress", "userAgent"
       FROM "AuditLog"
       WHERE action = 'USER_LOGIN'
+        AND coalesce(metadata->>'path', '') <> '/change-password'
         AND "actorId" = ANY(${pageUserIds}::text[])
       ORDER BY "actorId", "createdAt" DESC
     `;
@@ -926,7 +935,11 @@ export async function getAuditPersonDetail(
       _max: { createdAt: true },
     });
     const lastLogin = await tx.auditLog.aggregate({
-      where: { actorId: userId, action: "USER_LOGIN" },
+      where: {
+        actorId: userId,
+        action: "USER_LOGIN",
+        ...CREDENTIAL_LOGIN_ONLY,
+      },
       _max: { createdAt: true },
     });
 

@@ -377,6 +377,25 @@ describe("登录会话配对", () => {
     });
   });
 
+  it("历史区间仍保留「登录中」会话的完整时长，区间截取单独计算", () => {
+    const sessions = buildAuditSessions(
+      [event({ action: "USER_LOGIN", minutes: 0 })],
+      {
+        now,
+        to: at(100),
+        liveSessions: [live({ id: "s-live", minutes: 0 })],
+      },
+    );
+    expect(sessions[0]).toMatchObject({
+      endReason: "ACTIVE",
+      durationMs: 240 * 60_000,
+    });
+    expect(sessions[0]?.endedAt?.toISOString()).toBe(now.toISOString());
+    expect(
+      sessionDurationWithinRange(sessions[0]!, at(0), at(100), now),
+    ).toBe(100 * 60_000);
+  });
+
   it("历史区间不会补入区间之后创建的 live session", () => {
     const sessions = buildAuditSessions([], {
       now: at(240),
