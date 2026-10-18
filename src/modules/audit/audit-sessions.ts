@@ -101,10 +101,16 @@ export function buildAuditSessions(
       ipAddress: string | null;
       userAgent: string | null;
       loginMethod: string | null;
+      /** 下一次登录的时间：估计旧会话结束的上界，避免把后续操作算到旧会话上 */
+      nextLoginAt: Date | null;
     }> = [];
 
     for (const event of ordered) {
       if (event.action === "USER_LOGIN") {
+        // 同一用户又登录了一次：之前仍未关闭的会话最晚到这次登录为止
+        for (const item of open) {
+          if (!item.nextLoginAt) item.nextLoginAt = event.createdAt;
+        }
         const sessionId = sessionIdOf(event.metadata);
         open.push({
           key: sessionId ?? `login-${event.id.toString()}`,
@@ -113,6 +119,7 @@ export function buildAuditSessions(
           ipAddress: event.ipAddress,
           userAgent: event.userAgent,
           loginMethod: loginMethodFor(event.metadata),
+          nextLoginAt: null,
         });
         continue;
       }
@@ -152,20 +159,27 @@ export function buildAuditSessions(
     const matchedLiveIds = new Set<string>();
 
     for (const pending of open) {
-      // 新数据有 sessionId 时只认精确匹配；IP/UA 启发式只用于没有会话标识的旧数据
-      const live = pending.sessionId
-        ? userLive.find((session) => session.id === pending.sessionId)
-        : userLive.find(
-            (session) =>
-              Math.abs(
-                session.createdAt.getTime() - pending.startedAt.getTime(),
-              ) < LIVE_SESSION_MATCH_MS &&
-              // 小程序会话没有 IP/UA；Web 会话的 IP 可能因代理与审计行不同，
-              // 因此时间窗内 IP 或 UA 任一匹配即可，两者都不同才不配对。
-              (session.client === "MINIAPP" ||
-                session.ipAddress === pending.ipAddress ||
-                session.userAgent === pending.userAgent),
-          );
+      // 每个 live session 只能被认领一次；旧登录有多个候选时保守放弃
+      const availableLive = userLive.filter(
+        (session) => !matchedLiveIds.has(session.id),
+      );
+      let live: AuditLiveSession | undefined;
+      if (pending.sessionId) {
+        live = availableLive.find((session) => session.id === pending.sessionId);
+      } else {
+        const candidates = availableLive.filter(
+          (session) =>
+            Math.abs(
+              session.createdAt.getTime() - pending.startedAt.getTime(),
+            ) < LIVE_SESSION_MATCH_MS &&
+            // 小程序会话没有 IP/UA；Web 会话的 IP 可能因代理与审计行不同，
+            // 因此时间窗内 IP 或 UA 任一匹配即可，两者都不同才不配对。
+            (session.client === "MINIAPP" ||
+              session.ipAddress === pending.ipAddress ||
+              session.userAgent === pending.userAgent),
+        );
+        if (candidates.length === 1) live = candidates[0];
+      }
 
       if (live) {
         // 记录真正匹配到的 live session，后面只给未匹配的补录
@@ -177,7 +191,13 @@ export function buildAuditSessions(
       }
 
       if (lastActivity && lastActivity.getTime() > pending.startedAt.getTime()) {
-        const end = new Date(Math.min(lastActivity.getTime(), to.getTime()));
+        // 后续操作如果发生在下一次登录之后，应归到新会话，不能拿来延长旧会话
+        const estimatedEnd =
+          pending.nextLoginAt &&
+          lastActivity.getTime() > pending.nextLoginAt.getTime()
+            ? pending.nextLoginAt
+            : lastActivity;
+        const end = new Date(Math.min(estimatedEnd.getTime(), to.getTime()));
         sessions.push(finishSession(pending, end, "STALE", userId));
         continue;
       }

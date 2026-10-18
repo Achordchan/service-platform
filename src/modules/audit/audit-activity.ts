@@ -47,6 +47,9 @@ const NON_ACTIVITY_ACTIONS = [
 const TIME_ZONE = "Asia/Shanghai";
 // Web 会话 7 天、小程序会话 30 天；更早的会话由「按 sessionId 回查登录」兜底
 const SESSION_LOOKBACK_MS = 30 * 24 * 60 * 60_000;
+// 历史区间之后的登出最多看 30 天：既够用来判断会话是否跨越区间结束，
+// 又不会因为查几年前的区间而把之后几年的认证事件全拉出来
+const AUTH_LOOKAHEAD_MS = 30 * 24 * 60 * 60_000;
 
 /** 改密后 better-auth 会重建会话并发一条 USER_LOGIN，它不是一次真实登录。 */
 function isCredentialLogin(metadata: unknown): boolean {
@@ -66,8 +69,9 @@ function sessionIdOf(metadata: unknown): string | null {
 /**
  * 认证事件不能只取 [from, to]：
  * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
+ * - 后续登录要一起取，否则旧登录会跟更晚的登出错误配对；
  * - 登录可能早于 30 天 lookback，但登出在区间内。
- * 因此登出取到 now，并按登出里的 sessionId 回查更早的登录事件。
+ * 因此取 [from - 30d, to + 30d]，并对登出里的 sessionId 回查更早的登录。
  */
 async function loadAuthEventsForRange(
   tx: Prisma.TransactionClient,
@@ -80,20 +84,18 @@ async function loadAuthEventsForRange(
   },
 ): Promise<AuditAuthEvent[]> {
   const lookbackStart = new Date(params.from.getTime() - SESSION_LOOKBACK_MS);
+  const lookaheadEnd = new Date(
+    Math.min(
+      params.to.getTime() + AUTH_LOOKAHEAD_MS,
+      params.now.getTime(),
+    ),
+  );
   const events = await tx.auditLog.findMany({
     where: {
       ...(params.actorId ? { actorId: params.actorId } : {}),
       ...(params.requireActor ? { actorId: { not: null } } : {}),
-      OR: [
-        {
-          action: "USER_LOGIN",
-          createdAt: { gte: lookbackStart, lte: params.to },
-        },
-        {
-          action: "USER_LOGOUT",
-          createdAt: { gte: lookbackStart, lte: params.now },
-        },
-      ],
+      action: { in: ["USER_LOGIN", "USER_LOGOUT"] },
+      createdAt: { gte: lookbackStart, lte: lookaheadEnd },
     },
     select: {
       id: true,
@@ -134,7 +136,7 @@ async function loadAuthEventsForRange(
       id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
     FROM "AuditLog"
     WHERE action = 'USER_LOGIN'
-      AND "createdAt" <= ${params.to}
+      AND "createdAt" <= ${lookaheadEnd}
       AND metadata->>'sessionId' = ANY(${sessionIds}::text[])
       AND (${params.actorId ?? null}::text IS NULL OR "actorId" = ${params.actorId ?? null})
   `;

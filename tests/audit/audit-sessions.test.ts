@@ -215,6 +215,52 @@ describe("登录会话配对", () => {
     ).toBe("replacement");
   });
 
+  it("同一段 live session 不会被两个旧登录同时认领", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGIN", minutes: 1 }),
+      ],
+      {
+        now,
+        to,
+        liveSessions: [live({ id: "only-live", minutes: 0 })],
+      },
+    );
+    expect(sessions.filter((item) => item.endReason === "ACTIVE")).toHaveLength(1);
+    expect(sessions.filter((item) => item.endReason === "UNKNOWN")).toHaveLength(1);
+  });
+
+  it("旧登录有多个同 IP/UA 候选时，不拿后续登出硬配", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGIN", minutes: 24 * 60 }),
+        event({ action: "USER_LOGOUT", minutes: 24 * 60 + 1 }),
+      ],
+      { now: at(3 * 24 * 60), to: at(3 * 24 * 60) },
+    );
+    expect(sessions.some((item) => item.endReason === "LOGGED_OUT")).toBe(false);
+  });
+
+  it("估算旧会话结束时间时，不会跨过下一次登录", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGIN", minutes: 30 }),
+      ],
+      {
+        now,
+        to,
+        lastActivityByUser: new Map([["u1", at(120)]]),
+      },
+    );
+    const first = sessions.find((item) => item.startedAt.getTime() === at(0).getTime());
+    const second = sessions.find((item) => item.startedAt.getTime() === at(30).getTime());
+    expect(first).toMatchObject({ endReason: "STALE", durationMs: 30 * 60_000 });
+    expect(second).toMatchObject({ endReason: "STALE", durationMs: 90 * 60_000 });
+  });
+
   it("没有登录事件的 live session 也能补成「登录中」", () => {
     const sessions = buildAuditSessions([], {
       now,
