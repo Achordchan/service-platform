@@ -126,6 +126,37 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ key: "s1", endReason: "UNKNOWN" });
   });
 
+  it("已关闭的旧登录不会被后面的新登出认领", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGOUT", minutes: 1 }),
+        {
+          id: nextId++,
+          action: "USER_LOGOUT",
+          actorId: "u1",
+          createdAt: at(30),
+          ipAddress: "203.0.113.10",
+          userAgent: "Mozilla/5.0 Chrome/138.0",
+          metadata: {
+            sessionId: "s-new",
+            sessionStartedAt: at(2).toISOString(),
+          },
+        },
+      ],
+      { now, to },
+    );
+    expect(sessions.filter((item) => item.endReason === "LOGGED_OUT")).toHaveLength(2);
+    expect(sessions.find((item) => item.key === "s-new")).toMatchObject({
+      startedAt: at(2),
+      endedAt: at(30),
+      durationMs: 28 * 60_000,
+    });
+    expect(
+      sessions.find((item) => item.key.startsWith("login-"))?.durationMs,
+    ).toBe(60_000);
+  });
+
   it("旧登录 + 带 sessionStartedAt 的新登出只生成一条完整会话", () => {
     const sessions = buildAuditSessions(
       [

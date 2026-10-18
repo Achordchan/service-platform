@@ -411,9 +411,10 @@ export async function getAuditOverview(
     `;
 
     const multiIp = await tx.$queryRaw<
-      Array<{ actorId: string; ipCount: number }>
+      Array<{ actorId: string; ipCount: number; totalCount: number }>
     >`
-      SELECT "actorId", COUNT(DISTINCT "ipAddress")::int AS "ipCount"
+      SELECT "actorId", COUNT(DISTINCT "ipAddress")::int AS "ipCount",
+             COUNT(*) OVER()::int AS "totalCount"
       FROM "AuditLog"
       WHERE action = 'USER_LOGIN'
         AND "actorId" IS NOT NULL
@@ -511,7 +512,7 @@ export async function getAuditOverview(
       notices.push({
         key: "MULTI_IP",
         tone: "info",
-        title: `${multiIp.length} 个账号在多个网络登录`,
+        title: `${multiIp[0]?.totalCount ?? multiIp.length} 个账号在多个网络登录`,
         description: names.length
           ? `${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""} 在统计区间内使用过不同 IP，可能是换了网络或使用多台设备。`
           : "这些账号在统计区间内使用过不同 IP。",
