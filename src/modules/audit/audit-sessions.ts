@@ -129,6 +129,11 @@ export function buildAuditSessions(
         }
         if (event.action !== "USER_LOGOUT") continue;
         const eventSessionId = sessionIdOf(event.metadata);
+        const eventClient = loginClientFor(
+          event.metadata,
+          event.ipAddress,
+          event.userAgent,
+        );
         let index = eventSessionId
           ? open.findIndex(
               (item) => sessionIdOf(item.metadata) === eventSessionId,
@@ -138,12 +143,28 @@ export function buildAuditSessions(
           const candidates = open.filter(
             (item) =>
               (eventSessionId ? sessionIdOf(item.metadata) === null : true) &&
+              loginClientFor(
+                item.metadata,
+                item.ipAddress,
+                item.userAgent,
+              ) === eventClient &&
               item.ipAddress === event.ipAddress &&
               item.userAgent === event.userAgent,
           );
           if (candidates.length === 1) index = open.indexOf(candidates[0]!);
         }
-        if (index < 0 && !eventSessionId && open.length === 1) index = 0;
+        if (
+          index < 0 &&
+          !eventSessionId &&
+          open.length === 1 &&
+          loginClientFor(
+            open[0]!.metadata,
+            open[0]!.ipAddress,
+            open[0]!.userAgent,
+          ) === eventClient
+        ) {
+          index = 0;
+        }
         if (index < 0) continue;
         const [closed] = open.splice(index, 1);
         if (closed) {
@@ -283,6 +304,11 @@ export function buildAuditSessions(
       if (event.action !== "USER_LOGOUT") continue;
 
       const sessionId = sessionIdOf(event.metadata);
+      const eventClient = loginClientFor(
+        event.metadata,
+        event.ipAddress,
+        event.userAgent,
+      );
       let index = sessionId
         ? open.findIndex((item) => item.sessionId === sessionId)
         : -1;
@@ -294,13 +320,21 @@ export function buildAuditSessions(
           .filter(
             ({ item }) =>
               (sessionId ? item.sessionId === null : true) &&
+              item.client === eventClient &&
               item.ipAddress === event.ipAddress &&
               item.userAgent === event.userAgent,
           );
         if (candidates.length === 1) index = candidates[0]!.candidateIndex;
       }
-      // 完全没有会话标识的旧登出，只有一个未关闭登录时才敢兜底关它
-      if (index < 0 && !sessionId && open.length === 1) index = 0;
+      // 完全没有会话标识的旧登出，只有一个同客户端未关闭登录时才敢兜底关它
+      if (
+        index < 0 &&
+        !sessionId &&
+        open.length === 1 &&
+        open[0]!.client === eventClient
+      ) {
+        index = 0;
+      }
       if (index < 0) continue;
 
       const [matched] = open.splice(index, 1);

@@ -185,6 +185,36 @@ describe("登录会话配对", () => {
     ).toBe(60_000);
   });
 
+  it("旧 Web 登出不会关闭唯一的小程序登录", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({
+          action: "USER_LOGIN",
+          minutes: 0,
+          path: "miniapp",
+          ipAddress: null,
+          userAgent: null,
+        }),
+        event({ action: "USER_LOGOUT", minutes: 1 }),
+      ],
+      {
+        now,
+        to,
+        liveSessions: [
+          live({
+            id: "m-live",
+            minutes: 0,
+            ipAddress: null,
+            userAgent: null,
+            client: "MINIAPP",
+          }),
+        ],
+      },
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ endReason: "ACTIVE" });
+  });
+
   it("小程序登出不会认领同时间的 Web 旧登录", () => {
     const sessions = buildAuditSessions(
       [
