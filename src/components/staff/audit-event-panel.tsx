@@ -523,7 +523,15 @@ export function AuditEventPanel({ range }: { range: AuditRange }) {
               <CircularProgress size={14} sx={{ mr: 0.5 }} />
             ) : null}
             <Tooltip title="刷新">
-              <IconButton size="small" aria-label="刷新" onClick={() => void query.refetch()}>
+              <IconButton
+                size="small"
+                aria-label="刷新"
+                onClick={() => {
+                  void query.refetch();
+                  // 新动作/新执行人可能刚出现，筛选选项要和列表一起刷新
+                  void facetsQuery.refetch();
+                }}
+              >
                 <RefreshOutlinedIcon fontSize="small" />
               </IconButton>
             </Tooltip>
