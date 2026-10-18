@@ -58,10 +58,6 @@ function isCredentialLogin(metadata: unknown): boolean {
     : true;
 }
 
-const CREDENTIAL_LOGIN_ONLY = {
-  NOT: { metadata: { path: ["path"], equals: "/change-password" } },
-} satisfies Prisma.AuditLogWhereInput;
-
 /**
  * 认证事件不能只取 [from, to]：
  * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
@@ -351,15 +347,30 @@ export async function getAuditOverview(
       WHERE "createdAt" >= ${from} AND "createdAt" <= ${to}
     `;
 
-    const recentLoginRecords = await tx.auditLog.findMany({
-      where: {
-        action: "USER_LOGIN",
-        createdAt: { gte: from, lte: to },
-        ...CREDENTIAL_LOGIN_ONLY,
-      },
-      orderBy: { id: "desc" },
-      take: 6,
-      select: auditRecordSelect,
+    // Prisma JSON `NOT` 对缺失 path 的记录不返回 true，历史登录会被漏掉；
+    // 这里用 coalesce 显式把 null/缺失 path 当作正常登录。
+    const recentLoginIds = await tx.$queryRaw<Array<{ id: bigint }>>`
+      SELECT id
+      FROM "AuditLog"
+      WHERE action = 'USER_LOGIN'
+        AND "createdAt" >= ${from}
+        AND "createdAt" <= ${to}
+        AND coalesce(metadata->>'path', '') <> '/change-password'
+      ORDER BY id DESC
+      LIMIT 6
+    `;
+    const recentLoginRows = recentLoginIds.length
+      ? await tx.auditLog.findMany({
+          where: { id: { in: recentLoginIds.map((row) => row.id) } },
+          select: auditRecordSelect,
+        })
+      : [];
+    const recentLoginById = new Map(
+      recentLoginRows.map((row) => [row.id.toString(), row]),
+    );
+    const recentLoginRecords = recentLoginIds.flatMap((row) => {
+      const record = recentLoginById.get(row.id.toString());
+      return record ? [record] : [];
     });
 
     const recentEventRecords = await tx.auditLog.findMany({
@@ -934,14 +945,14 @@ export async function getAuditPersonDetail(
       where: { actorId: userId, action: { notIn: NON_ACTIVITY_ACTIONS } },
       _max: { createdAt: true },
     });
-    const lastLogin = await tx.auditLog.aggregate({
-      where: {
-        actorId: userId,
-        action: "USER_LOGIN",
-        ...CREDENTIAL_LOGIN_ONLY,
-      },
-      _max: { createdAt: true },
-    });
+    const lastLoginRows = await tx.$queryRaw<Array<{ lastLoginAt: Date | null }>>`
+      SELECT max("createdAt") AS "lastLoginAt"
+      FROM "AuditLog"
+      WHERE "actorId" = ${userId}
+        AND action = 'USER_LOGIN'
+        AND coalesce(metadata->>'path', '') <> '/change-password'
+    `;
+    const lastLoginAt = lastLoginRows[0]?.lastLoginAt ?? null;
 
     const references = await loadAuditReferences(tx, timelineRecords);
     const lastActivityRows = await tx.auditLog.groupBy({
@@ -1008,7 +1019,7 @@ export async function getAuditPersonDetail(
           user.roleGroup?.name ?? platformRoleLabel(user.platformRole) ?? "用户",
         isOnline: liveSessions.length > 0,
         lastActiveAt: lastActive._max.createdAt?.toISOString() ?? null,
-        lastLoginAt: lastLogin._max.createdAt?.toISOString() ?? null,
+        lastLoginAt: lastLoginAt?.toISOString() ?? null,
       },
       from: from.toISOString(),
       to: to.toISOString(),
