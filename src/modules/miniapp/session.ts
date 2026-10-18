@@ -75,7 +75,13 @@ export async function revokeMiniappSessionByAuthorization(
   const tokenHash = hashSecretToken(token);
   const record = await prisma.miniappSession.findUnique({
     where: { tokenHash },
-    select: { id: true, userId: true, revokedAt: true, expiresAt: true },
+    select: {
+      id: true,
+      userId: true,
+      createdAt: true,
+      revokedAt: true,
+      expiresAt: true,
+    },
   });
   // 重复登出不写审计，避免把同一次退出记成多条
   if (!record || record.revokedAt) return false;
@@ -97,6 +103,7 @@ export async function revokeMiniappSessionByAuthorization(
       metadata: {
         path: "miniapp",
         sessionId: record.id,
+        sessionStartedAt: record.createdAt.toISOString(),
         endReason: "SIGN_OUT",
       },
     });

@@ -90,8 +90,52 @@ export function buildAuditSessions(
     liveByUser.set(session.userId, list);
   }
 
-  const eventsByUser = new Map<string, AuditAuthEvent[]>();
+  // 新登出会带 sessionStartedAt。如果对应的登录事件已在 30 天窗口外，
+  // 用登出里的开始时间补一条登录，避免长会话在统计里消失。
+  const loginSessionIds = new Set(
+    events
+      .filter((event) => event.action === "USER_LOGIN")
+      .map((event) => sessionIdOf(event.metadata))
+      .filter((id): id is string => Boolean(id)),
+  );
+  const synthesized: AuditAuthEvent[] = [];
+  const synthesizedIds = new Set<string>();
+  let syntheticId = -1n;
   for (const event of events) {
+    if (event.action !== "USER_LOGOUT" || !event.actorId) continue;
+    const sessionId = sessionIdOf(event.metadata);
+    if (!sessionId || loginSessionIds.has(sessionId)) continue;
+    if (synthesizedIds.has(sessionId)) continue;
+    const startedAtValue = metadataRecord(event.metadata).sessionStartedAt;
+    if (typeof startedAtValue !== "string") continue;
+    const startedAt = new Date(startedAtValue);
+    if (
+      Number.isNaN(startedAt.getTime()) ||
+      startedAt.getTime() >= event.createdAt.getTime()
+    ) {
+      continue;
+    }
+    synthesizedIds.add(sessionId);
+    const path = metadataRecord(event.metadata).path;
+    synthesized.push({
+      id: syntheticId--,
+      action: "USER_LOGIN",
+      actorId: event.actorId,
+      createdAt: startedAt,
+      ipAddress: event.ipAddress,
+      userAgent: event.userAgent,
+      metadata: {
+        sessionId,
+        synthesized: true,
+        ...(typeof path === "string" ? { path } : {}),
+      },
+    });
+  }
+  const allEvents =
+    synthesized.length > 0 ? [...events, ...synthesized] : events;
+
+  const eventsByUser = new Map<string, AuditAuthEvent[]>();
+  for (const event of allEvents) {
     if (!event.actorId) continue;
     const list = eventsByUser.get(event.actorId) ?? [];
     list.push(event);
