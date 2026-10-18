@@ -745,12 +745,12 @@ export async function getAuditFacets(actor: Actor): Promise<AuditFacets> {
       by: ["result"],
       orderBy: { result: "asc" },
     });
+    // 不截断人员筛选项：低频用户也必须能被选到，否则执行人筛选会永久漏人
     const actorGroups = await tx.auditLog.groupBy({
       by: ["actorId"],
       where: { actorId: { not: null } },
       _count: { actorId: true },
       orderBy: { _count: { actorId: "desc" } },
-      take: 200,
     });
 
     const actorIds = actorGroups

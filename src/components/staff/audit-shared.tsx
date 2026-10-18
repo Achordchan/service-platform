@@ -1,6 +1,6 @@
 "use client";
 
-import { parseISO } from "date-fns";
+import { differenceInCalendarDays, parseISO } from "date-fns";
 import {
   Avatar,
   Box,
@@ -316,6 +316,18 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
+const AUDIT_RANGE_MAX_DAYS = 366;
+
+/** 自定义区间的自然日数（含首尾），用于在提交前拦住超长范围。 */
+export function auditRangeSpanDays(from: string, to: string): number {
+  const start = parseISO(from);
+  const end = parseISO(to);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return Number.NaN;
+  }
+  return differenceInCalendarDays(end, start) + 1;
+}
+
 /** 距离下一个北京时间零点的毫秒数；用于「今天 / 近 7 天 / 近 30 天」跨日刷新。 */
 export function msUntilNextShanghaiMidnight(now: Date = new Date()): number {
   const today = shanghaiDayKey(now);
@@ -367,6 +379,20 @@ export function AuditRangePicker({
   value: AuditRange;
   onChange: (range: AuditRange) => void;
 }) {
+  const toast = useToast();
+  const applyCustom = (next: Pick<AuditRange, "from" | "to">) => {
+    const days = auditRangeSpanDays(next.from, next.to);
+    if (!Number.isFinite(days) || days < 1) {
+      toast.error("开始日期不能晚于结束日期");
+      return;
+    }
+    if (days > AUDIT_RANGE_MAX_DAYS) {
+      toast.error(`统计区间最长 ${AUDIT_RANGE_MAX_DAYS} 天，请缩小范围`);
+      return;
+    }
+    onChange({ ...value, ...next });
+  };
+
   return (
     <Stack
       direction={{ xs: "column", md: "row" }}
@@ -401,7 +427,9 @@ export function AuditRangePicker({
             <DateStringPicker
               label="开始日期"
               value={value.from}
-              onChange={(from) => onChange({ ...value, from: from || value.from })}
+              onChange={(from) =>
+                applyCustom({ from: from || value.from, to: value.to })
+              }
               maxDate={value.to}
             />
           </Box>
@@ -409,7 +437,9 @@ export function AuditRangePicker({
             <DateStringPicker
               label="结束日期"
               value={value.to}
-              onChange={(to) => onChange({ ...value, to: to || value.to })}
+              onChange={(to) =>
+                applyCustom({ from: value.from, to: to || value.to })
+              }
               minDate={value.from}
               maxDate={shanghaiDayKey()}
             />

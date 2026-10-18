@@ -45,6 +45,7 @@ beforeAll(async () => {
     action: "USER_LOGIN" | "USER_LOGOUT",
     at: string,
     sessionId: string,
+    extra: Record<string, unknown> = {},
   ) =>
     ownerPool.query(
       `INSERT INTO "AuditLog" (
@@ -52,7 +53,7 @@ beforeAll(async () => {
          "ipAddress", "userAgent", "actorId", "createdAt"
        ) VALUES ($1, 'User', $2, 'SUCCESS', $3::jsonb, $4, '203.0.113.5',
                  'integration-suite/1.0', $2, $5)`,
-      [action, userId, JSON.stringify({ sessionId }), marker, at],
+      [action, userId, JSON.stringify({ sessionId, ...extra }), marker, at],
     );
 
   // 会话 A：登录早于 30 天 lookback，登出在统计区间内
@@ -67,6 +68,10 @@ beforeAll(async () => {
   // 会话 D：登录早于 from - 30d、登出晚于 to + 30d，两端都在初始窗口外
   await insert("USER_LOGIN", "2025-12-01T00:00:00Z", "sess-spanning");
   await insert("USER_LOGOUT", "2026-03-20T00:00:00Z", "sess-spanning");
+  // 会话 E：只有登出，登录在窗口外；靠 sessionStartedAt 发现并补出登录
+  await insert("USER_LOGOUT", "2026-03-25T00:00:00Z", "sess-meta", {
+    sessionStartedAt: "2025-12-01T00:00:00Z",
+  });
 });
 
 afterAll(async () => {
@@ -83,11 +88,11 @@ describe("审计会话与统计区间", () => {
     });
 
     expect(detail).not.toBeNull();
-    expect(detail!.sessions).toHaveLength(4);
-    // A 在区间内 12h；B、C、D 完整落在区间内各 (24h - 1ms)
-    expect(detail!.totals.sessionCount).toBe(4);
-    expect(detail!.totals.totalDurationMs).toBe(84 * 3_600_000 - 3);
-    expect(detail!.totals.avgDurationMs).toBe(75_599_999);
+    expect(detail!.sessions).toHaveLength(5);
+    // A 在区间内 12h；B、C、D、E 完整落在区间内各 (24h - 1ms)
+    expect(detail!.totals.sessionCount).toBe(5);
+    expect(detail!.totals.totalDurationMs).toBe(108 * 3_600_000 - 4);
+    expect(detail!.totals.avgDurationMs).toBe(77_759_999);
     expect(detail!.totals.loginCount).toBe(0);
     // 列表仍展示完整起止
     const old = detail!.sessions.find((item) => item.key === "sess-old");
@@ -95,5 +100,8 @@ describe("审计会话与统计区间", () => {
     expect(old?.endedAt).toBe("2026-01-10T12:00:00.000Z");
     const late = detail!.sessions.find((item) => item.key === "sess-late");
     expect(late?.endedAt).toBe("2026-03-15T00:00:00.000Z");
+    const meta = detail!.sessions.find((item) => item.key === "sess-meta");
+    expect(meta?.startedAt).toBe("2025-12-01T00:00:00.000Z");
+    expect(meta?.endedAt).toBe("2026-03-25T00:00:00.000Z");
   });
 });

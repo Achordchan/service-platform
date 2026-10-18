@@ -146,9 +146,26 @@ async function loadAuthEventsForRange(
     JOIN paired p ON a.id = p.login_id OR a.id = p.logout_id
   `;
 
+  // 部署前的旧登录没有 sessionId，无法参与上面的 join；新登出里带了
+  // sessionStartedAt，可以据此发现“两端都在窗口外”的会话并补出登录。
+  const startedAtRows = await tx.$queryRaw<RawAuthRow[]>`
+    SELECT
+      id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
+    FROM "AuditLog"
+    WHERE action = 'USER_LOGOUT'
+      AND metadata->>'sessionStartedAt' IS NOT NULL
+      AND metadata->>'sessionStartedAt' <= ${params.to.toISOString()}
+      AND "createdAt" >= ${params.from}
+      AND "createdAt" <= ${params.now}
+      AND (
+        ${params.actorIds === undefined}
+        OR "actorId" = ANY(${params.actorIds ?? []}::text[])
+      )
+  `;
+
   const seen = new Set(events.map((event) => event.id.toString()));
   const merged: AuditAuthEvent[] = [...events];
-  for (const row of pairedRows) {
+  for (const row of [...pairedRows, ...startedAtRows]) {
     if (seen.has(row.id.toString())) continue;
     seen.add(row.id.toString());
     merged.push(toAuthEvent(row));
