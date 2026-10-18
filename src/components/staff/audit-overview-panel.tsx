@@ -374,7 +374,11 @@ export function AuditOverviewPanel({ range }: { range: AuditRange }) {
           </Typography>
           {loading ? (
             <Skeleton variant="rectangular" height={120} sx={{ mt: 1.5, borderRadius: 1.5 }} />
-          ) : data && data.notices.length > 0 ? (
+          ) : !data ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+              概览加载失败，暂时无法判断登录安全情况。
+            </Typography>
+          ) : data.notices.length > 0 ? (
             <Stack spacing={1.25} sx={{ mt: 1.5 }}>
               {data.notices.map((notice) => (
                 <Alert key={notice.key} severity={notice.tone} icon={false}>
@@ -388,7 +392,7 @@ export function AuditOverviewPanel({ range }: { range: AuditRange }) {
               区间内没有发现需要特别留意的登录行为。
             </Alert>
           )}
-          {!loading && (data?.totals.failedLoginCount ?? 0) === 0 ? (
+          {query.isSuccess && data && data.totals.failedLoginCount === 0 ? (
             <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
               登录失败为 0 次。
             </Typography>

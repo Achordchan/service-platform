@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   Autocomplete,
@@ -137,6 +137,15 @@ export function AuditEventPanel({ range }: { range: AuditRange }) {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  // 时间段变化时保留筛选，只把分页拉回第一页
+  const rangeKey = `${range.from}|${range.to}`;
+  const lastRangeKey = useRef(rangeKey);
+  useEffect(() => {
+    if (lastRangeKey.current === rangeKey) return;
+    lastRangeKey.current = rangeKey;
+    setPagination((current) => ({ ...current, page: 0 }));
+  }, [rangeKey]);
 
   const facetsQuery = useQuery({
     queryKey: queryKeys.auditLogs.facets,

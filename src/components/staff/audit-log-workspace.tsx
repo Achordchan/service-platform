@@ -118,16 +118,16 @@ export function AuditLogWorkspace() {
       <Box>
         {tab === "overview" ? (
           // 概览含图表，隐藏时容器宽度为 0 会触发 recharts 警告，因此只在激活时挂载
-          <AuditOverviewPanel key={`overview-${range.from}-${range.to}`} range={range} />
+          <AuditOverviewPanel range={range} />
         ) : null}
         {mounted.people ? (
           <Box sx={{ display: tab === "people" ? "block" : "none" }}>
-            <AuditPeoplePanel key={`people-${range.from}-${range.to}`} range={range} />
+            <AuditPeoplePanel range={range} />
           </Box>
         ) : null}
         {mounted.logs ? (
           <Box sx={{ display: tab === "logs" ? "block" : "none" }}>
-            <AuditEventPanel key={`logs-${range.from}-${range.to}`} range={range} />
+            <AuditEventPanel range={range} />
           </Box>
         ) : null}
       </Box>

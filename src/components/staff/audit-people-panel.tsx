@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -28,6 +28,7 @@ import GroupOutlinedIcon from "@mui/icons-material/GroupOutlined";
 import { gridNoRowsOverlay } from "@/components/shared/data-grid-empty-overlay";
 import { ErrorState } from "@/components/shared/content-state";
 import {
+  AUDIT_TIME_ZONE,
   AuditEmptyHint,
   DurationText,
   formatAuditDayHeading,
@@ -114,7 +115,7 @@ function TimeOrNever({ iso, label }: { iso: string | null; label: string }) {
     <Tooltip title={formatAuditFullTime(iso)}>
       <Stack spacing={0.15}>
         <Typography variant="body2" noWrap>
-          {formatRelativeTime(iso)}
+          {formatRelativeTime(iso, undefined, { timeZone: AUDIT_TIME_ZONE })}
         </Typography>
         <Typography variant="caption" color="text.secondary" noWrap>
           {formatAuditTime(iso)}
@@ -138,6 +139,15 @@ export function AuditPeoplePanel({ range }: { range: AuditRange }) {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  // 时间段变化时保留搜索与人员类型，只把分页拉回第一页
+  const rangeKey = `${range.from}|${range.to}`;
+  const lastRangeKey = useRef(rangeKey);
+  useEffect(() => {
+    if (lastRangeKey.current === rangeKey) return;
+    lastRangeKey.current = rangeKey;
+    setPagination((current) => ({ ...current, page: 0 }));
+  }, [rangeKey]);
 
   const requestQuery = useMemo(() => {
     const params = new URLSearchParams({ from: range.from, to: range.to });
@@ -578,7 +588,9 @@ function AuditPersonDrawer({
                   variant="outlined"
                   label={`最近操作：${
                     detail.person.lastActiveAt
-                      ? formatRelativeTime(detail.person.lastActiveAt)
+                      ? formatRelativeTime(detail.person.lastActiveAt, undefined, {
+                          timeZone: AUDIT_TIME_ZONE,
+                        })
                       : "还没有"
                   }`}
                 />

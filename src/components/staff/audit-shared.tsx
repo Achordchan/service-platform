@@ -119,7 +119,7 @@ export function AuditTimeCell({ iso }: { iso: string }) {
           {formatAuditTime(iso)}
         </Typography>
         <Typography variant="caption" color="text.secondary" noWrap>
-          {formatRelativeTime(iso)}
+          {formatRelativeTime(iso, undefined, { timeZone: AUDIT_TIME_ZONE })}
         </Typography>
       </Stack>
     </Tooltip>

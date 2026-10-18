@@ -1,6 +1,7 @@
 import "server-only";
 
 import { parseISO } from "date-fns";
+import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import {
@@ -21,6 +22,7 @@ import {
   sessionDurationWithinRange,
   sessionOverlapsRange,
   toSessionViews,
+  type AuditAuthEvent,
   type BuiltSession,
 } from "@/modules/audit/audit-sessions";
 import type {
@@ -33,7 +35,6 @@ import type {
 import { AUDIT_ACTIVITY_RANGE_MAX_DAYS } from "@/modules/audit/audit-range";
 import { assertAllowed } from "@/modules/projects/errors";
 
-const AUTH_ACTIONS = ["USER_LOGIN", "USER_LOGOUT"] as const;
 const ROUTINE_AUTH_ACTIONS = ["USER_LOGIN", "USER_LOGOUT"] as const;
 const NON_ACTIVITY_ACTIONS = [
   "USER_LOGIN",
@@ -44,13 +45,115 @@ const NON_ACTIVITY_ACTIONS = [
 ];
 
 const TIME_ZONE = "Asia/Shanghai";
-const SESSION_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+// Web 会话 7 天、小程序会话 30 天；更早的会话由「按 sessionId 回查登录」兜底
+const SESSION_LOOKBACK_MS = 30 * 24 * 60 * 60_000;
 
 /** 改密后 better-auth 会重建会话并发一条 USER_LOGIN，它不是一次真实登录。 */
 function isCredentialLogin(metadata: unknown): boolean {
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>).path !== "/change-password"
     : true;
+}
+
+function sessionIdOf(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+  const value = (metadata as Record<string, unknown>).sessionId;
+  return typeof value === "string" && value ? value : null;
+}
+
+/**
+ * 认证事件不能只取 [from, to]：
+ * - 登出可能发生在 to 之后，缺了它会话只能算「未知」；
+ * - 登录可能早于 30 天 lookback，但登出在区间内。
+ * 因此登出取到 now，并按登出里的 sessionId 回查更早的登录事件。
+ */
+async function loadAuthEventsForRange(
+  tx: Prisma.TransactionClient,
+  params: {
+    from: Date;
+    to: Date;
+    now: Date;
+    actorId?: string;
+    requireActor?: boolean;
+  },
+): Promise<AuditAuthEvent[]> {
+  const lookbackStart = new Date(params.from.getTime() - SESSION_LOOKBACK_MS);
+  const events = await tx.auditLog.findMany({
+    where: {
+      ...(params.actorId ? { actorId: params.actorId } : {}),
+      ...(params.requireActor ? { actorId: { not: null } } : {}),
+      OR: [
+        {
+          action: "USER_LOGIN",
+          createdAt: { gte: lookbackStart, lte: params.to },
+        },
+        {
+          action: "USER_LOGOUT",
+          createdAt: { gte: lookbackStart, lte: params.now },
+        },
+      ],
+    },
+    select: {
+      id: true,
+      action: true,
+      actorId: true,
+      createdAt: true,
+      ipAddress: true,
+      userAgent: true,
+      metadata: true,
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  const sessionIds = [
+    ...new Set(
+      events
+        .map((event) =>
+          event.action === "USER_LOGOUT" ? sessionIdOf(event.metadata) : null,
+        )
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  if (sessionIds.length === 0) return events;
+
+  // sessionId 是字符串，不受 createdAt 窗口限制；30 天以上的长会话也能配上
+  const loginRows = await tx.$queryRaw<
+    Array<{
+      id: bigint;
+      action: string;
+      actorId: string | null;
+      createdAt: Date;
+      ipAddress: string | null;
+      userAgent: string | null;
+      metadata: unknown;
+    }>
+  >`
+    SELECT
+      id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
+    FROM "AuditLog"
+    WHERE action = 'USER_LOGIN'
+      AND "createdAt" <= ${params.to}
+      AND metadata->>'sessionId' = ANY(${sessionIds}::text[])
+      AND (${params.actorId ?? null}::text IS NULL OR "actorId" = ${params.actorId ?? null})
+  `;
+
+  const seen = new Set(events.map((event) => event.id.toString()));
+  return [
+    ...events,
+    ...loginRows
+      .filter((row) => !seen.has(row.id.toString()))
+      .map((row) => ({
+        id: row.id,
+        action: row.action,
+        actorId: row.actorId,
+        createdAt: row.createdAt,
+        ipAddress: row.ipAddress,
+        userAgent: row.userAgent,
+        metadata: row.metadata,
+      })),
+  ];
 }
 
 const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
@@ -126,25 +229,8 @@ export async function getAuditOverview(
   const { from, to } = range;
 
   return withActorDb(actor, async (tx) => {
-    // 往前多看 7 天：跨区间起点仍在进行的会话也能配上登录事件
-    const sessionWindowStart = new Date(from.getTime() - SESSION_LOOKBACK_MS);
     // 事务内只有一个连接：所有查询顺序执行，避免 pg 重入
-    const authEvents = await tx.auditLog.findMany({
-      where: {
-        action: { in: [...AUTH_ACTIONS] },
-        createdAt: { gte: sessionWindowStart, lte: to },
-      },
-      select: {
-        id: true,
-        action: true,
-        actorId: true,
-        createdAt: true,
-        ipAddress: true,
-        userAgent: true,
-        metadata: true,
-      },
-      orderBy: { createdAt: "asc" },
-    });
+    const authEvents = await loadAuthEventsForRange(tx, { from, to, now });
 
     const lastActivityRows = await tx.auditLog.groupBy({
       by: ["actorId"],
@@ -532,25 +618,11 @@ export async function listAuditPeople(
     const latestLoginByUser = new Map(
       latestLoginRows.map((row) => [row.actorId, row]),
     );
-    const authEvents = await tx.auditLog.findMany({
-      where: {
-        action: { in: [...AUTH_ACTIONS] },
-        createdAt: {
-          gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
-          lte: to,
-        },
-        actorId: { not: null },
-      },
-      select: {
-        id: true,
-        action: true,
-        actorId: true,
-        createdAt: true,
-        ipAddress: true,
-        userAgent: true,
-        metadata: true,
-      },
-      orderBy: { createdAt: "asc" },
+    const authEvents = await loadAuthEventsForRange(tx, {
+      from,
+      to,
+      now,
+      requireActor: true,
     });
     const liveWebSessions = await tx.session.findMany({
       where: { expiresAt: { gt: now } },
@@ -601,11 +673,7 @@ export async function listAuditPeople(
       to,
       lastActivityByUser: lastActivityForDuration,
       liveSessions,
-    }).filter(
-      (session) =>
-        session.startedAt.getTime() >= from.getTime() ||
-        session.endReason === "ACTIVE",
-    );
+    });
 
     const durationByUser = new Map<
       string,
@@ -758,6 +826,10 @@ export async function getAuditPersonDetail(
         ...categoryWhere,
       },
     });
+    const actionCount = actionGroups.reduce(
+      (sum, group) => sum + group._count._all,
+      0,
+    );
     const timelineRecords = await tx.auditLog.findMany({
       where: {
         actorId: userId,
@@ -769,25 +841,11 @@ export async function getAuditPersonDetail(
       take: pageSize,
       select: auditRecordSelect,
     });
-    const authEvents = await tx.auditLog.findMany({
-      where: {
-        actorId: userId,
-        action: { in: [...AUTH_ACTIONS] },
-        createdAt: {
-          gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
-          lte: to,
-        },
-      },
-      select: {
-        id: true,
-        action: true,
-        actorId: true,
-        createdAt: true,
-        ipAddress: true,
-        userAgent: true,
-        metadata: true,
-      },
-      orderBy: { createdAt: "asc" },
+    const authEvents = await loadAuthEventsForRange(tx, {
+      from,
+      to,
+      now,
+      actorId: userId,
     });
     const liveWebSessions = await tx.session.findMany({
       where: { userId, expiresAt: { gt: now } },
@@ -894,7 +952,7 @@ export async function getAuditPersonDetail(
       from: from.toISOString(),
       to: to.toISOString(),
       totals: {
-        actionCount: timelineTotal,
+        actionCount,
         loginCount: authEvents.filter(
           (event) =>
             event.action === "USER_LOGIN" &&
