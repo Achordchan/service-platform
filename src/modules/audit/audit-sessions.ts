@@ -91,21 +91,23 @@ export function buildAuditSessions(
   }
 
   // 新登出会带 sessionStartedAt。如果对应的登录事件已在 30 天窗口外，
-  // 用登出里的开始时间补一条登录，避免长会话在统计里消失。
+  // 用登出里的开始时间补一条登录；但部署前已有的无 sessionId 登录要先认领，
+  // 否则同一次登录会同时留下旧登录和合成登录两条会话。
+  const working = events.map((event) => ({ ...event }));
   const loginSessionIds = new Set(
-    events
+    working
       .filter((event) => event.action === "USER_LOGIN")
       .map((event) => sessionIdOf(event.metadata))
       .filter((id): id is string => Boolean(id)),
   );
   const synthesized: AuditAuthEvent[] = [];
   const synthesizedIds = new Set<string>();
+  const usedLegacyLoginIds = new Set<string>();
   let syntheticId = -1n;
-  for (const event of events) {
+  for (const event of working) {
     if (event.action !== "USER_LOGOUT" || !event.actorId) continue;
     const sessionId = sessionIdOf(event.metadata);
     if (!sessionId || loginSessionIds.has(sessionId)) continue;
-    if (synthesizedIds.has(sessionId)) continue;
     const startedAtValue = metadataRecord(event.metadata).sessionStartedAt;
     if (typeof startedAtValue !== "string") continue;
     const startedAt = new Date(startedAtValue);
@@ -115,6 +117,35 @@ export function buildAuditSessions(
     ) {
       continue;
     }
+
+    // 先按「同人 + 开始时间」找唯一的部署前旧登录，给它补上 sessionId
+    const legacyCandidates = working.filter(
+      (candidate) =>
+        candidate.action === "USER_LOGIN" &&
+        candidate.actorId === event.actorId &&
+        sessionIdOf(candidate.metadata) === null &&
+        !usedLegacyLoginIds.has(candidate.id.toString()) &&
+        Math.abs(
+          candidate.createdAt.getTime() - startedAt.getTime(),
+        ) < LIVE_SESSION_MATCH_MS,
+    );
+    if (legacyCandidates.length === 1) {
+      const candidate = legacyCandidates[0]!;
+      const index = working.findIndex((item) => item.id === candidate.id);
+      if (index >= 0) {
+        const existing = working[index]!;
+        working[index] = {
+          ...existing,
+          metadata: { ...metadataRecord(existing.metadata), sessionId },
+        };
+        usedLegacyLoginIds.add(candidate.id.toString());
+        loginSessionIds.add(sessionId);
+      }
+      continue;
+    }
+    // 多个旧候选说明这次登出归属本身不唯一，不要再造一条会话
+    if (legacyCandidates.length > 1) continue;
+    if (synthesizedIds.has(sessionId)) continue;
     synthesizedIds.add(sessionId);
     const path = metadataRecord(event.metadata).path;
     synthesized.push({
@@ -132,7 +163,7 @@ export function buildAuditSessions(
     });
   }
   const allEvents =
-    synthesized.length > 0 ? [...events, ...synthesized] : events;
+    synthesized.length > 0 ? [...working, ...synthesized] : working;
 
   const eventsByUser = new Map<string, AuditAuthEvent[]>();
   for (const event of allEvents) {

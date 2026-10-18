@@ -126,6 +126,33 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ key: "s1", endReason: "UNKNOWN" });
   });
 
+  it("旧登录 + 带 sessionStartedAt 的新登出只生成一条完整会话", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        {
+          id: nextId++,
+          action: "USER_LOGOUT",
+          actorId: "u1",
+          createdAt: at(60),
+          ipAddress: "203.0.113.10",
+          userAgent: "Mozilla/5.0 Chrome/138.0",
+          metadata: {
+            sessionId: "s-upgrade",
+            sessionStartedAt: at(0).toISOString(),
+          },
+        },
+      ],
+      { now, to },
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      key: "s-upgrade",
+      endReason: "LOGGED_OUT",
+      durationMs: 60 * 60_000,
+    });
+  });
+
   it("登出带 sessionStartedAt、登录在窗口外时，能补出完整会话", () => {
     const sessions = buildAuditSessions(
       [

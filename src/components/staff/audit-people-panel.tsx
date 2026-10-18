@@ -172,6 +172,7 @@ export function AuditPeoplePanel({ range }: { range: AuditRange }) {
     setSearchInput("");
     setSearch("");
     setRole("");
+    setPagination((current) => ({ ...current, page: 0 }));
   }
 
   const columns = useMemo<GridColDef<AuditPersonActivityRow>[]>(
