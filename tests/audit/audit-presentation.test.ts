@@ -185,6 +185,20 @@ describe("审计事件的普通话摘要", () => {
     ]);
   });
 
+  it("密码重置只陈述完成重置，不声称所有会话都已失效", () => {
+    const result = present({
+      action: "USER_PASSWORD_RESET_COMPLETED",
+      actionLabel: "完成密码重置",
+      resourceType: "User",
+      metadata: {},
+      object: null,
+      scope: null,
+      actorKind: "USER",
+      actorRoleLabel: "客户",
+    });
+    expect(result.summary).toBe("完成了密码重置");
+  });
+
   it("名称变更按资源类型描述，不会把客户空间/权限组写成姓名", () => {
     const space = present({
       action: "CUSTOMER_SPACE_UPDATED",

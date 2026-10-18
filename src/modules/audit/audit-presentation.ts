@@ -576,7 +576,7 @@ export function buildAuditPresentation(input: AuditPresentationInput): AuditPres
   }
   if (action === "USER_PASSWORD_RESET_COMPLETED") {
     return {
-      summary: "完成了密码重置，原有登录会话已失效",
+      summary: "完成了密码重置",
       changes,
       context,
     };
