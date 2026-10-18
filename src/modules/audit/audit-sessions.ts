@@ -166,12 +166,25 @@ export function buildAuditSessions(
       continue;
     }
 
-    // 先按「同人 + 开始时间」找唯一的部署前旧登录，给它补上 sessionId
+    // 先按「同人 + 客户端 + 来源 + 开始时间」找唯一的部署前旧登录
+    const logoutClient = loginClientFor(
+      event.metadata,
+      event.ipAddress,
+      event.userAgent,
+    );
     const legacyCandidates = working.filter(
       (candidate) =>
         candidate.action === "USER_LOGIN" &&
         candidate.actorId === event.actorId &&
         sessionIdOf(candidate.metadata) === null &&
+        loginClientFor(
+          candidate.metadata,
+          candidate.ipAddress,
+          candidate.userAgent,
+        ) === logoutClient &&
+        (logoutClient === "MINIAPP" ||
+          candidate.ipAddress === event.ipAddress ||
+          candidate.userAgent === event.userAgent) &&
         !usedLegacyLoginIds.has(candidate.id.toString()) &&
         // 已被更早的登出关闭的登录不能认领；由当前登出自己关闭的可以
         (closedAtByLoginId.get(candidate.id.toString()) ?? Number.POSITIVE_INFINITY) >=

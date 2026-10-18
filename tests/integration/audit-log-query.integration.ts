@@ -79,6 +79,9 @@ afterAll(async () => {
   await ownerPool.query(`DELETE FROM "AuditLog" WHERE "resourceId" = $1`, [
     `${marker}-failed`,
   ]);
+  await ownerPool.query(`DELETE FROM "AuditLog" WHERE action = $1`, [
+    `LEGACY_RESOURCE_${marker}`,
+  ]);
   await ownerPool.end();
 });
 
@@ -231,6 +234,33 @@ describe("审计日志查询", () => {
     });
     expect(
       page.rows.some((row) => row.action === "USER_LOGIN_FAILED"),
+    ).toBe(true);
+  });
+
+  it("按工单单号命中只写 resourceId 的旧记录", async () => {
+    const requestResult = await ownerPool.query<{
+      id: string;
+      number: string;
+    }>(`SELECT id, number FROM "ServiceRequest" ORDER BY "createdAt" LIMIT 1`);
+    const request = requestResult.rows[0];
+    expect(request).toBeDefined();
+
+    await insertLog({
+      action: `LEGACY_RESOURCE_${marker}`,
+      resourceType: "ServiceRequest",
+      resourceId: request!.id,
+      result: "SUCCESS",
+      ip: "10.0.0.10",
+      createdAt: "2026-04-10T00:00:00Z",
+      metadata: null,
+    });
+
+    const page = await listAuditLogs(admin, {
+      search: request!.number,
+      pageSize: 10,
+    });
+    expect(
+      page.rows.some((row) => row.action === `LEGACY_RESOURCE_${marker}`),
     ).toBe(true);
   });
 

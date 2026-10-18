@@ -185,6 +185,40 @@ describe("登录会话配对", () => {
     ).toBe(60_000);
   });
 
+  it("小程序登出不会认领同时间的 Web 旧登录", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        {
+          id: nextId++,
+          action: "USER_LOGOUT",
+          actorId: "u1",
+          createdAt: at(1),
+          ipAddress: null,
+          userAgent: null,
+          metadata: {
+            path: "miniapp",
+            sessionId: "s-m",
+            sessionStartedAt: at(0).toISOString(),
+          },
+        },
+      ],
+      {
+        now,
+        to,
+        liveSessions: [live({ id: "web-live", minutes: 0 })],
+      },
+    );
+    expect(
+      sessions.find((item) => item.endReason === "ACTIVE")?.key.startsWith("login-"),
+    ).toBe(true);
+    expect(sessions.find((item) => item.key === "s-m")).toMatchObject({
+      endReason: "LOGGED_OUT",
+      loginMethod: "小程序登录",
+    });
+    expect(sessions.some((item) => item.endReason === "UNKNOWN")).toBe(false);
+  });
+
   it("旧登录 + 带 sessionStartedAt 的新登出只生成一条完整会话", () => {
     const sessions = buildAuditSessions(
       [

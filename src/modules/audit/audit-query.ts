@@ -636,9 +636,59 @@ export async function auditCategoryWhereForDb(
   return { action: { in: actions } };
 }
 
+/**
+ * 旧记录可能只写了 resourceId，没有 serviceRequestId/projectId/customerSpaceId。
+ * 按展示出来的单号/标题/名称搜索时，要先把相关对象 ID 找出来，再按
+ * resourceType + resourceId 命中这些旧记录。
+ */
+async function legacyResourceSearchWhere(
+  tx: Prisma.TransactionClient,
+  search: string,
+): Promise<Prisma.AuditLogWhereInput | null> {
+  const requests = await tx.serviceRequest.findMany({
+    where: {
+      OR: [
+        { number: { contains: search, mode: "insensitive" } },
+        { title: { contains: search, mode: "insensitive" } },
+      ],
+    },
+    select: { id: true },
+  });
+  const projects = await tx.project.findMany({
+    where: { title: { contains: search, mode: "insensitive" } },
+    select: { id: true },
+  });
+  const spaces = await tx.customerSpace.findMany({
+    where: { name: { contains: search, mode: "insensitive" } },
+    select: { id: true },
+  });
+
+  const clauses: Prisma.AuditLogWhereInput[] = [];
+  if (requests.length > 0) {
+    clauses.push({
+      resourceType: "ServiceRequest",
+      resourceId: { in: requests.map((row) => row.id) },
+    });
+  }
+  if (projects.length > 0) {
+    clauses.push({
+      resourceType: "Project",
+      resourceId: { in: projects.map((row) => row.id) },
+    });
+  }
+  if (spaces.length > 0) {
+    clauses.push({
+      resourceType: "CustomerSpace",
+      resourceId: { in: spaces.map((row) => row.id) },
+    });
+  }
+  return clauses.length > 0 ? { OR: clauses } : null;
+}
+
 function buildWhere(
   filters: AuditLogFilters,
   categoryWhere?: Prisma.AuditLogWhereInput,
+  legacySearchWhere?: Prisma.AuditLogWhereInput | null,
 ): Prisma.AuditLogWhereInput {
   const where: Prisma.AuditLogWhereInput = {};
   if (filters.action) where.action = filters.action;
@@ -688,6 +738,7 @@ function buildWhere(
           { serviceRequest: { title: { contains: search, mode: "insensitive" } } },
           { project: { title: { contains: search, mode: "insensitive" } } },
           { customerSpace: { name: { contains: search, mode: "insensitive" } } },
+          ...(legacySearchWhere ? [legacySearchWhere] : []),
         ],
       });
     }
@@ -717,7 +768,11 @@ export async function listAuditLogs(
     const categoryWhere = filters.category
       ? await auditCategoryWhereForDb(tx, filters.category)
       : undefined;
-    const where = buildWhere(filters, categoryWhere);
+    const search = filters.search?.trim();
+    const legacySearchWhere = search
+      ? await legacyResourceSearchWhere(tx, search)
+      : null;
+    const where = buildWhere(filters, categoryWhere, legacySearchWhere);
     const total = await tx.auditLog.count({ where });
     const records = await tx.auditLog.findMany({
       where,
