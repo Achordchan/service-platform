@@ -39,6 +39,9 @@ describe("审计动作分类", () => {
     expect(auditCategoryFor("ROLE_GROUP_UPDATED")).toBe("TEAM");
     expect(auditCategoryFor("PLATFORM_SETTINGS_UPDATED")).toBe("SETTINGS");
     expect(auditCategoryFor("SYSTEM_ERROR_LOG_EXPORTED")).toBe("SYSTEM");
+    expect(auditCategoryFor("SERVICE_TYPE_UPDATED")).toBe("SETTINGS");
+    // 重叠前缀按声明顺序取第一个：通知偏好属于账号，不属于设置
+    expect(auditCategoryFor("NOTIFICATION_PREFERENCE_TYPE_UPDATED")).toBe("AUTH");
     expect(auditCategoryFor("SOMETHING_NEW")).toBe("OTHER");
     expect(auditCategoryLabel("AUTH")).toBe("登录与账号");
   });

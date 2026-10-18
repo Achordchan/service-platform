@@ -130,6 +130,28 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ endReason: "ACTIVE", durationMs: 180 * 60_000 });
   });
 
+  it("有 sessionId 的登录不会按 IP/UA 误配到另一段 live 会话", () => {
+    const sessions = buildAuditSessions(
+      [event({ action: "USER_LOGIN", minutes: 0, sessionId: "s-new" })],
+      {
+        now,
+        to,
+        liveSessions: [
+          {
+            id: "s-old",
+            userId: "u1",
+            createdAt: at(0),
+            expiresAt: at(60 * 24 * 7),
+            ipAddress: "203.0.113.10",
+            userAgent: "Mozilla/5.0 Chrome/138.0",
+            client: "WEB",
+          },
+        ],
+      },
+    );
+    expect(sessions[0]).toMatchObject({ key: "s-new", endReason: "UNKNOWN" });
+  });
+
   it("没有登出但有后续操作时，按最后操作估算并标记 STALE", () => {
     const sessions = buildAuditSessions(
       [event({ action: "USER_LOGIN", minutes: 0, sessionId: "s1" })],

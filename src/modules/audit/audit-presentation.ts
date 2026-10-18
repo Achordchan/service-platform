@@ -25,6 +25,7 @@ export const auditCategoryOrder: AuditCategoryKey[] = [
   "TEAM",
   "SETTINGS",
   "SYSTEM",
+  "OTHER",
 ];
 
 const CATEGORY_LABELS: Record<AuditCategoryKey, string> = {
@@ -60,6 +61,7 @@ const CATEGORY_PREFIXES: Array<[AuditCategoryKey, string[]]> = [
     "SETTINGS",
     [
       "PLATFORM_SETTINGS_",
+      "SERVICE_TYPE_",
       "MAIL_",
       "SMTP_",
       "RESEND_",
@@ -72,6 +74,10 @@ const CATEGORY_PREFIXES: Array<[AuditCategoryKey, string[]]> = [
   ],
   ["SYSTEM", ["SYSTEM_"]],
 ];
+
+/** 前缀的匹配优先级；查询层用它排除更高优先级类目的重叠前缀。 */
+export const auditCategoryPrecedence: AuditCategoryKey[] =
+  CATEGORY_PREFIXES.map(([key]) => key);
 
 export function auditCategoryFor(action: string): AuditCategoryKey {
   for (const [key, prefixes] of CATEGORY_PREFIXES) {

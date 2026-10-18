@@ -144,14 +144,17 @@ export function buildAuditSessions(
     const userLive = liveByUser.get(userId) ?? [];
 
     for (const pending of open) {
-      const live = userLive.find(
-        (session) =>
-          (pending.sessionId && session.id === pending.sessionId) ||
-          (session.ipAddress === pending.ipAddress &&
-            session.userAgent === pending.userAgent &&
-            Math.abs(session.createdAt.getTime() - pending.startedAt.getTime()) <
-              LIVE_SESSION_MATCH_MS),
-      );
+      // 新数据有 sessionId 时只认精确匹配；IP/UA 启发式只用于没有会话标识的旧数据
+      const live = pending.sessionId
+        ? userLive.find((session) => session.id === pending.sessionId)
+        : userLive.find(
+            (session) =>
+              session.ipAddress === pending.ipAddress &&
+              session.userAgent === pending.userAgent &&
+              Math.abs(
+                session.createdAt.getTime() - pending.startedAt.getTime(),
+              ) < LIVE_SESSION_MATCH_MS,
+          );
 
       if (live) {
         // 仍在登录：只统计到「现在 / 区间结束」，不把 7 天有效期当停留时长

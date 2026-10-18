@@ -12,6 +12,7 @@ import {
 import {
   auditCategoryFor,
   auditCategoryLabel,
+  auditCategoryPrecedence,
   auditCategoryPrefixes,
   buildAuditPresentation,
   describeUserAgent,
@@ -205,57 +206,55 @@ export async function loadAuditReferences(
     if (metadataRoleGroupId) roleGroupIds.add(metadataRoleGroupId);
   }
 
-  const [requests, projects, spaces, users, milestones, projectUpdates, externalContacts, roleGroups] =
-    await Promise.all([
-      requestIds.size
-        ? tx.serviceRequest.findMany({
-            where: { id: { in: [...requestIds] } },
-            select: { id: true, number: true, title: true },
-          })
-        : Promise.resolve([]),
-      projectIds.size
-        ? tx.project.findMany({
-            where: { id: { in: [...projectIds] } },
-            select: { id: true, title: true },
-          })
-        : Promise.resolve([]),
-      spaceIds.size
-        ? tx.customerSpace.findMany({
-            where: { id: { in: [...spaceIds] } },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve([]),
-      userIds.size
-        ? tx.user.findMany({
-            where: { id: { in: [...userIds] } },
-            select: { id: true, name: true, email: true },
-          })
-        : Promise.resolve([]),
-      milestoneIds.size
-        ? tx.milestone.findMany({
-            where: { id: { in: [...milestoneIds] } },
-            select: { id: true, title: true },
-          })
-        : Promise.resolve([]),
-      projectUpdateIds.size
-        ? tx.projectUpdate.findMany({
-            where: { id: { in: [...projectUpdateIds] } },
-            select: { id: true, title: true },
-          })
-        : Promise.resolve([]),
-      externalContactIds.size
-        ? tx.externalContact.findMany({
-            where: { id: { in: [...externalContactIds] } },
-            select: { id: true, displayName: true },
-          })
-        : Promise.resolve([]),
-      roleGroupIds.size
-        ? tx.roleGroup.findMany({
-            where: { id: { in: [...roleGroupIds] } },
-            select: { id: true, name: true },
-          })
-        : Promise.resolve([]),
-    ]);
+  // 事务内只有一个连接：顺序执行，避免 pg 的重入问题
+  const requests = requestIds.size
+    ? await tx.serviceRequest.findMany({
+        where: { id: { in: [...requestIds] } },
+        select: { id: true, number: true, title: true },
+      })
+    : [];
+  const projects = projectIds.size
+    ? await tx.project.findMany({
+        where: { id: { in: [...projectIds] } },
+        select: { id: true, title: true },
+      })
+    : [];
+  const spaces = spaceIds.size
+    ? await tx.customerSpace.findMany({
+        where: { id: { in: [...spaceIds] } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const users = userIds.size
+    ? await tx.user.findMany({
+        where: { id: { in: [...userIds] } },
+        select: { id: true, name: true, email: true },
+      })
+    : [];
+  const milestones = milestoneIds.size
+    ? await tx.milestone.findMany({
+        where: { id: { in: [...milestoneIds] } },
+        select: { id: true, title: true },
+      })
+    : [];
+  const projectUpdates = projectUpdateIds.size
+    ? await tx.projectUpdate.findMany({
+        where: { id: { in: [...projectUpdateIds] } },
+        select: { id: true, title: true },
+      })
+    : [];
+  const externalContacts = externalContactIds.size
+    ? await tx.externalContact.findMany({
+        where: { id: { in: [...externalContactIds] } },
+        select: { id: true, displayName: true },
+      })
+    : [];
+  const roleGroups = roleGroupIds.size
+    ? await tx.roleGroup.findMany({
+        where: { id: { in: [...roleGroupIds] } },
+        select: { id: true, name: true },
+      })
+    : [];
 
   return {
     requests: new Map(requests.map((item) => [item.id, item])),
@@ -607,19 +606,21 @@ export function mapAuditRecords(
   return records.map((record) => presentAuditRecord(record, references));
 }
 
-/** 「按类目筛选」在 SQL 层的翻译；OTHER 用排除法命中所有未归类动作。 */
+/**
+ * 「按类目筛选」在 SQL 层的翻译。
+ *
+ * 类目前缀存在重叠（如 NOTIFICATION_PREFERENCE_ 同时命中 AUTH 与 SETTINGS），
+ * 展示层按 `CATEGORY_PREFIXES` 的顺序取第一个匹配项，这里必须排除更高优先级
+ * 类目的前缀，否则筛 SETTINGS 会把显示为「登录与账号」的记录也带出来。
+ * OTHER 用排除法命中所有未归类动作。
+ */
 export function auditCategoryWhere(
   category: AuditCategoryKey,
 ): Prisma.AuditLogWhereInput {
+  const ownPrefixes = auditCategoryPrefixes(category);
   if (category === "OTHER") {
     const knownPrefixes = new Set(
-      auditCategoryPrefixes("AUTH")
-        .concat(auditCategoryPrefixes("REQUEST"))
-        .concat(auditCategoryPrefixes("PROJECT"))
-        .concat(auditCategoryPrefixes("CUSTOMER"))
-        .concat(auditCategoryPrefixes("TEAM"))
-        .concat(auditCategoryPrefixes("SETTINGS"))
-        .concat(auditCategoryPrefixes("SYSTEM")),
+      auditCategoryPrecedence.flatMap((key) => auditCategoryPrefixes(key)),
     );
     return {
       NOT: {
@@ -629,10 +630,32 @@ export function auditCategoryWhere(
       },
     };
   }
+  const index = auditCategoryPrecedence.indexOf(category);
+  const higherPriorityPrefixes =
+    index > 0
+      ? auditCategoryPrecedence
+          .slice(0, index)
+          .flatMap((key) => auditCategoryPrefixes(key))
+      : [];
   return {
-    OR: auditCategoryPrefixes(category).map((prefix) => ({
-      action: { startsWith: prefix },
-    })),
+    AND: [
+      {
+        OR: ownPrefixes.map((prefix) => ({
+          action: { startsWith: prefix },
+        })),
+      },
+      ...(higherPriorityPrefixes.length > 0
+        ? [
+            {
+              NOT: {
+                OR: higherPriorityPrefixes.map((prefix) => ({
+                  action: { startsWith: prefix },
+                })),
+              },
+            },
+          ]
+        : []),
+    ],
   };
 }
 
@@ -727,27 +750,25 @@ export async function getAuditFacets(actor: Actor): Promise<AuditFacets> {
   assertAllowed(actor.isPlatformAdmin);
 
   return withActorDb(actor, async (tx) => {
-    const [actions, resourceTypes, results, actorGroups] = await Promise.all([
-      tx.auditLog.groupBy({
-        by: ["action"],
-        orderBy: { action: "asc" },
-      }),
-      tx.auditLog.groupBy({
-        by: ["resourceType"],
-        orderBy: { resourceType: "asc" },
-      }),
-      tx.auditLog.groupBy({
-        by: ["result"],
-        orderBy: { result: "asc" },
-      }),
-      tx.auditLog.groupBy({
-        by: ["actorId"],
-        where: { actorId: { not: null } },
-        _count: { actorId: true },
-        orderBy: { _count: { actorId: "desc" } },
-        take: 200,
-      }),
-    ]);
+    const actions = await tx.auditLog.groupBy({
+      by: ["action"],
+      orderBy: { action: "asc" },
+    });
+    const resourceTypes = await tx.auditLog.groupBy({
+      by: ["resourceType"],
+      orderBy: { resourceType: "asc" },
+    });
+    const results = await tx.auditLog.groupBy({
+      by: ["result"],
+      orderBy: { result: "asc" },
+    });
+    const actorGroups = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: { actorId: { not: null } },
+      _count: { actorId: true },
+      orderBy: { _count: { actorId: "desc" } },
+      take: 200,
+    });
 
     const actorIds = actorGroups
       .map((item) => item.actorId)

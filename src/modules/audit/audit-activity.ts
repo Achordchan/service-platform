@@ -1,6 +1,7 @@
 import "server-only";
 
-import { addDays, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
+import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import {
@@ -52,6 +53,54 @@ function isCredentialLogin(metadata: unknown): boolean {
     : true;
 }
 
+/**
+ * 仍有效的会话可能创建于查询窗口之前（Web 会话每 24h 续期一次，可以存活很多天）。
+ * 按 sessionId 把它们的登录事件单独捞回来，否则这些会话会从「登录中」里凭空消失。
+ */
+async function loadLiveSessionLoginEvents(
+  tx: Prisma.TransactionClient,
+  sessionIds: string[],
+): Promise<AuditAuthEvent[]> {
+  if (sessionIds.length === 0) return [];
+  const rows = await tx.$queryRaw<
+    Array<{
+      id: bigint;
+      action: string;
+      actorId: string | null;
+      createdAt: Date;
+      ipAddress: string | null;
+      userAgent: string | null;
+      metadata: unknown;
+    }>
+  >`
+    SELECT
+      id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
+    FROM "AuditLog"
+    WHERE action = 'USER_LOGIN'
+      AND metadata->>'sessionId' = ANY(${sessionIds}::text[])
+  `;
+  return rows.map((row) => ({
+    id: row.id,
+    action: row.action,
+    actorId: row.actorId,
+    createdAt: row.createdAt,
+    ipAddress: row.ipAddress,
+    userAgent: row.userAgent,
+    metadata: row.metadata,
+  }));
+}
+
+function mergeAuthEvents(
+  primary: AuditAuthEvent[],
+  extra: AuditAuthEvent[],
+): AuditAuthEvent[] {
+  const seen = new Set(primary.map((event) => event.id.toString()));
+  return [
+    ...primary,
+    ...extra.filter((event) => !seen.has(event.id.toString())),
+  ];
+}
+
 const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   timeZone: TIME_ZONE,
   year: "numeric",
@@ -73,7 +122,8 @@ function eachShanghaiDay(from: Date, to: Date): string[] {
   let cursor = start;
   while (cursor <= end && days.length < AUDIT_ACTIVITY_RANGE_MAX_DAYS) {
     days.push(cursor.toISOString().slice(0, 10));
-    cursor = addDays(cursor, 1);
+    // 固定 UTC 加 24h，避免服务器本地 DST 让某一天被跳过/重复
+    cursor = new Date(cursor.getTime() + 86_400_000);
   }
   return days;
 }
@@ -108,7 +158,8 @@ export async function getAuditOverview(
   return withActorDb(actor, async (tx) => {
     // 往前多看 7 天：跨区间起点仍在进行的会话也能配上登录事件
     const sessionWindowStart = new Date(from.getTime() - SESSION_LOOKBACK_MS);
-    const authEventsPromise = tx.auditLog.findMany({
+    // 事务内只有一个连接：所有查询顺序执行，避免 pg 重入
+    const authEvents = await tx.auditLog.findMany({
       where: {
         action: { in: [...AUTH_ACTIONS] },
         createdAt: { gte: sessionWindowStart, lte: to },
@@ -123,10 +174,9 @@ export async function getAuditOverview(
         metadata: true,
       },
       orderBy: { createdAt: "asc" },
-      take: 20_000,
     });
 
-    const lastActivityPromise = tx.auditLog.groupBy({
+    const lastActivityRows = await tx.auditLog.groupBy({
       by: ["actorId"],
       where: {
         actorId: { not: null },
@@ -136,58 +186,55 @@ export async function getAuditOverview(
       _max: { createdAt: true },
     });
 
-    const liveSessionsPromise = Promise.all([
-      tx.session.findMany({
-        where: { expiresAt: { gt: now } },
-        select: {
-          id: true,
-          userId: true,
-          createdAt: true,
-          expiresAt: true,
-          ipAddress: true,
-          userAgent: true,
-          user: {
-            select: {
-              name: true,
-              email: true,
-              platformRole: true,
-              roleGroup: { select: { name: true } },
-            },
+    const liveWebSessions = await tx.session.findMany({
+      where: { expiresAt: { gt: now } },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        ipAddress: true,
+        userAgent: true,
+        user: {
+          select: {
+            name: true,
+            email: true,
+            platformRole: true,
+            roleGroup: { select: { name: true } },
           },
         },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      }),
-      tx.miniappSession.findMany({
-        where: { expiresAt: { gt: now }, revokedAt: null },
-        select: {
-          id: true,
-          userId: true,
-          createdAt: true,
-          expiresAt: true,
-          user: {
-            select: {
-              name: true,
-              email: true,
-              platformRole: true,
-              roleGroup: { select: { name: true } },
-            },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const liveMiniappSessions = await tx.miniappSession.findMany({
+      where: { expiresAt: { gt: now }, revokedAt: null },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        user: {
+          select: {
+            name: true,
+            email: true,
+            platformRole: true,
+            roleGroup: { select: { name: true } },
           },
         },
-        orderBy: { createdAt: "desc" },
-        take: 100,
-      }),
-    ]).then(([web, miniapp]) => [
-      ...web.map((session) => ({ ...session, client: "WEB" as const })),
-      ...miniapp.map((session) => ({
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const liveSessions = [
+      ...liveWebSessions.map((session) => ({ ...session, client: "WEB" as const })),
+      ...liveMiniappSessions.map((session) => ({
         ...session,
         ipAddress: null,
         userAgent: null,
         client: "MINIAPP" as const,
       })),
-    ]);
+    ];
 
-    const trendPromise = tx.$queryRaw<TrendRow[]>`
+    const trendRows = await tx.$queryRaw<TrendRow[]>`
       SELECT
         -- createdAt 是 timestamp(3)，Prisma 按 UTC 写入；先按 UTC 还原瞬间，
         -- 再转北京时间，避免依赖数据库会话时区（改为 UTC 时会整体偏一天）。
@@ -207,7 +254,7 @@ export async function getAuditOverview(
       ORDER BY 1 ASC
     `;
 
-    const totalsPromise = tx.$queryRaw<
+    const totalsRows = await tx.$queryRaw<
       Array<{
         actionCount: number;
         activePeople: number;
@@ -227,14 +274,14 @@ export async function getAuditOverview(
       WHERE "createdAt" >= ${from} AND "createdAt" <= ${to}
     `;
 
-    const recentLoginRecordsPromise = tx.auditLog.findMany({
+    const recentLoginRecords = await tx.auditLog.findMany({
       where: { action: "USER_LOGIN", createdAt: { gte: from, lte: to } },
       orderBy: { id: "desc" },
       take: 6,
       select: auditRecordSelect,
     });
 
-    const recentEventRecordsPromise = tx.auditLog.findMany({
+    const recentEventRecords = await tx.auditLog.findMany({
       where: {
         // 登录/登出放在「最近登录」里，这里保留失败、重置密码等值得注意的事件
         action: { notIn: [...ROUTINE_AUTH_ACTIONS] },
@@ -245,7 +292,7 @@ export async function getAuditOverview(
       select: auditRecordSelect,
     });
 
-    const topPeoplePromise = tx.auditLog.groupBy({
+    const topPeople = await tx.auditLog.groupBy({
       by: ["actorId"],
       where: {
         actorId: { not: null },
@@ -259,7 +306,7 @@ export async function getAuditOverview(
       take: 5,
     });
 
-    const failureGroupsPromise = tx.$queryRaw<
+    const failureGroups = await tx.$queryRaw<
       Array<{ email: string | null; count: number }>
     >`
       SELECT metadata->>'email' AS email, COUNT(*)::int AS count
@@ -271,7 +318,7 @@ export async function getAuditOverview(
       LIMIT 5
     `;
 
-    const multiIpPromise = tx.$queryRaw<
+    const multiIp = await tx.$queryRaw<
       Array<{ actorId: string; ipCount: number }>
     >`
       SELECT "actorId", COUNT(DISTINCT "ipAddress")::int AS "ipCount"
@@ -286,30 +333,6 @@ export async function getAuditOverview(
       LIMIT 5
     `;
 
-    const [
-      authEvents,
-      lastActivityRows,
-      liveSessions,
-      trendRows,
-      totalsRows,
-      recentLoginRecords,
-      recentEventRecords,
-      topPeople,
-      failureGroups,
-      multiIp,
-    ] = await Promise.all([
-      authEventsPromise,
-      lastActivityPromise,
-      liveSessionsPromise,
-      trendPromise,
-      totalsPromise,
-      recentLoginRecordsPromise,
-      recentEventRecordsPromise,
-      topPeoplePromise,
-      failureGroupsPromise,
-      multiIpPromise,
-    ]);
-
     const references = await loadAuditReferences(tx, [
       ...recentLoginRecords,
       ...recentEventRecords,
@@ -322,12 +345,19 @@ export async function getAuditOverview(
       }
     }
 
-    const sessions = buildAuditSessions(authEvents, {
-      now,
-      to,
-      lastActivityByUser,
-      liveSessions,
-    }).filter(
+    const liveLoginEvents = await loadLiveSessionLoginEvents(
+      tx,
+      liveSessions.map((session) => session.id),
+    );
+    const sessions = buildAuditSessions(
+      mergeAuthEvents(authEvents, liveLoginEvents),
+      {
+        now,
+        to,
+        lastActivityByUser,
+        liveSessions,
+      },
+    ).filter(
       (session) =>
         // 区间内开始的会话；跨区间但仍在登录的会话也保留（用于「当前登录中」）
         session.startedAt.getTime() >= from.getTime() ||
@@ -505,76 +535,92 @@ export async function listAuditPeople(
       },
     });
 
-    const [activityRows, lastActiveRows, lastLoginRows, authEvents, liveSessions] =
-      await Promise.all([
-        tx.auditLog.groupBy({
-          by: ["actorId"],
-          where: { actorId: { not: null }, createdAt: { gte: from, lte: to } },
-          _count: { actorId: true },
-        }),
-        tx.auditLog.groupBy({
-          by: ["actorId"],
-          // 「最近操作」只算业务操作；只看登录/登出会把它误当成做过事
-          where: {
-            actorId: { not: null },
-            action: { notIn: NON_ACTIVITY_ACTIONS },
-          },
-          _max: { createdAt: true },
-        }),
-        tx.auditLog.groupBy({
-          by: ["actorId"],
-          where: { actorId: { not: null }, action: "USER_LOGIN" },
-          _max: { createdAt: true },
-        }),
-        tx.auditLog.findMany({
-          where: {
-            action: { in: [...AUTH_ACTIONS] },
-            createdAt: {
-              gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
-              lte: to,
-            },
-            actorId: { not: null },
-          },
-          select: {
-            id: true,
-            action: true,
-            actorId: true,
-            createdAt: true,
-            ipAddress: true,
-            userAgent: true,
-            metadata: true,
-          },
-          orderBy: { createdAt: "asc" },
-          take: 20_000,
-        }),
-        Promise.all([
-          tx.session.findMany({
-            where: { expiresAt: { gt: now } },
-            select: {
-              id: true,
-              userId: true,
-              createdAt: true,
-              expiresAt: true,
-              ipAddress: true,
-              userAgent: true,
-            },
-            take: 5_000,
-          }),
-          tx.miniappSession.findMany({
-            where: { expiresAt: { gt: now }, revokedAt: null },
-            select: { id: true, userId: true, createdAt: true, expiresAt: true },
-            take: 5_000,
-          }),
-        ]).then(([web, miniapp]) => [
-          ...web.map((session) => ({ ...session, client: "WEB" as const })),
-          ...miniapp.map((session) => ({
-            ...session,
-            ipAddress: null,
-            userAgent: null,
-            client: "MINIAPP" as const,
-          })),
-        ]),
-      ]);
+    const activityRows = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: { actorId: { not: null }, createdAt: { gte: from, lte: to } },
+      _count: { actorId: true },
+    });
+    const lastActiveRows = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      // 「最近操作」只算业务操作；只看登录/登出会把它误当成做过事
+      where: {
+        actorId: { not: null },
+        action: { notIn: NON_ACTIVITY_ACTIONS },
+      },
+      _max: { createdAt: true },
+    });
+    // 最近登录的「时间 + 设备 + IP」必须来自同一条事件；独立聚合会拼出
+    // 「历史区间的时间戳 + 更近一次登录的设备」这种错位信息。
+    const userIds = users.map((user) => user.id);
+    const latestLoginRows = userIds.length
+      ? await tx.$queryRaw<
+          Array<{
+            actorId: string;
+            createdAt: Date;
+            ipAddress: string | null;
+            userAgent: string | null;
+          }>
+        >`
+          SELECT DISTINCT ON ("actorId")
+            "actorId", "createdAt", "ipAddress", "userAgent"
+          FROM "AuditLog"
+          WHERE action = 'USER_LOGIN'
+            AND "actorId" = ANY(${userIds}::text[])
+          ORDER BY "actorId", "createdAt" DESC
+        `
+      : [];
+    const latestLoginByUser = new Map(
+      latestLoginRows.map((row) => [row.actorId, row]),
+    );
+    const authEventsInRange = await tx.auditLog.findMany({
+      where: {
+        action: { in: [...AUTH_ACTIONS] },
+        createdAt: {
+          gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
+          lte: to,
+        },
+        actorId: { not: null },
+      },
+      select: {
+        id: true,
+        action: true,
+        actorId: true,
+        createdAt: true,
+        ipAddress: true,
+        userAgent: true,
+        metadata: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const liveWebSessions = await tx.session.findMany({
+      where: { expiresAt: { gt: now } },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        ipAddress: true,
+        userAgent: true,
+      },
+    });
+    const liveMiniappSessions = await tx.miniappSession.findMany({
+      where: { expiresAt: { gt: now }, revokedAt: null },
+      select: { id: true, userId: true, createdAt: true, expiresAt: true },
+    });
+    const liveSessions = [
+      ...liveWebSessions.map((session) => ({ ...session, client: "WEB" as const })),
+      ...liveMiniappSessions.map((session) => ({
+        ...session,
+        ipAddress: null,
+        userAgent: null,
+        client: "MINIAPP" as const,
+      })),
+    ];
+    const liveLoginEvents = await loadLiveSessionLoginEvents(
+      tx,
+      liveSessions.map((session) => session.id),
+    );
+    const authEvents = mergeAuthEvents(authEventsInRange, liveLoginEvents);
 
     const activityByUser = new Map(
       activityRows.flatMap((row) =>
@@ -583,13 +629,6 @@ export async function listAuditPeople(
     );
     const lastActiveByUser = new Map(
       lastActiveRows.flatMap((row) =>
-        row.actorId && row._max.createdAt
-          ? [[row.actorId, row._max.createdAt] as const]
-          : [],
-      ),
-    );
-    const lastLoginByUser = new Map(
-      lastLoginRows.flatMap((row) =>
         row.actorId && row._max.createdAt
           ? [[row.actorId, row._max.createdAt] as const]
           : [],
@@ -654,20 +693,6 @@ export async function listAuditPeople(
     }
 
     const liveUserIds = new Set(liveSessions.map((session) => session.userId));
-    const latestLoginByUser = new Map<string, AuditAuthEvent>();
-    for (const event of authEvents) {
-      if (
-        !event.actorId ||
-        event.action !== "USER_LOGIN" ||
-        !isCredentialLogin(event.metadata)
-      ) {
-        continue;
-      }
-      const existing = latestLoginByUser.get(event.actorId);
-      if (!existing || existing.createdAt < event.createdAt) {
-        latestLoginByUser.set(event.actorId, event);
-      }
-    }
 
     const rows: AuditPersonActivityRow[] = users.map((user) => {
       const duration = durationByUser.get(user.id);
@@ -680,7 +705,7 @@ export async function listAuditPeople(
         kind: "USER",
         isOnline: liveUserIds.has(user.id),
         lastActiveAt: lastActiveByUser.get(user.id)?.toISOString() ?? null,
-        lastLoginAt: lastLoginByUser.get(user.id)?.toISOString() ?? null,
+        lastLoginAt: latestLoginByUser.get(user.id)?.createdAt.toISOString() ?? null,
         loginCount: 0,
         actionCount: activityByUser.get(user.id) ?? 0,
         sessionCount: duration?.count ?? 0,
@@ -763,88 +788,88 @@ export async function getAuditPersonDetail(
     const categoryWhere = params.category
       ? auditCategoryWhere(params.category)
       : {};
-    const [actionGroups, timelineTotal, timelineRecords, authEvents, liveSessions, lastActive, lastLogin] =
-      await Promise.all([
-        tx.auditLog.groupBy({
-          by: ["action"],
-          where: { actorId: userId, createdAt: { gte: from, lte: to } },
-          _count: { _all: true },
-        }),
-        tx.auditLog.count({
-          where: {
-            actorId: userId,
-            createdAt: { gte: from, lte: to },
-            ...categoryWhere,
-          },
-        }),
-        tx.auditLog.findMany({
-          where: {
-            actorId: userId,
-            createdAt: { gte: from, lte: to },
-            ...categoryWhere,
-          },
-          orderBy: { id: "desc" },
-          skip: page * pageSize,
-          take: pageSize,
-          select: auditRecordSelect,
-        }),
-        tx.auditLog.findMany({
-          where: {
-            actorId: userId,
-            action: { in: [...AUTH_ACTIONS] },
-            createdAt: {
-              gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
-              lte: to,
-            },
-          },
-          select: {
-            id: true,
-            action: true,
-            actorId: true,
-            createdAt: true,
-            ipAddress: true,
-            userAgent: true,
-            metadata: true,
-          },
-          orderBy: { createdAt: "asc" },
-          take: 20_000,
-        }),
-        Promise.all([
-          tx.session.findMany({
-            where: { userId, expiresAt: { gt: now } },
-            select: {
-              id: true,
-              userId: true,
-              createdAt: true,
-              expiresAt: true,
-              ipAddress: true,
-              userAgent: true,
-            },
-            orderBy: { createdAt: "desc" },
-          }),
-          tx.miniappSession.findMany({
-            where: { userId, expiresAt: { gt: now }, revokedAt: null },
-            select: { id: true, userId: true, createdAt: true, expiresAt: true },
-            orderBy: { createdAt: "desc" },
-          }),
-        ]).then(([web, miniapp]) => [
-          ...web.map((session) => ({ ...session, client: "WEB" as const })),
-          ...miniapp.map((session) => ({
-            ...session,
-            ipAddress: null,
-            userAgent: null,
-            client: "MINIAPP" as const,
-          })),
-        ]),
-        tx.auditLog.aggregate({
-          where: { actorId: userId, action: { notIn: NON_ACTIVITY_ACTIONS } },
-          _max: { createdAt: true },
-        }),
-        tx.auditLog.aggregate({
-          where: { actorId: userId, action: "USER_LOGIN" },
-          _max: { createdAt: true },
-        }),
-      ]);
+    const actionGroups = await tx.auditLog.groupBy({
+      by: ["action"],
+      where: { actorId: userId, createdAt: { gte: from, lte: to } },
+      _count: { _all: true },
+    });
+    const timelineTotal = await tx.auditLog.count({
+      where: {
+        actorId: userId,
+        createdAt: { gte: from, lte: to },
+        ...categoryWhere,
+      },
+    });
+    const timelineRecords = await tx.auditLog.findMany({
+      where: {
+        actorId: userId,
+        createdAt: { gte: from, lte: to },
+        ...categoryWhere,
+      },
+      orderBy: { id: "desc" },
+      skip: page * pageSize,
+      take: pageSize,
+      select: auditRecordSelect,
+    });
+    const authEventsInRange = await tx.auditLog.findMany({
+      where: {
+        actorId: userId,
+        action: { in: [...AUTH_ACTIONS] },
+        createdAt: {
+          gte: new Date(from.getTime() - SESSION_LOOKBACK_MS),
+          lte: to,
+        },
+      },
+      select: {
+        id: true,
+        action: true,
+        actorId: true,
+        createdAt: true,
+        ipAddress: true,
+        userAgent: true,
+        metadata: true,
+      },
+      orderBy: { createdAt: "asc" },
+    });
+    const liveWebSessions = await tx.session.findMany({
+      where: { userId, expiresAt: { gt: now } },
+      select: {
+        id: true,
+        userId: true,
+        createdAt: true,
+        expiresAt: true,
+        ipAddress: true,
+        userAgent: true,
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    const liveMiniappSessions = await tx.miniappSession.findMany({
+      where: { userId, expiresAt: { gt: now }, revokedAt: null },
+      select: { id: true, userId: true, createdAt: true, expiresAt: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const liveSessions = [
+      ...liveWebSessions.map((session) => ({ ...session, client: "WEB" as const })),
+      ...liveMiniappSessions.map((session) => ({
+        ...session,
+        ipAddress: null,
+        userAgent: null,
+        client: "MINIAPP" as const,
+      })),
+    ];
+    const liveLoginEvents = await loadLiveSessionLoginEvents(
+      tx,
+      liveSessions.map((session) => session.id),
+    );
+    const authEvents = mergeAuthEvents(authEventsInRange, liveLoginEvents);
+    const lastActive = await tx.auditLog.aggregate({
+      where: { actorId: userId, action: { notIn: NON_ACTIVITY_ACTIONS } },
+      _max: { createdAt: true },
+    });
+    const lastLogin = await tx.auditLog.aggregate({
+      where: { actorId: userId, action: "USER_LOGIN" },
+      _max: { createdAt: true },
+    });
 
     const references = await loadAuditReferences(tx, timelineRecords);
     const lastActivityRows = await tx.auditLog.groupBy({

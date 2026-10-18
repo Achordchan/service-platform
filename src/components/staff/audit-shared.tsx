@@ -1,6 +1,6 @@
 "use client";
 
-import { subDays, parseISO } from "date-fns";
+import { parseISO } from "date-fns";
 import {
   Avatar,
   Box,
@@ -319,7 +319,10 @@ export function rangeForPreset(
   const today = shanghaiDayKey(now);
   if (preset === "today") return { preset, from: today, to: today };
   const days = preset === "7d" ? 7 : 30;
-  const start = subDays(parseISO(`${today}T00:00:00Z`), days - 1);
+  // 用 UTC 毫秒做日历减法：本地时区的 DST 切换日不能让「近 7 天」少一天
+  const start = new Date(
+    parseISO(`${today}T00:00:00Z`).getTime() - (days - 1) * 86_400_000,
+  );
   return { preset, from: start.toISOString().slice(0, 10), to: today };
 }
 
