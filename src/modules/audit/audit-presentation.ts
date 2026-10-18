@@ -75,10 +75,6 @@ const CATEGORY_PREFIXES: Array<[AuditCategoryKey, string[]]> = [
   ["SYSTEM", ["SYSTEM_"]],
 ];
 
-/** 前缀的匹配优先级；查询层用它排除更高优先级类目的重叠前缀。 */
-export const auditCategoryPrecedence: AuditCategoryKey[] =
-  CATEGORY_PREFIXES.map(([key]) => key);
-
 export function auditCategoryFor(action: string): AuditCategoryKey {
   for (const [key, prefixes] of CATEGORY_PREFIXES) {
     if (prefixes.some((prefix) => action.startsWith(prefix))) return key;
@@ -88,11 +84,6 @@ export function auditCategoryFor(action: string): AuditCategoryKey {
 
 export function auditCategoryLabel(key: AuditCategoryKey): string {
   return CATEGORY_LABELS[key];
-}
-
-/** 某个类目包含的动作前缀，供查询层把「按类目筛选」翻译成 SQL 条件 */
-export function auditCategoryPrefixes(key: AuditCategoryKey): string[] {
-  return CATEGORY_PREFIXES.find(([candidate]) => candidate === key)?.[1] ?? [];
 }
 
 export const auditCategoryOptions = auditCategoryOrder.map((value) => ({

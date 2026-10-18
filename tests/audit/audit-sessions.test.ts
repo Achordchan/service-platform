@@ -164,6 +164,57 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ endReason: "ACTIVE" });
   });
 
+  it("旧 Web 登录与会话行 IP 不一致但 UA 一致时仍能识别为登录中", () => {
+    const sessions = buildAuditSessions(
+      [event({ action: "USER_LOGIN", minutes: 0, ipAddress: "203.0.113.10" })],
+      {
+        now,
+        to,
+        liveSessions: [
+          {
+            id: "w-live",
+            userId: "u1",
+            createdAt: at(0),
+            expiresAt: at(60 * 24 * 7),
+            ipAddress: "10.0.0.2",
+            userAgent: "Mozilla/5.0 Chrome/138.0",
+            client: "WEB",
+          },
+        ],
+      },
+    );
+    expect(sessions[0]).toMatchObject({ endReason: "ACTIVE" });
+  });
+
+  it("旧登录已登出、随后新建 live 会话时，不会因为时间相近而漏掉新会话", () => {
+    const sessions = buildAuditSessions(
+      [
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        event({ action: "USER_LOGOUT", minutes: 1 }),
+      ],
+      {
+        now,
+        to,
+        liveSessions: [
+          {
+            id: "replacement",
+            userId: "u1",
+            createdAt: at(2),
+            expiresAt: at(60 * 24 * 7),
+            ipAddress: "203.0.113.10",
+            userAgent: "Mozilla/5.0 Chrome/138.0",
+            client: "WEB",
+          },
+        ],
+      },
+    );
+    expect(sessions).toHaveLength(2);
+    expect(sessions.filter((item) => item.endReason === "LOGGED_OUT")).toHaveLength(1);
+    expect(
+      sessions.find((item) => item.endReason === "ACTIVE")?.key,
+    ).toBe("replacement");
+  });
+
   it("没有登录事件的 live session 也能补成「登录中」", () => {
     const sessions = buildAuditSessions([], {
       now,

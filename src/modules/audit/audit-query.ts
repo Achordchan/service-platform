@@ -12,8 +12,6 @@ import {
 import {
   auditCategoryFor,
   auditCategoryLabel,
-  auditCategoryPrecedence,
-  auditCategoryPrefixes,
   buildAuditPresentation,
   describeUserAgent,
   ipScopeFor,
@@ -355,7 +353,11 @@ function resolveAuditObject(
   switch (record.resourceType) {
     case "ServiceRequest":
       return {
-        object: request ?? namedObject(metadataLabel(metadata), resourceLabel),
+        // 旧记录可能只填了 resourceId，没填 serviceRequestId
+        object:
+          request ??
+          requestObject(references, record.resourceId) ??
+          namedObject(metadataLabel(metadata), resourceLabel),
         scope: project,
       };
     case "RequestMessage":
@@ -365,7 +367,10 @@ function resolveAuditObject(
       };
     case "Project":
       return {
-        object: project ?? namedObject(metadataLabel(metadata), resourceLabel),
+        object:
+          project ??
+          projectObject(references, record.resourceId) ??
+          namedObject(metadataLabel(metadata), resourceLabel),
         scope: space,
       };
     case "ProjectStaff":
@@ -414,7 +419,13 @@ function resolveAuditObject(
       };
     }
     case "CustomerSpace":
-      return { object: space ?? namedObject(metadataLabel(metadata), resourceLabel), scope: null };
+      return {
+        object:
+          space ??
+          spaceObject(references, record.resourceId) ??
+          namedObject(metadataLabel(metadata), resourceLabel),
+        scope: null,
+      };
     case "Membership":
     case "Invitation":
       return {
@@ -607,59 +618,28 @@ export function mapAuditRecords(
 }
 
 /**
- * 「按类目筛选」在 SQL 层的翻译。
+ * 「按类目筛选」翻译成精确的 action 列表。
  *
- * 类目前缀存在重叠（如 NOTIFICATION_PREFERENCE_ 同时命中 AUTH 与 SETTINGS），
- * 展示层按 `CATEGORY_PREFIXES` 的顺序取第一个匹配项，这里必须排除更高优先级
- * 类目的前缀，否则筛 SETTINGS 会把显示为「登录与账号」的记录也带出来。
- * OTHER 用排除法命中所有未归类动作。
+ * 不能用 `startsWith`：Prisma 会把它变成 SQL LIKE，前缀里的 `_` 是单字符
+ * 通配符（`NOTIFICATION_PREFERENCE_` 会误命中 `NOTIFICATION_PREFERENCES_...`），
+ * 导致筛选结果与展示分类不一致。这里先取库里的动作码，用和展示层同一个
+ * `auditCategoryFor` 判定，再用 `IN` 查询，语义完全一致。
  */
-export function auditCategoryWhere(
+export async function auditCategoryWhereForDb(
+  tx: Prisma.TransactionClient,
   category: AuditCategoryKey,
-): Prisma.AuditLogWhereInput {
-  const ownPrefixes = auditCategoryPrefixes(category);
-  if (category === "OTHER") {
-    const knownPrefixes = new Set(
-      auditCategoryPrecedence.flatMap((key) => auditCategoryPrefixes(key)),
-    );
-    return {
-      NOT: {
-        OR: [...knownPrefixes].map((prefix) => ({
-          action: { startsWith: prefix },
-        })),
-      },
-    };
-  }
-  const index = auditCategoryPrecedence.indexOf(category);
-  const higherPriorityPrefixes =
-    index > 0
-      ? auditCategoryPrecedence
-          .slice(0, index)
-          .flatMap((key) => auditCategoryPrefixes(key))
-      : [];
-  return {
-    AND: [
-      {
-        OR: ownPrefixes.map((prefix) => ({
-          action: { startsWith: prefix },
-        })),
-      },
-      ...(higherPriorityPrefixes.length > 0
-        ? [
-            {
-              NOT: {
-                OR: higherPriorityPrefixes.map((prefix) => ({
-                  action: { startsWith: prefix },
-                })),
-              },
-            },
-          ]
-        : []),
-    ],
-  };
+): Promise<Prisma.AuditLogWhereInput> {
+  const rows = await tx.auditLog.groupBy({ by: ["action"] });
+  const actions = rows
+    .map((row) => row.action)
+    .filter((action) => auditCategoryFor(action) === category);
+  return { action: { in: actions } };
 }
 
-function buildWhere(filters: AuditLogFilters): Prisma.AuditLogWhereInput {
+function buildWhere(
+  filters: AuditLogFilters,
+  categoryWhere?: Prisma.AuditLogWhereInput,
+): Prisma.AuditLogWhereInput {
   const where: Prisma.AuditLogWhereInput = {};
   if (filters.action) where.action = filters.action;
   if (filters.resourceType) where.resourceType = filters.resourceType;
@@ -674,8 +654,8 @@ function buildWhere(filters: AuditLogFilters): Prisma.AuditLogWhereInput {
 
   const and: Prisma.AuditLogWhereInput[] = [];
 
-  if (filters.category) {
-    and.push(auditCategoryWhere(filters.category));
+  if (categoryWhere) {
+    and.push(categoryWhere);
   }
 
   if (filters.from || filters.to) {
@@ -724,9 +704,12 @@ export async function listAuditLogs(
     AUDIT_PAGE_SIZE_MAX,
   );
   const page = Math.max(filters.page ?? 0, 0);
-  const where = buildWhere(filters);
 
   return withActorDb(actor, async (tx) => {
+    const categoryWhere = filters.category
+      ? await auditCategoryWhereForDb(tx, filters.category)
+      : undefined;
+    const where = buildWhere(filters, categoryWhere);
     const total = await tx.auditLog.count({ where });
     const records = await tx.auditLog.findMany({
       where,

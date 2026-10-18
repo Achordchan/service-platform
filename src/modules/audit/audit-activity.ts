@@ -6,7 +6,7 @@ import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import {
   AUDIT_PAGE_SIZE_MAX,
-  auditCategoryWhere,
+  auditCategoryWhereForDb,
   auditRecordSelect,
   loadAuditReferences,
   mapAuditRecords,
@@ -595,6 +595,16 @@ export async function listAuditPeople(
       },
       _max: { createdAt: true },
     });
+    // 估算会话结束时间只能用区间内的最后一次操作；全时间的最末操作只用于展示
+    const rangeActivityRows = await tx.auditLog.groupBy({
+      by: ["actorId"],
+      where: {
+        actorId: { not: null },
+        createdAt: { gte: from, lte: to },
+        action: { notIn: NON_ACTIVITY_ACTIONS },
+      },
+      _max: { createdAt: true },
+    });
     // 最近登录的「时间 + 设备 + IP」必须来自同一条事件；独立聚合会拼出
     // 「历史区间的时间戳 + 更近一次登录的设备」这种错位信息。
     const userIds = users.map((user) => user.id);
@@ -662,7 +672,7 @@ export async function listAuditPeople(
       ),
     );
     const lastActivityForDuration = new Map<string, Date>();
-    for (const row of lastActiveRows) {
+    for (const row of rangeActivityRows) {
       if (row.actorId && row._max.createdAt) {
         lastActivityForDuration.set(row.actorId, row._max.createdAt);
       }
@@ -812,7 +822,7 @@ export async function getAuditPersonDetail(
     if (!user) return null;
 
     const categoryWhere = params.category
-      ? auditCategoryWhere(params.category)
+      ? await auditCategoryWhereForDb(tx, params.category)
       : {};
     const actionGroups = await tx.auditLog.groupBy({
       by: ["action"],

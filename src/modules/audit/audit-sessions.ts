@@ -149,6 +149,7 @@ export function buildAuditSessions(
 
     const lastActivity = lastActivityByUser.get(userId) ?? null;
     const userLive = liveByUser.get(userId) ?? [];
+    const matchedLiveIds = new Set<string>();
 
     for (const pending of open) {
       // 新数据有 sessionId 时只认精确匹配；IP/UA 启发式只用于没有会话标识的旧数据
@@ -159,13 +160,16 @@ export function buildAuditSessions(
               Math.abs(
                 session.createdAt.getTime() - pending.startedAt.getTime(),
               ) < LIVE_SESSION_MATCH_MS &&
-              // 小程序会话没有 IP/UA，只能按同人 + 时间匹配
+              // 小程序会话没有 IP/UA；Web 会话的 IP 可能因代理与审计行不同，
+              // 因此时间窗内 IP 或 UA 任一匹配即可，两者都不同才不配对。
               (session.client === "MINIAPP" ||
-                (session.ipAddress === pending.ipAddress &&
-                  session.userAgent === pending.userAgent)),
+                session.ipAddress === pending.ipAddress ||
+                session.userAgent === pending.userAgent),
           );
 
       if (live) {
+        // 记录真正匹配到的 live session，后面只给未匹配的补录
+        matchedLiveIds.add(live.id);
         // 仍在登录：只统计到「现在 / 区间结束」，不把 7 天有效期当停留时长
         const end = new Date(Math.min(now.getTime(), to.getTime()));
         sessions.push(finishSession(pending, end, "ACTIVE", userId));
@@ -193,21 +197,11 @@ export function buildAuditSessions(
 
     // 仍有效的会话可能来自窗口外，甚至早于 sessionId 上线：没有登录事件时
     // 直接用 Session 行本身补一段「登录中」，否则它会在登录会话列表里消失。
+    // 只给「没有被任何登录事件实际匹配到」的 live session 补录，避免同一次登录
+    // 既被旧登录认领、又生成一条重复会话。
     for (const live of userLive) {
       if (live.createdAt.getTime() > to.getTime()) continue;
-      const represented = sessions.some((session) => {
-        if (session.userId !== userId) return false;
-        if (session.key === live.id) return true;
-        // 旧登录没有 sessionId，只能按同人 + 启动时间判断是否同一次；
-        // Session 行与审计行是同一瞬间写的，5 分钟内视为同一次登录。
-        return (
-          session.key.startsWith("login-") &&
-          Math.abs(
-            session.startedAt.getTime() - live.createdAt.getTime(),
-          ) < LIVE_SESSION_MATCH_MS
-        );
-      });
-      if (represented) continue;
+      if (matchedLiveIds.has(live.id)) continue;
       const end = new Date(Math.min(now.getTime(), to.getTime()));
       if (end.getTime() < live.createdAt.getTime()) continue;
       sessions.push({
