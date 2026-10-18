@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAuditSessions,
+  sessionDurationWithinRange,
+  sessionOverlapsRange,
   toSessionViews,
   type AuditAuthEvent,
   type AuditLiveSession,
+  type BuiltSession,
 } from "@/modules/audit/audit-sessions";
 
 const base = new Date("2026-10-18T01:00:00.000Z"); // 北京时间 09:00
@@ -122,6 +125,68 @@ describe("登录会话配对", () => {
     expect(sessions[0]).toMatchObject({ key: "s1", endReason: "UNKNOWN" });
   });
 
+  it("部署前登录、部署后登出：回退到唯一的无 sessionId 登录", () => {
+    const sessions = buildAuditSessions(
+      [
+        // 旧登录没有 sessionId
+        event({ action: "USER_LOGIN", minutes: 0 }),
+        // 新登出带 sessionId，精确匹配不到，应回退到唯一的旧登录
+        event({ action: "USER_LOGOUT", minutes: 20, sessionId: "s-new" }),
+      ],
+      { now, to },
+    );
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      endReason: "LOGGED_OUT",
+      durationMs: 20 * 60_000,
+    });
+  });
+
+  it("旧小程序登录没有 sessionId 时，按同人 + 时间匹配 live 会话", () => {
+    const sessions = buildAuditSessions(
+      [event({ action: "USER_LOGIN", minutes: 0, path: "miniapp" })],
+      {
+        now,
+        to,
+        liveSessions: [
+          {
+            id: "m-live",
+            userId: "u1",
+            createdAt: at(0),
+            expiresAt: at(60 * 24 * 30),
+            ipAddress: null,
+            userAgent: null,
+            client: "MINIAPP",
+          },
+        ],
+      },
+    );
+    expect(sessions[0]).toMatchObject({ endReason: "ACTIVE" });
+  });
+
+  it("没有登录事件的 live session 也能补成「登录中」", () => {
+    const sessions = buildAuditSessions([], {
+      now,
+      to,
+      liveSessions: [live({ id: "s-live", minutes: 0 })],
+    });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({
+      key: "s-live",
+      endReason: "ACTIVE",
+      durationMs: 240 * 60_000,
+    });
+  });
+
+  it("历史区间不会补入区间之后创建的 live session", () => {
+    const sessions = buildAuditSessions([], {
+      now: at(240),
+      to: at(60),
+      liveSessions: [live({ id: "s-future", minutes: 120 })],
+    });
+    expect(sessions).toHaveLength(0);
+  });
+
   it("仍在登录的会话只算到当前时间，并标记 ACTIVE", () => {
     const sessions = buildAuditSessions(
       [event({ action: "USER_LOGIN", minutes: 60, sessionId: "s1" })],
@@ -215,6 +280,46 @@ describe("登录会话配对", () => {
       },
     );
     expect(sessions[0]).toMatchObject({ endReason: "ACTIVE", loginMethod: "小程序登录" });
+  });
+});
+
+describe("会话与统计区间", () => {
+  const session = (input: Partial<BuiltSession>): BuiltSession => ({
+    key: "s1",
+    userId: "u1",
+    startedAt: at(0),
+    endedAt: at(60),
+    durationMs: 60 * 60_000,
+    endReason: "LOGGED_OUT",
+    ipAddress: null,
+    userAgent: null,
+    loginMethod: null,
+    ...input,
+  });
+
+  it("只统计与区间有交集的会话", () => {
+    expect(sessionOverlapsRange(session({}), at(30), at(90))).toBe(true);
+    expect(sessionOverlapsRange(session({}), at(61), at(90))).toBe(false);
+    expect(sessionOverlapsRange(session({}), at(-30), at(-1))).toBe(false);
+  });
+
+  it("跨区间起止的会话只计入区间内那一段", () => {
+    expect(sessionDurationWithinRange(session({}), at(30), at(90))).toBe(
+      30 * 60_000,
+    );
+    expect(
+      sessionDurationWithinRange(
+        session({ startedAt: at(-60), endedAt: at(60), durationMs: 120 * 60_000 }),
+        at(0),
+        at(30),
+      ),
+    ).toBe(30 * 60_000);
+  });
+
+  it("UNKNOWN 会话计入存在性但不伪造时长", () => {
+    const unknown = session({ endedAt: null, durationMs: null, endReason: "UNKNOWN" });
+    expect(sessionOverlapsRange(unknown, at(-10), at(10))).toBe(true);
+    expect(sessionDurationWithinRange(unknown, at(-10), at(10))).toBeNull();
   });
 });
 

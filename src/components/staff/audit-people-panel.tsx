@@ -604,8 +604,8 @@ function AuditPersonDrawer({
                 ) : null}
               </Stack>
               <SessionCaveat>
-                累计停留只计已登出与仍登录中的会话；平均值只统计有明确登出的会话。
-                未登出的会话按最后操作估算，单条展示但不参与平均。
+                统计数字按所选区间截取；下方会话列表展示每次登录的完整起止时间。
+                累计停留只计已登出与仍登录中的会话，平均值只统计有明确登出的会话。
               </SessionCaveat>
 
               {detail.currentSessions.length > 0 ? (

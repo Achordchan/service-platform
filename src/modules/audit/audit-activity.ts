@@ -1,7 +1,6 @@
 import "server-only";
 
 import { parseISO } from "date-fns";
-import type { Prisma } from "@/generated/prisma/client";
 import type { Actor } from "@/lib/actor";
 import { withActorDb } from "@/lib/actor";
 import {
@@ -19,8 +18,9 @@ import {
 } from "@/modules/audit/audit-presentation";
 import {
   buildAuditSessions,
+  sessionDurationWithinRange,
+  sessionOverlapsRange,
   toSessionViews,
-  type AuditAuthEvent,
   type BuiltSession,
 } from "@/modules/audit/audit-sessions";
 import type {
@@ -51,54 +51,6 @@ function isCredentialLogin(metadata: unknown): boolean {
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>).path !== "/change-password"
     : true;
-}
-
-/**
- * 仍有效的会话可能创建于查询窗口之前（Web 会话每 24h 续期一次，可以存活很多天）。
- * 按 sessionId 把它们的登录事件单独捞回来，否则这些会话会从「登录中」里凭空消失。
- */
-async function loadLiveSessionLoginEvents(
-  tx: Prisma.TransactionClient,
-  sessionIds: string[],
-): Promise<AuditAuthEvent[]> {
-  if (sessionIds.length === 0) return [];
-  const rows = await tx.$queryRaw<
-    Array<{
-      id: bigint;
-      action: string;
-      actorId: string | null;
-      createdAt: Date;
-      ipAddress: string | null;
-      userAgent: string | null;
-      metadata: unknown;
-    }>
-  >`
-    SELECT
-      id, action, "actorId", "createdAt", "ipAddress", "userAgent", metadata
-    FROM "AuditLog"
-    WHERE action = 'USER_LOGIN'
-      AND metadata->>'sessionId' = ANY(${sessionIds}::text[])
-  `;
-  return rows.map((row) => ({
-    id: row.id,
-    action: row.action,
-    actorId: row.actorId,
-    createdAt: row.createdAt,
-    ipAddress: row.ipAddress,
-    userAgent: row.userAgent,
-    metadata: row.metadata,
-  }));
-}
-
-function mergeAuthEvents(
-  primary: AuditAuthEvent[],
-  extra: AuditAuthEvent[],
-): AuditAuthEvent[] {
-  const seen = new Set(primary.map((event) => event.id.toString()));
-  return [
-    ...primary,
-    ...extra.filter((event) => !seen.has(event.id.toString())),
-  ];
 }
 
 const SHANGHAI_DAY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
@@ -135,15 +87,33 @@ type TrendRow = {
   logins: number;
 };
 
-function averageDuration(sessions: BuiltSession[]): number | null {
+type RangedSession = {
+  session: BuiltSession;
+  durationMs: number | null;
+};
+
+function sessionMetricsWithinRange(
+  sessions: BuiltSession[],
+  from: Date,
+  to: Date,
+  now: Date,
+): RangedSession[] {
+  return sessions
+    .filter((session) => sessionOverlapsRange(session, from, to, now))
+    .map((session) => ({
+      session,
+      durationMs: sessionDurationWithinRange(session, from, to, now),
+    }));
+}
+
+function averageDuration(sessions: RangedSession[]): number | null {
   // 平均值只统计「有明确登出」的会话。进行中的会随时间变大，
   // 未登出的只能按最后操作估算，混进平均值会系统性偏高。
   const measured = sessions.filter(
-    (session) =>
-      typeof session.durationMs === "number" && session.endReason === "LOGGED_OUT",
+    (item) => item.session.endReason === "LOGGED_OUT" && item.durationMs !== null,
   );
   if (measured.length === 0) return null;
-  const total = measured.reduce((sum, session) => sum + (session.durationMs ?? 0), 0);
+  const total = measured.reduce((sum, item) => sum + (item.durationMs ?? 0), 0);
   return Math.round(total / measured.length);
 }
 
@@ -345,24 +315,14 @@ export async function getAuditOverview(
       }
     }
 
-    const liveLoginEvents = await loadLiveSessionLoginEvents(
-      tx,
-      liveSessions.map((session) => session.id),
-    );
-    const sessions = buildAuditSessions(
-      mergeAuthEvents(authEvents, liveLoginEvents),
-      {
-        now,
-        to,
-        lastActivityByUser,
-        liveSessions,
-      },
-    ).filter(
-      (session) =>
-        // 区间内开始的会话；跨区间但仍在登录的会话也保留（用于「当前登录中」）
-        session.startedAt.getTime() >= from.getTime() ||
-        session.endReason === "ACTIVE",
-    );
+    const sessions = buildAuditSessions(authEvents, {
+      now,
+      to,
+      lastActivityByUser,
+      liveSessions,
+    });
+    // 跨区间起止的会话按交集计入，时长只算区间内的那一段
+    const rangeSessions = sessionMetricsWithinRange(sessions, from, to, now);
 
     const trendByDate = new Map(trendRows.map((row) => [row.date, row]));
     const trend = eachShanghaiDay(from, to).map((date) => {
@@ -444,8 +404,8 @@ export async function getAuditOverview(
         activePeople: Number(totals.activePeople),
         loginCount: Number(totals.loginCount),
         failedLoginCount: failedCount,
-        sessionCount: sessions.length,
-        avgSessionMs: averageDuration(sessions),
+        sessionCount: rangeSessions.length,
+        avgSessionMs: averageDuration(rangeSessions),
         onlineNow: new Set(liveSessions.map((session) => session.userId)).size,
       },
       trend,
@@ -572,7 +532,7 @@ export async function listAuditPeople(
     const latestLoginByUser = new Map(
       latestLoginRows.map((row) => [row.actorId, row]),
     );
-    const authEventsInRange = await tx.auditLog.findMany({
+    const authEvents = await tx.auditLog.findMany({
       where: {
         action: { in: [...AUTH_ACTIONS] },
         createdAt: {
@@ -616,11 +576,6 @@ export async function listAuditPeople(
         client: "MINIAPP" as const,
       })),
     ];
-    const liveLoginEvents = await loadLiveSessionLoginEvents(
-      tx,
-      liveSessions.map((session) => session.id),
-    );
-    const authEvents = mergeAuthEvents(authEventsInRange, liveLoginEvents);
 
     const activityByUser = new Map(
       activityRows.flatMap((row) =>
@@ -664,6 +619,7 @@ export async function listAuditPeople(
       }
     >();
     for (const session of sessions) {
+      if (!sessionOverlapsRange(session, from, to, now)) continue;
       const entry =
         durationByUser.get(session.userId) ??
         {
@@ -675,17 +631,18 @@ export async function listAuditPeople(
           count: 0,
         };
       entry.count += 1;
-      if (typeof session.durationMs === "number") {
+      const durationMs = sessionDurationWithinRange(session, from, to, now);
+      if (durationMs !== null) {
         // 累计只算「已登出 / 仍登录」；未登出的估算值不进合计，避免 12 天假会话
         if (session.endReason === "LOGGED_OUT" || session.endReason === "ACTIVE") {
-          entry.total += session.durationMs;
+          entry.total += durationMs;
         }
         if (session.endReason === "LOGGED_OUT") {
-          entry.measuredTotal += session.durationMs;
+          entry.measuredTotal += durationMs;
           entry.measured += 1;
         }
         if (session.endReason === "STALE") {
-          entry.estimatedTotal += session.durationMs;
+          entry.estimatedTotal += durationMs;
           entry.estimatedCount += 1;
         }
       }
@@ -729,7 +686,8 @@ export async function listAuditPeople(
         event.action !== "USER_LOGIN" ||
         !event.actorId ||
         !isCredentialLogin(event.metadata) ||
-        event.createdAt.getTime() < from.getTime()
+        event.createdAt.getTime() < from.getTime() ||
+        event.createdAt.getTime() > to.getTime()
       ) {
         continue;
       }
@@ -811,7 +769,7 @@ export async function getAuditPersonDetail(
       take: pageSize,
       select: auditRecordSelect,
     });
-    const authEventsInRange = await tx.auditLog.findMany({
+    const authEvents = await tx.auditLog.findMany({
       where: {
         actorId: userId,
         action: { in: [...AUTH_ACTIONS] },
@@ -857,11 +815,6 @@ export async function getAuditPersonDetail(
         client: "MINIAPP" as const,
       })),
     ];
-    const liveLoginEvents = await loadLiveSessionLoginEvents(
-      tx,
-      liveSessions.map((session) => session.id),
-    );
-    const authEvents = mergeAuthEvents(authEventsInRange, liveLoginEvents);
     const lastActive = await tx.auditLog.aggregate({
       where: { actorId: userId, action: { notIn: NON_ACTIVITY_ACTIONS } },
       _max: { createdAt: true },
@@ -890,11 +843,8 @@ export async function getAuditPersonDetail(
         lastBusinessActivity ? [[userId, lastBusinessActivity]] : [],
       ),
       liveSessions,
-    }).filter(
-      (session) =>
-        session.startedAt.getTime() >= from.getTime() ||
-        session.endReason === "ACTIVE",
-    );
+    });
+    const rangeSessions = sessionMetricsWithinRange(sessions, from, to, now);
 
     const breakdownMap = new Map<AuditCategoryKey, number>();
     for (const group of actionGroups) {
@@ -905,24 +855,28 @@ export async function getAuditPersonDetail(
       );
     }
 
-    const totalDurationMs = sessions.reduce(
-      (sum, session) =>
-        session.endReason === "LOGGED_OUT" || session.endReason === "ACTIVE"
-          ? sum + (session.durationMs ?? 0)
+    const totalDurationMs = rangeSessions.reduce(
+      (sum, item) =>
+        (item.session.endReason === "LOGGED_OUT" ||
+          item.session.endReason === "ACTIVE") &&
+        item.durationMs !== null
+          ? sum + item.durationMs
           : sum,
       0,
     );
-    const measuredSessions = sessions.filter(
-      (session) =>
-        typeof session.durationMs === "number" && session.endReason === "LOGGED_OUT",
+    const measuredSessions = rangeSessions.filter(
+      (item) =>
+        item.session.endReason === "LOGGED_OUT" && item.durationMs !== null,
     );
     const measuredDurationMs = measuredSessions.reduce(
-      (sum, session) => sum + (session.durationMs ?? 0),
+      (sum, item) => sum + (item.durationMs ?? 0),
       0,
     );
-    const estimatedDurationMs = sessions.reduce(
-      (sum, session) =>
-        session.endReason === "STALE" ? sum + (session.durationMs ?? 0) : sum,
+    const estimatedDurationMs = rangeSessions.reduce(
+      (sum, item) =>
+        item.session.endReason === "STALE" && item.durationMs !== null
+          ? sum + item.durationMs
+          : sum,
       0,
     );
 
@@ -945,9 +899,10 @@ export async function getAuditPersonDetail(
           (event) =>
             event.action === "USER_LOGIN" &&
             isCredentialLogin(event.metadata) &&
-            event.createdAt.getTime() >= from.getTime(),
+            event.createdAt.getTime() >= from.getTime() &&
+            event.createdAt.getTime() <= to.getTime(),
         ).length,
-        sessionCount: sessions.length,
+        sessionCount: rangeSessions.length,
         totalDurationMs,
         estimatedDurationMs,
         avgDurationMs:
@@ -966,7 +921,7 @@ export async function getAuditPersonDetail(
             ? { browser: null, os: null, deviceType: "小程序", label: "微信小程序" }
             : describeUserAgent(session.userAgent),
       })),
-      sessions: toSessionViews(sessions),
+      sessions: toSessionViews(rangeSessions.map((item) => item.session)),
       breakdown: [...breakdownMap.entries()]
         .map(([category, count]) => ({
           category,

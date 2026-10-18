@@ -84,8 +84,10 @@ export function buildAuditSessions(
   }
 
   const sessions: BuiltSession[] = [];
+  const userIds = new Set([...eventsByUser.keys(), ...liveByUser.keys()]);
 
-  for (const [userId, userEvents] of eventsByUser) {
+  for (const userId of userIds) {
+    const userEvents = eventsByUser.get(userId) ?? [];
     const ordered = [...userEvents].sort((left, right) => {
       const byTime = left.createdAt.getTime() - right.createdAt.getTime();
       if (byTime !== 0) return byTime;
@@ -121,16 +123,21 @@ export function buildAuditSessions(
       let index = sessionId
         ? open.findIndex((item) => item.sessionId === sessionId)
         : -1;
-      // 有 sessionId 时只认精确匹配：配不上宁可忽略，也不要把并发的另一段会话关掉。
-      // 旧数据没有 sessionId，才退化为「同 IP/UA 的最近一次登录」。
-      if (!sessionId) {
-        index = open.findLastIndex(
-          (item) =>
-            item.ipAddress === event.ipAddress &&
-            item.userAgent === event.userAgent,
-        );
-        if (index < 0 && open.length > 0) index = open.length - 1;
+      // 新格式登出配不上时，只回退到没有 sessionId 的旧登录；且必须唯一候选。
+      // 这样既能关掉「部署前登录、部署后登出」的真实会话，又不会误关并发会话。
+      if (index < 0) {
+        const candidates = open
+          .map((item, candidateIndex) => ({ item, candidateIndex }))
+          .filter(
+            ({ item }) =>
+              (sessionId ? item.sessionId === null : true) &&
+              item.ipAddress === event.ipAddress &&
+              item.userAgent === event.userAgent,
+          );
+        if (candidates.length === 1) index = candidates[0]!.candidateIndex;
       }
+      // 完全没有会话标识的旧登出，只有一个未关闭登录时才敢兜底关它
+      if (index < 0 && !sessionId && open.length === 1) index = 0;
       if (index < 0) continue;
 
       const [matched] = open.splice(index, 1);
@@ -149,11 +156,13 @@ export function buildAuditSessions(
         ? userLive.find((session) => session.id === pending.sessionId)
         : userLive.find(
             (session) =>
-              session.ipAddress === pending.ipAddress &&
-              session.userAgent === pending.userAgent &&
               Math.abs(
                 session.createdAt.getTime() - pending.startedAt.getTime(),
-              ) < LIVE_SESSION_MATCH_MS,
+              ) < LIVE_SESSION_MATCH_MS &&
+              // 小程序会话没有 IP/UA，只能按同人 + 时间匹配
+              (session.client === "MINIAPP" ||
+                (session.ipAddress === pending.ipAddress &&
+                  session.userAgent === pending.userAgent)),
           );
 
       if (live) {
@@ -179,6 +188,38 @@ export function buildAuditSessions(
         ipAddress: pending.ipAddress,
         userAgent: pending.userAgent,
         loginMethod: pending.loginMethod,
+      });
+    }
+
+    // 仍有效的会话可能来自窗口外，甚至早于 sessionId 上线：没有登录事件时
+    // 直接用 Session 行本身补一段「登录中」，否则它会在登录会话列表里消失。
+    for (const live of userLive) {
+      if (live.createdAt.getTime() > to.getTime()) continue;
+      const represented = sessions.some((session) => {
+        if (session.userId !== userId) return false;
+        if (session.key === live.id) return true;
+        // 旧登录没有 sessionId，只能按同人 + 启动时间判断是否同一次；
+        // Session 行与审计行是同一瞬间写的，5 分钟内视为同一次登录。
+        return (
+          session.key.startsWith("login-") &&
+          Math.abs(
+            session.startedAt.getTime() - live.createdAt.getTime(),
+          ) < LIVE_SESSION_MATCH_MS
+        );
+      });
+      if (represented) continue;
+      const end = new Date(Math.min(now.getTime(), to.getTime()));
+      if (end.getTime() < live.createdAt.getTime()) continue;
+      sessions.push({
+        key: live.id,
+        userId,
+        startedAt: live.createdAt,
+        endedAt: end,
+        durationMs: end.getTime() - live.createdAt.getTime(),
+        endReason: "ACTIVE",
+        ipAddress: live.ipAddress,
+        userAgent: live.userAgent,
+        loginMethod: null,
       });
     }
   }
@@ -211,6 +252,52 @@ function finishSession(
     userAgent: pending.userAgent,
     loginMethod: pending.loginMethod,
   };
+}
+
+/**
+ * 会话是否与统计区间有交集。区间外的会话不计入；跨区间起止的会话要计入。
+ * UNKNOWN 没有结束时间，只能按「登录发生在区间内」判断。
+ */
+export function sessionOverlapsRange(
+  session: BuiltSession,
+  from: Date,
+  to: Date,
+  now = new Date(),
+): boolean {
+  if (session.endReason === "UNKNOWN") {
+    return (
+      session.startedAt.getTime() >= from.getTime() &&
+      session.startedAt.getTime() <= to.getTime()
+    );
+  }
+  const end = session.endedAt ?? now;
+  return (
+    session.startedAt.getTime() <= to.getTime() &&
+    end.getTime() >= from.getTime()
+  );
+}
+
+/**
+ * 会话落在统计区间内的时长。跨区间的会话只计入区间内的那一段，
+ * 避免「今天」把昨天开始的会话整段算进来，也避免历史区间计入今天的新登录。
+ */
+export function sessionDurationWithinRange(
+  session: BuiltSession,
+  from: Date,
+  to: Date,
+  now = new Date(),
+): number | null {
+  if (session.endReason === "UNKNOWN") return null;
+  const end = session.endedAt ?? now;
+  if (
+    session.startedAt.getTime() > to.getTime() ||
+    end.getTime() < from.getTime()
+  ) {
+    return null;
+  }
+  const startMs = Math.max(session.startedAt.getTime(), from.getTime());
+  const endMs = Math.min(end.getTime(), to.getTime());
+  return endMs >= startMs ? endMs - startMs : null;
 }
 
 const END_REASON_LABELS: Record<AuditSessionView["endReason"], string> = {

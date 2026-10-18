@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Box, Paper, Stack, Tab, Tabs, Typography } from "@mui/material";
-import { AuditRangePicker, rangeForPreset } from "@/components/staff/audit-shared";
+import {
+  AuditRangePicker,
+  msUntilNextShanghaiMidnight,
+  rangeForPreset,
+} from "@/components/staff/audit-shared";
 import { AuditEventPanel } from "@/components/staff/audit-event-panel";
 import { AuditOverviewPanel } from "@/components/staff/audit-overview-panel";
 import { AuditPeoplePanel } from "@/components/staff/audit-people-panel";
@@ -34,6 +38,36 @@ export function AuditLogWorkspace() {
     people: tab === "people",
     logs: tab === "logs",
   }));
+
+  // 页面跨过北京时间零点时，预设区间要跟着走到新的一天（自定义日期不动）
+  useEffect(() => {
+    if (range.preset === "custom") return;
+    const timer = window.setTimeout(() => {
+      setRange((current) =>
+        current.preset === "custom" ? current : rangeForPreset(current.preset),
+      );
+    }, msUntilNextShanghaiMidnight() + 1_000);
+    return () => window.clearTimeout(timer);
+  }, [range.preset, range.from, range.to]);
+
+  // 从后台切回、或窗口重新聚焦时补一次跨日检查
+  useEffect(() => {
+    const sync = () => {
+      setRange((current) => {
+        if (current.preset === "custom") return current;
+        const next = rangeForPreset(current.preset);
+        return next.from === current.from && next.to === current.to
+          ? current
+          : next;
+      });
+    };
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
 
   function selectTab(next: AuditTab) {
     setMounted((current) => ({ ...current, [next]: true }));

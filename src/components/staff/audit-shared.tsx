@@ -102,7 +102,8 @@ export function formatAuditDayHeading(iso: string): string {
   const parts = dayHeadingFormatter.formatToParts(date);
   const pick = (type: Intl.DateTimeFormatPartTypes) =>
     parts.find((part) => part.type === type)?.value ?? "";
-  const sameYear = pick("year") === String(new Date().getFullYear());
+  // 用北京时间的「今天」判断年份，避免跨年时按浏览器本地年份漏掉/多加年份
+  const sameYear = pick("year") === shanghaiDayKey().slice(0, 4);
   return `${sameYear ? "" : `${pick("year")} 年 `}${pick("month")} 月 ${pick("day")} 日 · ${pick("weekday")}`;
 }
 
@@ -297,9 +298,12 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
       <IconButton
         size="small"
         aria-label={label}
-        onClick={() => {
+        onClick={async () => {
           try {
-            void navigator.clipboard?.writeText(value);
+            if (!navigator.clipboard?.writeText) {
+              throw new Error("Clipboard API unavailable");
+            }
+            await navigator.clipboard.writeText(value);
             toast.success("已复制");
           } catch {
             toast.error("复制失败，请手动选择文本");
@@ -310,6 +314,15 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
       </IconButton>
     </Tooltip>
   );
+}
+
+/** 距离下一个北京时间零点的毫秒数；用于「今天 / 近 7 天 / 近 30 天」跨日刷新。 */
+export function msUntilNextShanghaiMidnight(now: Date = new Date()): number {
+  const today = shanghaiDayKey(now);
+  const nextMidnight = new Date(
+    parseISO(`${today}T00:00:00+08:00`).getTime() + 86_400_000,
+  );
+  return Math.max(1_000, nextMidnight.getTime() - now.getTime());
 }
 
 export function rangeForPreset(
